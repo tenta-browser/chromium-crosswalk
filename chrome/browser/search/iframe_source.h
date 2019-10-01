@@ -8,13 +8,14 @@
 #include "base/macros.h"
 #include "build/build_config.h"
 #include "content/public/browser/url_data_source.h"
+#include "ui/base/template_expressions.h"
 
 #if defined(OS_ANDROID)
 #error "Instant is only used on desktop";
 #endif
 
 // Base class for URL data sources for chrome-search:// iframed content.
-// TODO(treib): This has only one subclass outside of tests,
+// TODO(crbug.com/947608): This has only one subclass outside of tests,
 // MostVisitedIframeSource. Merge the two classes?
 class IframeSource : public content::URLDataSource {
  public:
@@ -34,9 +35,9 @@ class IframeSource : public content::URLDataSource {
   virtual bool ServesPath(const std::string& path) const = 0;
 
   // Sends unmodified resource bytes.
-  void SendResource(
-      int resource_id,
-      const content::URLDataSource::GotDataCallback& callback);
+  void SendResource(int resource_id,
+                    const content::URLDataSource::GotDataCallback& callback,
+                    const ui::TemplateReplacements* replacements = nullptr);
 
   // Sends Javascript with an expected postMessage origin interpolated.
   void SendJSWithOrigin(

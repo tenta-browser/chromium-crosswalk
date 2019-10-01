@@ -118,8 +118,7 @@ WebUIDataSourceImpl::WebUIDataSourceImpl(const std::string& source_name)
       frame_src_set_(false),
       deny_xframe_options_(true),
       add_load_time_data_defaults_(true),
-      replace_existing_source_(true),
-      use_gzip_(false) {}
+      replace_existing_source_(true) {}
 
 WebUIDataSourceImpl::~WebUIDataSourceImpl() {
 }
@@ -181,8 +180,10 @@ void WebUIDataSourceImpl::SetDefaultResource(int resource_id) {
 }
 
 void WebUIDataSourceImpl::SetRequestFilter(
-    const WebUIDataSource::HandleRequestCallback& callback) {
-  filter_callback_ = callback;
+    const ShouldHandleRequestCallback& should_handle_request_callback,
+    const HandleRequestCallback& handle_request_callback) {
+  should_handle_request_callback_ = should_handle_request_callback;
+  filter_callback_ = handle_request_callback;
 }
 
 void WebUIDataSourceImpl::DisableReplaceExistingSource() {
@@ -217,16 +218,6 @@ void WebUIDataSourceImpl::OverrideContentSecurityPolicyChildSrc(
 
 void WebUIDataSourceImpl::DisableDenyXFrameOptions() {
   deny_xframe_options_ = false;
-}
-
-void WebUIDataSourceImpl::UseGzip() {
-  use_gzip_ = true;
-}
-
-void WebUIDataSourceImpl::UseGzip(
-    base::RepeatingCallback<bool(const std::string&)> is_gzipped_callback) {
-  UseGzip();
-  is_gzipped_callback_ = std::move(is_gzipped_callback);
 }
 
 const ui::TemplateReplacements* WebUIDataSourceImpl::GetReplacements() const {
@@ -267,6 +258,12 @@ std::string WebUIDataSourceImpl::GetMimeType(const std::string& path) const {
   if (base::EndsWith(file_path, ".svg", base::CompareCase::INSENSITIVE_ASCII))
     return "image/svg+xml";
 
+  if (base::EndsWith(file_path, ".jpg", base::CompareCase::INSENSITIVE_ASCII))
+    return "image/jpeg";
+
+  if (base::EndsWith(file_path, ".png", base::CompareCase::INSENSITIVE_ASCII))
+    return "image/png";
+
   return "text/html";
 }
 
@@ -274,8 +271,9 @@ void WebUIDataSourceImpl::StartDataRequest(
     const std::string& path,
     const ResourceRequestInfo::WebContentsGetter& wc_getter,
     const URLDataSource::GotDataCallback& callback) {
-  if (!filter_callback_.is_null() &&
-      filter_callback_.Run(path, callback)) {
+  if (!should_handle_request_callback_.is_null() &&
+      should_handle_request_callback_.Run(path)) {
+    filter_callback_.Run(path, callback);
     return;
   }
 
@@ -286,12 +284,7 @@ void WebUIDataSourceImpl::StartDataRequest(
     return;
   }
 
-  int resource_id = default_resource_;
-  std::map<std::string, int>::iterator result;
-  // Remove the query string for named resource lookups.
-  result = path_to_idr_map_.find(CleanUpPath(path));
-  if (result != path_to_idr_map_.end())
-    resource_id = result->second;
+  int resource_id = PathToIdrOrDefault(CleanUpPath(path));
   DCHECK_NE(resource_id, -1);
   scoped_refptr<base::RefCountedMemory> response(
       GetContentClient()->GetDataResourceBytes(resource_id));
@@ -310,15 +303,30 @@ const base::DictionaryValue* WebUIDataSourceImpl::GetLocalizedStrings() const {
 }
 
 bool WebUIDataSourceImpl::IsGzipped(const std::string& path) const {
-  if (!use_gzip_)
+  // Note: In the hypothetical case of requests handled by |filter_callback_|
+  // that involve gzipped data, the callback itself is responsible for
+  // ungzipping, and IsGzipped will return false for such cases.
+  if (!should_handle_request_callback_.is_null() &&
+      should_handle_request_callback_.Run(path)) {
     return false;
+  }
 
-  // TODO(dbeam): does anybody care about the "dirty" path (i.e. stuff after ?).
-  const std::string clean_path = CleanUpPath(path);
-  if (!json_path_.empty() && clean_path == json_path_)
+  if (!json_path_.empty() && path == json_path_) {
     return false;
+  }
 
-  return is_gzipped_callback_.is_null() || is_gzipped_callback_.Run(clean_path);
+  std::string file_path = CleanUpPath(path);
+  int idr = PathToIdrOrDefault(file_path);
+  if (idr == -1) {
+    return false;
+  }
+
+  return GetContentClient()->IsDataResourceGzipped(idr);
+}
+
+int WebUIDataSourceImpl::PathToIdrOrDefault(const std::string& path) const {
+  auto it = path_to_idr_map_.find(path);
+  return it == path_to_idr_map_.end() ? default_resource_ : it->second;
 }
 
 }  // namespace content

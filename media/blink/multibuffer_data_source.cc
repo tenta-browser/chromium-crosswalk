@@ -206,7 +206,7 @@ void MultibufferDataSource::Initialize(const InitializeCB& init_cb) {
   if (reader_->Available()) {
     render_task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&MultibufferDataSource::StartCallback, weak_ptr_));
+        base::BindOnce(&MultibufferDataSource::StartCallback, weak_ptr_));
 
     // When the entire file is already in the cache, we won't get any more
     // progress callbacks, which breaks some expectations. Post a task to
@@ -229,7 +229,7 @@ void MultibufferDataSource::OnRedirect(
     if (init_cb_) {
       render_task_runner_->PostTask(
           FROM_HERE,
-          base::Bind(&MultibufferDataSource::StartCallback, weak_ptr_));
+          base::BindOnce(&MultibufferDataSource::StartCallback, weak_ptr_));
     } else {
       base::AutoLock auto_lock(lock_);
       StopInternal_Locked();
@@ -252,7 +252,7 @@ void MultibufferDataSource::OnRedirect(
       if (reader_->Available()) {
         render_task_runner_->PostTask(
             FROM_HERE,
-            base::Bind(&MultibufferDataSource::StartCallback, weak_ptr_));
+            base::BindOnce(&MultibufferDataSource::StartCallback, weak_ptr_));
       } else {
         reader_->Wait(
             1, base::Bind(&MultibufferDataSource::StartCallback, weak_ptr_));
@@ -289,14 +289,17 @@ bool MultibufferDataSource::IsCorsCrossOrigin() const {
   return url_data_->is_cors_cross_origin();
 }
 
+bool MultibufferDataSource::HasAccessControl() const {
+  return url_data_->has_access_control();
+}
+
 UrlData::CorsMode MultibufferDataSource::cors_mode() const {
   return url_data_->cors_mode();
 }
 
 void MultibufferDataSource::MediaPlaybackRateChanged(double playback_rate) {
   DCHECK(render_task_runner_->BelongsToCurrentThread());
-
-  if (playback_rate < 0.0)
+  if (playback_rate < 0 || playback_rate == playback_rate_)
     return;
 
   playback_rate_ = playback_rate;
@@ -306,6 +309,9 @@ void MultibufferDataSource::MediaPlaybackRateChanged(double playback_rate) {
 
 void MultibufferDataSource::MediaIsPlaying() {
   DCHECK(render_task_runner_->BelongsToCurrentThread());
+  if (media_has_played_)
+    return;
+
   media_has_played_ = true;
   cancel_on_defer_ = false;
   // Once we start playing, we need preloading.
@@ -328,9 +334,9 @@ void MultibufferDataSource::Stop() {
     }
   }
 
-  render_task_runner_->PostTask(FROM_HERE,
-                                base::Bind(&MultibufferDataSource::StopLoader,
-                                           weak_factory_.GetWeakPtr()));
+  render_task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&MultibufferDataSource::StopLoader,
+                                weak_factory_.GetWeakPtr()));
 }
 
 void MultibufferDataSource::Abort() {
@@ -408,8 +414,8 @@ void MultibufferDataSource::Read(int64_t position,
         if (seek_positions_.size() == 1) {
           render_task_runner_->PostDelayedTask(
               FROM_HERE,
-              base::Bind(&MultibufferDataSource::SeekTask,
-                         weak_factory_.GetWeakPtr()),
+              base::BindOnce(&MultibufferDataSource::SeekTask,
+                             weak_factory_.GetWeakPtr()),
               kSeekDelay);
         }
 
@@ -420,9 +426,9 @@ void MultibufferDataSource::Read(int64_t position,
     read_op_.reset(new ReadOperation(position, size, data, read_cb));
   }
 
-  render_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&MultibufferDataSource::ReadTask, weak_factory_.GetWeakPtr()));
+  render_task_runner_->PostTask(FROM_HERE,
+                                base::BindOnce(&MultibufferDataSource::ReadTask,
+                                               weak_factory_.GetWeakPtr()));
 }
 
 bool MultibufferDataSource::GetSize(int64_t* size_out) {
@@ -623,7 +629,7 @@ void MultibufferDataSource::StartCallback() {
   }
 
   render_task_runner_->PostTask(FROM_HERE,
-                                base::Bind(std::move(init_cb_), success));
+                                base::BindOnce(std::move(init_cb_), success));
 
   UpdateBufferSizes();
 

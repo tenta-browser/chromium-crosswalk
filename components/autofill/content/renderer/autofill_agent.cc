@@ -159,8 +159,8 @@ void AutofillAgent::BindRequest(mojom::AutofillAgentAssociatedRequest request) {
 
 bool AutofillAgent::FormDataCompare::operator()(const FormData& lhs,
                                                 const FormData& rhs) const {
-  return std::tie(lhs.name, lhs.origin, lhs.action, lhs.is_form_tag) <
-         std::tie(rhs.name, rhs.origin, rhs.action, rhs.is_form_tag);
+  return std::tie(lhs.name, lhs.url, lhs.action, lhs.is_form_tag) <
+         std::tie(rhs.name, rhs.url, rhs.action, rhs.is_form_tag);
 }
 
 void AutofillAgent::DidCommitProvisionalLoad(bool is_same_document_navigation,
@@ -225,19 +225,19 @@ void AutofillAgent::DidChangeScrollOffsetImpl(
     HidePopup();
 }
 
-void AutofillAgent::FocusedNodeChanged(const WebNode& node) {
+void AutofillAgent::FocusedElementChanged(const WebElement& element) {
   was_focused_before_now_ = false;
 
   if ((IsKeyboardAccessoryEnabled() || !focus_requires_scroll_) &&
       WebUserGestureIndicator::IsProcessingUserGesture(
-          node.IsNull() ? nullptr : node.GetDocument().GetFrame())) {
+          element.IsNull() ? nullptr : element.GetDocument().GetFrame())) {
     focused_node_was_last_clicked_ = true;
     HandleFocusChangeComplete();
   }
 
   HidePopup();
 
-  if (node.IsNull() || !node.IsElementNode()) {
+  if (element.IsNull()) {
     if (!last_interacted_form_.IsNull()) {
       // Focus moved away from the last interacted form to somewhere else on
       // the page.
@@ -246,22 +246,21 @@ void AutofillAgent::FocusedNodeChanged(const WebNode& node) {
     return;
   }
 
-  WebElement web_element = node.ToConst<WebElement>();
-  const WebInputElement* element = ToWebInputElement(&web_element);
+  const WebInputElement* input = ToWebInputElement(&element);
 
   if (!last_interacted_form_.IsNull() &&
-      (!element || last_interacted_form_ != element->Form())) {
+      (!input || last_interacted_form_ != input->Form())) {
     // The focused element is not part of the last interacted form (could be
     // in a different form).
     GetAutofillDriver()->FocusNoLongerOnForm();
     return;
   }
 
-  if (!element || !element->IsEnabled() || element->IsReadOnly() ||
-      !element->IsTextField())
+  if (!input || !input->IsEnabled() || input->IsReadOnly() ||
+      !input->IsTextField())
     return;
 
-  element_ = *element;
+  element_ = *input;
 
   FormData form;
   FormFieldData field;
@@ -418,9 +417,6 @@ void AutofillAgent::DoAcceptDataListSuggestion(
 }
 
 void AutofillAgent::TriggerRefillIfNeeded(const FormData& form) {
-  if (!base::FeatureList::IsEnabled(features::kAutofillDynamicForms))
-    return;
-
   ReplaceElementIfNowInvalid(form);
 
   FormFieldData field;
@@ -450,8 +446,7 @@ void AutofillAgent::FillForm(int32_t id, const FormData& form) {
   was_last_action_fill_ = true;
 
   // If this is a re-fill, replace the triggering element if it's invalid.
-  if (base::FeatureList::IsEnabled(features::kAutofillDynamicForms) &&
-      id == kNoQueryId)
+  if (id == kNoQueryId)
     ReplaceElementIfNowInvalid(form);
 
   query_node_autofill_state_ = element_.GetAutofillState();
@@ -895,6 +890,12 @@ void AutofillAgent::SelectFieldOptionsChanged(
       base::TimeDelta::FromMilliseconds(kWaitTimeForSelectOptionsChangesMs),
       base::BindRepeating(&AutofillAgent::SelectWasUpdated,
                           weak_ptr_factory_.GetWeakPtr(), element));
+}
+
+bool AutofillAgent::HasFillData(const WebFormControlElement& element) const {
+  // This is currently only implemented for passwords. Consider supporting other
+  // autofill types in the future as well.
+  return password_autofill_agent_->HasFillData(element);
 }
 
 void AutofillAgent::SelectWasUpdated(

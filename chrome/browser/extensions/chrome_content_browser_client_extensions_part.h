@@ -9,7 +9,9 @@
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
+#include "base/optional.h"
 #include "chrome/browser/chrome_content_browser_client_parts.h"
+#include "content/public/browser/browser_or_resource_context.h"
 #include "content/public/common/resource_type.h"
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
@@ -49,7 +51,7 @@ class ChromeContentBrowserClientExtensionsPart
   static bool ShouldUseSpareRenderProcessHost(Profile* profile,
                                               const GURL& site_url);
   static bool DoesSiteRequireDedicatedProcess(
-      content::BrowserContext* browser_context,
+      content::BrowserOrResourceContext browser_or_resource_context,
       const GURL& effective_site_url);
   static bool ShouldLockToOrigin(content::BrowserContext* browser_context,
                                  const GURL& effective_site_url);
@@ -70,10 +72,12 @@ class ChromeContentBrowserClientExtensionsPart
   static bool AllowServiceWorker(const GURL& scope,
                                  const GURL& first_party_url,
                                  content::ResourceContext* context);
-  static void OverrideNavigationParams(content::SiteInstance* site_instance,
-                                       ui::PageTransition* transition,
-                                       bool* is_renderer_initiated,
-                                       content::Referrer* referrer);
+  static void OverrideNavigationParams(
+      content::SiteInstance* site_instance,
+      ui::PageTransition* transition,
+      bool* is_renderer_initiated,
+      content::Referrer* referrer,
+      base::Optional<url::Origin>* initiator_origin);
 
   // Similiar to ChromeContentBrowserClient::ShouldAllowOpenURL(), but the
   // return value indicates whether to use |result| or not.

@@ -8,6 +8,7 @@
 #include <unordered_set>
 
 #include "base/base_switches.h"
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/path_service.h"
@@ -32,7 +33,6 @@
 #include "headless/lib/headless_macros.h"
 #include "net/base/url_util.h"
 #include "net/ssl/client_cert_identity.h"
-#include "printing/buildflags/buildflags.h"
 #include "storage/browser/quota/quota_settings.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/gfx/switches.h"
@@ -43,11 +43,6 @@
 #include "components/crash/content/browser/crash_handler_host_linux.h"
 #include "content/public/common/content_descriptors.h"
 #endif  // defined(HEADLESS_USE_BREAKPAD)
-
-#if BUILDFLAG(ENABLE_PRINTING) && !defined(CHROME_MULTIPLE_DLL_CHILD)
-#include "base/strings/utf_string_conversions.h"
-#include "components/services/pdf_compositor/public/interfaces/pdf_compositor.mojom.h"
-#endif
 
 namespace headless {
 
@@ -121,12 +116,15 @@ HeadlessContentBrowserClient::HeadlessContentBrowserClient(
 
 HeadlessContentBrowserClient::~HeadlessContentBrowserClient() = default;
 
-content::BrowserMainParts* HeadlessContentBrowserClient::CreateBrowserMainParts(
+std::unique_ptr<content::BrowserMainParts>
+HeadlessContentBrowserClient::CreateBrowserMainParts(
     const content::MainFunctionParams&) {
-  std::unique_ptr<HeadlessBrowserMainParts> browser_main_parts =
+  auto browser_main_parts =
       std::make_unique<HeadlessBrowserMainParts>(browser_);
+
   browser_->set_browser_main_parts(browser_main_parts.get());
-  return browser_main_parts.release();
+
+  return browser_main_parts;
 }
 
 void HeadlessContentBrowserClient::OverrideWebkitPrefs(
@@ -157,15 +155,7 @@ HeadlessContentBrowserClient::GetServiceManifestOverlay(
   return base::nullopt;
 }
 
-void HeadlessContentBrowserClient::RegisterOutOfProcessServices(
-    OutOfProcessServiceMap* services) {
-#if BUILDFLAG(ENABLE_PRINTING) && !defined(CHROME_MULTIPLE_DLL_CHILD)
-  (*services)[printing::mojom::kServiceName] =
-      base::BindRepeating(&base::ASCIIToUTF16, "PDF Compositor Service");
-#endif
-}
-
-content::QuotaPermissionContext*
+scoped_refptr<content::QuotaPermissionContext>
 HeadlessContentBrowserClient::CreateQuotaPermissionContext() {
   return new HeadlessQuotaPermissionContext();
 }
@@ -175,7 +165,8 @@ void HeadlessContentBrowserClient::GetQuotaSettings(
     content::StoragePartition* partition,
     ::storage::OptionalQuotaSettingsCallback callback) {
   ::storage::GetNominalDynamicSettings(
-      partition->GetPath(), context->IsOffTheRecord(), std::move(callback));
+      partition->GetPath(), context->IsOffTheRecord(),
+      ::storage::GetDefaultDiskInfoHelper(), std::move(callback));
 }
 
 content::GeneratedCodeCacheSettings
@@ -269,7 +260,7 @@ void HeadlessContentBrowserClient::AllowCertificateError(
     int cert_error,
     const net::SSLInfo& ssl_info,
     const GURL& request_url,
-    content::ResourceType resource_type,
+    bool is_main_frame_request,
     bool strict_enforcement,
     bool expired_previous_decision,
     const base::Callback<void(content::CertificateRequestResultType)>&

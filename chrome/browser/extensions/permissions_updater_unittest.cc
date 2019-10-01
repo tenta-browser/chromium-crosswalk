@@ -11,7 +11,7 @@
 #include "base/json/json_file_value_serializer.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
-#include "base/test/scoped_feature_list.h"
+#include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_service.h"
@@ -172,8 +172,8 @@ TEST_F(PermissionsUpdaterTest, GrantAndRevokeOptionalPermissions) {
   URLPatternSet default_hosts;
   AddPattern(&default_hosts, "http://a.com/*");
   PermissionSet default_permissions(default_apis.Clone(),
-                                    ManifestPermissionSet(), default_hosts,
-                                    URLPatternSet());
+                                    ManifestPermissionSet(),
+                                    std::move(default_hosts), URLPatternSet());
 
   // Make sure it loaded properly.
   ASSERT_EQ(default_permissions,
@@ -190,7 +190,7 @@ TEST_F(PermissionsUpdaterTest, GrantAndRevokeOptionalPermissions) {
   AddPattern(&hosts, "http://*.c.com/*");
 
   {
-    PermissionSet delta(apis.Clone(), ManifestPermissionSet(), hosts,
+    PermissionSet delta(apis.Clone(), ManifestPermissionSet(), hosts.Clone(),
                         URLPatternSet());
 
     PermissionsUpdaterListener listener;
@@ -224,7 +224,7 @@ TEST_F(PermissionsUpdaterTest, GrantAndRevokeOptionalPermissions) {
     // In the second part of the test, we'll remove the permissions that we
     // just added except for 'notifications'.
     apis.erase(APIPermission::kNotifications);
-    PermissionSet delta(apis.Clone(), ManifestPermissionSet(), hosts,
+    PermissionSet delta(apis.Clone(), ManifestPermissionSet(), hosts.Clone(),
                         URLPatternSet());
 
     PermissionsUpdaterListener listener;
@@ -522,10 +522,6 @@ TEST_F(PermissionsUpdaterTest,
 
 TEST_F(PermissionsUpdaterTest,
        UpdatingRuntimeGrantedPermissionsWithRuntimePermissions) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(
-      extensions_features::kRuntimeHostPermissions);
-
   InitializeEmptyExtensionService();
 
   scoped_refptr<const Extension> extension =
@@ -551,9 +547,9 @@ TEST_F(PermissionsUpdaterTest,
 
   URLPatternSet explicit_hosts({URLPattern(
       Extension::kValidHostPermissionSchemes, "https://example.com/*")});
-  PermissionSet runtime_granted_permissions(APIPermissionSet(),
-                                            ManifestPermissionSet(),
-                                            explicit_hosts, URLPatternSet());
+  PermissionSet runtime_granted_permissions(
+      APIPermissionSet(), ManifestPermissionSet(), std::move(explicit_hosts),
+      URLPatternSet());
 
   // Granting runtime-granted permissions should update the runtime granted
   // permissions store in preferences, but *not* granted permissions in
@@ -577,10 +573,6 @@ TEST_F(PermissionsUpdaterTest,
 }
 
 TEST_F(PermissionsUpdaterTest, RevokingPermissionsWithRuntimeHostPermissions) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(
-      extensions_features::kRuntimeHostPermissions);
-
   InitializeEmptyExtensionService();
 
   constexpr struct {
@@ -619,9 +611,9 @@ TEST_F(PermissionsUpdaterTest, RevokingPermissionsWithRuntimeHostPermissions) {
 
     URLPatternSet url_pattern_set;
     url_pattern_set.AddOrigin(URLPattern::SCHEME_ALL, kOrigin);
-    const PermissionSet permission_set(APIPermissionSet(),
-                                       ManifestPermissionSet(), url_pattern_set,
-                                       URLPatternSet());
+    const PermissionSet permission_set(
+        APIPermissionSet(), ManifestPermissionSet(), std::move(url_pattern_set),
+        URLPatternSet());
     // Give the extension access to the test site. Now, the test site permission
     // should be revokable.
     permissions_test_util::GrantRuntimePermissionsAndWaitForCompletion(
@@ -647,10 +639,6 @@ TEST_F(PermissionsUpdaterTest, RevokingPermissionsWithRuntimeHostPermissions) {
 }
 
 TEST_F(PermissionsUpdaterTest, ChromeFaviconIsNotARevokableHost) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(
-      extensions_features::kRuntimeHostPermissions);
-
   InitializeEmptyExtensionService();
 
   URLPattern chrome_favicon_pattern(Extension::kValidHostPermissionSchemes,
@@ -743,9 +731,6 @@ TEST_F(PermissionsUpdaterTest, ChromeFaviconIsNotARevokableHost) {
 // Tests runtime-granting permissions beyond what are explicitly requested by
 // the extension.
 TEST_F(PermissionsUpdaterTest, GrantingBroadRuntimePermissions) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(
-      extensions_features::kRuntimeHostPermissions);
   InitializeEmptyExtensionService();
 
   scoped_refptr<const Extension> extension =

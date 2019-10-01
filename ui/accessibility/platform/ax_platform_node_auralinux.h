@@ -10,6 +10,8 @@
 #include <string>
 
 #include "base/macros.h"
+#include "base/optional.h"
+#include "base/strings/utf_offset_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/accessibility/ax_export.h"
 #include "ui/accessibility/platform/ax_platform_node_base.h"
@@ -57,13 +59,16 @@ class AX_EXPORT AXPlatformNodeAuraLinux : public AXPlatformNodeBase {
                                         gint y,
                                         AtkCoordType coord_type);
   bool GrabFocus();
+  bool GrabFocusOrSetSequentialFocusNavigationStartingPointAtOffset(int offset);
+  bool GrabFocusOrSetSequentialFocusNavigationStartingPoint();
   bool DoDefaultAction();
   const gchar* GetDefaultActionName();
   AtkAttributeSet* GetAtkAttributes();
 
-  void SetExtentsRelativeToAtkCoordinateType(
-      gint* x, gint* y, gint* width, gint* height,
-      AtkCoordType coord_type);
+  gfx::Vector2d GetParentOriginInScreenCoordinates() const;
+  gfx::Vector2d GetParentFrameOriginInScreenCoordinates() const;
+  gfx::Rect GetExtentsRelativeToAtkCoordinateType(
+      AtkCoordType coord_type) const;
 
   // AtkDocument helpers
   const gchar* GetDocumentAttributeValue(const gchar* attribute) const;
@@ -72,10 +77,16 @@ class AX_EXPORT AXPlatformNodeAuraLinux : public AXPlatformNodeBase {
   // AtkHyperlink helpers
   AtkHyperlink* GetAtkHyperlink();
 
+  void ScrollToPoint(AtkCoordType atk_coord_type, int x, int y);
+#if defined(ATK_CHECK_VERSION) && ATK_CHECK_VERSION(2, 30, 0)
+  base::Optional<gfx::Point> CalculateScrollToPoint(AtkScrollType scroll_type);
+#endif  // ATK_230
+
   // Misc helpers
   void GetFloatAttributeInGValue(ax::mojom::FloatAttribute attr, GValue* value);
 
   // Event helpers
+  void OnActiveDescendantChanged();
   void OnCheckedStateChanged();
   void OnExpandedStateChanged(bool is_expanded);
   void OnFocused();
@@ -85,7 +96,15 @@ class AX_EXPORT AXPlatformNodeAuraLinux : public AXPlatformNodeBase {
   void OnMenuPopupHide();
   void OnMenuPopupEnd();
   void OnSelected();
+  void OnSelectedChildrenChanged();
+  void OnTextSelectionChanged();
   void OnValueChanged();
+  void OnNameChanged();
+  void OnDescriptionChanged();
+  void OnInvalidStatusChanged();
+  void OnDocumentTitleChanged();
+  void OnSubtreeCreated();
+  void OnSubtreeWillBeDeleted();
 
   bool SupportsSelectionWithAtkSelection();
   bool SelectionAndFocusAreTheSame();
@@ -97,14 +116,33 @@ class AX_EXPORT AXPlatformNodeAuraLinux : public AXPlatformNodeBase {
   // AXPlatformNodeBase overrides.
   void Init(AXPlatformNodeDelegate* delegate) override;
   int GetIndexInParent() override;
-
-  std::string GetTextForATK();
+  base::string16 GetHypertext() const override;
 
   void UpdateHypertext();
-  const AXHypertext& GetHypertext();
+  const AXHypertext& GetAXHypertext();
+  const base::OffsetAdjuster::Adjustments& GetHypertextAdjustments();
+  size_t UTF16ToUnicodeOffsetInText(size_t utf16_offset);
+  size_t UnicodeToUTF16OffsetInText(int unicode_offset);
+
+  void SetEmbeddedDocument(AtkObject* new_document);
+  void SetEmbeddingWindow(AtkObject* new_embedding_window);
+
+  int GetCaretOffset();
+  bool SetCaretOffset(int offset);
+  bool SetTextSelectionForAtkText(int start_offset, int end_offset);
+  bool HasSelection();
+  void GetSelectionExtents(int* start_offset, int* end_offset);
+  gchar* GetSelectionWithText(int* start_offset, int* end_offset);
+
+  std::string accessible_name_;
 
  protected:
-  AXHypertext hypertext_;
+  // Offsets for the AtkText API are calculated in UTF-16 code point offsets,
+  // but the ATK APIs want all offsets to be in "characters," which we
+  // understand to be Unicode character offsets. We keep a lazily generated set
+  // of Adjustments to convert between UTF-16 and Unicode character offsets.
+  base::Optional<base::OffsetAdjuster::Adjustments> text_unicode_adjustments_ =
+      base::nullopt;
 
   void AddAttributeToList(const char* name,
                           const char* value,
@@ -121,6 +159,7 @@ class AX_EXPORT AXPlatformNodeAuraLinux : public AXPlatformNodeBase {
     ATK_IMAGE_INTERFACE,
     ATK_SELECTION_INTERFACE,
     ATK_TABLE_INTERFACE,
+    ATK_TABLE_CELL_INTERFACE,
     ATK_TEXT_INTERFACE,
     ATK_VALUE_INTERFACE,
     ATK_WINDOW_INTERFACE,
@@ -130,10 +169,17 @@ class AX_EXPORT AXPlatformNodeAuraLinux : public AXPlatformNodeBase {
   GType GetAccessibilityGType();
   AtkObject* CreateAtkObject();
   void DestroyAtkObjects();
-  void AddRelationToSet(AtkRelationSet*, AtkRelationType, int target_id);
+  void AddRelationToSet(AtkRelationSet*,
+                        AtkRelationType,
+                        AXPlatformNode* target);
+  bool IsInLiveRegion();
 
   // The AtkStateType for a checkable node can vary depending on the role.
   AtkStateType GetAtkStateTypeForCheckableNode();
+
+  // Find the topmost document that is an ancestor of this node. Returns
+  // null if there is no ancestor which is a document.`
+  AXPlatformNodeAuraLinux* FindTopmostDocumentAncestor();
 
   // Keep information of latest AtkInterfaces mask to refresh atk object
   // interfaces accordingly if needed.
@@ -142,6 +188,10 @@ class AX_EXPORT AXPlatformNodeAuraLinux : public AXPlatformNodeBase {
   // We own a reference to these ref-counted objects.
   AtkObject* atk_object_ = nullptr;
   AtkHyperlink* atk_hyperlink_ = nullptr;
+
+  // Some weak pointers which help us track ATK embeds / embedded by relations.
+  AtkObject* embedded_document_ = nullptr;
+  AtkObject* embedding_window_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(AXPlatformNodeAuraLinux);
 };

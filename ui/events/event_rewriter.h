@@ -14,7 +14,8 @@
 namespace ui {
 
 class Event;
-class EventSource;
+class EventRewriterContinuation;
+class EventSource;  // TODO(kpschoedel): Remove with old API.
 
 // Return status of EventRewriter operations; see that class below.
 enum EventRewriteStatus {
@@ -45,8 +46,52 @@ enum EventRewriteStatus {
 // before being dispatched from EventSource to EventSink.
 class EVENTS_EXPORT EventRewriter {
  public:
+  // Copyable opaque type, to be used only as an argument to SendEvent(),
+  // SendEventFinally(), or DiscardEvent(). The current implementation is
+  // a WeakPtr because some EventRewriters outlive their registration and
+  // can try to send events through an absent source (e.g. from a timer).
+  using Continuation = base::WeakPtr<EventRewriterContinuation>;
+
   EventRewriter() = default;
   virtual ~EventRewriter() = default;
+
+  // Potentially rewrites (replaces) an event, possibly with multiple events,
+  // or causes it to be discarded.
+  //
+  // To accept the supplied event without change,
+  //    return SendEvent(continuation, &event)
+  //
+  // To replace the supplied event with a new event, call either
+  //    return SendEvent(continuation, new_event)
+  // or
+  //    return SendEventFinally(continuation, new_event)
+  // depending on whether or not |new_event| should be provided to any
+  // later rewriters. These functions can be called more than once to
+  // replace an incoming event with multiple new events; when doing so,
+  // check |details.dispatcher_destroyed| after each call.
+  //
+  // To discard the incoming event without replacement,
+  //    return DiscardEvent()
+  //
+  // In the common case of one event at a time, the EventDispatchDetails
+  // from the above calls can and should be returned directly by RewriteEvent().
+  // When a rewriter generates multiple events synchronously, it should
+  // typically bail and return on a non-vacuous EventDispatchDetails.
+  // When a rewriter generates events asynchronously (e.g. from a timer)
+  // there is no opportunity to return the result directly, but a rewriter
+  // can consider retaining it for the next call.
+  //
+  // The supplied WeakPtr<Continuation> can be saved in order to respond
+  // asynchronously, e.g. after a double-click timeout. Normally, with
+  // EventRewriters subordinate to EventSources, the Continuation lives as
+  // long as the EventRewriter remains registered. If the continuation is not
+  // valid, the Send functions will return with |details.dispatcher_destroyed|.
+  //
+  // Design note: We need to pass the continuation state explicitly because
+  // Ash registers some EventRewriter instances with multiple EventSources.
+  //
+  virtual EventDispatchDetails RewriteEvent(const Event& event,
+                                            const Continuation continuation);
 
   // Potentially rewrites (replaces) an event, or requests it be discarded.
   // or discards an event. If the rewriter wants to rewrite an event, and
@@ -68,6 +113,19 @@ class EVENTS_EXPORT EventRewriter {
       std::unique_ptr<Event>* new_event) = 0;
 
  protected:
+  // Forwards an event, through any subsequent rewriters.
+  static EventDispatchDetails SendEvent(const Continuation continuation,
+                                        const Event* event) WARN_UNUSED_RESULT;
+
+  // Forwards an event, skipping any subsequent rewriters.
+  static EventDispatchDetails SendEventFinally(const Continuation continuation,
+                                               const Event* event)
+      WARN_UNUSED_RESULT;
+
+  // Discards an event, so that it will not be passed to the sink.
+  static EventDispatchDetails DiscardEvent(const Continuation continuation)
+      WARN_UNUSED_RESULT;
+
   // A helper that calls a protected EventSource function, which sends the event
   // to subsequent event rewriters on the source and onto its event sink.
   EventDispatchDetails SendEventToEventSource(EventSource* source,

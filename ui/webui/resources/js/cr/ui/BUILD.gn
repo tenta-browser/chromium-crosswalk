@@ -16,7 +16,6 @@ js_type_check("ui_resources") {
     ":array_data_model",
     ":autocomplete_list",
     ":command",
-    ":context_menu_button",
     ":context_menu_handler",
     ":dialogs",
     ":drag_wrapper",
@@ -42,6 +41,7 @@ js_type_check("ui_resources") {
     ":store",
     ":store_client",
     ":table",
+    ":tabs",
     ":tree",
   ]
 }
@@ -73,12 +73,6 @@ js_library("command") {
   deps = [
     "..:ui",
     "../..:cr",
-  ]
-}
-
-js_library("context_menu_button") {
-  deps = [
-    ":menu_button",
   ]
 }
 
@@ -267,6 +261,14 @@ js_library("table") {
     "table:table_column_model",
     "table:table_header",
     "table:table_list",
+  ]
+}
+
+js_library("tabs") {
+  deps = [
+    ":focus_outline_manager",
+    "..:ui",
+    "../..:cr",
   ]
 }
 

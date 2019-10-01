@@ -16,16 +16,20 @@
 #include "base/time/tick_clock.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "chrome/browser/previews/previews_https_notification_infobar_decider.h"
 #include "chrome/browser/previews/previews_lite_page_navigation_throttle_manager.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_settings.h"
 #include "net/http/http_request_headers.h"
 
 class PrefService;
+class Profile;
 
 namespace content {
 class BrowserContext;
 class NavigationHandle;
 class NavigationThrottle;
+class WebContents;
+
 }  // namespace content
 
 namespace user_prefs {
@@ -37,6 +41,7 @@ class PrefRegistrySyncable;
 // triggering decision to |PreviewsLitePageNavigationThrottle|.
 class PreviewsLitePageDecider
     : public PreviewsLitePageNavigationThrottleManager,
+      public PreviewsHTTPSNotificationInfoBarDecider,
       public data_reduction_proxy::DataReductionProxySettingsObserver {
  public:
   explicit PreviewsLitePageDecider(content::BrowserContext* browser_context);
@@ -50,6 +55,11 @@ class PreviewsLitePageDecider
   // making.
   static std::unique_ptr<content::NavigationThrottle> MaybeCreateThrottleFor(
       content::NavigationHandle* handle);
+
+  // Helpers to generate page ID.
+  static uint64_t GeneratePageIdForWebContents(
+      content::WebContents* web_contents);
+  static uint64_t GeneratePageIdForProfile(Profile* profile);
 
   // Removes |this| as a DataReductionProxySettingsObserver.
   void Shutdown();
@@ -70,9 +80,9 @@ class PreviewsLitePageDecider
   // Sets that the user has seen the UI notification.
   void SetUserHasSeenUINotification();
 
- private:
-  FRIEND_TEST_ALL_PREFIXES(PreviewsLitePageDeciderTest, TestServerUnavailable);
-  FRIEND_TEST_ALL_PREFIXES(PreviewsLitePageDeciderTest, TestSingleBypass);
+  // PreviewsHTTPSNotificationInfoBarDecider:
+  bool NeedsToNotifyUser() override;
+  void NotifyUser(content::WebContents* web_contents) override;
 
   // PreviewsLitePageNavigationThrottleManager:
   void SetServerUnavailableFor(base::TimeDelta retry_after) override;
@@ -83,8 +93,6 @@ class PreviewsLitePageDecider
   void ReportDataSavings(int64_t network_bytes,
                          int64_t original_bytes,
                          const std::string& host) override;
-  bool NeedsToNotifyUser() override;
-  void NotifyUser(content::WebContents* web_contents) override;
   void BlacklistBypassedHost(const std::string& host,
                              base::TimeDelta duration) override;
   bool HostBlacklistedFromBypass(const std::string& host) override;
@@ -94,6 +102,9 @@ class PreviewsLitePageDecider
       const net::HttpRequestHeaders& headers) override;
   void OnSettingsInitialized() override;
 
+  bool has_drp_headers() const { return drp_headers_valid_; }
+
+ private:
   // The time after which it is ok to send the server more preview requests.
   base::Optional<base::TimeTicks> retry_at_;
 
@@ -123,6 +134,10 @@ class PreviewsLitePageDecider
   // this dictionary, that host should be blacklisted from this preview until
   // after the time value. This is stored persistently in prefs.
   std::unique_ptr<base::DictionaryValue> host_bypass_blacklist_;
+
+  // A bool that tracks if the last call to |OnProxyRequestHeadersChanged| had
+  // what looked like a valid chrome-proxy header.
+  bool drp_headers_valid_;
 
   SEQUENCE_CHECKER(sequence_checker_);
 

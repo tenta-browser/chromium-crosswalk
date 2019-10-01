@@ -6,6 +6,7 @@ package org.chromium.chrome.browser.ntp;
 
 import android.app.Activity;
 import android.graphics.Canvas;
+import android.os.Build;
 import android.support.v4.view.ViewCompat;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -56,6 +57,12 @@ public class IncognitoNewTabPage
 
         mIncognitoNTPBackgroundColor =
                 ApiCompatibilityUtils.getColor(activity.getResources(), R.color.ntp_bg_incognito);
+
+        // Work around https://crbug.com/943873 and https://crbug.com/963385 where default focus
+        // highlight shows up after toggling dark mode.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            getView().setDefaultFocusHighlightEnabled(false);
+        }
     }
 
     @Override
@@ -86,38 +93,16 @@ public class IncognitoNewTabPage
 
         LayoutInflater inflater = LayoutInflater.from(activity);
         mIncognitoNewTabPageView =
-                (IncognitoNewTabPageView) inflater.inflate(getLayoutResource(), null);
+                (IncognitoNewTabPageView) inflater.inflate(R.layout.new_tab_page_incognito, null);
         mIncognitoNewTabPageView.initialize(mIncognitoNewTabPageManager);
+        mIncognitoNewTabPageView.setNavigationDelegate(host.createHistoryNavigationDelegate());
 
         boolean useAlternateIncognitoStrings =
                 ChromeFeatureList.isEnabled(ChromeFeatureList.INCOGNITO_STRINGS);
-        if (useMDIncognitoNTP()) {
-            TextView newTabIncognitoHeader =
-                    (TextView) mIncognitoNewTabPageView.findViewById(R.id.new_tab_incognito_title);
-            newTabIncognitoHeader.setText(useAlternateIncognitoStrings
-                            ? R.string.new_tab_private_title
-                            : R.string.new_tab_otr_title);
-        } else {
-            TextView newTabIncognitoHeader =
-                    (TextView) mIncognitoNewTabPageView.findViewById(R.id.ntp_incognito_header);
-            newTabIncognitoHeader.setText(useAlternateIncognitoStrings
-                            ? R.string.new_tab_private_header
-                            : R.string.new_tab_incognito_header);
-            TextView newTabIncognitoMessage = (TextView) mIncognitoNewTabPageView.findViewById(
-                    R.id.new_tab_incognito_message);
-            newTabIncognitoMessage.setText(useAlternateIncognitoStrings
-                            ? R.string.new_tab_private_message
-                            : R.string.new_tab_incognito_message);
-        }
-    }
-
-    protected int getLayoutResource() {
-        return useMDIncognitoNTP() ? R.layout.new_tab_page_incognito_md
-                                   : R.layout.new_tab_page_incognito;
-    }
-
-    protected static boolean useMDIncognitoNTP() {
-        return ChromeFeatureList.isEnabled(ChromeFeatureList.MATERIAL_DESIGN_INCOGNITO_NTP);
+        TextView newTabIncognitoHeader =
+                (TextView) mIncognitoNewTabPageView.findViewById(R.id.new_tab_incognito_title);
+        newTabIncognitoHeader.setText(useAlternateIncognitoStrings ? R.string.new_tab_private_title
+                                                                   : R.string.new_tab_otr_title);
     }
 
     /**
@@ -134,6 +119,7 @@ public class IncognitoNewTabPage
     public void destroy() {
         assert !ViewCompat
                 .isAttachedToWindow(getView()) : "Destroy called before removed from window";
+        super.destroy();
     }
 
     @Override

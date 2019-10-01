@@ -21,8 +21,8 @@
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/views/chrome_views_test_base.h"
 #include "chromeos/constants/chromeos_switches.h"
-#include "components/arc/arc_bridge_service.h"
 #include "components/arc/common/accessibility_helper.mojom.h"
+#include "components/arc/session/arc_bridge_service.h"
 #include "components/exo/shell_surface.h"
 #include "components/exo/shell_surface_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -79,11 +79,11 @@ class ArcAccessibilityHelperBridgeTest : public ChromeViewsTestBase {
    public:
     void AddObserver(Observer* observer) override {
       observers_.AddObserver(observer);
-    };
+    }
 
     void RemoveObserver(Observer* observer) override {
       observers_.RemoveObserver(observer);
-    };
+    }
 
     ArcNotificationSurface* GetArcSurface(
         const std::string& notification_key) const override {
@@ -145,7 +145,8 @@ class ArcAccessibilityHelperBridgeTest : public ChromeViewsTestBase {
 
   views::Widget* CreateTestWidget() {
     views::Widget* widget = new views::Widget();
-    widget->Init(CreateParams(views::Widget::InitParams::TYPE_POPUP));
+    widget->Init(
+        CreateParams(views::Widget::InitParams::TYPE_WINDOW_FRAMELESS));
     return widget;
   }
 
@@ -418,7 +419,7 @@ TEST_F(ArcAccessibilityHelperBridgeTest,
 
   // Prepare widget to hold it.
   views::Widget* widget = CreateTestWidget();
-  widget->widget_delegate()->set_can_activate(false);
+  widget->widget_delegate()->SetCanActivate(false);
   widget->Deactivate();
   widget->SetContentsView(notification_view.get());
   widget->Show();

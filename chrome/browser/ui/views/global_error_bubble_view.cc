@@ -8,6 +8,7 @@
 
 #include <vector>
 
+#include "base/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/platform_util.h"
@@ -195,8 +196,9 @@ views::View* GlobalErrorBubbleView::CreateExtraView() {
   if (!error_ || error_->GetBubbleViewCancelButtonLabel().empty() ||
       !error_->ShouldUseExtraView())
     return nullptr;
-  return views::MdTextButton::CreateSecondaryUiButton(
+  auto view = views::MdTextButton::CreateSecondaryUiButton(
       this, error_->GetBubbleViewCancelButtonLabel());
+  return view.release();
 }
 
 bool GlobalErrorBubbleView::Cancel() {

@@ -73,6 +73,13 @@ class ASH_EXPORT AccessibilityController
   bool autoclick_enabled() const { return autoclick_enabled_; }
   void SetAutoclickEventType(mojom::AutoclickEventType event_type);
   mojom::AutoclickEventType GetAutoclickEventType();
+  void SetAutoclickMenuPosition(mojom::AutoclickMenuPosition position);
+  mojom::AutoclickMenuPosition GetAutoclickMenuPosition();
+
+  // Update the autoclick menu bounds if necessary. This may need to happen when
+  // the display work area changes, or if system ui regions change (like the
+  // virtual keyboard position).
+  void UpdateAutoclickMenuBoundsIfNeeded();
 
   void SetCaretHighlightEnabled(bool enabled);
   bool caret_highlight_enabled() const { return caret_highlight_enabled_; }
@@ -184,6 +191,7 @@ class ASH_EXPORT AccessibilityController
   void ToggleDictationFromSource(mojom::DictationToggleSource source) override;
   void ForwardKeyEventsToSwitchAccess(bool should_forward) override;
   void GetBatteryDescription(GetBatteryDescriptionCallback callback) override;
+  void SetVirtualKeyboardVisible(bool is_visible) override;
 
   // SessionObserver:
   void OnSigninScreenPrefServiceInitialized(PrefService* prefs) override;
@@ -205,7 +213,9 @@ class ASH_EXPORT AccessibilityController
   void UpdateAutoclickDelayFromPref();
   void UpdateAutoclickEventTypeFromPref();
   void UpdateAutoclickRevertToLeftClickFromPref();
+  void UpdateAutoclickStabilizePositionFromPref();
   void UpdateAutoclickMovementThresholdFromPref();
+  void UpdateAutoclickMenuPositionFromPref();
   void UpdateCaretHighlightFromPref();
   void UpdateCursorHighlightFromPref();
   void UpdateDictationFromPref();

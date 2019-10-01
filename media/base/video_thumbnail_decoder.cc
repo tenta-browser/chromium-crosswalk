@@ -4,6 +4,7 @@
 
 #include "media/base/video_thumbnail_decoder.h"
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/video_frame.h"
@@ -69,7 +70,7 @@ void VideoThumbnailDecoder::OnEosBufferDecoded(DecodeStatus status) {
 }
 
 void VideoThumbnailDecoder::OnVideoFrameDecoded(
-    const scoped_refptr<VideoFrame>& frame) {
+    scoped_refptr<VideoFrame> frame) {
   NotifyComplete(std::move(frame));
 }
 

@@ -19,6 +19,8 @@
 
 #include "base/command_line.h"
 #include "base/logging.h"
+#include "base/memory/platform_shared_memory_region.h"
+#include "base/memory/unsafe_shared_memory_region.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "third_party/skia/include/core/SkCanvas.h"
@@ -135,6 +137,9 @@ void RegistryHandler(void* data,
         static_cast<zwp_linux_explicit_synchronization_v1*>(wl_registry_bind(
             registry, id, &zwp_linux_explicit_synchronization_v1_interface,
             1)));
+  } else if (strcmp(interface, "zcr_vsync_feedback_v1") == 0) {
+    globals->vsync_feedback.reset(static_cast<zcr_vsync_feedback_v1*>(
+        wl_registry_bind(registry, id, &zcr_vsync_feedback_v1_interface, 1)));
   }
 }
 
@@ -742,11 +747,16 @@ std::unique_ptr<ClientBase::Buffer> ClientBase::CreateBuffer(
     buffer = std::make_unique<Buffer>();
 
     size_t stride = size.width() * kBytesPerPixel;
-    buffer->shared_memory.reset(new base::SharedMemory());
-    buffer->shared_memory->CreateAndMapAnonymous(stride * size.height());
+    base::UnsafeSharedMemoryRegion shared_memory_region =
+        base::UnsafeSharedMemoryRegion::Create(stride * size.height());
+    buffer->shared_memory_mapping = shared_memory_region.Map();
+    base::subtle::PlatformSharedMemoryRegion platform_shared_memory =
+        base::UnsafeSharedMemoryRegion::TakeHandleForSerialization(
+            std::move(shared_memory_region));
+
     buffer->shm_pool.reset(wl_shm_create_pool(
-        globals_.shm.get(), buffer->shared_memory->handle().GetHandle(),
-        buffer->shared_memory->requested_size()));
+        globals_.shm.get(), platform_shared_memory.GetPlatformHandle().fd,
+        buffer->shared_memory_mapping.size()));
 
     buffer->buffer.reset(static_cast<wl_buffer*>(
         wl_shm_pool_create_buffer(buffer->shm_pool.get(), 0, size.width(),
@@ -759,7 +769,7 @@ std::unique_ptr<ClientBase::Buffer> ClientBase::CreateBuffer(
     buffer->sk_surface = SkSurface::MakeRasterDirect(
         SkImageInfo::Make(size.width(), size.height(), kColorType,
                           kOpaque_SkAlphaType),
-        static_cast<uint8_t*>(buffer->shared_memory->memory()), stride);
+        buffer->shared_memory_mapping.GetMemoryAs<uint8_t>(), stride);
     DCHECK(buffer->sk_surface);
   }
 
@@ -787,10 +797,10 @@ std::unique_ptr<ClientBase::Buffer> ClientBase::CreateDrmBuffer(
 
     buffer->params.reset(
         zwp_linux_dmabuf_v1_create_params(globals_.linux_dmabuf.get()));
-    for (size_t i = 0; i < gbm_bo_get_num_planes(buffer->bo.get()); ++i) {
+    for (size_t i = 0; i < gbm_bo_get_plane_count(buffer->bo.get()); ++i) {
       base::ScopedFD fd(gbm_bo_get_plane_fd(buffer->bo.get(), i));
-      uint32_t stride = gbm_bo_get_plane_stride(buffer->bo.get(), i);
-      uint32_t offset = gbm_bo_get_plane_offset(buffer->bo.get(), i);
+      uint32_t stride = gbm_bo_get_stride_for_plane(buffer->bo.get(), i);
+      uint32_t offset = gbm_bo_get_offset(buffer->bo.get(), i);
       zwp_linux_buffer_params_v1_add(buffer->params.get(), fd.get(), i, offset,
                                      stride, 0, 0);
     }
@@ -801,22 +811,23 @@ std::unique_ptr<ClientBase::Buffer> ClientBase::CreateDrmBuffer(
     buffer->buffer.reset(zwp_linux_buffer_params_v1_create_immed(
         buffer->params.get(), size.width(), size.height(), drm_format, flags));
 
-    if (gbm_bo_get_num_planes(buffer->bo.get()) != 1)
+    if (gbm_bo_get_plane_count(buffer->bo.get()) != 1)
       return buffer;
 
-    EGLint khr_image_attrs[] = {EGL_DMA_BUF_PLANE0_FD_EXT,
-                                fd.get(),
-                                EGL_WIDTH,
-                                size.width(),
-                                EGL_HEIGHT,
-                                size.height(),
-                                EGL_LINUX_DRM_FOURCC_EXT,
-                                drm_format,
-                                EGL_DMA_BUF_PLANE0_PITCH_EXT,
-                                gbm_bo_get_plane_stride(buffer->bo.get(), 0),
-                                EGL_DMA_BUF_PLANE0_OFFSET_EXT,
-                                0,
-                                EGL_NONE};
+    EGLint khr_image_attrs[] = {
+        EGL_DMA_BUF_PLANE0_FD_EXT,
+        fd.get(),
+        EGL_WIDTH,
+        size.width(),
+        EGL_HEIGHT,
+        size.height(),
+        EGL_LINUX_DRM_FOURCC_EXT,
+        drm_format,
+        EGL_DMA_BUF_PLANE0_PITCH_EXT,
+        gbm_bo_get_stride_for_plane(buffer->bo.get(), 0),
+        EGL_DMA_BUF_PLANE0_OFFSET_EXT,
+        0,
+        EGL_NONE};
     EGLImageKHR image = eglCreateImageKHR(
         eglGetCurrentDisplay(), EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT,
         nullptr /* no client buffer */, khr_image_attrs);

@@ -13,15 +13,16 @@
 #include "components/metrics/metrics_pref_names.h"
 #include "components/metrics/metrics_service.h"
 #include "components/prefs/pref_service.h"
+#include "components/ukm/ios/features.h"
 #import "ios/chrome/app/application_delegate/startup_information.h"
 #include "ios/chrome/browser/application_context.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
 #include "ios/chrome/browser/crash_report/breakpad_helper.h"
-#include "ios/chrome/browser/experimental_flags.h"
 #include "ios/chrome/browser/metrics/first_user_action_recorder.h"
 #import "ios/chrome/browser/metrics/previous_session_info.h"
 #import "ios/chrome/browser/net/connection_type_observer_bridge.h"
 #include "ios/chrome/browser/pref_names.h"
+#include "ios/chrome/browser/system_flags.h"
 #import "ios/chrome/browser/tabs/tab.h"
 #import "ios/chrome/browser/tabs/tab_model.h"
 #import "ios/chrome/browser/ui/main/browser_interface_provider.h"
@@ -159,14 +160,17 @@ using metrics_mediator::kAppEnteredBackgroundDateKey;
 - (void)updateMetricsStateBasedOnPrefsUserTriggered:(BOOL)isUserTriggered {
   BOOL optIn = [self areMetricsEnabled];
   BOOL allowUploading = [self isUploadingEnabled];
-  BOOL wifiOnly = GetApplicationContext()->GetLocalState()->GetBoolean(
-      prefs::kMetricsReportingWifiOnly);
+  if (!base::FeatureList::IsEnabled(kUmaCellular)) {
+    BOOL wifiOnly = GetApplicationContext()->GetLocalState()->GetBoolean(
+        prefs::kMetricsReportingWifiOnly);
+    optIn = optIn && wifiOnly;
+  }
 
   if (isUserTriggered)
     [self updateMetricsPrefsOnPermissionChange:optIn];
   [self setMetricsEnabled:optIn withUploading:allowUploading];
   [self setBreakpadEnabled:optIn withUploading:allowUploading];
-  [self setWatchWWANEnabled:(optIn && wifiOnly)];
+  [self setWatchWWANEnabled:optIn];
   [self setAppGroupMetricsEnabled:optIn];
 }
 
@@ -186,6 +190,9 @@ using metrics_mediator::kAppEnteredBackgroundDateKey;
 
 - (BOOL)isUploadingEnabled {
   BOOL optIn = [self areMetricsEnabled];
+  if (base::FeatureList::IsEnabled(kUmaCellular)) {
+    return optIn;
+  }
   BOOL wifiOnly = GetApplicationContext()->GetLocalState()->GetBoolean(
       prefs::kMetricsReportingWifiOnly);
   BOOL allowUploading = optIn;
@@ -250,7 +257,7 @@ using metrics_mediator::kAppEnteredBackgroundDateKey;
   app_group::main_app::RecordWidgetUsage();
   base::PostTaskWithTraits(
       FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
-      base::Bind(&app_group::main_app::ProcessPendingLogs, callback));
+      base::BindOnce(&app_group::main_app::ProcessPendingLogs, callback));
 }
 
 - (void)processCrashReportsPresentAtStartup {
@@ -258,6 +265,7 @@ using metrics_mediator::kAppEnteredBackgroundDateKey;
 }
 
 - (void)setBreakpadEnabled:(BOOL)enabled withUploading:(BOOL)allowUploading {
+  breakpad_helper::SetUserEnabledUploading(enabled);
   if (enabled) {
     breakpad_helper::SetEnabled(true);
 
@@ -376,10 +384,13 @@ using metrics_mediator::kAppEnteredBackgroundDateKey;
 }
 
 - (BOOL)isMetricsReportingEnabledWifiOnly {
-  return GetApplicationContext()->GetLocalState()->GetBoolean(
-             metrics::prefs::kMetricsReportingEnabled) &&
-         GetApplicationContext()->GetLocalState()->GetBoolean(
-             prefs::kMetricsReportingWifiOnly);
+  BOOL optIn = GetApplicationContext()->GetLocalState()->GetBoolean(
+      metrics::prefs::kMetricsReportingEnabled);
+  if (base::FeatureList::IsEnabled(kUmaCellular)) {
+    return optIn;
+  }
+  return optIn && GetApplicationContext()->GetLocalState()->GetBoolean(
+                      prefs::kMetricsReportingWifiOnly);
 }
 
 @end

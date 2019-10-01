@@ -26,8 +26,15 @@
 
 namespace chrome {
 
+// "Learn more" URL for accessibility image labels, linked from the permissions
+// dialog shown when a user enables the feature.
+extern const char kAccessibilityLabelsLearnMoreURL[];
+
 // "Learn more" URL for when profile settings are automatically reset.
 extern const char kAutomaticSettingsResetLearnMoreURL[];
+
+// "Learn more" URL for Advanced Protection download warnings.
+extern const char kAdvancedProtectionDownloadLearnMoreURL[];
 
 // The URL for providing help when the Bluetooth adapter is off.
 extern const char kBluetoothAdapterOffHelpURL[];
@@ -131,6 +138,9 @@ extern const char kGoogleAccountActivityControlsURL[];
 // URL of the Google Account.
 extern const char kGoogleAccountURL[];
 
+// URL of the Google Account chooser.
+extern const char kGoogleAccountChooserURL[];
+
 // URL of the Google Password Manager.
 extern const char kGooglePasswordManagerURL[];
 
@@ -158,6 +168,9 @@ extern const char kOmniboxLearnMoreURL[];
 extern const char kPageInfoHelpCenterURL[];
 
 extern const char kPasswordManagerLearnMoreURL[];
+
+// Help URL for the Payment methods page of the Google Pay site.
+extern const char kPaymentMethodsURL[];
 
 extern const char kPaymentMethodsLearnMoreURL[];
 
@@ -199,6 +212,9 @@ extern const char kEnhancedPlaybackNotificationLearnMoreURL[];
 #endif
 
 #if defined(OS_CHROMEOS)
+// Help center URL for Chrome OS Account Manager.
+extern const char kAccountManagerLearnMoreURL[];
+
 // The URL for the "learn more" link for Google Play Store (ARC) settings.
 extern const char kAndroidAppsLearnMoreURL[];
 
@@ -216,6 +232,8 @@ extern const char kChromePaletteHelpURL[];
 extern const char kCrosScheme[];
 
 extern const char kCupsPrintLearnMoreURL[];
+
+extern const char kCupsPrintPPDLearnMoreURL[];
 
 // The URL for the "Learn more" link the the Easy Unlock settings.
 extern const char kEasyUnlockLearnMoreUrl[];

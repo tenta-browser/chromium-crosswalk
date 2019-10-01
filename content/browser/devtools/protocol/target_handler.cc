@@ -5,6 +5,8 @@
 #include "content/browser/devtools/protocol/target_handler.h"
 
 #include "base/base64.h"
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/containers/flat_map.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
@@ -26,7 +28,9 @@ namespace protocol {
 
 namespace {
 
-const char kNotAllowedError[] = "Not allowed.";
+static const char kNotAllowedError[] = "Not allowed";
+static const char kMethod[] = "method";
+static const char kResumeMethod[] = "Runtime.runIfWaitingForDebugger";
 
 static const char kInitializerScript[] = R"(
   (function() {
@@ -173,7 +177,8 @@ class BrowserToPageConnector {
   void DispatchProtocolMessage(DevToolsAgentHost* agent_host,
                                const std::string& message) {
     if (agent_host == page_host_.get()) {
-      std::unique_ptr<base::Value> value = base::JSONReader::Read(message);
+      std::unique_ptr<base::Value> value =
+          base::JSONReader::ReadDeprecated(message);
       if (!value || !value->is_dict())
         return;
       // Make sure this is a binding call.
@@ -198,8 +203,9 @@ class BrowserToPageConnector {
 
     std::string encoded;
     base::Base64Encode(message, &encoded);
-    std::string eval_code = "window." + binding_name_ + ".onmessage(atob(\"";
-    std::string eval_suffix = "\"))";
+    std::string eval_code =
+        "try { window." + binding_name_ + ".onmessage(atob(\"";
+    std::string eval_suffix = "\")); } catch(e) { console.error(e); }";
     eval_code.reserve(eval_code.size() + encoded.size() + eval_suffix.size());
     eval_code.append(encoded);
     eval_code.append(eval_suffix);
@@ -311,8 +317,12 @@ class TargetHandler::Session : public DevToolsAgentHostClient {
 
   void SendMessageToAgentHost(const std::string& message) {
     if (throttle_) {
-      std::unique_ptr<base::Value> value = base::JSONReader::Read(message);
-      if (DevToolsSession::IsRuntimeResumeCommand(value.get()))
+      auto* client = handler_->root_session_->client();
+      std::unique_ptr<protocol::DictionaryValue> value =
+          protocol::DictionaryValue::cast(protocol::StringUtil::parseMessage(
+              message, client->UsesBinaryProtocol()));
+      std::string method;
+      if (value->getString(kMethod, &method) && method == kResumeMethod)
         ResumeIfThrottled();
     }
 
@@ -321,6 +331,13 @@ class TargetHandler::Session : public DevToolsAgentHostClient {
 
   bool IsAttachedTo(const std::string& target_id) {
     return agent_host_->GetId() == target_id;
+  }
+
+  bool UsesBinaryProtocol() override {
+    if (flatten_protocol_)
+      return true;
+    auto* client = handler_->root_session_->client();
+    return client->UsesBinaryProtocol();
   }
 
  private:
@@ -463,7 +480,7 @@ Response TargetHandler::Disable() {
   return Response::OK();
 }
 
-void TargetHandler::DidCommitNavigation() {
+void TargetHandler::DidFinishNavigation() {
   auto_attacher_.UpdateServiceWorkers();
 }
 
@@ -473,6 +490,10 @@ std::unique_ptr<NavigationThrottle> TargetHandler::CreateThrottleForNavigation(
     return nullptr;
   return std::make_unique<Throttle>(weak_factory_.GetWeakPtr(),
                                     navigation_handle);
+}
+
+void TargetHandler::UpdatePortals() {
+  auto_attacher_.UpdatePortals();
 }
 
 void TargetHandler::ClearThrottles() {
@@ -689,6 +710,8 @@ Response TargetHandler::CreateTarget(const std::string& url,
                                      Maybe<int> height,
                                      Maybe<std::string> context_id,
                                      Maybe<bool> enable_begin_frame_control,
+                                     Maybe<bool> new_window,
+                                     Maybe<bool> background,
                                      std::string* out_target_id) {
   if (access_mode_ == AccessMode::kAutoAttachOnly)
     return Response::Error(kNotAllowedError);

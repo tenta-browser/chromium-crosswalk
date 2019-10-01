@@ -12,6 +12,7 @@
 
 #include "base/barrier_closure.h"
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/files/file_util.h"
 #include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
@@ -952,7 +953,7 @@ void FileSystem::GetMetadata(GetFilesystemMetadataCallback callback) {
   base::RepeatingClosure closure = base::BarrierClosure(
       num_callbacks,
       base::BindOnce(&FileSystem::OnGetMetadata, weak_ptr_factory_.GetWeakPtr(),
-                     base::Passed(std::move(callback)), base::Owned(metadata),
+                     std::move(callback), base::Owned(metadata),
                      base::Owned(team_drive_metadata)));
 
   metadata->refreshing = default_corpus_change_list_loader_->IsRefreshing();

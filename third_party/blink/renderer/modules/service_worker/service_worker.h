@@ -61,6 +61,14 @@ class MODULES_EXPORT ServiceWorker final
   // and use the above From() everywhere instead of this one.
   static ServiceWorker* From(ExecutionContext*, WebServiceWorkerObjectInfo);
 
+  static ServiceWorker* Create(ExecutionContext* context,
+                               WebServiceWorkerObjectInfo info) {
+    ServiceWorker* worker =
+        MakeGarbageCollected<ServiceWorker>(context, std::move(info));
+    worker->UpdateStateIfNeeded();
+    return worker;
+  }
+
   ServiceWorker(ExecutionContext*, WebServiceWorkerObjectInfo);
   ~ServiceWorker() override;
   void Trace(blink::Visitor*) override;
@@ -79,7 +87,7 @@ class MODULES_EXPORT ServiceWorker final
 
   String scriptURL() const;
   String state() const;
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(statechange, kStatechange);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(statechange, kStatechange)
 
   ServiceWorker* ToServiceWorker() override { return this; }
 
@@ -95,7 +103,8 @@ class MODULES_EXPORT ServiceWorker final
   ScriptPromise InternalsTerminate(ScriptState*);
 
  private:
-  // PausableObject overrides.
+  // ContextLifecycleStateObserver overrides.
+  void ContextLifecycleStateChanged(mojom::FrameLifecycleState state) override;
   void ContextDestroyed(ExecutionContext*) override;
 
   bool was_stopped_;

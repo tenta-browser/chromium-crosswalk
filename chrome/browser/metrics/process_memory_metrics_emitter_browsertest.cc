@@ -6,8 +6,10 @@
 
 #include <set>
 
+#include "base/feature_list.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
+#include "base/strings/stringprintf.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/trace_event_analyzer.h"
@@ -21,11 +23,13 @@
 #include "components/ukm/test_ukm_recorder.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/common/network_service_util.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/buildflags/buildflags.h"
 #include "net/dns/mock_host_resolver.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_source.h"
+#include "services/network/public/cpp/features.h"
 #include "services/resource_coordinator/public/cpp/memory_instrumentation/memory_instrumentation.h"
 #include "services/resource_coordinator/public/cpp/memory_instrumentation/os_metrics.h"
 #include "url/gurl.h"
@@ -104,9 +108,7 @@ class ProcessMemoryMetricsEmitterFake : public ProcessMemoryMetricsEmitter {
     QuitIfFinished();
   }
 
-  void ReceivedProcessInfos(
-      std::vector<resource_coordinator::mojom::ProcessInfoPtr> process_infos)
-      override {
+  void ReceivedProcessInfos(std::vector<ProcessInfo> process_infos) override {
     ProcessMemoryMetricsEmitter::ReceivedProcessInfos(std::move(process_infos));
     finished_process_info_ = true;
     QuitIfFinished();
@@ -146,7 +148,8 @@ void CheckMemoryMetric(const std::string& name,
     EXPECT_EQ(samples->TotalCount(), count * number_of_processes) << name;
   }
 
-  if (count != 0 && value_restriction == ValueRestriction::ABOVE_ZERO)
+  if (count != 0 && number_of_processes != 0 &&
+      value_restriction == ValueRestriction::ABOVE_ZERO)
     EXPECT_GT(samples->sum(), 0u) << name;
 
   // As a sanity check, no memory stat should exceed 4 GB.
@@ -175,8 +178,9 @@ void CheckExperimentalMemoryMetrics(
     CheckMemoryMetric("Memory.Experimental.Renderer2.PartitionAlloc",
                       histogram_tester, count, ValueRestriction::NONE,
                       number_of_renderer_processes);
+    // V8 memory footprint can be below 1 MB, which is reported as zero.
     CheckMemoryMetric("Memory.Experimental.Renderer2.V8", histogram_tester,
-                      count, ValueRestriction::ABOVE_ZERO,
+                      count, ValueRestriction::NONE,
                       number_of_renderer_processes);
   }
   if (number_of_extension_processes) {
@@ -246,6 +250,24 @@ void CheckStableMemoryMetrics(const base::HistogramTester& histogram_tester,
     CheckMemoryMetric("Memory.Extension.PrivateSwapFootprint", histogram_tester,
                       count_for_private_swap_footprint, ValueRestriction::NONE,
                       number_of_extension_processes);
+  }
+
+  if (base::FeatureList::IsEnabled(network::features::kNetworkService)) {
+    int number_of_ns_processes =
+        content::IsOutOfProcessNetworkService() ? 1 : 0;
+    CheckMemoryMetric("Memory.NetworkService.ResidentSet", histogram_tester,
+                      count_for_resident_set, ValueRestriction::ABOVE_ZERO,
+                      number_of_ns_processes);
+    CheckMemoryMetric("Memory.NetworkService.PrivateMemoryFootprint",
+                      histogram_tester, count, ValueRestriction::ABOVE_ZERO,
+                      number_of_ns_processes);
+    // Shared memory footprint can be below 1 MB, which is reported as zero.
+    CheckMemoryMetric("Memory.NetworkService.SharedMemoryFootprint",
+                      histogram_tester, count, ValueRestriction::NONE,
+                      number_of_ns_processes);
+    CheckMemoryMetric("Memory.NetworkService.PrivateSwapFootprint",
+                      histogram_tester, count_for_private_swap_footprint,
+                      ValueRestriction::NONE, number_of_ns_processes);
   }
 
   CheckMemoryMetric("Memory.Total.ResidentSet", histogram_tester,
@@ -328,7 +350,7 @@ class ProcessMemoryMetricsEmitterTest
     const int64_t* value = ukm::TestUkmRecorder::GetEntryMetric(entry, name);
     ASSERT_TRUE(value) << name;
     EXPECT_GE(*value, 0) << name;
-    EXPECT_LE(*value, 10) << name;
+    EXPECT_LE(*value, 300) << name;
   }
 
   void CheckAllUkmEntries(size_t entry_count = 1u) {
@@ -532,6 +554,10 @@ IN_PROC_BROWSER_TEST_F(ProcessMemoryMetricsEmitterTest,
 #if defined(ADDRESS_SANITIZER) || defined(MEMORY_SANITIZER)
 #define MAYBE_FetchAndEmitMetricsWithExtensions \
   DISABLED_FetchAndEmitMetricsWithExtensions
+#elif defined(OS_LINUX)
+// Disabled for crbug.com/964025
+#define MAYBE_FetchAndEmitMetricsWithExtensions \
+  DISABLED_FetchAndEmitMetricsWithExtensions
 #else
 #define MAYBE_FetchAndEmitMetricsWithExtensions \
   FetchAndEmitMetricsWithExtensions
@@ -583,8 +609,9 @@ IN_PROC_BROWSER_TEST_F(ProcessMemoryMetricsEmitterTest,
 #define MAYBE_FetchAndEmitMetricsWithHostedApps \
   DISABLED_FetchAndEmitMetricsWithHostedApps
 #else
+// TODO(crbug.com/943207): Re-enable this test once it's not flaky anymore.
 #define MAYBE_FetchAndEmitMetricsWithHostedApps \
-  FetchAndEmitMetricsWithHostedApps
+  DISABLED_FetchAndEmitMetricsWithHostedApps
 #endif
 IN_PROC_BROWSER_TEST_F(ProcessMemoryMetricsEmitterTest,
                        MAYBE_FetchAndEmitMetricsWithHostedApps) {
@@ -743,12 +770,9 @@ IN_PROC_BROWSER_TEST_F(ProcessMemoryMetricsEmitterTest,
   CheckPageInfoUkmMetrics(url, true);
 }
 
-#if defined(ADDRESS_SANITIZER) || defined(MEMORY_SANITIZER)
-#define MAYBE_FetchThreeTimes DISABLED_FetchThreeTimes
-#else
-#define MAYBE_FetchThreeTimes FetchThreeTimes
-#endif
-IN_PROC_BROWSER_TEST_F(ProcessMemoryMetricsEmitterTest, MAYBE_FetchThreeTimes) {
+// Flaky test: https://crbug.com/731466
+IN_PROC_BROWSER_TEST_F(ProcessMemoryMetricsEmitterTest,
+                       DISABLED_FetchThreeTimes) {
   ASSERT_TRUE(embedded_test_server()->Start());
   const GURL url = embedded_test_server()->GetURL("foo.com", "/empty.html");
   ui_test_utils::NavigateToURLWithDisposition(
@@ -776,7 +800,11 @@ IN_PROC_BROWSER_TEST_F(ProcessMemoryMetricsEmitterTest, MAYBE_FetchThreeTimes) {
   CheckPageInfoUkmMetrics(url, true, count);
 }
 
-#if defined(ADDRESS_SANITIZER) || defined(MEMORY_SANITIZER)
+// Test is flaky on chromeos and linux. https://crbug.com/938054.
+// Test is flaky on mac and win: https://crbug.com/948674.
+#if defined(ADDRESS_SANITIZER) || defined(MEMORY_SANITIZER) ||         \
+    defined(OS_CHROMEOS) || defined(OS_LINUX) || defined(OS_MACOSX) || \
+    defined(OS_WIN)
 #define MAYBE_ForegroundAndBackgroundPages DISABLED_ForegroundAndBackgroundPages
 #else
 #define MAYBE_ForegroundAndBackgroundPages ForegroundAndBackgroundPages

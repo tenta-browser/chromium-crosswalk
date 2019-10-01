@@ -11,11 +11,20 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/task/cancelable_task_tracker.h"
+#include "components/favicon/core/favicon_request_handler.h"
 #include "components/favicon/core/favicon_service.h"
 #include "content/public/browser/url_data_source.h"
 #include "ui/gfx/favicon_size.h"
 
 class Profile;
+
+namespace base {
+class RefCountedMemory;
+}
+
+namespace ui {
+class NativeTheme;
+}
 
 // FaviconSource is the gateway between network-level chrome:
 // requests for favicons and the history backend that serves these.
@@ -70,7 +79,8 @@ class FaviconSource : public content::URLDataSource {
     IconRequest(const content::URLDataSource::GotDataCallback& cb,
                 const GURL& path,
                 int size,
-                float scale);
+                float scale,
+                favicon::FaviconRequestOrigin origin);
     IconRequest(const IconRequest& other);
     ~IconRequest();
 
@@ -78,13 +88,13 @@ class FaviconSource : public content::URLDataSource {
     GURL request_path;
     int size_in_dip;
     float device_scale_factor;
+    favicon::FaviconRequestOrigin icon_request_origin;
   };
 
-  // Called when the favicon data is missing to perform additional checks to
-  // locate the resource.
-  // |request| contains information for the failed request.
-  // Returns true if the missing resource is found.
-  virtual bool HandleMissingResource(const IconRequest& request);
+  // Exposed for testing.
+  virtual ui::NativeTheme* GetNativeTheme();
+  virtual base::RefCountedMemory* LoadIconBytes(const IconRequest& request,
+                                                int resource_id);
 
   Profile* profile_;
 
@@ -110,6 +120,7 @@ class FaviconSource : public content::URLDataSource {
   void SendDefaultResponse(const IconRequest& request);
 
   base::CancelableTaskTracker cancelable_task_tracker_;
+  favicon::FaviconRequestHandler favicon_request_handler_;
 
   DISALLOW_COPY_AND_ASSIGN(FaviconSource);
 };

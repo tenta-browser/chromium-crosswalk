@@ -43,6 +43,7 @@
 .project
 .pydevproject
 .checkstyle
+compile_commands.json
 cscope.*
 GPATH
 GRTAGS
@@ -53,18 +54,22 @@ tags
 Thumbs.db
 v8.log
 vs-chromium-project.txt
+/.clangd/
+/.clangd-index/
 # Settings directories for eclipse
 /.externalToolBuilders/
 /.settings/
 /.vs/
 # Visual Studio Code
-/.vscode/
+.vscode/
 /_out
 /android_emulator_sdk
+/android_webview/tools/webview_log_verbosifier/.gradle/
+/android_webview/tools/webview_log_verbosifier/.settings/
 /ash/ash_unittests_run.xml
 /base/base_unittests_run.xml
 # See build/.gitignore for entries covering src/build.
-/buildtools
+
 # The Chrome OS build creates a /c symlink due to http://crbug.com/54866.
 /c
 /cdm
@@ -72,6 +77,7 @@ vs-chromium-project.txt
 /chrome/android/profiles/afdo.prof
 /chrome/android/profiles/local.txt
 /chrome/angle_unittests_run.xml
+/chrome/app/vector_icons/google_chrome/
 /chrome/build/chrome.x64.orderfile
 /chrome/build/chrome.x86.orderfile
 /chrome/build/chrome_child.x64.orderfile
@@ -83,7 +89,6 @@ vs-chromium-project.txt
 /chrome/app/theme/default_100_percent/google_chrome
 /chrome/app/theme/default_200_percent/google_chrome
 /chrome/app/theme/google_chrome
-/chrome/browser/autofill/internal
 /chrome/browser/chromeos/arc/voice_interaction/internal
 /chrome/browser/chromeos/assistant/internal
 /chrome/browser/chromeos/login/screenshot_testing/golden_screenshots/*.png
@@ -95,6 +100,7 @@ vs-chromium-project.txt
 /chrome/browser/media/engagement_internal
 /chrome/browser/performance_monitor/performance_monitor.xml
 /chrome/browser/protector/internal
+/chrome/browser/resources/chromeos/kiosk_next_home/internal
 /chrome/browser/resources/chromeos/quickoffice
 /chrome/browser/resources/pdf/html_office
 /chrome/browser/resources/media_router/extension/src/
@@ -130,6 +136,7 @@ vs-chromium-project.txt
 /chrome/test/chromeos/autotest/files/client/deps/perf_data_dep/test_src/
 /chrome/test/chromeos/autotest/files/client/deps/pyauto_dep/test_src/
 /chrome/test/chromeos/autotest/files/client/deps/telemetry_dep/test_src/
+/chrome/test/data/autofill/captured_sites
 /chrome/test/data/extensions/api_test/permissions/nacl_enabled/bin
 /chrome/test/data/firefox2_profile/searchplugins
 /chrome/test/data/firefox2_searchplugins
@@ -138,6 +145,7 @@ vs-chromium-project.txt
 /chrome/test/data/gpu/vectortown_endurance/
 /chrome/test/data/gpu/vt/
 /chrome/test/data/layout_tests
+/chrome/test/data/password/captured_sites
 /chrome/test/data/pdf_private
 /chrome/test/data/perf/canvas_bench
 /chrome/test/data/perf/frame_rate/content
@@ -148,14 +156,12 @@ vs-chromium-project.txt
 /chrome/test/data/vr/
 /chrome/test/data/webrtc/resources
 /chrome/test/data/xr/webvr_info/
-/chrome/test/data/xr/webxr_samples/
 /chrome/test/media_router/internal
 /chrome/test/python_tests/
 /chrome/tools/memory
 /chrome/tools/test/reference_build
 /chrome/unit_tests_run.xml
 /chrome/web_ui_mojo_bindings.xml
-/chrome_elf/chrome_elf_resources.xml
 /chromecast/internal
 /chromeos/assistant/internal
 /cipd_cache/
@@ -169,8 +175,8 @@ vs-chromium-project.txt
 /components/rappor.xml
 /components/resources/default_100_percent/google_chrome
 /components/resources/default_200_percent/google_chrome
+/components/resources/default_300_percent/google_chrome
 /components/search_engines/prepopulated_engines.xml
-/components/test/data/language/
 /components/suggestions.xml
 /components/variations.xml
 /components/zucchini/testdata/*.exe
@@ -207,6 +213,7 @@ vs-chromium-project.txt
 /ios/third_party/motion_interchange_objc/src
 /ios/third_party/motion_transitioning_objc/src
 /ios/third_party/ochamcrest/src
+/ios/third_party/webkit/src
 /ios_internal
 /libassistant
 /libinteraction
@@ -223,7 +230,8 @@ vs-chromium-project.txt
 /net/net_unittests_run.xml
 /net/Release
 /net/testserver.log
-/net/third_party/quiche
+/net/third_party/quiche/src
+/orderfiles
 /out*/
 /ppapi/native_client/nacl_irt.xml
 /ppapi/native_client/ppapi_lib.xml
@@ -255,12 +263,12 @@ vs-chromium-project.txt
 /skia/tools/clusterfuzz-data/
 /sql/sql_unittests_run.xml
 /sync/sync.xml
-/sync_testserver.log
 /testing/libfuzzer/fuzzer_corpus_for_bots/
 /testserver.log
 # See third_party/.gitignore for entries covering src/third_party.
 /tools/.bisect-builds-cache.json
 /tools/cygprofile/*.wprgo
+/tools/clang/dsymutil/bin/dsymutil
 /tools/distcc
 /tools/gn/bin/linux
 /tools/gn/bin/mac
@@ -271,6 +279,7 @@ vs-chromium-project.txt
 /tools/metrics/histograms/histograms.before.pretty-print.xml
 /tools/metrics/histograms/enums.before.pretty-print.xml
 /tools/page_cycler/acid3
+/tools/perf/contrib/leak_detection/data/leak_detection_003.wprgo
 /tools/skia_goldctl/
 /tools/swarming_client
 /tools/tryserver
@@ -285,6 +294,9 @@ vs-chromium-project.txt
 /webpagereplay_logs/
 /x86-generic_out/
 /xcodebuild
-/xwalk
-/third_party/libpxc
-/bin/
+
+# Ignore any Android RenderTest goldens
+**/render_tests/*.png
+
+# Ignore IntelliJ files.
+.idea/

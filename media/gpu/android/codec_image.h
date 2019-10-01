@@ -42,6 +42,7 @@ class MEDIA_GPU_EXPORT CodecImage : public gpu::gles2::GLStreamTextureImage {
   // gl::GLImage implementation
   gfx::Size GetSize() override;
   unsigned GetInternalFormat() override;
+  BindOrCopy ShouldBindOrCopy() override;
   bool BindTexImage(unsigned target) override;
   void ReleaseTexImage(unsigned target) override;
   bool CopyTexImage(unsigned target) override;
@@ -75,6 +76,10 @@ class MEDIA_GPU_EXPORT CodecImage : public gpu::gles2::GLStreamTextureImage {
     return phase_ == Phase::kInFrontBuffer;
   }
 
+  // Whether the TextureOwner's texture is in the front buffer and bound to the
+  // latest image.
+  bool was_tex_image_bound() const { return was_tex_image_bound_; }
+
   // Whether this image is backed by a texture owner.
   bool is_texture_owner_backed() const { return !!texture_owner_; }
 
@@ -105,14 +110,22 @@ class MEDIA_GPU_EXPORT CodecImage : public gpu::gles2::GLStreamTextureImage {
 
   // Renders this image to the texture owner front buffer by first rendering
   // it to the back buffer if it's not already there, and then waiting for the
-  // frame available event before calling UpdateTexImage(). Passing
-  // BindingsMode::kDontRestore skips the work of restoring the current texture
-  // bindings if the texture owner's context is already current. Otherwise,
-  // this switches contexts and preserves the texture bindings.
-  // Returns true if the buffer is in the front buffer. Returns false if the
-  // buffer was invalidated.
-  enum class BindingsMode { kRestore, kDontRestore };
+  // frame available event before calling UpdateTexImage().
+  enum class BindingsMode {
+    // Ensures that the TextureOwner's texture is bound to the latest image, if
+    // it requires explicit binding.
+    kEnsureTexImageBound,
+
+    // Updates the current image but does not bind it. If updating the image
+    // implicitly binds the texture, the current bindings will be restored.
+    kRestoreIfBound,
+
+    // Updates the current image but does not bind it. If updating the image
+    // implicitly binds the texture, the current bindings will not be restored.
+    kDontRestoreIfBound
+  };
   bool RenderToTextureOwnerFrontBuffer(BindingsMode bindings_mode);
+  void EnsureBoundIfNeeded(BindingsMode mode);
 
   // Renders this image to the overlay. Returns true if the buffer is in the
   // overlay front buffer. Returns false if the buffer was invalidated.
@@ -135,6 +148,7 @@ class MEDIA_GPU_EXPORT CodecImage : public gpu::gles2::GLStreamTextureImage {
   PromotionHintAggregator::NotifyPromotionHintCB promotion_hint_cb_;
 
   DestructionCb destruction_cb_;
+  bool was_tex_image_bound_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(CodecImage);
 };

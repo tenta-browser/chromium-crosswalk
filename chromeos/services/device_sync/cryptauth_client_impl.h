@@ -5,8 +5,13 @@
 #ifndef CHROMEOS_SERVICES_DEVICE_SYNC_CRYPTAUTH_CLIENT_IMPL_H_
 #define CHROMEOS_SERVICES_DEVICE_SYNC_CRYPTAUTH_CLIENT_IMPL_H_
 
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "chromeos/services/device_sync/cryptauth_api_call_flow.h"
 #include "chromeos/services/device_sync/cryptauth_client.h"
 #include "chromeos/services/device_sync/proto/cryptauth_api.pb.h"
@@ -36,6 +41,8 @@ class CryptAuthClientImpl : public CryptAuthClient {
   // Creates the client using |url_request_context| to make the HTTP request
   // through |api_call_flow|. The |device_classifier| argument contains basic
   // device information of the caller (e.g. version and device type).
+  // TODO(nohle): Remove the |device_classifier| argument when the CryptAuth v1
+  // methods are no longer needed.
   CryptAuthClientImpl(
       std::unique_ptr<CryptAuthApiCallFlow> api_call_flow,
       identity::IdentityManager* identity_manager,
@@ -72,16 +79,58 @@ class CryptAuthClientImpl : public CryptAuthClient {
   void FinishEnrollment(const cryptauth::FinishEnrollmentRequest& request,
                         const FinishEnrollmentCallback& callback,
                         const ErrorCallback& error_callback) override;
+  void SyncKeys(const cryptauthv2::SyncKeysRequest& request,
+                const SyncKeysCallback& callback,
+                const ErrorCallback& error_callback) override;
+  void EnrollKeys(const cryptauthv2::EnrollKeysRequest& request,
+                  const EnrollKeysCallback& callback,
+                  const ErrorCallback& error_callback) override;
+  void SyncMetadata(const cryptauthv2::SyncMetadataRequest& request,
+                    const SyncMetadataCallback& callback,
+                    const ErrorCallback& error_callback) override;
+  void ShareGroupPrivateKey(
+      const cryptauthv2::ShareGroupPrivateKeyRequest& request,
+      const ShareGroupPrivateKeyCallback& callback,
+      const ErrorCallback& error_callback) override;
+  void BatchNotifyGroupDevices(
+      const cryptauthv2::BatchNotifyGroupDevicesRequest& request,
+      const BatchNotifyGroupDevicesCallback& callback,
+      const ErrorCallback& error_callback) override;
+  void BatchGetFeatureStatuses(
+      const cryptauthv2::BatchGetFeatureStatusesRequest& request,
+      const BatchGetFeatureStatusesCallback& callback,
+      const ErrorCallback& error_callback) override;
+  void BatchSetFeatureStatuses(
+      const cryptauthv2::BatchSetFeatureStatusesRequest& request,
+      const BatchSetFeatureStatusesCallback& callback,
+      const ErrorCallback& error_callback) override;
   std::string GetAccessTokenUsed() override;
 
  private:
-  // Starts a call to the API given by |request_path|, with the templated
-  // request and response types. The client first fetches the access token and
-  // then makes the HTTP request.
-  template <class RequestProto, class ResponseProto>
+  enum class RequestType { kGet, kPost };
+
+  // Starts a call to the API given by |request_url|. The client first fetches
+  // the access token and then makes the HTTP request.
+  //   |request_url|: API endpoint.
+  //   |request_type|: Whether the request is a GET or POST.
+  //   |serialized_request|: Serialized request message proto that will be sent
+  //                         as the body of a POST request. Null if
+  //                         request type is not POST.
+  //   |request_as_query_parameters|: The request message proto represented as
+  //                                  key-value pairs that will be sent as query
+  //                                  parameters in a GET request. Note: A key
+  //                                  can have multiple values. Null if request
+  //                                  type is not GET.
+  //   |response_callback|: Callback for a successful request.
+  //   |error_callback|: Callback for a failed request.
+  //   |partial_traffic_annotation|: A partial tag used to mark a source of
+  template <class ResponseProto>
   void MakeApiCall(
-      const std::string& request_path,
-      const RequestProto& request_proto,
+      const GURL& request_url,
+      RequestType request_type,
+      const base::Optional<std::string>& serialized_request,
+      const base::Optional<std::vector<std::pair<std::string, std::string>>>&
+          request_as_query_parameters,
       const base::Callback<void(const ResponseProto&)>& response_callback,
       const ErrorCallback& error_callback,
       const net::PartialNetworkTrafficAnnotationTag&
@@ -90,7 +139,10 @@ class CryptAuthClientImpl : public CryptAuthClient {
   // Called when the access token is obtained so the API request can be made.
   template <class ResponseProto>
   void OnAccessTokenFetched(
-      const std::string& serialized_request,
+      RequestType request_type,
+      const base::Optional<std::string>& serialized_request,
+      const base::Optional<std::vector<std::pair<std::string, std::string>>>&
+          request_as_query_parameters,
       const base::Callback<void(const ResponseProto&)>& response_callback,
       GoogleServiceAuthError error,
       identity::AccessTokenInfo access_token_info);
@@ -104,6 +156,11 @@ class CryptAuthClientImpl : public CryptAuthClient {
 
   // Called when the current API call fails at any step.
   void OnApiCallFailed(NetworkRequestError error);
+
+  // Returns a copy of the input request with the device classifier field set.
+  // Only used for CryptAuth v1 protos.
+  template <class RequestProto>
+  RequestProto RequestWithDeviceClassifierSet(const RequestProto& request);
 
   // Constructs and executes the actual HTTP request.
   std::unique_ptr<CryptAuthApiCallFlow> api_call_flow_;
@@ -125,8 +182,8 @@ class CryptAuthClientImpl : public CryptAuthClient {
   // completes.
   bool has_call_started_;
 
-  // URL path of the current request.
-  std::string request_path_;
+  // URL of the current request.
+  GURL request_url_;
 
   // The access token fetched by |access_token_fetcher_|.
   std::string access_token_used_;

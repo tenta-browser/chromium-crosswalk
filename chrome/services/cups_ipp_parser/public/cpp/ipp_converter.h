@@ -85,11 +85,8 @@ base::Optional<std::vector<uint8_t>> BuildIppRequest(
     ipp_t* ipp);
 
 // Mojom converter for ipp_t objects, return nullptr on failure.
+// Note: This function does not take ownership of |ipp|.
 chrome::mojom::IppMessagePtr ConvertIppToMojo(ipp_t* ipp);
-
-// Common converters for working with arbitrary byte buffers.
-std::vector<uint8_t> ConvertToByteBuffer(base::StringPiece char_buffer);
-std::vector<char> ConvertToCharBuffer(base::span<const uint8_t> byte_buffer);
 
 }  // namespace ipp_converter
 

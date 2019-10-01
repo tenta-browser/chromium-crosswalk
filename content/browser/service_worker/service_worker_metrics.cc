@@ -7,6 +7,7 @@
 #include <limits>
 #include <string>
 
+#include "base/bind.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/strcat.h"
@@ -19,7 +20,6 @@
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/common/content_client.h"
 #include "net/url_request/url_request.h"
-#include "third_party/blink/public/common/service_worker/service_worker_utils.h"
 
 namespace content {
 
@@ -124,6 +124,8 @@ const char* EventTypeToSuffix(ServiceWorkerMetrics::EventType event_type) {
       return "_LONG_RUNNING_MESSAGE";
     case ServiceWorkerMetrics::EventType::BACKGROUND_FETCH_SUCCESS:
       return "_BACKGROUND_FETCH_SUCCESS";
+    case ServiceWorkerMetrics::EventType::PERIODIC_SYNC:
+      return "_PERIODIC_SYNC";
   }
   return "_UNKNOWN";
 }
@@ -158,31 +160,6 @@ ServiceWorkerMetrics::WorkerPreparationType GetWorkerPreparationType(
   }
   NOTREACHED() << static_cast<int>(initial_worker_status);
   return Preparation::UNKNOWN;
-}
-
-const char* GetWorkerPreparationSuffix(
-    ServiceWorkerMetrics::WorkerPreparationType status) {
-  using Preparation = ServiceWorkerMetrics::WorkerPreparationType;
-  switch (status) {
-    case Preparation::UNKNOWN:
-      break;
-    case Preparation::START_DURING_STARTUP:
-      return "_StartWorkerDuringStartup";
-    case Preparation::START_IN_NEW_PROCESS:
-      return "_StartWorkerNewProcess";
-    case Preparation::START_IN_EXISTING_UNREADY_PROCESS:
-      return "_StartWorkerExistingUnreadyProcess";
-    case Preparation::START_IN_EXISTING_READY_PROCESS:
-      return "_StartWorkerExistingReadyProcess";
-    case Preparation::STARTING:
-      return "_StartingWorker";
-    case Preparation::RUNNING:
-      return "_RunningWorker";
-    case Preparation::STOPPING:
-      return "_StoppingWorker";
-  }
-  NOTREACHED();
-  return "_UNKNOWN";
 }
 
 void RecordURLMetricOnUI(const std::string& metric_name, const GURL& url) {
@@ -263,6 +240,8 @@ const char* ServiceWorkerMetrics::EventTypeToString(EventType event_type) {
       return "Long Running Message";
     case EventType::BACKGROUND_FETCH_SUCCESS:
       return "Background Fetch Success";
+    case EventType::PERIODIC_SYNC:
+      return "Periodic Sync";
   }
   NOTREACHED() << "Got unexpected event type: " << static_cast<int>(event_type);
   return "error";
@@ -470,36 +449,6 @@ void ServiceWorkerMetrics::RecordActivatedWorkerPreparationForMainFrame(
         "NavigationPreloadEnabled",
         preparation);
   }
-
-  // Don't record .Time if S13nServiceWorker is enabled.
-  // https://crbug.com/852664
-  if (blink::ServiceWorkerUtils::IsServicificationEnabled())
-    return;
-
-  // Record the preparation time.
-  UMA_HISTOGRAM_MEDIUM_TIMES(
-      "ServiceWorker.ActivatedWorkerPreparationForMainFrame.Time", time);
-
-  // Record the preparation time using the worker preparation suffix.
-  base::UmaHistogramMediumTimes(
-      base::StrCat({"ServiceWorker.ActivatedWorkerPreparationForMainFrame.Time",
-                    GetWorkerPreparationSuffix(preparation)}),
-      time);
-
-  // Record the preparation time using the navigation preload suffix.
-  if (did_navigation_preload) {
-    UMA_HISTOGRAM_MEDIUM_TIMES(
-        "ServiceWorker.ActivatedWorkerPreparationForMainFrame.Time_"
-        "NavigationPreloadEnabled",
-        time);
-    // We're mostly interested in when the worker needed to start up.
-    if (initial_worker_status != EmbeddedWorkerStatus::RUNNING) {
-      UMA_HISTOGRAM_MEDIUM_TIMES(
-          "ServiceWorker.ActivatedWorkerPreparationForMainFrame.Time_"
-          "WorkerStartOccurred_NavigationPreloadEnabled",
-          time);
-    }
-  }
 }
 
 void ServiceWorkerMetrics::RecordWorkerStopped(StopStatus status) {
@@ -627,6 +576,10 @@ void ServiceWorkerMetrics::RecordEventDuration(EventType event,
       // Since this event is expected to last indefinitely we don't need to log
       // how long they actually last.
       break;
+    case EventType::PERIODIC_SYNC:
+      UMA_HISTOGRAM_MEDIUM_TIMES(
+          "ServiceWorker.PeriodicBackgroundSyncEvent.Time", time);
+      break;
 
     case EventType::NAVIGATION_HINT:
     // The navigation hint should not be sent as an event.
@@ -685,6 +638,14 @@ void ServiceWorkerMetrics::RecordProcessCreated(bool is_new_process) {
 
 void ServiceWorkerMetrics::RecordStartWorkerTiming(const StartTimes& times,
                                                    StartSituation situation) {
+  // This is in-process timing, so process consistency doesn't matter.
+  constexpr base::TimeDelta kMinTime = base::TimeDelta::FromMicroseconds(1);
+  constexpr base::TimeDelta kMaxTime = base::TimeDelta::FromMilliseconds(100);
+  constexpr int kBuckets = 50;
+  UMA_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES(
+      "ServiceWorker.StartTiming.BrowserThreadHopTime", times.thread_hop_time,
+      kMinTime, kMaxTime, kBuckets);
+
   // Bail if the timings across processes weren't consistent.
   if (!base::TimeTicks::IsHighResolution() ||
       !base::TimeTicks::IsConsistentAcrossProcesses()) {
@@ -787,9 +748,9 @@ void ServiceWorkerMetrics::RecordNavigationPreloadResponse(
     ResourceType resource_type) {
   DCHECK_GE(worker_start.ToInternalValue(), 0);
   DCHECK_GE(response_start.ToInternalValue(), 0);
-  DCHECK(resource_type == RESOURCE_TYPE_MAIN_FRAME ||
-         resource_type == RESOURCE_TYPE_SUB_FRAME);
-  const bool is_main_frame = (resource_type == RESOURCE_TYPE_MAIN_FRAME);
+  DCHECK(resource_type == ResourceType::kMainFrame ||
+         resource_type == ResourceType::kSubFrame);
+  const bool is_main_frame = (resource_type == ResourceType::kMainFrame);
   // TODO(falken): Log sub-frame navigations also.
   if (!is_main_frame) {
     return;
@@ -841,36 +802,6 @@ void ServiceWorkerMetrics::RecordNavigationPreloadResponse(
   }
 }
 
-void ServiceWorkerMetrics::RecordContextRequestHandlerStatus(
-    ServiceWorkerContextRequestHandler::CreateJobStatus status,
-    bool is_installed,
-    bool is_main_script) {
-  if (is_installed) {
-    if (is_main_script) {
-      UMA_HISTOGRAM_ENUMERATION(
-          "ServiceWorker.ContextRequestHandlerStatus.InstalledWorker."
-          "MainScript",
-          status);
-    } else {
-      UMA_HISTOGRAM_ENUMERATION(
-          "ServiceWorker.ContextRequestHandlerStatus.InstalledWorker."
-          "ImportedScript",
-          status);
-    }
-  } else {
-    if (is_main_script) {
-      UMA_HISTOGRAM_ENUMERATION(
-          "ServiceWorker.ContextRequestHandlerStatus.NewWorker.MainScript",
-          status);
-    } else {
-      UMA_HISTOGRAM_ENUMERATION(
-          "ServiceWorker.ContextRequestHandlerStatus.NewWorker."
-          "ImportedScript",
-          status);
-    }
-  }
-}
-
 void ServiceWorkerMetrics::RecordRuntime(base::TimeDelta time) {
   // Start at 1 second since we expect service worker to last at least this
   // long: the update timer and idle timeout timer run on the order of seconds.
@@ -894,6 +825,22 @@ void ServiceWorkerMetrics::RecordStartServiceWorkerForNavigationHintResult(
 
 void ServiceWorkerMetrics::RecordRegisteredOriginCount(size_t origin_count) {
   UMA_HISTOGRAM_COUNTS_1M("ServiceWorker.RegisteredOriginCount", origin_count);
+}
+
+void ServiceWorkerMetrics::RecordLookupRegistrationTime(
+    blink::ServiceWorkerStatusCode status,
+    base::TimeDelta duration) {
+  if (status == blink::ServiceWorkerStatusCode::kOk) {
+    UMA_HISTOGRAM_TIMES(
+        "ServiceWorker.LookupRegistration.MainResource.Time.Exists", duration);
+  } else if (status == blink::ServiceWorkerStatusCode::kErrorNotFound) {
+    UMA_HISTOGRAM_TIMES(
+        "ServiceWorker.LookupRegistration.MainResource.Time.DoesNotExist",
+        duration);
+  } else {
+    UMA_HISTOGRAM_TIMES(
+        "ServiceWorker.LookupRegistration.MainResource.Time.Error", duration);
+  }
 }
 
 }  // namespace content

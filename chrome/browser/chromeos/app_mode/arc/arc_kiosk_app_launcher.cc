@@ -11,8 +11,10 @@
 #include "ash/public/interfaces/window_pin_type.mojom.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_utils.h"
 #include "chrome/browser/ui/ash/launcher/arc_app_window_launcher_controller.h"
+#include "components/arc/arc_util.h"
 #include "components/arc/metrics/arc_metrics_constants.h"
 #include "ui/aura/env.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/events/event_constants.h"
 
 namespace chromeos {
@@ -77,7 +79,7 @@ void ArcKioskAppLauncher::OnWindowDestroying(aura::Window* window) {
 
 bool ArcKioskAppLauncher::CheckAndPinWindow(aura::Window* const window) {
   DCHECK_GE(task_id_, 0);
-  if (ArcAppWindowLauncherController::GetWindowTaskId(window) != task_id_)
+  if (arc::GetWindowTaskId(window) != task_id_)
     return false;
   // Stop observing as target window is already found.
   StopObserving();

@@ -11,13 +11,13 @@ import android.os.SystemClock;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.chrome.browser.AppHooks;
 import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.metrics.WebApkSplashscreenMetrics;
 import org.chromium.chrome.browser.metrics.WebApkUma;
 import org.chromium.chrome.browser.util.IntentUtils;
+import org.chromium.content_public.browser.WebContents;
 import org.chromium.webapk.lib.common.WebApkConstants;
-
-import java.util.concurrent.TimeUnit;
 
 /**
  * An Activity is designed for WebAPKs (native Android apps) and displays a webapp in a nearly
@@ -29,8 +29,6 @@ public class WebApkActivity extends WebappActivity {
 
     /** The start time that the activity becomes focused. */
     private long mStartTime;
-
-    private WebApkSplashscreenMetrics mWebApkSplashscreenMetrics;
 
     private static final String TAG = "cr_WebApkActivity";
 
@@ -50,7 +48,20 @@ public class WebApkActivity extends WebappActivity {
     @Override
     protected void initializeUI(Bundle savedInstance) {
         super.initializeUI(savedInstance);
-        getActivityTab().setWebappManifestScope(getWebappInfo().scopeUri().toString());
+        WebContents webContents = getActivityTab().getWebContents();
+        if (webContents != null) webContents.notifyRendererPreferenceUpdate();
+    }
+
+    @Override
+    public boolean shouldPreferLightweightFre(Intent intent) {
+        // We cannot use getWebApkPackageName() because
+        // {@link WebappActivity#performPreInflationStartup()} may not have been called yet.
+        String webApkPackageName =
+                IntentUtils.safeGetStringExtra(intent, WebApkConstants.EXTRA_WEBAPK_PACKAGE_NAME);
+
+        // Use the lightweight FRE for unbound WebAPKs.
+        return webApkPackageName != null
+                && !webApkPackageName.startsWith(WebApkConstants.WEBAPK_PACKAGE_PREFIX);
     }
 
     @Override
@@ -77,11 +88,16 @@ public class WebApkActivity extends WebappActivity {
     }
 
     @Override
+    public void onResumeWithNative() {
+        super.onResumeWithNative();
+        AppHooks.get().setDisplayModeForActivity(getWebappInfo().displayMode(), this);
+    }
+
+    @Override
     protected void recordIntentToCreationTime(long timeMs) {
         super.recordIntentToCreationTime(timeMs);
 
-        RecordHistogram.recordTimesHistogram(
-                "MobileStartup.IntentToCreationTime.WebApk", timeMs, TimeUnit.MILLISECONDS);
+        RecordHistogram.recordTimesHistogram("MobileStartup.IntentToCreationTime.WebApk", timeMs);
     }
 
     @Override
@@ -116,34 +132,30 @@ public class WebApkActivity extends WebappActivity {
         if (mUpdateManager != null) {
             mUpdateManager.destroy();
         }
-        if (mWebApkSplashscreenMetrics != null) {
-            mWebApkSplashscreenMetrics = null;
-        }
+
+        // The common case is to be connected to just one WebAPK's services. For the sake of
+        // simplicity disconnect from the services of all WebAPKs.
+        ChromeWebApkHost.disconnectFromAllServices(true /* waitForPendingWork */);
+
         super.onDestroyInternal();
     }
 
     @Override
-    public void preInflationStartup() {
-        // Decide whether to record startup UMA histograms. This is a similar check to the one done
-        // in ChromeTabbedActivity.preInflationStartup refer to the comment there for why.
-        if (!LibraryLoader.getInstance().isInitialized()) {
-            getActivityTabStartupMetricsTracker().trackStartupMetrics(STARTUP_UMA_HISTOGRAM_SUFFIX);
-            // If there is a saved instance state, then the intent (and its stored timestamp) might
-            // be stale (Android replays intents if there is a recents entry for the activity).
-            if (getSavedInstanceState() == null) {
-                long shellLaunchTimestampMs =
-                        IntentHandler.getWebApkShellLaunchTimestampFromIntent(getIntent());
-                mWebApkSplashscreenMetrics.trackSplashscreenMetrics(shellLaunchTimestampMs);
-            }
-        }
-        super.preInflationStartup();
-    }
+    protected boolean handleBackPressed() {
+        if (super.handleBackPressed()) return true;
 
-    @Override
-    protected void initializeStartupMetrics() {
-        super.initializeStartupMetrics();
-        mWebApkSplashscreenMetrics = new WebApkSplashscreenMetrics();
-        addSplashscreenObserver(mWebApkSplashscreenMetrics);
+        if (getWebappInfo().isSplashProvidedByWebApk()) {
+            // When the WebAPK provides the splash screen, the splash screen activity is stacked
+            // underneath the WebAPK. The splash screen finishes itself in
+            // {@link Activity#onResume()}. When finishing the WebApkActivity, there is sometimes a
+            // frame of the splash screen drawn prior to the splash screen activity finishing
+            // itself. There are no glitches when the activity stack is finished via
+            // {@link ActivityManager.AppTask#finishAndRemoveTask()}.
+            WebApkServiceClient.getInstance().finishAndRemoveTaskSdk23(this);
+            return true;
+        }
+
+        return false;
     }
 
     @Override
@@ -151,5 +163,24 @@ public class WebApkActivity extends WebappActivity {
         WebApkInfo webApkInfo = (WebApkInfo) webappInfo;
         return WebApkPostShareTargetNavigator.navigateIfPostShareTarget(
                 webApkInfo, getActivityTab().getWebContents());
+    }
+
+    @Override
+    protected void initSplash() {
+        super.initSplash();
+
+        // Decide whether to record startup UMA histograms. This is a similar check to the one done
+        // in ChromeTabbedActivity.performPreInflationStartup refer to the comment there for why.
+        if (!LibraryLoader.getInstance().isInitialized()) {
+            getActivityTabStartupMetricsTracker().trackStartupMetrics(STARTUP_UMA_HISTOGRAM_SUFFIX);
+            // If there is a saved instance state, then the intent (and its stored timestamp) might
+            // be stale (Android replays intents if there is a recents entry for the activity).
+            if (getSavedInstanceState() == null) {
+                long shellLaunchTimestampMs =
+                        IntentHandler.getWebApkShellLaunchTimestampFromIntent(getIntent());
+                // Splash observers are removed once the splash screen is hidden.
+                addSplashscreenObserver(new WebApkSplashscreenMetrics(shellLaunchTimestampMs));
+            }
+        }
     }
 }

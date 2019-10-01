@@ -7,12 +7,15 @@
 
 #include <map>
 #include <memory>
+#include <utility>
 
 #include "base/callback_forward.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
+#include "chrome/browser/autofill/accessory_controller.h"
 #include "components/autofill/core/common/filling_status.h"
+#include "components/autofill/core/common/mojom/autofill_types.mojom.h"
 #include "components/autofill/core/common/password_generation_util.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "ui/gfx/image/image.h"
@@ -22,10 +25,6 @@ namespace autofill {
 struct PasswordForm;
 }  // namespace autofill
 
-namespace password_manager {
-class PasswordManagerDriver;
-}  // namespace password_manager
-
 // Interface for password-specific keyboard accessory controller between the
 // ManualFillingController and PasswordManagerClient.
 //
@@ -34,10 +33,11 @@ class PasswordManagerDriver;
 // On the first call, an instance is attached to |web_contents|, so it can be
 // returned by subsequent calls.
 class PasswordAccessoryController
-    : public base::SupportsWeakPtr<PasswordAccessoryController> {
+    : public base::SupportsWeakPtr<PasswordAccessoryController>,
+      public AccessoryController {
  public:
   PasswordAccessoryController() = default;
-  virtual ~PasswordAccessoryController() = default;
+  ~PasswordAccessoryController() override = default;
 
   // Returns true if the accessory controller may exist for |web_contents|.
   // Otherwise (e.g. if VR is enabled), it returns false.
@@ -65,12 +65,6 @@ class PasswordAccessoryController
           best_matches,
       const url::Origin& origin) = 0;
 
-  // Notifies the view that automatic password generation status changed.
-  virtual void OnAutomaticGenerationStatusChanged(
-      bool available,
-      const base::Optional<
-          autofill::password_generation::PasswordGenerationUIData>& ui_data,
-      const base::WeakPtr<password_manager::PasswordManagerDriver>& driver) = 0;
 
   // Notifies the controller that the generated password has potentially
   // changed. Currently only used for recording metrics.
@@ -85,11 +79,10 @@ class PasswordAccessoryController
   virtual void OnFilledIntoFocusedField(autofill::FillingStatus status) = 0;
 
   // Makes sure, that all shown suggestions are appropriate for the currently
-  // focused field and for fields that lost the focus. If a field lost focus,
-  // |is_fillable| will be false.
-  virtual void RefreshSuggestionsForField(const url::Origin& origin,
-                                          bool is_fillable,
-                                          bool is_password_field) = 0;
+  // focused field and for fields that lost the focus.
+  virtual void RefreshSuggestionsForField(
+      autofill::mojom::FocusedFieldType focused_field_type,
+      bool is_manual_generation_available) = 0;
 
   // Reacts to a navigation on the main frame, e.g. by clearing caches.
   virtual void DidNavigateMainFrame() = 0;
@@ -105,34 +98,6 @@ class PasswordAccessoryController
   virtual void GetFavicon(
       int desired_size_in_pixel,
       base::OnceCallback<void(const gfx::Image&)> icon_callback) = 0;
-
-  // Called by the UI code to request that |text_to_fill| is to be filled into
-  // the currently focused field.
-  virtual void OnFillingTriggered(bool is_password,
-                                  const base::string16& text_to_fill) = 0;
-
-  // Called by the UI code because a user triggered the |selected_option|,
-  // such as "Manage passwords..."
-  // TODO(crbug.com/905669): Replace the string param with an enum to indicate
-  // the selected option.
-  virtual void OnOptionSelected(
-      const base::string16& selected_option) const = 0;
-
-  // Called by the UI code to signal that the user requested password
-  // generation. This should prompt a modal dialog with the generated password.
-  virtual void OnGenerationRequested() = 0;
-
-  // Called from the modal dialog if the user accepted the generated password.
-  virtual void GeneratedPasswordAccepted(const base::string16& password) = 0;
-
-  // Called from the modal dialog if the user rejected the generated password.
-  virtual void GeneratedPasswordRejected() = 0;
-
-  // -----------------
-  // Member accessors:
-  // -----------------
-
-  virtual gfx::NativeWindow native_window() const = 0;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(PasswordAccessoryController);

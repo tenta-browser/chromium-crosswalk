@@ -7,8 +7,8 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/scoped_feature_list.h"
 #include "ios/chrome/browser/browser_state/test_chrome_browser_state.h"
 #import "ios/chrome/browser/download/ar_quick_look_tab_helper.h"
 #import "ios/chrome/browser/download/download_manager_tab_helper.h"
@@ -30,6 +30,7 @@
 
 namespace {
 char kUrl[] = "https://test.test/";
+char kUsdzFileName[] = "important_file.usdz";
 
 // Substitutes real TabHelper for testing.
 template <class TabHelper>
@@ -92,8 +93,6 @@ class BrowserDownloadServiceTest : public PlatformTest {
  protected:
   BrowserDownloadServiceTest()
       : browser_state_(browser_state_builder_.Build()) {
-    scoped_feature_list_.InitAndEnableFeature(download::kUsdzPreview);
-
     StubTabHelper<PassKitTabHelper>::CreateForWebState(&web_state_);
     TestARQuickLookTabHelper::CreateForWebState(&web_state_);
     StubTabHelper<DownloadManagerTabHelper>::CreateForWebState(&web_state_);
@@ -140,7 +139,6 @@ class BrowserDownloadServiceTest : public PlatformTest {
   std::unique_ptr<BrowserDownloadService> service_;
   web::TestWebState web_state_;
   base::HistogramTester histogram_tester_;
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 // Tests that BrowserDownloadService downloads the task using
@@ -161,8 +159,32 @@ TEST_F(BrowserDownloadServiceTest, PkPassMimeType) {
       1);
 }
 
-// Tests that BrowserDownloadService downloads the task using
-// ARQuickLookTabHelper.
+// Tests that BrowserDownloadService uses ARQuickLookTabHelper for .USDZ
+// extension.
+TEST_F(BrowserDownloadServiceTest, UsdzExtension) {
+  if (!download::IsUsdzPreviewEnabled()) {
+    // Disabled on iOS versions below 12 because QLPreviewController is not
+    // available.
+    return;
+  }
+
+  ASSERT_TRUE(download_controller()->GetDelegate());
+  auto task = std::make_unique<web::FakeDownloadTask>(GURL(kUrl), "other");
+  task->SetSuggestedFilename(base::UTF8ToUTF16(kUsdzFileName));
+  web::DownloadTask* task_ptr = task.get();
+  download_controller()->GetDelegate()->OnDownloadCreated(
+      download_controller(), &web_state_, std::move(task));
+  ASSERT_EQ(1U, ar_quick_look_tab_helper()->tasks().size());
+  EXPECT_EQ(task_ptr, ar_quick_look_tab_helper()->tasks()[0].get());
+  ASSERT_TRUE(download_manager_tab_helper()->tasks().empty());
+  histogram_tester_.ExpectUniqueSample(
+      "Download.IOSDownloadMimeType",
+      static_cast<base::HistogramBase::Sample>(DownloadMimeTypeResult::Other),
+      1);
+}
+
+// Tests that BrowserDownloadService uses ARQuickLookTabHelper for USDZ Mime
+// type.
 TEST_F(BrowserDownloadServiceTest, UsdzMimeType) {
   if (!download::IsUsdzPreviewEnabled()) {
     // Disabled on iOS versions below 12 because QLPreviewController is not
@@ -183,6 +205,56 @@ TEST_F(BrowserDownloadServiceTest, UsdzMimeType) {
       "Download.IOSDownloadMimeType",
       static_cast<base::HistogramBase::Sample>(
           DownloadMimeTypeResult::UniversalSceneDescription),
+      1);
+}
+
+// Tests that BrowserDownloadService uses ARQuickLookTabHelper for legacy USDZ
+// Mime type.
+TEST_F(BrowserDownloadServiceTest, LegacyUsdzMimeType) {
+  if (!download::IsUsdzPreviewEnabled()) {
+    // Disabled on iOS versions below 12 because QLPreviewController is not
+    // available.
+    return;
+  }
+
+  ASSERT_TRUE(download_controller()->GetDelegate());
+  auto task =
+      std::make_unique<web::FakeDownloadTask>(GURL(kUrl), kLegacyUsdzMimeType);
+  web::DownloadTask* task_ptr = task.get();
+  download_controller()->GetDelegate()->OnDownloadCreated(
+      download_controller(), &web_state_, std::move(task));
+  ASSERT_EQ(1U, ar_quick_look_tab_helper()->tasks().size());
+  EXPECT_EQ(task_ptr, ar_quick_look_tab_helper()->tasks()[0].get());
+  ASSERT_TRUE(download_manager_tab_helper()->tasks().empty());
+  histogram_tester_.ExpectUniqueSample(
+      "Download.IOSDownloadMimeType",
+      static_cast<base::HistogramBase::Sample>(
+          DownloadMimeTypeResult::LegacyUniversalSceneDescription),
+      1);
+}
+
+// Tests that BrowserDownloadService uses ARQuickLookTabHelper for legacy Pixar
+// USDZ Mime type.
+TEST_F(BrowserDownloadServiceTest, LegacyPixarUsdzMimeType) {
+  if (!download::IsUsdzPreviewEnabled()) {
+    // Disabled on iOS versions below 12 because QLPreviewController is not
+    // available.
+    return;
+  }
+
+  ASSERT_TRUE(download_controller()->GetDelegate());
+  auto task = std::make_unique<web::FakeDownloadTask>(GURL(kUrl),
+                                                      kLegacyPixarUsdzMimeType);
+  web::DownloadTask* task_ptr = task.get();
+  download_controller()->GetDelegate()->OnDownloadCreated(
+      download_controller(), &web_state_, std::move(task));
+  ASSERT_EQ(1U, ar_quick_look_tab_helper()->tasks().size());
+  EXPECT_EQ(task_ptr, ar_quick_look_tab_helper()->tasks()[0].get());
+  ASSERT_TRUE(download_manager_tab_helper()->tasks().empty());
+  histogram_tester_.ExpectUniqueSample(
+      "Download.IOSDownloadMimeType",
+      static_cast<base::HistogramBase::Sample>(
+          DownloadMimeTypeResult::LegacyPixarUniversalSceneDescription),
       1);
 }
 

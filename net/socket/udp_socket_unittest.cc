@@ -49,6 +49,7 @@
 
 using net::test::IsError;
 using net::test::IsOk;
+using testing::DoAll;
 using testing::Not;
 
 namespace net {
@@ -207,8 +208,8 @@ void UDPSocketTest::ConnectTest(bool use_nonblocking_io) {
   // Client sends to the server.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(&UDPSocketTest::WriteSocketIgnoreResult,
-                 base::Unretained(this), client.get(), simple_message));
+      base::BindOnce(&UDPSocketTest::WriteSocketIgnoreResult,
+                     base::Unretained(this), client.get(), simple_message));
   run_loop.Run();
   EXPECT_EQ(simple_message.length(), static_cast<size_t>(read_result));
   EXPECT_EQ(simple_message, std::string(buffer_->data(), read_result));
@@ -316,7 +317,7 @@ TEST_F(UDPSocketTest, PartialRecv) {
 // - Android: devices attached to testbots don't have default network, so
 // broadcasting to 255.255.255.255 returns error -109 (Address not reachable).
 // crbug.com/139144.
-// - Fuchsia: TODO(fuchsia): broadcast support is not implemented yet.
+// - Fuchsia: TODO(crbug.com/959314): broadcast support is not implemented yet.
 #define MAYBE_LocalBroadcast DISABLED_LocalBroadcast
 #else
 #define MAYBE_LocalBroadcast LocalBroadcast
@@ -410,14 +411,7 @@ TEST_F(UDPSocketTest, ConnectRandomBind) {
   }
 }
 
-#if defined(OS_FUCHSIA)
-// Currently the test fails on Fuchsia because netstack allows to connect IPv4
-// socket to IPv6 address. This issue is tracked by NET-596.
-#define MAYBE_ConnectFail DISABLED_ConnectFail
-#else
-#define MAYBE_ConnectFail ConnectFail
-#endif
-TEST_F(UDPSocketTest, MAYBE_ConnectFail) {
+TEST_F(UDPSocketTest, ConnectFail) {
   UDPSocket socket(DatagramSocket::DEFAULT_BIND, nullptr, NetLogSource());
 
   EXPECT_THAT(socket.Open(ADDRESS_FAMILY_IPV4), IsOk());
@@ -542,7 +536,7 @@ TEST_F(UDPSocketTest, ClientGetLocalPeerAddresses) {
 
 TEST_F(UDPSocketTest, ServerGetLocalAddress) {
   IPEndPoint bind_address(IPAddress::IPv4Localhost(), 0);
-  UDPServerSocket server(NULL, NetLogSource());
+  UDPServerSocket server(nullptr, NetLogSource());
   int rv = server.Listen(bind_address);
   EXPECT_THAT(rv, IsOk());
 
@@ -557,7 +551,7 @@ TEST_F(UDPSocketTest, ServerGetLocalAddress) {
 
 TEST_F(UDPSocketTest, ServerGetPeerAddress) {
   IPEndPoint bind_address(IPAddress::IPv4Localhost(), 0);
-  UDPServerSocket server(NULL, NetLogSource());
+  UDPServerSocket server(nullptr, NetLogSource());
   int rv = server.Listen(bind_address);
   EXPECT_THAT(rv, IsOk());
 
@@ -579,10 +573,11 @@ TEST_F(UDPSocketTest, ClientSetDoNotFragment) {
       return;
     EXPECT_THAT(rv, IsOk());
 
-#if defined(OS_MACOSX)
-    EXPECT_EQ(ERR_NOT_IMPLEMENTED, client.SetDoNotFragment());
-#else
     rv = client.SetDoNotFragment();
+#if defined(OS_MACOSX) || defined(OS_FUCHSIA)
+    // TODO(crbug.com/945590): IP_MTU_DISCOVER is not implemented on Fuchsia.
+    EXPECT_THAT(rv, IsError(ERR_NOT_IMPLEMENTED));
+#else
     EXPECT_THAT(rv, IsOk());
 #endif
   }
@@ -600,10 +595,11 @@ TEST_F(UDPSocketTest, ServerSetDoNotFragment) {
       return;
     EXPECT_THAT(rv, IsOk());
 
-#if defined(OS_MACOSX)
-    EXPECT_EQ(ERR_NOT_IMPLEMENTED, server.SetDoNotFragment());
-#else
     rv = server.SetDoNotFragment();
+#if defined(OS_MACOSX) || defined(OS_FUCHSIA)
+    // TODO(crbug.com/945590): IP_MTU_DISCOVER is not implemented on Fuchsia.
+    EXPECT_THAT(rv, IsError(ERR_NOT_IMPLEMENTED));
+#else
     EXPECT_THAT(rv, IsOk());
 #endif
   }
@@ -612,7 +608,7 @@ TEST_F(UDPSocketTest, ServerSetDoNotFragment) {
 // Close the socket while read is pending.
 TEST_F(UDPSocketTest, CloseWithPendingRead) {
   IPEndPoint bind_address(IPAddress::IPv4Localhost(), 0);
-  UDPServerSocket server(NULL, NetLogSource());
+  UDPServerSocket server(nullptr, NetLogSource());
   int rv = server.Listen(bind_address);
   EXPECT_THAT(rv, IsOk());
 
@@ -644,17 +640,6 @@ TEST_F(UDPSocketTest, JoinMulticastGroup) {
   UDPSocket socket(DatagramSocket::DEFAULT_BIND, nullptr, NetLogSource());
   EXPECT_THAT(socket.Open(bind_address.GetFamily()), IsOk());
 
-#if defined(OS_FUCHSIA)
-  // Fuchsia currently doesn't support automatic interface selection for
-  // multicast, so interface index needs to be set explicitly.
-  // See https://fuchsia.atlassian.net/browse/NET-195 .
-  NetworkInterfaceList interfaces;
-  ASSERT_TRUE(GetNetworkList(&interfaces, 0));
-  ASSERT_FALSE(interfaces.empty());
-  EXPECT_THAT(socket.SetMulticastInterface(interfaces[0].interface_index),
-              IsOk());
-#endif  // defined(OS_FUCHSIA)
-
   EXPECT_THAT(socket.Bind(bind_address), IsOk());
   EXPECT_THAT(socket.JoinGroup(group_ip), IsOk());
   // Joining group multiple times.
@@ -668,7 +653,13 @@ TEST_F(UDPSocketTest, JoinMulticastGroup) {
 
 #if !defined(OS_FUCHSIA)
 // TODO(https://crbug.com/900709): SO_REUSEPORT doesn't work on Fuchsia.
-TEST_F(UDPSocketTest, SharedMulticastAddress) {
+#if defined(OS_IOS)
+// TODO(https://crbug.com/947115): failing on device on iOS 12.2.
+#define MAYBE_SharedMulticastAddress DISABLED_SharedMulticastAddress
+#else
+#define MAYBE_SharedMulticastAddress SharedMulticastAddress
+#endif
+TEST_F(UDPSocketTest, MAYBE_SharedMulticastAddress) {
   const char kGroup[] = "224.0.0.251";
 
   IPAddress group_ip;
@@ -1200,7 +1191,7 @@ TEST_F(UDPSocketTest, ReadWithSocketOptimization) {
 
   // Setup the server to listen.
   IPEndPoint server_address(IPAddress::IPv4Localhost(), 0 /* port */);
-  UDPServerSocket server(NULL, NetLogSource());
+  UDPServerSocket server(nullptr, NetLogSource());
   server.AllowAddressReuse();
   ASSERT_THAT(server.Listen(server_address), IsOk());
   // Get bound port.
@@ -1241,7 +1232,7 @@ TEST_F(UDPSocketTest, ReadWithSocketOptimizationTruncation) {
 
   // Setup the server to listen.
   IPEndPoint server_address(IPAddress::IPv4Localhost(), 0 /* port */);
-  UDPServerSocket server(NULL, NetLogSource());
+  UDPServerSocket server(nullptr, NetLogSource());
   server.AllowAddressReuse();
   ASSERT_THAT(server.Listen(server_address), IsOk());
   // Get bound port.
@@ -1311,6 +1302,11 @@ TEST_F(UDPSocketTest, ReadWithSocketOptimizationTruncation) {
 // works as expected.
 #if defined(OS_ANDROID)
 TEST_F(UDPSocketTest, Tag) {
+  if (!CanGetTaggedBytes()) {
+    DVLOG(0) << "Skipping test - GetTaggedBytes unsupported.";
+    return;
+  }
+
   UDPServerSocket server(nullptr, NetLogSource());
   ASSERT_THAT(server.Listen(IPEndPoint(IPAddress::IPv4Localhost(), 0)), IsOk());
   IPEndPoint server_address;

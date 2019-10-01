@@ -10,7 +10,7 @@
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_task_environment.h"
 #include "chrome/common/pref_names.h"
-#include "chromeos/dbus/fake_power_manager_client.h"
+#include "chromeos/dbus/power/fake_power_manager_client.h"
 #include "components/metrics/daily_event.h"
 #include "components/prefs/testing_pref_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -21,32 +21,41 @@ namespace auto_screen_brightness {
 
 namespace {
 
-constexpr auto kNoAls = MetricsReporter::UserAdjustment::kNoAls;
-constexpr auto kSupportedAls = MetricsReporter::UserAdjustment::kSupportedAls;
-constexpr auto kUnsupportedAls =
-    MetricsReporter::UserAdjustment::kUnsupportedAls;
+constexpr auto kNoAls = MetricsReporter::DeviceClass::kNoAls;
+constexpr auto kSupportedAls = MetricsReporter::DeviceClass::kSupportedAls;
+constexpr auto kUnsupportedAls = MetricsReporter::DeviceClass::kUnsupportedAls;
+constexpr auto kAtlas = MetricsReporter::DeviceClass::kAtlas;
+constexpr auto kEve = MetricsReporter::DeviceClass::kEve;
 
 }  // namespace
 
 class MetricsReporterTest : public testing::Test {
  public:
-  MetricsReporterTest() {
+  MetricsReporterTest() = default;
+  ~MetricsReporterTest() override = default;
+
+  void SetUp() override {
+    PowerManagerClient::InitializeFake();
     MetricsReporter::RegisterLocalStatePrefs(pref_service_.registry());
-    ResetReporter();
+  }
+
+  void TearDown() override {
+    reporter_.reset();
+    PowerManagerClient::Shutdown();
   }
 
  protected:
   // Reinitialize |reporter_| without resetting underlying prefs. May be called
   // by tests to simulate a Chrome restart.
-  void ResetReporter() {
-    reporter_ = std::make_unique<MetricsReporter>(&power_manager_client_,
+  void ResetReporter(MetricsReporter::DeviceClass device_class) {
+    reporter_ = std::make_unique<MetricsReporter>(PowerManagerClient::Get(),
                                                   &pref_service_);
+    reporter_->SetDeviceClass(device_class);
   }
 
   // Notifies |reporter_| that a user adjustment request is received.
-  void SendOnUserBrightnessChangeRequested(
-      MetricsReporter::UserAdjustment user_adjustment) {
-    reporter_->OnUserBrightnessChangeRequested(user_adjustment);
+  void SendOnUserBrightnessChangeRequested() {
+    reporter_->OnUserBrightnessChangeRequested();
   }
 
   // Instructs |reporter_| to report daily metrics for reason |type|.
@@ -56,24 +65,15 @@ class MetricsReporterTest : public testing::Test {
 
   // Instructs |reporter_| to report daily metrics due to the passage of a day
   // and verifies that it reports one sample with each of the passed values.
-  void TriggerDailyEventAndVerifyHistograms(int no_als_count,
-                                            int supported_als_count,
-                                            int unsupported_als_count) {
+  void TriggerDailyEventAndVerifyHistograms(const std::string& histogram_name,
+                                            int expected_count) {
     base::HistogramTester histogram_tester;
 
     TriggerDailyEvent(metrics::DailyEvent::IntervalType::DAY_ELAPSED);
-    histogram_tester.ExpectUniqueSample(
-        MetricsReporter::kNoAlsUserAdjustmentName, no_als_count, 1);
-    histogram_tester.ExpectUniqueSample(
-        MetricsReporter::kSupportedAlsUserAdjustmentName, supported_als_count,
-        1);
-    histogram_tester.ExpectUniqueSample(
-        MetricsReporter::kUnsupportedAlsUserAdjustmentName,
-        unsupported_als_count, 1);
+    histogram_tester.ExpectUniqueSample(histogram_name, expected_count, 1);
   }
 
   base::test::ScopedTaskEnvironment scoped_task_environment_;
-  FakePowerManagerClient power_manager_client_;
   TestingPrefServiceSimple pref_service_;
   std::unique_ptr<MetricsReporter> reporter_;
 
@@ -82,30 +82,48 @@ class MetricsReporterTest : public testing::Test {
 };
 
 TEST_F(MetricsReporterTest, CountAndReportEvents) {
-  // Report the following user adjustments:
-  // - 3 without ALS
-  // - 2 with supported ALS
-  // No user adjustment on unsupported ALS is reported.
-  SendOnUserBrightnessChangeRequested(kNoAls);
-  SendOnUserBrightnessChangeRequested(kSupportedAls);
-  SendOnUserBrightnessChangeRequested(kNoAls);
-  SendOnUserBrightnessChangeRequested(kNoAls);
-  SendOnUserBrightnessChangeRequested(kSupportedAls);
-  TriggerDailyEventAndVerifyHistograms(3, 2, 0);
+  // Three without ALS.
+  ResetReporter(kNoAls);
+  SendOnUserBrightnessChangeRequested();
+  SendOnUserBrightnessChangeRequested();
+  SendOnUserBrightnessChangeRequested();
+  TriggerDailyEventAndVerifyHistograms(
+      MetricsReporter::kNoAlsUserAdjustmentName, 3);
 
-  // The next day, the following user adjustments:
-  // - 1 without ALS
-  // - 1 with supported
-  // - 3 with unsupported ALS
-  SendOnUserBrightnessChangeRequested(kUnsupportedAls);
-  SendOnUserBrightnessChangeRequested(kNoAls);
-  SendOnUserBrightnessChangeRequested(kUnsupportedAls);
-  SendOnUserBrightnessChangeRequested(kUnsupportedAls);
-  SendOnUserBrightnessChangeRequested(kSupportedAls);
-  TriggerDailyEventAndVerifyHistograms(1, 1, 3);
+  // Two with unsupported ALS.
+  ResetReporter(kUnsupportedAls);
+  SendOnUserBrightnessChangeRequested();
+  SendOnUserBrightnessChangeRequested();
+  TriggerDailyEventAndVerifyHistograms(
+      MetricsReporter::kUnsupportedAlsUserAdjustmentName, 2);
 
-  // The next day, no user adjustment is reported.
-  TriggerDailyEventAndVerifyHistograms(0, 0, 0);
+  // Two with supported ALS.
+  ResetReporter(kSupportedAls);
+  SendOnUserBrightnessChangeRequested();
+  SendOnUserBrightnessChangeRequested();
+  TriggerDailyEventAndVerifyHistograms(
+      MetricsReporter::kSupportedAlsUserAdjustmentName, 2);
+
+  // Two with Atlas.
+  ResetReporter(kAtlas);
+  SendOnUserBrightnessChangeRequested();
+  SendOnUserBrightnessChangeRequested();
+  TriggerDailyEventAndVerifyHistograms(
+      MetricsReporter::kAtlasUserAdjustmentName, 2);
+
+  // Three with Eve.
+  ResetReporter(kEve);
+  SendOnUserBrightnessChangeRequested();
+  SendOnUserBrightnessChangeRequested();
+  SendOnUserBrightnessChangeRequested();
+  TriggerDailyEventAndVerifyHistograms(MetricsReporter::kEveUserAdjustmentName,
+                                       3);
+
+  // The next day, another two with Eve.
+  SendOnUserBrightnessChangeRequested();
+  SendOnUserBrightnessChangeRequested();
+  TriggerDailyEventAndVerifyHistograms(MetricsReporter::kEveUserAdjustmentName,
+                                       2);
 }
 
 TEST_F(MetricsReporterTest, LoadInitialCountsFromPrefs) {
@@ -115,16 +133,23 @@ TEST_F(MetricsReporterTest, LoadInitialCountsFromPrefs) {
       prefs::kAutoScreenBrightnessMetricsNoAlsUserAdjustmentCount, 1);
   pref_service_.SetInteger(
       prefs::kAutoScreenBrightnessMetricsSupportedAlsUserAdjustmentCount, 2);
-  ResetReporter();
-  TriggerDailyEventAndVerifyHistograms(1, 2, 0);
+  pref_service_.SetInteger(
+      prefs::kAutoScreenBrightnessMetricsAtlasUserAdjustmentCount, 2);
+  pref_service_.SetInteger(
+      prefs::kAutoScreenBrightnessMetricsEveUserAdjustmentCount, 4);
+  ResetReporter(kAtlas);
+
+  TriggerDailyEventAndVerifyHistograms(
+      MetricsReporter::kAtlasUserAdjustmentName, 2);
 
   // The previous report should've cleared the prefs, so a new reporter should
   // start out at zero.
-  ResetReporter();
-  TriggerDailyEventAndVerifyHistograms(0, 0, 0);
+  TriggerDailyEventAndVerifyHistograms(
+      MetricsReporter::kAtlasUserAdjustmentName, 0);
 }
 
 TEST_F(MetricsReporterTest, IgnoreDailyEventFirstRun) {
+  ResetReporter(kAtlas);
   // metrics::DailyEvent notifies observers immediately on first run. Histograms
   // shouldn't be sent in this case.
   base::HistogramTester tester;
@@ -133,10 +158,13 @@ TEST_F(MetricsReporterTest, IgnoreDailyEventFirstRun) {
   tester.ExpectTotalCount(MetricsReporter::kSupportedAlsUserAdjustmentName, 0);
   tester.ExpectTotalCount(MetricsReporter::kUnsupportedAlsUserAdjustmentName,
                           0);
+  tester.ExpectTotalCount(MetricsReporter::kAtlasUserAdjustmentName, 0);
+  tester.ExpectTotalCount(MetricsReporter::kEveUserAdjustmentName, 0);
 }
 
 TEST_F(MetricsReporterTest, IgnoreDailyEventClockChanged) {
-  SendOnUserBrightnessChangeRequested(kSupportedAls);
+  ResetReporter(kAtlas);
+  SendOnUserBrightnessChangeRequested();
 
   // metrics::DailyEvent notifies observers if it sees that the system clock has
   // jumped back. Histograms shouldn't be sent in this case.
@@ -146,10 +174,13 @@ TEST_F(MetricsReporterTest, IgnoreDailyEventClockChanged) {
   tester.ExpectTotalCount(MetricsReporter::kSupportedAlsUserAdjustmentName, 0);
   tester.ExpectTotalCount(MetricsReporter::kUnsupportedAlsUserAdjustmentName,
                           0);
+  tester.ExpectTotalCount(MetricsReporter::kAtlasUserAdjustmentName, 0);
+  tester.ExpectTotalCount(MetricsReporter::kEveUserAdjustmentName, 0);
 
   // The existing stats should be cleared when the clock change notification is
   // received, so the next report should only contain zeros.
-  TriggerDailyEventAndVerifyHistograms(0, 0, 0);
+  TriggerDailyEventAndVerifyHistograms(
+      MetricsReporter::kAtlasUserAdjustmentName, 0);
 }
 
 }  // namespace auto_screen_brightness

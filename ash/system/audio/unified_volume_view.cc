@@ -21,6 +21,7 @@
 #include "ui/views/animation/ink_drop_mask.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/layout/box_layout.h"
+#include "ui/views/view_class_properties.h"
 
 using chromeos::CrasAudioHandler;
 
@@ -79,6 +80,11 @@ class MoreButton : public views::Button {
 
     SetTooltipText(l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_AUDIO));
     TrayPopupUtils::ConfigureTrayPopupButton(this);
+
+    auto path = std::make_unique<SkPath>();
+    path->addRoundRect(gfx::RectToSkRect(gfx::Rect(CalculatePreferredSize())),
+                       kTrayItemSize / 2, kTrayItemSize / 2);
+    SetProperty(views::kHighlightPathKey, path.release());
   }
 
   ~MoreButton() override = default;
@@ -114,6 +120,8 @@ class MoreButton : public views::Button {
                                                          kTrayItemSize / 2);
   }
 
+  const char* GetClassName() const override { return "MoreButton"; }
+
  private:
   DISALLOW_COPY_AND_ASSIGN(MoreButton);
 };
@@ -125,15 +133,17 @@ UnifiedVolumeView::UnifiedVolumeView(UnifiedVolumeSliderController* controller)
                         kSystemMenuVolumeHighIcon,
                         IDS_ASH_STATUS_TRAY_VOLUME),
       more_button_(new MoreButton(controller)) {
-  DCHECK(CrasAudioHandler::IsInitialized());
   CrasAudioHandler::Get()->AddAudioObserver(this);
   AddChildView(more_button_);
   Update(false /* by_user */);
 }
 
 UnifiedVolumeView::~UnifiedVolumeView() {
-  DCHECK(CrasAudioHandler::IsInitialized());
   CrasAudioHandler::Get()->RemoveAudioObserver(this);
+}
+
+const char* UnifiedVolumeView::GetClassName() const {
+  return "UnifiedVolumeView";
 }
 
 void UnifiedVolumeView::Update(bool by_user) {
@@ -143,7 +153,8 @@ void UnifiedVolumeView::Update(bool by_user) {
   // Indicate that the slider is inactive when it's muted.
   slider()->UpdateState(!is_muted);
 
-  button()->SetToggled(is_muted);
+  // The button should be gray whay muted and colored otherwise.
+  button()->SetToggled(!is_muted);
   button()->SetVectorIcon(is_muted ? kUnifiedMenuVolumeMuteIcon
                                    : GetVolumeIconForLevel(level));
 
@@ -165,7 +176,7 @@ void UnifiedVolumeView::OnOutputNodeVolumeChanged(uint64_t node_id,
   Update(true /* by_user */);
 }
 
-void UnifiedVolumeView::OnOutputMuteChanged(bool mute_on, bool system_adjust) {
+void UnifiedVolumeView::OnOutputMuteChanged(bool mute_on) {
   Update(true /* by_user */);
 }
 

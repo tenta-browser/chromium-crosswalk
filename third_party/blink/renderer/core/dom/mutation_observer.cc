@@ -80,7 +80,7 @@ class MutationObserver::V8DelegateImpl final
   }
 
  private:
-  TraceWrapperMember<V8MutationCallback> callback_;
+  Member<V8MutationCallback> callback_;
 };
 
 static unsigned g_observer_priority = 0;
@@ -231,7 +231,7 @@ using SlotChangeList = HeapVector<Member<HTMLSlotElement>>;
 
 // TODO(hayato): We should have a SlotChangeList for each unit of related
 // similar-origin browsing context.
-// https://html.spec.whatwg.org/multipage/browsers.html#unit-of-related-similar-origin-browsing-contexts
+// https://html.spec.whatwg.org/C/#unit-of-related-similar-origin-browsing-contexts
 static SlotChangeList& ActiveSlotChangeList() {
   DEFINE_STATIC_LOCAL(Persistent<SlotChangeList>, slot_change_list,
                       (MakeGarbageCollected<SlotChangeList>()));

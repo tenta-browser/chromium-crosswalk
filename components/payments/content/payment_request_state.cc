@@ -8,12 +8,13 @@
 #include <set>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/feature_list.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/autofill/core/browser/autofill_country.h"
 #include "components/autofill/core/browser/autofill_data_util.h"
-#include "components/autofill/core/browser/autofill_profile.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/geo/autofill_country.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/payments/content/content_payment_request_delegate.h"
 #include "components/payments/content/payment_manifest_web_data_service.h"
@@ -21,7 +22,6 @@
 #include "components/payments/content/service_worker_payment_instrument.h"
 #include "components/payments/core/autofill_payment_instrument.h"
 #include "components/payments/core/features.h"
-#include "components/payments/core/journey_logger.h"
 #include "components/payments/core/payment_instrument.h"
 #include "components/payments/core/payment_request_data_util.h"
 #include "content/public/common/content_features.h"
@@ -146,10 +146,13 @@ void PaymentRequestState::FinishedGetAllSWPaymentInstruments() {
   get_all_instruments_finished_ = true;
   are_requested_methods_supported_ |= !available_instruments_.empty();
   NotifyOnGetAllPaymentInstrumentsFinished();
+  NotifyInitialized();
 
   // Fulfill the pending CanMakePayment call.
-  if (can_make_payment_callback_)
-    CheckCanMakePayment(std::move(can_make_payment_callback_));
+  if (can_make_payment_callback_) {
+    CheckCanMakePayment(can_make_payment_legacy_mode_,
+                        std::move(can_make_payment_callback_));
+  }
 
   // Fulfill the pending HasEnrolledInstrument call.
   if (has_enrolled_instrument_callback_)
@@ -199,22 +202,38 @@ void PaymentRequestState::OnSpecUpdated() {
   UpdateIsReadyToPayAndNotifyObservers();
 }
 
-void PaymentRequestState::CanMakePayment(StatusCallback callback) {
+void PaymentRequestState::CanMakePayment(bool legacy_mode,
+                                         StatusCallback callback) {
   if (!get_all_instruments_finished_) {
     DCHECK(!can_make_payment_callback_);
     can_make_payment_callback_ = std::move(callback);
+    can_make_payment_legacy_mode_ = legacy_mode;
     return;
   }
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::BindOnce(&PaymentRequestState::CheckCanMakePayment,
-                     weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
+      FROM_HERE, base::BindOnce(&PaymentRequestState::CheckCanMakePayment,
+                                weak_ptr_factory_.GetWeakPtr(), legacy_mode,
+                                std::move(callback)));
 }
 
-void PaymentRequestState::CheckCanMakePayment(StatusCallback callback) {
+void PaymentRequestState::CheckCanMakePayment(bool legacy_mode,
+                                              StatusCallback callback) {
   DCHECK(get_all_instruments_finished_);
-  std::move(callback).Run(are_requested_methods_supported_);
+  if (!legacy_mode) {
+    std::move(callback).Run(are_requested_methods_supported_);
+    return;
+  }
+
+  // Legacy mode: fall back to also checking if an instrument is enrolled.
+  bool can_make_payment_value = false;
+  for (const auto& instrument : available_instruments_) {
+    if (instrument->IsValidForCanMakePayment()) {
+      can_make_payment_value = true;
+      break;
+    }
+  }
+  std::move(callback).Run(can_make_payment_value);
 }
 
 void PaymentRequestState::HasEnrolledInstrument(StatusCallback callback) {
@@ -231,6 +250,7 @@ void PaymentRequestState::HasEnrolledInstrument(StatusCallback callback) {
 }
 
 void PaymentRequestState::CheckHasEnrolledInstrument(StatusCallback callback) {
+  DCHECK(get_all_instruments_finished_);
   bool has_enrolled_instrument_value = false;
   for (const auto& instrument : available_instruments_) {
     if (instrument->IsValidForCanMakePayment()) {
@@ -283,6 +303,12 @@ void PaymentRequestState::GeneratePaymentResponse() {
       selected_shipping_profile_, selected_contact_profile_, this);
 }
 
+void PaymentRequestState::OnPaymentAppWindowClosed() {
+  DCHECK(selected_instrument_);
+  response_helper_.reset();
+  selected_instrument_->OnPaymentAppWindowClosed();
+}
+
 void PaymentRequestState::RecordUseStats() {
   if (spec_->request_shipping()) {
     DCHECK(selected_shipping_profile_);
@@ -332,8 +358,10 @@ void PaymentRequestState::AddAutofillPaymentInstrument(
       shipping_profiles_, app_locale_, payment_request_delegate_);
   available_instruments_.push_back(std::move(instrument));
 
-  if (selected)
-    SetSelectedInstrument(available_instruments_.back().get());
+  if (selected) {
+    SetSelectedInstrument(available_instruments_.back().get(),
+                          SectionSelectionStatus::kAddedSelected);
+  }
 }
 
 void PaymentRequestState::AddAutofillShippingProfile(
@@ -346,8 +374,10 @@ void PaymentRequestState::AddAutofillShippingProfile(
   autofill::AutofillProfile* new_cached_profile = profile_cache_.back().get();
   shipping_profiles_.push_back(new_cached_profile);
 
-  if (selected)
-    SetSelectedShippingProfile(new_cached_profile);
+  if (selected) {
+    SetSelectedShippingProfile(new_cached_profile,
+                               SectionSelectionStatus::kAddedSelected);
+  }
 }
 
 void PaymentRequestState::AddAutofillContactProfile(
@@ -358,8 +388,10 @@ void PaymentRequestState::AddAutofillContactProfile(
   autofill::AutofillProfile* new_cached_profile = profile_cache_.back().get();
   contact_profiles_.push_back(new_cached_profile);
 
-  if (selected)
-    SetSelectedContactProfile(new_cached_profile);
+  if (selected) {
+    SetSelectedContactProfile(new_cached_profile,
+                              SectionSelectionStatus::kAddedSelected);
+  }
 }
 
 void PaymentRequestState::SetSelectedShippingOption(
@@ -372,7 +404,8 @@ void PaymentRequestState::SetSelectedShippingOption(
 }
 
 void PaymentRequestState::SetSelectedShippingProfile(
-    autofill::AutofillProfile* profile) {
+    autofill::AutofillProfile* profile,
+    SectionSelectionStatus selection_status) {
   spec_->StartWaitingForUpdateWith(
       PaymentRequestSpec::UpdateReason::SHIPPING_ADDRESS);
   selected_shipping_profile_ = profile;
@@ -390,10 +423,13 @@ void PaymentRequestState::SetSelectedShippingProfile(
       *selected_shipping_profile_, /*timeout_seconds=*/2,
       base::BindOnce(&PaymentRequestState::OnAddressNormalized,
                      weak_ptr_factory_.GetWeakPtr()));
+  IncrementSelectionStatus(JourneyLogger::Section::SECTION_SHIPPING_ADDRESS,
+                           selection_status);
 }
 
 void PaymentRequestState::SetSelectedContactProfile(
-    autofill::AutofillProfile* profile) {
+    autofill::AutofillProfile* profile,
+    SectionSelectionStatus selection_status) {
   selected_contact_profile_ = profile;
 
   // Changing the contact information clears contact information validation
@@ -406,11 +442,35 @@ void PaymentRequestState::SetSelectedContactProfile(
     delegate_->OnPayerInfoSelected(
         response_helper_->GeneratePayerDetail(profile));
   }
+  IncrementSelectionStatus(JourneyLogger::Section::SECTION_CONTACT_INFO,
+                           selection_status);
 }
 
-void PaymentRequestState::SetSelectedInstrument(PaymentInstrument* instrument) {
+void PaymentRequestState::SetSelectedInstrument(
+    PaymentInstrument* instrument,
+    SectionSelectionStatus selection_status) {
   selected_instrument_ = instrument;
   UpdateIsReadyToPayAndNotifyObservers();
+  IncrementSelectionStatus(JourneyLogger::Section::SECTION_PAYMENT_METHOD,
+                           selection_status);
+}
+
+void PaymentRequestState::IncrementSelectionStatus(
+    JourneyLogger::Section section,
+    SectionSelectionStatus selection_status) {
+  switch (selection_status) {
+    case SectionSelectionStatus::kSelected:
+      journey_logger_->IncrementSelectionChanges(section);
+      break;
+    case SectionSelectionStatus::kEditedSelected:
+      journey_logger_->IncrementSelectionEdits(section);
+      break;
+    case SectionSelectionStatus::kAddedSelected:
+      journey_logger_->IncrementSelectionAdds(section);
+      break;
+    default:
+      NOTREACHED();
+  }
 }
 
 const std::string& PaymentRequestState::GetApplicationLocale() {
@@ -431,6 +491,22 @@ bool PaymentRequestState::IsPaymentAppInvoked() const {
 
 autofill::AddressNormalizer* PaymentRequestState::GetAddressNormalizer() {
   return payment_request_delegate_->GetAddressNormalizer();
+}
+
+bool PaymentRequestState::IsInitialized() const {
+  return get_all_instruments_finished_;
+}
+
+void PaymentRequestState::SelectDefaultShippingAddressAndNotifyObservers() {
+  // Only pre-select an address if the merchant provided at least one selected
+  // shipping option, and the top profile is complete. Assumes that profiles
+  // have already been sorted for completeness and frecency.
+  if (!shipping_profiles().empty() && spec_->selected_shipping_option() &&
+      profile_comparator()->IsShippingComplete(shipping_profiles_[0])) {
+    selected_shipping_profile_ = shipping_profiles()[0];
+  }
+
+  UpdateIsReadyToPayAndNotifyObservers();
 }
 
 void PaymentRequestState::PopulateProfileCache() {
@@ -487,14 +563,6 @@ void PaymentRequestState::PopulateProfileCache() {
 }
 
 void PaymentRequestState::SetDefaultProfileSelections() {
-  // Only pre-select an address if the merchant provided at least one selected
-  // shipping option, and the top profile is complete. Assumes that profiles
-  // have already been sorted for completeness and frecency.
-  if (!shipping_profiles().empty() && spec_->selected_shipping_option() &&
-      profile_comparator()->IsShippingComplete(shipping_profiles_[0])) {
-    selected_shipping_profile_ = shipping_profiles()[0];
-  }
-
   // Contact profiles were ordered by completeness in addition to frecency;
   // the first one is the best default selection.
   if (!contact_profiles().empty() &&
@@ -515,7 +583,8 @@ void PaymentRequestState::SetDefaultProfileSelections() {
   selected_instrument_ = first_complete_instrument == instruments.end()
                              ? nullptr
                              : first_complete_instrument->get();
-  UpdateIsReadyToPayAndNotifyObservers();
+
+  SelectDefaultShippingAddressAndNotifyObservers();
 
   bool has_complete_instrument =
       available_instruments().empty()

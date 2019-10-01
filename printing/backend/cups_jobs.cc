@@ -399,7 +399,8 @@ ScopedIppPtr GetPrinterAttributes(http_t* http,
 
   DCHECK_EQ(ippValidateAttributes(request.get()), 1);
 
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::WILL_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::WILL_BLOCK);
   auto response = WrapIpp(cupsDoRequest(http, request.release(), rp.c_str()));
   *status = ippGetStatusCode(response.get());
 
@@ -434,7 +435,6 @@ bool GetPrinterInfo(const std::string& address,
                     const std::string& resource,
                     bool encrypted,
                     PrinterInfo* printer_info) {
-
   ScopedHttpPtr http = ScopedHttpPtr(httpConnect2(
       address.c_str(), port, nullptr, AF_INET,
       encrypted ? HTTP_ENCRYPTION_ALWAYS : HTTP_ENCRYPTION_IF_REQUESTED, 0,
@@ -469,7 +469,6 @@ bool GetPrinterInfo(const std::string& address,
 bool GetPrinterStatus(http_t* http,
                       const std::string& printer_id,
                       PrinterStatus* printer_status) {
-
   ipp_status_t status;
   const std::string printer_uri = PrinterUriFromName(printer_id);
 
@@ -516,7 +515,8 @@ bool GetCupsJobs(http_t* http,
     return false;
   }
 
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   // cupsDoRequest will delete the request.
   auto response = WrapIpp(cupsDoRequest(http, request.release(), "/"));
 

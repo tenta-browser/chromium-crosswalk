@@ -29,16 +29,12 @@
 #include "content/public/browser/browser_thread_delegate.h"
 #include "extensions/buildflags/buildflags.h"
 #include "net/base/network_change_notifier.h"
-#include "services/network/public/mojom/network_service.mojom.h"
+#include "services/network/public/mojom/network_service.mojom-forward.h"
 #include "services/network/url_request_context_owner.h"
 
 class PrefRegistrySimple;
 class PrefService;
 class SystemNetworkContextManager;
-
-namespace chrome_browser_net {
-class DnsProbeService;
-}
 
 namespace data_use_measurement {
 class ChromeDataUseAscriber;
@@ -49,6 +45,7 @@ class EventRouterForwarder;
 }
 
 namespace net {
+class CertNetFetcherImpl;
 class CertVerifier;
 class HostResolver;
 class NetworkQualityEstimator;
@@ -107,20 +104,18 @@ class IOThread : public content::BrowserThreadDelegate {
     // URLRequestContext when network service is enabled.
     std::unique_ptr<net::HostResolver> deprecated_host_resolver;
 
-    // When the network service is enabled, this holds on to a
+    // When the network service is disabled, this holds on to a
     // content::NetworkContext class that owns |system_request_context|.
     std::unique_ptr<network::mojom::NetworkContext> system_network_context;
-    // When the network service is disabled, this owns |system_request_context|.
-    network::URLRequestContextOwner system_request_context_owner;
     net::URLRequestContext* system_request_context;
+    // When the network service is disabled, this holds the CertNetFetcher used
+    // by the |system_request_context|'s CertVerifier. May be nullptr if
+    // CertNetFetcher is not used by the current platform.
+    scoped_refptr<net::CertNetFetcherImpl> cert_net_fetcher;
 #if BUILDFLAG(ENABLE_EXTENSIONS)
     scoped_refptr<extensions::EventRouterForwarder>
         extension_event_router_forwarder;
 #endif
-    // NetErrorTabHelper uses |dns_probe_service| to send DNS probes when a
-    // main frame load fails with a DNS error in order to provide more useful
-    // information to the renderer so it can show a more specific error page.
-    std::unique_ptr<chrome_browser_net::DnsProbeService> dns_probe_service;
   };
 
   // |net_log| must either outlive the IOThread or be NULL.

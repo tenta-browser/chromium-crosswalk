@@ -82,6 +82,15 @@ class OZONE_EXPORT OzonePlatform {
     // use mojo. Setting this to true requires calling |AddInterfaces|
     // afterwards in the Viz process and providing a connector as part.
     bool using_mojo = false;
+
+    // Setting this to true indicates the display compositor will run in the GPU
+    // process (as part of the viz service). Note this param is currently only
+    // checked in Ozone DRM for overlay support. Other Ozone platforms either
+    // don't need to change anything or assume that VizDisplayCompositor is
+    // always enabled.
+    // TODO(crbug.com/936425): Remove after VizDisplayCompositor feature
+    // launches.
+    bool viz_display_compositor = false;
   };
 
   // Struct used to indicate platform properties.
@@ -103,7 +112,13 @@ class OZONE_EXPORT OzonePlatform {
     bool requires_mojo = false;
   };
 
-  using StartupCallback = base::OnceCallback<void(OzonePlatform*)>;
+  // Properties available in the host process after initialization.
+  struct InitializedHostProperties {
+    // Whether the underlying platform supports deferring compositing of buffers
+    // via overlays. If overlays are not supported the promotion and validation
+    // logic can be skipped.
+    bool supports_overlays = false;
+  };
 
   // Ensures the OzonePlatform instance without doing any initialization.
   // No-op in case the instance is already created.
@@ -122,14 +137,6 @@ class OZONE_EXPORT OzonePlatform {
   static void InitializeForGPU(const InitParams& args);
 
   static OzonePlatform* GetInstance();
-
-  // Registers a callback to be run when the OzonePlatform is initialized. Note
-  // that if an instance already exists, then the callback is called
-  // immediately. If an instance does not exist, and is created later, then the
-  // callback is called once the instance is created and initialized, on the
-  // thread it is initialized on. If the caller requires the callback to run on
-  // a specific thread, then it needs to do ensure that by itself.
-  static void RegisterStartupCallback(StartupCallback callback);
 
   // Factory getters to override in subclasses. The returned objects will be
   // injected into the appropriate layer at startup. Subclasses should not
@@ -154,8 +161,13 @@ class OZONE_EXPORT OzonePlatform {
                                              gfx::BufferUsage usage) const;
 
   // Returns a struct that contains configuration and requirements for the
-  // current platform implementation.
+  // current platform implementation. This can be called from either host or GPU
+  // process at any time.
   virtual const PlatformProperties& GetPlatformProperties();
+
+  // Returns a struct that contains properties available in the host process
+  // after InitializeForUI() runs.
+  virtual const InitializedHostProperties& GetInitializedHostProperties();
 
   // Returns the message loop type required for OzonePlatform instance that
   // will be initialized for the GPU process.
@@ -182,6 +194,9 @@ class OZONE_EXPORT OzonePlatform {
   // platform implementations to ignore sandboxing and any associated launch
   // ordering issues.
   virtual void AfterSandboxEntry();
+
+ protected:
+  static bool has_initialized_ui();
 
  private:
   virtual void InitializeUI(const InitParams& params) = 0;

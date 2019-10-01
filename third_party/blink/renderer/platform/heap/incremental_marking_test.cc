@@ -5,6 +5,7 @@
 #include <initializer_list>
 #include <vector>
 
+#include "base/bind.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/heap.h"
@@ -17,9 +18,7 @@
 #include "third_party/blink/renderer/platform/heap/thread_state.h"
 #include "third_party/blink/renderer/platform/heap/trace_traits.h"
 #include "third_party/blink/renderer/platform/heap/visitor.h"
-
-#if BUILDFLAG(BLINK_HEAP_INCREMENTAL_MARKING)
-
+#include "third_party/blink/renderer/platform/wtf/allocator.h"
 namespace blink {
 namespace incremental_marking_test {
 
@@ -37,7 +36,7 @@ class BackingVisitor : public Visitor {
     header->Unmark();
     GCInfoTable::Get()
         .GCInfoFromIndex(header->GcInfoIndex())
-        ->trace_(this, header->Payload());
+        ->trace(this, header->Payload());
   }
 
   void Visit(void* obj, TraceDescriptor desc) final {
@@ -71,9 +70,6 @@ class BackingVisitor : public Visitor {
                                     void* callback_data) final {}
   void RegisterWeakCallback(void* closure, WeakCallback) final {}
   void Visit(const TraceWrapperV8Reference<v8::Value>&) final {}
-  void Visit(DOMWrapperMap<ScriptWrappable>*,
-             const ScriptWrappable* key) final {}
-  void VisitWithWrappers(void*, TraceDescriptor) final {}
 
  private:
   std::vector<void*>* objects_;
@@ -81,6 +77,8 @@ class BackingVisitor : public Visitor {
 
 // Base class for initializing worklists.
 class IncrementalMarkingScopeBase {
+  DISALLOW_NEW();
+
  public:
   explicit IncrementalMarkingScopeBase(ThreadState* thread_state)
       : thread_state_(thread_state), heap_(thread_state_->Heap()) {
@@ -113,8 +111,8 @@ class IncrementalMarkingScope : public IncrementalMarkingScopeBase {
     EXPECT_TRUE(marking_worklist_->IsGlobalEmpty());
     EXPECT_TRUE(not_fully_constructed_worklist_->IsGlobalEmpty());
     thread_state->EnableIncrementalMarkingBarrier();
-    thread_state->current_gc_data_.visitor =
-        MarkingVisitor::Create(thread_state, MarkingVisitor::kGlobalMarking);
+    thread_state->current_gc_data_.visitor = std::make_unique<MarkingVisitor>(
+        thread_state, MarkingVisitor::kGlobalMarking);
   }
 
   ~IncrementalMarkingScope() {
@@ -223,11 +221,6 @@ class ExpectNoWriteBarrierFires : public IncrementalMarkingScope {
 
 class Object : public GarbageCollected<Object> {
  public:
-  static Object* Create() { return MakeGarbageCollected<Object>(); }
-  static Object* Create(Object* next) {
-    return MakeGarbageCollected<Object>(next);
-  }
-
   Object() : next_(nullptr) {}
   explicit Object(Object* next) : next_(next) {}
 
@@ -258,13 +251,8 @@ TEST(IncrementalMarkingTest, EnableDisableBarrier) {
   EXPECT_FALSE(ThreadState::Current()->IsIncrementalMarking());
 }
 
-TEST(IncrementalMarkingTest, StackFrameDepthDisabled) {
-  IncrementalMarkingScope scope(ThreadState::Current());
-  EXPECT_FALSE(scope.heap().GetStackFrameDepth().IsSafeToRecurse());
-}
-
 TEST(IncrementalMarkingTest, ManualWriteBarrierTriggersWhenMarkingIsOn) {
-  Object* object = Object::Create();
+  auto* object = MakeGarbageCollected<Object>();
   {
     ExpectWriteBarrierFires scope(ThreadState::Current(), {object});
     EXPECT_FALSE(object->IsMarked());
@@ -274,7 +262,7 @@ TEST(IncrementalMarkingTest, ManualWriteBarrierTriggersWhenMarkingIsOn) {
 }
 
 TEST(IncrementalMarkingTest, ManualWriteBarrierBailoutWhenMarkingIsOff) {
-  Object* object = Object::Create();
+  auto* object = MakeGarbageCollected<Object>();
   EXPECT_FALSE(object->IsMarked());
   MarkingVisitor::WriteBarrier(object);
   EXPECT_FALSE(object->IsMarked());
@@ -285,8 +273,8 @@ TEST(IncrementalMarkingTest, ManualWriteBarrierBailoutWhenMarkingIsOff) {
 // =============================================================================
 
 TEST(IncrementalMarkingTest, MemberSetUnmarkedObject) {
-  Object* parent = Object::Create();
-  Object* child = Object::Create();
+  auto* parent = MakeGarbageCollected<Object>();
+  auto* child = MakeGarbageCollected<Object>();
   {
     ExpectWriteBarrierFires scope(ThreadState::Current(), {child});
     EXPECT_FALSE(child->IsMarked());
@@ -296,8 +284,8 @@ TEST(IncrementalMarkingTest, MemberSetUnmarkedObject) {
 }
 
 TEST(IncrementalMarkingTest, MemberSetMarkedObjectNoBarrier) {
-  Object* parent = Object::Create();
-  Object* child = Object::Create();
+  auto* parent = MakeGarbageCollected<Object>();
+  auto* child = MakeGarbageCollected<Object>();
   HeapObjectHeader::FromPayload(child)->Mark();
   {
     ExpectNoWriteBarrierFires scope(ThreadState::Current(), {child});
@@ -306,12 +294,12 @@ TEST(IncrementalMarkingTest, MemberSetMarkedObjectNoBarrier) {
 }
 
 TEST(IncrementalMarkingTest, MemberInitializingStoreNoBarrier) {
-  Object* object1 = Object::Create();
+  auto* object1 = MakeGarbageCollected<Object>();
   HeapObjectHeader* object1_header = HeapObjectHeader::FromPayload(object1);
   {
     IncrementalMarkingScope scope(ThreadState::Current());
     EXPECT_FALSE(object1_header->IsMarked());
-    Object* object2 = Object::Create(object1);
+    auto* object2 = MakeGarbageCollected<Object>(object1);
     HeapObjectHeader* object2_header = HeapObjectHeader::FromPayload(object2);
     EXPECT_FALSE(object1_header->IsMarked());
     EXPECT_FALSE(object2_header->IsMarked());
@@ -319,7 +307,7 @@ TEST(IncrementalMarkingTest, MemberInitializingStoreNoBarrier) {
 }
 
 TEST(IncrementalMarkingTest, MemberReferenceAssignMember) {
-  Object* obj = Object::Create();
+  auto* obj = MakeGarbageCollected<Object>();
   Member<Object> m1;
   Member<Object>& m2 = m1;
   Member<Object> m3(obj);
@@ -354,7 +342,7 @@ TEST(IncrementalMarkingTest, MemberHashTraitConstructDeletedValueNoBarrier) {
 }
 
 TEST(IncrementalMarkingTest, MemberHashTraitIsDeletedValueNoBarrier) {
-  Member<Object> m1(Object::Create());
+  Member<Object> m1(MakeGarbageCollected<Object>());
   {
     ExpectNoWriteBarrierFires scope(ThreadState::Current(), {});
     EXPECT_FALSE(HashTraits<Member<Object>>::IsDeletedValue(m1));
@@ -391,8 +379,6 @@ class Child : public GarbageCollected<Child>,
   USING_GARBAGE_COLLECTED_MIXIN(Child);
 
  public:
-  static Child* Create() { return MakeGarbageCollected<Child>(); }
-
   Child() : ClassWithVirtual(), Mixin() {}
   ~Child() override {}
 
@@ -404,10 +390,6 @@ class Child : public GarbageCollected<Child>,
 
 class ParentWithMixinPointer : public GarbageCollected<ParentWithMixinPointer> {
  public:
-  static ParentWithMixinPointer* Create() {
-    return MakeGarbageCollected<ParentWithMixinPointer>();
-  }
-
   ParentWithMixinPointer() : mixin_(nullptr) {}
 
   void set_mixin(Mixin* mixin) { mixin_ = mixin; }
@@ -421,8 +403,9 @@ class ParentWithMixinPointer : public GarbageCollected<ParentWithMixinPointer> {
 }  // namespace
 
 TEST(IncrementalMarkingTest, WriteBarrierOnUnmarkedMixinApplication) {
-  ParentWithMixinPointer* parent = ParentWithMixinPointer::Create();
-  Child* child = Child::Create();
+  ParentWithMixinPointer* parent =
+      MakeGarbageCollected<ParentWithMixinPointer>();
+  auto* child = MakeGarbageCollected<Child>();
   Mixin* mixin = static_cast<Mixin*>(child);
   EXPECT_NE(static_cast<void*>(child), static_cast<void*>(mixin));
   {
@@ -432,8 +415,9 @@ TEST(IncrementalMarkingTest, WriteBarrierOnUnmarkedMixinApplication) {
 }
 
 TEST(IncrementalMarkingTest, NoWriteBarrierOnMarkedMixinApplication) {
-  ParentWithMixinPointer* parent = ParentWithMixinPointer::Create();
-  Child* child = Child::Create();
+  ParentWithMixinPointer* parent =
+      MakeGarbageCollected<ParentWithMixinPointer>();
+  auto* child = MakeGarbageCollected<Child>();
   HeapObjectHeader::FromPayload(child)->Mark();
   Mixin* mixin = static_cast<Mixin*>(child);
   EXPECT_NE(static_cast<void*>(child), static_cast<void*>(mixin));
@@ -486,7 +470,7 @@ class NonGarbageCollectedContainerRoot {
 }  // namespace
 
 TEST(IncrementalMarkingTest, HeapVectorPushBackMember) {
-  Object* obj = Object::Create();
+  auto* obj = MakeGarbageCollected<Object>();
   HeapVector<Member<Object>> vec;
   {
     ExpectWriteBarrierFires scope(ThreadState::Current(), {obj});
@@ -495,7 +479,7 @@ TEST(IncrementalMarkingTest, HeapVectorPushBackMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapVectorPushBackNonGCedContainer) {
-  Object* obj = Object::Create();
+  auto* obj = MakeGarbageCollected<Object>();
   HeapVector<NonGarbageCollectedContainer> vec;
   {
     ExpectWriteBarrierFires scope(ThreadState::Current(), {obj});
@@ -504,8 +488,8 @@ TEST(IncrementalMarkingTest, HeapVectorPushBackNonGCedContainer) {
 }
 
 TEST(IncrementalMarkingTest, HeapVectorPushBackStdPair) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   HeapVector<std::pair<Member<Object>, Member<Object>>> vec;
   {
     ExpectWriteBarrierFires scope(ThreadState::Current(), {obj1, obj2});
@@ -514,7 +498,7 @@ TEST(IncrementalMarkingTest, HeapVectorPushBackStdPair) {
 }
 
 TEST(IncrementalMarkingTest, HeapVectorEmplaceBackMember) {
-  Object* obj = Object::Create();
+  auto* obj = MakeGarbageCollected<Object>();
   HeapVector<Member<Object>> vec;
   {
     ExpectWriteBarrierFires scope(ThreadState::Current(), {obj});
@@ -523,7 +507,7 @@ TEST(IncrementalMarkingTest, HeapVectorEmplaceBackMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapVectorEmplaceBackNonGCedContainer) {
-  Object* obj = Object::Create();
+  auto* obj = MakeGarbageCollected<Object>();
   HeapVector<NonGarbageCollectedContainer> vec;
   {
     ExpectWriteBarrierFires scope(ThreadState::Current(), {obj});
@@ -532,8 +516,8 @@ TEST(IncrementalMarkingTest, HeapVectorEmplaceBackNonGCedContainer) {
 }
 
 TEST(IncrementalMarkingTest, HeapVectorEmplaceBackStdPair) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   HeapVector<std::pair<Member<Object>, Member<Object>>> vec;
   {
     ExpectWriteBarrierFires scope(ThreadState::Current(), {obj1, obj2});
@@ -542,7 +526,7 @@ TEST(IncrementalMarkingTest, HeapVectorEmplaceBackStdPair) {
 }
 
 TEST(IncrementalMarkingTest, HeapVectorCopyMember) {
-  Object* object = Object::Create();
+  auto* object = MakeGarbageCollected<Object>();
   HeapVector<Member<Object>> vec1;
   vec1.push_back(object);
   {
@@ -552,7 +536,7 @@ TEST(IncrementalMarkingTest, HeapVectorCopyMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapVectorCopyNonGCedContainer) {
-  Object* obj = Object::Create();
+  auto* obj = MakeGarbageCollected<Object>();
   HeapVector<NonGarbageCollectedContainer> vec1;
   vec1.emplace_back(obj, 1);
   {
@@ -562,8 +546,8 @@ TEST(IncrementalMarkingTest, HeapVectorCopyNonGCedContainer) {
 }
 
 TEST(IncrementalMarkingTest, HeapVectorCopyStdPair) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   HeapVector<std::pair<Member<Object>, Member<Object>>> vec1;
   vec1.emplace_back(obj1, obj2);
   {
@@ -573,7 +557,7 @@ TEST(IncrementalMarkingTest, HeapVectorCopyStdPair) {
 }
 
 TEST(IncrementalMarkingTest, HeapVectorMoveMember) {
-  Object* obj = Object::Create();
+  auto* obj = MakeGarbageCollected<Object>();
   HeapVector<Member<Object>> vec1;
   vec1.push_back(obj);
   {
@@ -583,7 +567,7 @@ TEST(IncrementalMarkingTest, HeapVectorMoveMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapVectorMoveNonGCedContainer) {
-  Object* obj = Object::Create();
+  auto* obj = MakeGarbageCollected<Object>();
   HeapVector<NonGarbageCollectedContainer> vec1;
   vec1.emplace_back(obj, 1);
   {
@@ -593,8 +577,8 @@ TEST(IncrementalMarkingTest, HeapVectorMoveNonGCedContainer) {
 }
 
 TEST(IncrementalMarkingTest, HeapVectorMoveStdPair) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   HeapVector<std::pair<Member<Object>, Member<Object>>> vec1;
   vec1.emplace_back(obj1, obj2);
   {
@@ -604,8 +588,8 @@ TEST(IncrementalMarkingTest, HeapVectorMoveStdPair) {
 }
 
 TEST(IncrementalMarkingTest, HeapVectorSwapMember) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   HeapVector<Member<Object>> vec1;
   vec1.push_back(obj1);
   HeapVector<Member<Object>> vec2;
@@ -617,8 +601,8 @@ TEST(IncrementalMarkingTest, HeapVectorSwapMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapVectorSwapNonGCedContainer) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   HeapVector<NonGarbageCollectedContainer> vec1;
   vec1.emplace_back(obj1, 1);
   HeapVector<NonGarbageCollectedContainer> vec2;
@@ -630,8 +614,8 @@ TEST(IncrementalMarkingTest, HeapVectorSwapNonGCedContainer) {
 }
 
 TEST(IncrementalMarkingTest, HeapVectorSwapStdPair) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   HeapVector<std::pair<Member<Object>, Member<Object>>> vec1;
   vec1.emplace_back(obj1, nullptr);
   HeapVector<std::pair<Member<Object>, Member<Object>>> vec2;
@@ -643,8 +627,8 @@ TEST(IncrementalMarkingTest, HeapVectorSwapStdPair) {
 }
 
 TEST(IncrementalMarkingTest, HeapVectorSubscriptOperator) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   HeapVector<Member<Object>> vec;
   vec.push_back(obj1);
   {
@@ -658,9 +642,9 @@ TEST(IncrementalMarkingTest, HeapVectorSubscriptOperator) {
 }
 
 TEST(IncrementalMarkingTest, HeapVectorEagerTracingStopsAtMember) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
-  Object* obj3 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
+  auto* obj3 = MakeGarbageCollected<Object>();
   obj1->set_next(obj3);
   HeapVector<NonGarbageCollectedContainerRoot> vec;
   {
@@ -700,7 +684,7 @@ class ObjectNode : public GarbageCollected<ObjectNode>,
 }  // namespace
 
 TEST(IncrementalMarkingTest, HeapDoublyLinkedListPush) {
-  Object* obj = Object::Create();
+  auto* obj = MakeGarbageCollected<Object>();
   ObjectNode* obj_node = MakeGarbageCollected<ObjectNode>(obj);
   HeapDoublyLinkedList<ObjectNode> list;
   {
@@ -712,7 +696,7 @@ TEST(IncrementalMarkingTest, HeapDoublyLinkedListPush) {
 }
 
 TEST(IncrementalMarkingTest, HeapDoublyLinkedListAppend) {
-  Object* obj = Object::Create();
+  auto* obj = MakeGarbageCollected<Object>();
   ObjectNode* obj_node = MakeGarbageCollected<ObjectNode>(obj);
   HeapDoublyLinkedList<ObjectNode> list;
   {
@@ -728,7 +712,7 @@ TEST(IncrementalMarkingTest, HeapDoublyLinkedListAppend) {
 // =============================================================================
 
 TEST(IncrementalMarkingTest, HeapDequePushBackMember) {
-  Object* obj = Object::Create();
+  auto* obj = MakeGarbageCollected<Object>();
   HeapDeque<Member<Object>> deq;
   {
     ExpectWriteBarrierFires scope(ThreadState::Current(), {obj});
@@ -737,7 +721,7 @@ TEST(IncrementalMarkingTest, HeapDequePushBackMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapDequePushFrontMember) {
-  Object* obj = Object::Create();
+  auto* obj = MakeGarbageCollected<Object>();
   HeapDeque<Member<Object>> deq;
   {
     ExpectWriteBarrierFires scope(ThreadState::Current(), {obj});
@@ -746,7 +730,7 @@ TEST(IncrementalMarkingTest, HeapDequePushFrontMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapDequeEmplaceBackMember) {
-  Object* obj = Object::Create();
+  auto* obj = MakeGarbageCollected<Object>();
   HeapDeque<Member<Object>> deq;
   {
     ExpectWriteBarrierFires scope(ThreadState::Current(), {obj});
@@ -755,7 +739,7 @@ TEST(IncrementalMarkingTest, HeapDequeEmplaceBackMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapDequeEmplaceFrontMember) {
-  Object* obj = Object::Create();
+  auto* obj = MakeGarbageCollected<Object>();
   HeapDeque<Member<Object>> deq;
   {
     ExpectWriteBarrierFires scope(ThreadState::Current(), {obj});
@@ -764,7 +748,7 @@ TEST(IncrementalMarkingTest, HeapDequeEmplaceFrontMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapDequeCopyMember) {
-  Object* object = Object::Create();
+  auto* object = MakeGarbageCollected<Object>();
   HeapDeque<Member<Object>> deq1;
   deq1.push_back(object);
   {
@@ -774,7 +758,7 @@ TEST(IncrementalMarkingTest, HeapDequeCopyMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapDequeMoveMember) {
-  Object* object = Object::Create();
+  auto* object = MakeGarbageCollected<Object>();
   HeapDeque<Member<Object>> deq1;
   deq1.push_back(object);
   {
@@ -784,8 +768,8 @@ TEST(IncrementalMarkingTest, HeapDequeMoveMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapDequeSwapMember) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   HeapDeque<Member<Object>> deq1;
   deq1.push_back(obj1);
   HeapDeque<Member<Object>> deq2;
@@ -804,7 +788,7 @@ namespace {
 
 template <typename Container>
 void Insert() {
-  Object* obj = Object::Create();
+  auto* obj = MakeGarbageCollected<Object>();
   Container container;
   {
     ExpectWriteBarrierFires scope(ThreadState::Current(), {obj});
@@ -814,7 +798,7 @@ void Insert() {
 
 template <typename Container>
 void InsertNoBarrier() {
-  Object* obj = Object::Create();
+  auto* obj = MakeGarbageCollected<Object>();
   Container container;
   {
     ExpectNoWriteBarrierFires scope(ThreadState::Current(), {obj});
@@ -824,7 +808,7 @@ void InsertNoBarrier() {
 
 template <typename Container>
 void Copy() {
-  Object* obj = Object::Create();
+  auto* obj = MakeGarbageCollected<Object>();
   Container container1;
   container1.insert(obj);
   {
@@ -837,7 +821,7 @@ void Copy() {
 
 template <typename Container>
 void CopyNoBarrier() {
-  Object* obj = Object::Create();
+  auto* obj = MakeGarbageCollected<Object>();
   Container container1;
   container1.insert(obj);
   {
@@ -850,7 +834,7 @@ void CopyNoBarrier() {
 
 template <typename Container>
 void Move() {
-  Object* obj = Object::Create();
+  auto* obj = MakeGarbageCollected<Object>();
   Container container1;
   Container container2;
   container1.insert(obj);
@@ -862,7 +846,7 @@ void Move() {
 
 template <typename Container>
 void MoveNoBarrier() {
-  Object* obj = Object::Create();
+  auto* obj = MakeGarbageCollected<Object>();
   Container container1;
   container1.insert(obj);
   {
@@ -873,8 +857,8 @@ void MoveNoBarrier() {
 
 template <typename Container>
 void Swap() {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   Container container1;
   container1.insert(obj1);
   Container container2;
@@ -887,8 +871,8 @@ void Swap() {
 
 template <typename Container>
 void SwapNoBarrier() {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   Container container1;
   container1.insert(obj1);
   Container container2;
@@ -1018,8 +1002,8 @@ namespace blink {
 namespace incremental_marking_test {
 
 TEST(IncrementalMarkingTest, HeapHashSetStrongWeakPair) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   HeapHashSet<StrongWeakPair> set;
   {
     // Both, the weak and the strong field, are hit by the write barrier.
@@ -1029,8 +1013,8 @@ TEST(IncrementalMarkingTest, HeapHashSetStrongWeakPair) {
 }
 
 TEST(IncrementalMarkingTest, HeapLinkedHashSetStrongWeakPair) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   HeapLinkedHashSet<StrongWeakPair> set;
   {
     // Both, the weak and the strong field, are hit by the write barrier.
@@ -1082,8 +1066,8 @@ TEST(IncrementalMarkingTest, HeapHashCountedSetInsert) {
 TEST(IncrementalMarkingTest, HeapHashCountedSetSwap) {
   // HeapHashCountedSet is not move constructible so we cannot use std::swap.
   {
-    Object* obj1 = Object::Create();
-    Object* obj2 = Object::Create();
+    auto* obj1 = MakeGarbageCollected<Object>();
+    auto* obj2 = MakeGarbageCollected<Object>();
     HeapHashCountedSet<Member<Object>> container1;
     container1.insert(obj1);
     HeapHashCountedSet<Member<Object>> container2;
@@ -1094,8 +1078,8 @@ TEST(IncrementalMarkingTest, HeapHashCountedSetSwap) {
     }
   }
   {
-    Object* obj1 = Object::Create();
-    Object* obj2 = Object::Create();
+    auto* obj1 = MakeGarbageCollected<Object>();
+    auto* obj2 = MakeGarbageCollected<Object>();
     HeapHashCountedSet<WeakMember<Object>> container1;
     container1.insert(obj1);
     HeapHashCountedSet<WeakMember<Object>> container2;
@@ -1113,8 +1097,8 @@ TEST(IncrementalMarkingTest, HeapHashCountedSetSwap) {
 // =============================================================================
 
 TEST(IncrementalMarkingTest, HeapHashMapInsertMember) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   HeapHashMap<Member<Object>, Member<Object>> map;
   {
     ExpectWriteBarrierFires scope(ThreadState::Current(), {obj1, obj2});
@@ -1123,8 +1107,8 @@ TEST(IncrementalMarkingTest, HeapHashMapInsertMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapHashMapInsertWeakMember) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   HeapHashMap<WeakMember<Object>, WeakMember<Object>> map;
   {
     // Weak references are strongified for the current cycle.
@@ -1134,8 +1118,8 @@ TEST(IncrementalMarkingTest, HeapHashMapInsertWeakMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapHashMapInsertMemberWeakMember) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   HeapHashMap<Member<Object>, WeakMember<Object>> map;
   {
     // Weak references are strongified for the current cycle.
@@ -1145,8 +1129,8 @@ TEST(IncrementalMarkingTest, HeapHashMapInsertMemberWeakMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapHashMapInsertWeakMemberMember) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   HeapHashMap<WeakMember<Object>, Member<Object>> map;
   {
     // Weak references are strongified for the current cycle.
@@ -1156,8 +1140,8 @@ TEST(IncrementalMarkingTest, HeapHashMapInsertWeakMemberMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapHashMapSetMember) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   HeapHashMap<Member<Object>, Member<Object>> map;
   {
     ExpectWriteBarrierFires scope(ThreadState::Current(), {obj1, obj2});
@@ -1166,9 +1150,9 @@ TEST(IncrementalMarkingTest, HeapHashMapSetMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapHashMapSetMemberUpdateValue) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
-  Object* obj3 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
+  auto* obj3 = MakeGarbageCollected<Object>();
   HeapHashMap<Member<Object>, Member<Object>> map;
   map.insert(obj1, obj2);
   {
@@ -1182,9 +1166,9 @@ TEST(IncrementalMarkingTest, HeapHashMapSetMemberUpdateValue) {
 }
 
 TEST(IncrementalMarkingTest, HeapHashMapIteratorChangeKey) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
-  Object* obj3 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
+  auto* obj3 = MakeGarbageCollected<Object>();
   HeapHashMap<Member<Object>, Member<Object>> map;
   map.insert(obj1, obj2);
   {
@@ -1196,9 +1180,9 @@ TEST(IncrementalMarkingTest, HeapHashMapIteratorChangeKey) {
 }
 
 TEST(IncrementalMarkingTest, HeapHashMapIteratorChangeValue) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
-  Object* obj3 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
+  auto* obj3 = MakeGarbageCollected<Object>();
   HeapHashMap<Member<Object>, Member<Object>> map;
   map.insert(obj1, obj2);
   {
@@ -1210,8 +1194,8 @@ TEST(IncrementalMarkingTest, HeapHashMapIteratorChangeValue) {
 }
 
 TEST(IncrementalMarkingTest, HeapHashMapCopyMemberMember) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   HeapHashMap<Member<Object>, Member<Object>> map1;
   map1.insert(obj1, obj2);
   {
@@ -1224,8 +1208,8 @@ TEST(IncrementalMarkingTest, HeapHashMapCopyMemberMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapHashMapCopyWeakMemberWeakMember) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   HeapHashMap<WeakMember<Object>, WeakMember<Object>> map1;
   map1.insert(obj1, obj2);
   {
@@ -1239,8 +1223,8 @@ TEST(IncrementalMarkingTest, HeapHashMapCopyWeakMemberWeakMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapHashMapCopyMemberWeakMember) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   HeapHashMap<Member<Object>, WeakMember<Object>> map1;
   map1.insert(obj1, obj2);
   {
@@ -1254,8 +1238,8 @@ TEST(IncrementalMarkingTest, HeapHashMapCopyMemberWeakMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapHashMapCopyWeakMemberMember) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   HeapHashMap<WeakMember<Object>, Member<Object>> map1;
   map1.insert(obj1, obj2);
   {
@@ -1269,8 +1253,8 @@ TEST(IncrementalMarkingTest, HeapHashMapCopyWeakMemberMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapHashMapMoveMember) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   HeapHashMap<Member<Object>, Member<Object>> map1;
   map1.insert(obj1, obj2);
   {
@@ -1280,8 +1264,8 @@ TEST(IncrementalMarkingTest, HeapHashMapMoveMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapHashMapMoveWeakMember) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   HeapHashMap<WeakMember<Object>, WeakMember<Object>> map1;
   map1.insert(obj1, obj2);
   {
@@ -1292,8 +1276,8 @@ TEST(IncrementalMarkingTest, HeapHashMapMoveWeakMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapHashMapMoveMemberWeakMember) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   HeapHashMap<Member<Object>, WeakMember<Object>> map1;
   map1.insert(obj1, obj2);
   {
@@ -1304,8 +1288,8 @@ TEST(IncrementalMarkingTest, HeapHashMapMoveMemberWeakMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapHashMapMoveWeakMemberMember) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   HeapHashMap<WeakMember<Object>, Member<Object>> map1;
   map1.insert(obj1, obj2);
   {
@@ -1316,10 +1300,10 @@ TEST(IncrementalMarkingTest, HeapHashMapMoveWeakMemberMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapHashMapSwapMemberMember) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
-  Object* obj3 = Object::Create();
-  Object* obj4 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
+  auto* obj3 = MakeGarbageCollected<Object>();
+  auto* obj4 = MakeGarbageCollected<Object>();
   HeapHashMap<Member<Object>, Member<Object>> map1;
   map1.insert(obj1, obj2);
   HeapHashMap<Member<Object>, Member<Object>> map2;
@@ -1332,10 +1316,10 @@ TEST(IncrementalMarkingTest, HeapHashMapSwapMemberMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapHashMapSwapWeakMemberWeakMember) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
-  Object* obj3 = Object::Create();
-  Object* obj4 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
+  auto* obj3 = MakeGarbageCollected<Object>();
+  auto* obj4 = MakeGarbageCollected<Object>();
   HeapHashMap<WeakMember<Object>, WeakMember<Object>> map1;
   map1.insert(obj1, obj2);
   HeapHashMap<WeakMember<Object>, WeakMember<Object>> map2;
@@ -1349,10 +1333,10 @@ TEST(IncrementalMarkingTest, HeapHashMapSwapWeakMemberWeakMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapHashMapSwapMemberWeakMember) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
-  Object* obj3 = Object::Create();
-  Object* obj4 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
+  auto* obj3 = MakeGarbageCollected<Object>();
+  auto* obj4 = MakeGarbageCollected<Object>();
   HeapHashMap<Member<Object>, WeakMember<Object>> map1;
   map1.insert(obj1, obj2);
   HeapHashMap<Member<Object>, WeakMember<Object>> map2;
@@ -1366,10 +1350,10 @@ TEST(IncrementalMarkingTest, HeapHashMapSwapMemberWeakMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapHashMapSwapWeakMemberMember) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
-  Object* obj3 = Object::Create();
-  Object* obj4 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
+  auto* obj3 = MakeGarbageCollected<Object>();
+  auto* obj4 = MakeGarbageCollected<Object>();
   HeapHashMap<WeakMember<Object>, Member<Object>> map1;
   map1.insert(obj1, obj2);
   HeapHashMap<WeakMember<Object>, Member<Object>> map2;
@@ -1383,9 +1367,9 @@ TEST(IncrementalMarkingTest, HeapHashMapSwapWeakMemberMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapHashMapInsertStrongWeakPairMember) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
-  Object* obj3 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
+  auto* obj3 = MakeGarbageCollected<Object>();
   HeapHashMap<StrongWeakPair, Member<Object>> map;
   {
     // Tests that the write barrier also fires for entities such as
@@ -1396,9 +1380,9 @@ TEST(IncrementalMarkingTest, HeapHashMapInsertStrongWeakPairMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapHashMapInsertMemberStrongWeakPair) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
-  Object* obj3 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
+  auto* obj3 = MakeGarbageCollected<Object>();
   HeapHashMap<Member<Object>, StrongWeakPair> map;
   {
     // Tests that the write barrier also fires for entities such as
@@ -1409,8 +1393,8 @@ TEST(IncrementalMarkingTest, HeapHashMapInsertMemberStrongWeakPair) {
 }
 
 TEST(IncrementalMarkingTest, HeapHashMapCopyKeysToVectorMember) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   HeapHashMap<Member<Object>, Member<Object>> map;
   map.insert(obj1, obj2);
   HeapVector<Member<Object>> vec;
@@ -1423,8 +1407,8 @@ TEST(IncrementalMarkingTest, HeapHashMapCopyKeysToVectorMember) {
 }
 
 TEST(IncrementalMarkingTest, HeapHashMapCopyValuesToVectorMember) {
-  Object* obj1 = Object::Create();
-  Object* obj2 = Object::Create();
+  auto* obj1 = MakeGarbageCollected<Object>();
+  auto* obj2 = MakeGarbageCollected<Object>();
   HeapHashMap<Member<Object>, Member<Object>> map;
   map.insert(obj1, obj2);
   HeapVector<Member<Object>> vec;
@@ -1442,7 +1426,7 @@ TEST(IncrementalMarkingTest, HeapHashMapCopyValuesToVectorMember) {
 TEST(IncrementalMarkingTest, DISABLED_WeakHashMapPromptlyFreeDisabled) {
   ThreadState* state = ThreadState::Current();
   state->SetGCState(ThreadState::kIncrementalMarkingStepScheduled);
-  Persistent<Object> obj1 = Object::Create();
+  Persistent<Object> obj1 = MakeGarbageCollected<Object>();
   NormalPageArena* arena = static_cast<NormalPageArena*>(
       ThreadState::Current()->Heap().Arena(BlinkGC::kHashTableArenaIndex));
   CHECK(arena);
@@ -1560,7 +1544,8 @@ class IncrementalMarkingTestDriver {
   }
 
   void Start() {
-    thread_state_->IncrementalMarkingStart(BlinkGC::GCReason::kTesting);
+    thread_state_->IncrementalMarkingStart(
+        BlinkGC::GCReason::kForcedGCForTesting);
   }
 
   bool SingleStep(BlinkGC::StackState stack_state =
@@ -1581,19 +1566,20 @@ class IncrementalMarkingTestDriver {
     }
   }
 
-  void FinishGC() {
+  void FinishGC(bool complete_sweep = true) {
     CHECK(thread_state_->IsIncrementalMarking());
     FinishSteps(BlinkGC::StackState::kNoHeapPointersOnStack);
     CHECK_EQ(ThreadState::kIncrementalMarkingFinalizeScheduled,
              thread_state_->GetGCState());
     thread_state_->RunScheduledGC(BlinkGC::StackState::kNoHeapPointersOnStack);
     CHECK(!thread_state_->IsIncrementalMarking());
-    thread_state_->CompleteSweep();
+    if (complete_sweep)
+      thread_state_->CompleteSweep();
   }
 
   size_t GetHeapCompactLastFixupCount() {
     HeapCompact* compaction = ThreadState::Current()->Heap().Compaction();
-    return compaction->last_fixup_count_for_testing();
+    return compaction->LastFixupCountForTesting();
   }
 
  private:
@@ -1615,7 +1601,7 @@ TEST(IncrementalMarkingTest, DropBackingStore) {
   using WeakStore = HeapHashCountedSet<WeakMember<Object>>;
 
   Persistent<WeakStore> persistent(new WeakStore);
-  persistent->insert(Object::Create());
+  persistent->insert(MakeGarbageCollected<Object>());
   IncrementalMarkingTestDriver driver(ThreadState::Current());
   driver.Start();
   driver.FinishSteps();
@@ -1636,8 +1622,8 @@ TEST(IncrementalMarkingTest, WeakCallbackDoesNotReviveDeletedValue) {
   // structure. The values for .second are chosen to be non-null as they
   // would otherwise count as empty and be skipped during iteration after the
   // first part died.
-  persistent->insert({Object::Create(), 1});
-  persistent->insert({Object::Create(), 2});
+  persistent->insert({MakeGarbageCollected<Object>(), 1});
+  persistent->insert({MakeGarbageCollected<Object>(), 2});
   IncrementalMarkingTestDriver driver(ThreadState::Current());
   driver.Start();
   // The backing is not treated as weak backing and thus eagerly processed,
@@ -1671,11 +1657,11 @@ TEST(IncrementalMarkingTest, NoBackingFreeDuringIncrementalMarking) {
   // would trigger the write barrier, mitigating the bug where a backing store
   // is promptly freed.
   for (size_t i = 0; i < 8; i++) {
-    persistent->insert({Object::Create(), i});
+    persistent->insert({MakeGarbageCollected<Object>(), i});
   }
   IncrementalMarkingTestDriver driver(ThreadState::Current());
   driver.Start();
-  persistent->insert({Object::Create(), 8});
+  persistent->insert({MakeGarbageCollected<Object>(), 8});
   // Is not allowed to free the backing store as the previous insert may have
   // registered a slot.
   persistent->clear();
@@ -1687,9 +1673,9 @@ TEST(IncrementalMarkingTest, DropReferenceWithHeapCompaction) {
   using Store = HeapHashCountedSet<Member<Object>>;
 
   Persistent<Store> persistent(new Store());
-  persistent->insert(Object::Create());
+  persistent->insert(MakeGarbageCollected<Object>());
   IncrementalMarkingTestDriver driver(ThreadState::Current());
-  HeapCompact::ScheduleCompactionGCForTesting(true);
+  ThreadState::Current()->EnableCompactionForNextGCForTesting();
   driver.Start();
   driver.FinishSteps();
   persistent->clear();
@@ -1705,8 +1691,8 @@ TEST(IncrementalMarkingTest, HasInlineCapacityCollectionWithHeapCompaction) {
   Persistent<Store> persistent2(MakeGarbageCollected<Store>());
 
   IncrementalMarkingTestDriver driver(ThreadState::Current());
-  HeapCompact::ScheduleCompactionGCForTesting(true);
-  persistent->push_back(Object::Create());
+  ThreadState::Current()->EnableCompactionForNextGCForTesting();
+  persistent->push_back(MakeGarbageCollected<Object>());
   driver.Start();
   driver.FinishGC();
 
@@ -1726,10 +1712,10 @@ TEST(IncrementalMarkingTest, WeakHashMapHeapCompaction) {
   Persistent<Store> persistent(new Store());
 
   IncrementalMarkingTestDriver driver(ThreadState::Current());
-  HeapCompact::ScheduleCompactionGCForTesting(true);
+  ThreadState::Current()->EnableCompactionForNextGCForTesting();
   driver.Start();
   driver.FinishSteps();
-  persistent->insert(Object::Create());
+  persistent->insert(MakeGarbageCollected<Object>());
   driver.FinishGC();
 
   // Weak callback should register the slot.
@@ -1739,10 +1725,10 @@ TEST(IncrementalMarkingTest, WeakHashMapHeapCompaction) {
 TEST(IncrementalMarkingTest, ConservativeGCWhileCompactionScheduled) {
   using Store = HeapVector<Member<Object>>;
   Persistent<Store> persistent(MakeGarbageCollected<Store>());
-  persistent->push_back(Object::Create());
+  persistent->push_back(MakeGarbageCollected<Object>());
 
   IncrementalMarkingTestDriver driver(ThreadState::Current());
-  HeapCompact::ScheduleCompactionGCForTesting(true);
+  ThreadState::Current()->EnableCompactionForNextGCForTesting();
   driver.Start();
   driver.FinishSteps();
   ThreadState::Current()->CollectGarbage(
@@ -1778,7 +1764,7 @@ TEST(IncrementalMarkingTest, WeakMember) {
   IncrementalMarkingTestDriver driver(ThreadState::Current());
   driver.Start();
   driver.FinishSteps();
-  persistent->set_object(Object::Create());
+  persistent->set_object(MakeGarbageCollected<Object>());
   driver.FinishGC();
   ConservativelyCollectGarbage();
 }
@@ -1877,7 +1863,125 @@ TEST(IncrementalMarkingTest, StepDuringMixinObjectConstruction) {
   PreciselyCollectGarbage();
 }
 
+TEST(IncrementalMarkingTest, IncrementalMarkingShrinkingBackingCompaction) {
+  // Regression test: https://crbug.com/918064
+
+  using Nested = HeapVector<HeapVector<Member<Object>>>;
+  // The following setup will ensure that the outer HeapVector's backing store
+  // contains slots to other to-be-compacted backings.
+  Persistent<Nested> holder(MakeGarbageCollected<Nested>());
+  for (int i = 0; i < 32; i++) {
+    holder->emplace_back();
+    holder->at(i).emplace_back(MakeGarbageCollected<Object>());
+  }
+  IncrementalMarkingTestDriver driver(ThreadState::Current());
+  ThreadState::Current()->EnableCompactionForNextGCForTesting();
+  driver.Start();
+  driver.FinishSteps();
+  // Reduce size of the outer backing store.
+  for (int i = 0; i < 16; i++) {
+    holder->pop_back();
+  }
+  // Ensure that shrinking the backing does not crash in compaction as there may
+  // be registered slots left in the area that is already freed.
+  holder->ShrinkToFit();
+  driver.FinishGC();
+}
+
+TEST(IncrementalMarkingTest,
+     InPayloadWriteBarrierRegistersInvalidSlotForCompaction) {
+  // Regression test: https://crbug.com/918064
+
+  using Nested = HeapVector<HeapVector<Member<Object>>>;
+  IncrementalMarkingTestDriver driver(ThreadState::Current());
+  ThreadState::Current()->EnableCompactionForNextGCForTesting();
+  // Allocate a vector and reserve a buffer to avoid triggering the write
+  // barrier during incremental marking.
+  Nested* nested = MakeGarbageCollected<Nested>();
+  nested->ReserveCapacity(32);
+  driver.Start();
+  // Initialize the inner vector, triggering tracing and slots registration.
+  // This could be an object using DISALLOW_NEW() but HeapVector is easier to
+  // test.
+  nested->emplace_back(1);
+  // Use the inner vector as otherwise the slot would not be registered due to
+  // not having a backing store itself.
+  nested->at(0).emplace_back(MakeGarbageCollected<Object>());
+  driver.FinishSteps();
+  // GCs here are without stack. This is just to show that we don't want this
+  // object marked.
+  CHECK(!HeapObjectHeader::FromPayload(nested)->IsMarked());
+  nested = nullptr;
+  driver.FinishGC();
+}
+
+namespace {
+
+class EagerlySweptWithVectorWithInlineStorage
+    : public GarbageCollected<EagerlySweptWithVectorWithInlineStorage> {
+  EAGERLY_FINALIZE();
+
+ public:
+  virtual void Trace(Visitor* visitor) { visitor->Trace(nested_); }
+
+  HeapVector<HeapVector<Member<Object>>, 2>& nested() { return nested_; }
+
+ private:
+  HeapVector<HeapVector<Member<Object>>, 2> nested_;
+};
+
+}  // namespace
+
+TEST(IncrementalMarkingTest,
+     InPayloadWriteBarrierInEagerlyFinalizedRegistersInvalidSlotForCompaction) {
+  // Regression test: https://crbug.com/918064
+  //
+  // Same as InPayloadWriteBarrierRegistersInvalidSlotForCompaction with the
+  // addition that the object is marked as EAGERLY_FINALIZE(). This requires
+  // that slots filtering happens before any eager sweep phase.
+
+  IncrementalMarkingTestDriver driver(ThreadState::Current());
+  ThreadState::Current()->EnableCompactionForNextGCForTesting();
+  EagerlySweptWithVectorWithInlineStorage* eagerly =
+      MakeGarbageCollected<EagerlySweptWithVectorWithInlineStorage>();
+  driver.Start();
+  eagerly->nested().emplace_back(1);
+  eagerly->nested().at(0).emplace_back(MakeGarbageCollected<Object>());
+  driver.FinishSteps();
+  CHECK(!HeapObjectHeader::FromPayload(eagerly)->IsMarked());
+  eagerly = nullptr;
+  driver.FinishGC();
+}
+
+TEST(IncrementalMarkingTest, AdjustMarkedBytesOnMarkedBackingStore) {
+  // Regression test: https://crbug.com/966456
+  //
+  // Test ensures that backing expansion does not crash in trying to adjust
+  // marked bytes when the page is actually about to be swept and marking is not
+  // in progress.
+
+  using Container = HeapVector<Member<Object>>;
+  Persistent<Container> holder(MakeGarbageCollected<Container>());
+  holder->push_back(MakeGarbageCollected<Object>());
+  holder->Grow(16);
+  ThreadState::Current()->Heap().ResetAllocationPointForTesting();
+  // Slowly shrink down the backing, only adjusting capacity without performing
+  // free as the resulting memory block is too small for a free list entry.
+  for (int i = 15; i > 0; i--) {
+    holder->Shrink(i);
+    holder->ShrinkToFit();
+  }
+  IncrementalMarkingTestDriver driver(ThreadState::Current());
+  driver.Start();
+  driver.FinishSteps();
+  // The object is marked at this point.
+  CHECK(HeapObjectHeader::FromPayload(holder.Get())->IsMarked());
+  driver.FinishGC(false);
+  // The object is still marked as sweeping did not make any progress.
+  CHECK(HeapObjectHeader::FromPayload(holder.Get())->IsMarked());
+  // Re-grow to some size within the initial payload size (capacity=16).
+  holder->Grow(8);
+}
+
 }  // namespace incremental_marking_test
 }  // namespace blink
-
-#endif  // BUILDFLAG(BLINK_HEAP_INCREMENTAL_MARKING)

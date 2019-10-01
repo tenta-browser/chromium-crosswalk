@@ -13,33 +13,36 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/threading/sequenced_task_runner_handle.h"
-#import "ios/web/interstitials/web_interstitial_impl.h"
+#import "ios/web/common/crw_content_view.h"
+#include "ios/web/common/url_util.h"
 #import "ios/web/navigation/crw_session_controller.h"
 #import "ios/web/navigation/legacy_navigation_manager_impl.h"
+#import "ios/web/navigation/navigation_context_impl.h"
 #import "ios/web/navigation/navigation_item_impl.h"
 #import "ios/web/navigation/session_storage_builder.h"
 #import "ios/web/navigation/wk_based_navigation_manager_impl.h"
 #import "ios/web/navigation/wk_navigation_util.h"
 #include "ios/web/public/browser_state.h"
-#import "ios/web/public/crw_navigation_item_storage.h"
-#import "ios/web/public/crw_session_storage.h"
+#import "ios/web/public/deprecated/crw_native_content.h"
+#import "ios/web/public/deprecated/crw_native_content_holder.h"
 #include "ios/web/public/favicon_url.h"
 #import "ios/web/public/java_script_dialog_presenter.h"
 #import "ios/web/public/navigation_item.h"
-#include "ios/web/public/url_util.h"
+#import "ios/web/public/session/crw_navigation_item_storage.h"
+#import "ios/web/public/session/crw_session_storage.h"
+#import "ios/web/public/session/serializable_user_data_manager.h"
 #import "ios/web/public/web_client.h"
 #import "ios/web/public/web_state/context_menu_params.h"
-#import "ios/web/public/web_state/ui/crw_content_view.h"
-#import "ios/web/public/web_state/ui/crw_native_content.h"
 #import "ios/web/public/web_state/web_state_delegate.h"
 #include "ios/web/public/web_state/web_state_interface_provider.h"
 #include "ios/web/public/web_state/web_state_observer.h"
 #import "ios/web/public/web_state/web_state_policy_decider.h"
 #include "ios/web/public/web_thread.h"
 #include "ios/web/public/webui/web_ui_ios_controller.h"
+#import "ios/web/security/web_interstitial_impl.h"
+#import "ios/web/session/session_certificate_policy_cache_impl.h"
 #include "ios/web/web_state/global_web_state_event_tracker.h"
-#import "ios/web/web_state/navigation_context_impl.h"
-#import "ios/web/web_state/session_certificate_policy_cache_impl.h"
+#import "ios/web/web_state/ui/crw_js_injector.h"
 #import "ios/web/web_state/ui/crw_web_controller.h"
 #import "ios/web/web_state/ui/crw_web_controller_container_view.h"
 #import "ios/web/web_state/ui/crw_web_view_navigation_proxy.h"
@@ -61,6 +64,8 @@ std::unique_ptr<WebState> WebState::Create(const CreateParams& params) {
 
   // Initialize the new session.
   web_state->GetNavigationManagerImpl().InitializeSession();
+  web_state->GetNavigationManagerImpl().GetSessionController().delegate =
+      web_state->GetWebController();
 
   return web_state;
 }
@@ -312,12 +317,6 @@ void WebStateImpl::ProcessWebUIMessage(const GURL& source_url,
     web_ui_->ProcessWebUIIOSMessage(source_url, message, args);
 }
 
-void WebStateImpl::LoadWebUIHtml(const base::string16& html, const GURL& url) {
-  CHECK(web::GetWebClient()->IsAppSpecificURL(url));
-  [web_controller_ loadHTML:base::SysUTF16ToNSString(html)
-          forAppSpecificURL:url];
-}
-
 const base::string16& WebStateImpl::GetTitle() const {
   // TODO(stuartmorgan): Implement the NavigationManager logic necessary to
   // match the WebContents implementation of this method.
@@ -329,13 +328,6 @@ const base::string16& WebStateImpl::GetTitle() const {
     item = navigation_manager_->GetVisibleItem();
   }
   return item ? item->GetTitleForDisplay() : empty_string16_;
-}
-
-void WebStateImpl::ShowTransientContentView(CRWContentView* content_view) {
-  DCHECK(Configured());
-  DCHECK(content_view);
-  DCHECK(content_view.scrollView);
-  [web_controller_ showTransientContentView:content_view];
 }
 
 bool WebStateImpl::IsShowingWebInterstitial() const {
@@ -386,9 +378,11 @@ void WebStateImpl::UpdateHttpResponseHeaders(const GURL& url) {
 
 void WebStateImpl::ShowWebInterstitial(WebInterstitialImpl* interstitial) {
   DCHECK(Configured());
-  DCHECK(interstitial);
   interstitial_ = interstitial;
-  ShowTransientContentView(interstitial_->GetContentView());
+
+  DCHECK(interstitial_->GetContentView());
+  DCHECK(interstitial_->GetContentView().scrollView);
+  [web_controller_ showTransientContentView:interstitial_->GetContentView()];
 }
 
 void WebStateImpl::SendChangeLoadProgress(double progress) {
@@ -589,6 +583,10 @@ void WebStateImpl::WasHidden() {
     observer.WasHidden(this);
 }
 
+void WebStateImpl::SetKeepRenderProcessAlive(bool keep_alive) {
+  [web_controller_ setKeepsRenderProcessAlive:keep_alive];
+}
+
 BrowserState* WebStateImpl::GetBrowserState() const {
   return navigation_manager_->GetBrowserState();
 }
@@ -630,39 +628,54 @@ WebStateImpl::GetSessionCertificatePolicyCache() {
 CRWSessionStorage* WebStateImpl::BuildSessionStorage() {
   [web_controller_ recordStateInHistory];
   if (web::GetWebClient()->IsSlimNavigationManagerEnabled() &&
-      restored_session_storage_)
+      restored_session_storage_) {
+    // UserData can be updated in an uncommitted WebState. Even
+    // if a WebState hasn't been restored, its opener value may have changed.
+    std::unique_ptr<web::SerializableUserData> serializable_user_data =
+        web::SerializableUserDataManager::FromWebState(this)
+            ->CreateSerializableUserData();
+    [restored_session_storage_
+        setSerializableUserData:std::move(serializable_user_data)];
     return restored_session_storage_;
+  }
   SessionStorageBuilder session_storage_builder;
   return session_storage_builder.BuildStorage(this);
 }
 
+void WebStateImpl::LoadData(NSData* data,
+                            NSString* mime_type,
+                            const GURL& url) {
+  [web_controller_ loadData:data MIMEType:mime_type forURL:url];
+}
+
 CRWJSInjectionReceiver* WebStateImpl::GetJSInjectionReceiver() const {
-  return [web_controller_ jsInjectionReceiver];
+  return [web_controller_.jsInjector JSInjectionReceiver];
 }
 
 void WebStateImpl::ExecuteJavaScript(const base::string16& javascript) {
-  [web_controller_ executeJavaScript:base::SysUTF16ToNSString(javascript)
-                   completionHandler:nil];
+  [web_controller_.jsInjector
+      executeJavaScript:base::SysUTF16ToNSString(javascript)
+      completionHandler:nil];
 }
 
 void WebStateImpl::ExecuteJavaScript(const base::string16& javascript,
                                      JavaScriptResultCallback callback) {
   __block JavaScriptResultCallback stack_callback = std::move(callback);
-  [web_controller_ executeJavaScript:base::SysUTF16ToNSString(javascript)
-                   completionHandler:^(id value, NSError* error) {
-                     if (error) {
-                       DLOG(WARNING)
-                           << "Script execution has failed: "
-                           << base::SysNSStringToUTF16(
-                                  error.userInfo[NSLocalizedDescriptionKey]);
-                     }
-                     std::move(stack_callback)
-                         .Run(ValueResultFromWKResult(value).get());
-                   }];
+  [web_controller_.jsInjector
+      executeJavaScript:base::SysUTF16ToNSString(javascript)
+      completionHandler:^(id value, NSError* error) {
+        if (error) {
+          DLOG(WARNING) << "Script execution has failed: "
+                        << base::SysNSStringToUTF16(
+                               error.userInfo[NSLocalizedDescriptionKey]);
+        }
+        std::move(stack_callback).Run(ValueResultFromWKResult(value).get());
+      }];
 }
 
 void WebStateImpl::ExecuteUserJavaScript(NSString* javaScript) {
-  [web_controller_ executeUserJavaScript:javaScript completionHandler:nil];
+  [web_controller_.jsInjector executeUserJavaScript:javaScript
+                                  completionHandler:nil];
 }
 
 const std::string& WebStateImpl::GetContentsMimeType() const {
@@ -684,15 +697,22 @@ const GURL& WebStateImpl::GetLastCommittedURL() const {
 }
 
 GURL WebStateImpl::GetCurrentURL(URLVerificationTrustLevel* trust_level) const {
+  if (web::GetWebClient()->IsSlimNavigationManagerEnabled() && !trust_level) {
+    auto ignore_trust = URLVerificationTrustLevel::kNone;
+    return [web_controller_ currentURLWithTrustLevel:&ignore_trust];
+  }
   GURL result = [web_controller_ currentURLWithTrustLevel:trust_level];
 
-  web::NavigationItem* item = navigation_manager_->GetLastCommittedItem();
+  web::NavigationItemImpl* item =
+      navigation_manager_->GetLastCommittedItemImpl();
   GURL lastCommittedURL;
   if (item) {
-    if ([web_controller_.nativeController
-            respondsToSelector:@selector(virtualURL)]) {
-      // For native content |currentURLWithTrustLevel:| returns virtual URL if
-      // one is available.
+    if ([[web_controller_ nativeContentHolder].nativeController
+            respondsToSelector:@selector(virtualURL)] ||
+        item->error_retry_state_machine().state() ==
+            ErrorRetryState::kReadyToDisplayErrorForFailedNavigation) {
+      // For native content, or when webView.URL is a placeholder URL,
+      // |currentURLWithTrustLevel:| returns virtual URL if one is available.
       lastCommittedURL = item->GetVirtualURL();
     } else {
       // Otherwise document URL is returned.
@@ -714,6 +734,10 @@ GURL WebStateImpl::GetCurrentURL(URLVerificationTrustLevel* trust_level) const {
                        << " Last committed: " << lastCommittedURL.spec();
   UMA_HISTOGRAM_BOOLEAN("Web.CurrentOriginEqualsLastCommittedOrigin",
                         equalOrigins);
+  if (web::GetWebClient()->IsSlimNavigationManagerEnabled() &&
+      (!equalOrigins || (item && item->IsUntrusted()))) {
+    *trust_level = web::URLVerificationTrustLevel::kMixed;
+  }
   return result;
 }
 
@@ -840,8 +864,9 @@ void WebStateImpl::WillChangeUserAgentType() {
   [web_controller_ requirePageReconstruction];
 }
 
-void WebStateImpl::LoadCurrentItem() {
-  [web_controller_ loadCurrentURL];
+void WebStateImpl::LoadCurrentItem(NavigationInitiationType type) {
+  [web_controller_ loadCurrentURLWithRendererInitiatedNavigation:
+                       type == NavigationInitiationType::RENDERER_INITIATED];
 }
 
 void WebStateImpl::LoadIfNecessary() {
@@ -890,6 +915,10 @@ void WebStateImpl::RemoveWebView() {
   return [web_controller_ removeWebView];
 }
 
+NavigationItemImpl* WebStateImpl::GetPendingItem() {
+  return [web_controller_ lastPendingItemForNewNavigation];
+}
+
 void WebStateImpl::RestoreSessionStorage(CRWSessionStorage* session_storage) {
   // Session storage restore is asynchronous with WKBasedNavigationManager
   // because it involves a page load in WKWebView. Temporarily cache the
@@ -902,6 +931,8 @@ void WebStateImpl::RestoreSessionStorage(CRWSessionStorage* session_storage) {
     restored_session_storage_ = session_storage;
   SessionStorageBuilder session_storage_builder;
   session_storage_builder.ExtractSessionState(this, session_storage);
+  GetNavigationManagerImpl().GetSessionController().delegate =
+      GetWebController();
 }
 
 }  // namespace web

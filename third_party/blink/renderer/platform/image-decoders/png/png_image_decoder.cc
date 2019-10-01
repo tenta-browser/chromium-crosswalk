@@ -41,7 +41,7 @@
 #include <memory>
 
 #include "base/numerics/checked_math.h"
-#include "third_party/skia/third_party/skcms/skcms.h"
+#include "third_party/skia/include/third_party/skcms/skcms.h"
 
 #if (defined(__ARM_NEON__) || defined(__ARM_NEON))
 #include <arm_neon.h>
@@ -256,7 +256,7 @@ bool PNGImageDecoder::ImageIsHighBitDepth() {
 bool PNGImageDecoder::SetSize(unsigned width, unsigned height) {
   DCHECK(!IsDecodedSizeAvailable());
   // Protect against large PNGs. See http://bugzil.la/251381 for more details.
-  const unsigned long kMaxPNGSize = 1000000UL;
+  const uint32_t kMaxPNGSize = 1000000;
   return (width <= kMaxPNGSize) && (height <= kMaxPNGSize) &&
          ImageDecoder::SetSize(width, height);
 }
@@ -735,8 +735,8 @@ void PNGImageDecoder::RowAvailable(unsigned char* row_buffer,
     auto* xform = ColorTransform();
     auto* src_profile = xform ? xform->SrcProfile() : nullptr;
     auto* dst_profile = xform ? xform->DstProfile() : nullptr;
-    auto src_format = has_alpha ? skcms_PixelFormat_RGBA_16161616
-                                : skcms_PixelFormat_RGB_161616;
+    auto src_format = has_alpha ? skcms_PixelFormat_RGBA_16161616BE
+                                : skcms_PixelFormat_RGB_161616BE;
     auto src_alpha_format =
         has_alpha ? skcms_AlphaFormat_Unpremul : skcms_AlphaFormat_Opaque;
     auto dst_alpha_format = has_alpha ? (buffer.PremultiplyAlpha()

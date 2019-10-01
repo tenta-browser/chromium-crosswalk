@@ -31,11 +31,13 @@ class ResourceFetcherImpl : public ResourceFetcher {
   void SetMethod(const std::string& method) override;
   void SetBody(const std::string& body) override;
   void SetHeader(const std::string& header, const std::string& value) override;
+  void SetFetchRequestMode(
+      network::mojom::FetchRequestMode fetch_request_mode) override;
   void Start(blink::WebLocalFrame* frame,
              blink::mojom::RequestContextType request_context,
              scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
              const net::NetworkTrafficAnnotationTag& annotation_tag,
-             Callback callback,
+             StartCallback callback,
              size_t maximum_download_size) override;
   void SetTimeout(const base::TimeDelta& timeout) override;
 

@@ -42,7 +42,6 @@ class CORE_EXPORT HTMLSlotElement final : public HTMLElement {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static HTMLSlotElement* Create(Document&);
   static HTMLSlotElement* CreateUserAgentDefaultSlot(Document&);
   static HTMLSlotElement* CreateUserAgentCustomAssignSlot(Document&);
 
@@ -122,23 +121,22 @@ class CORE_EXPORT HTMLSlotElement final : public HTMLElement {
  private:
   InsertionNotificationRequest InsertedInto(ContainerNode&) final;
   void RemovedFrom(ContainerNode&) final;
-  void DidRecalcStyle(StyleRecalcChange) final;
+  void DidRecalcStyle(const StyleRecalcChange) final;
 
   void EnqueueSlotChangeEvent();
 
   bool HasSlotableChild() const;
 
-  void LazyReattachNodesIfNeeded(const HeapVector<Member<Node>>& nodes1,
-                                 const HeapVector<Member<Node>>& nodes2);
-  static void LazyReattachNodesNaive(const HeapVector<Member<Node>>& nodes1,
-                                     const HeapVector<Member<Node>>& nodes2);
-  static void LazyReattachNodesByDynamicProgramming(
-      const HeapVector<Member<Node>>& nodes1,
-      const HeapVector<Member<Node>>& nodes2);
+  void NotifySlottedNodesOfFlatTreeChange(
+      const HeapVector<Member<Node>>& old_slotted,
+      const HeapVector<Member<Node>>& new_slotted);
+  static void NotifySlottedNodesOfFlatTreeChangeNaive(
+      const HeapVector<Member<Node>>& new_slotted);
+  static void NotifySlottedNodesOfFlatTreeChangeByDynamicProgramming(
+      const HeapVector<Member<Node>>& old_slotted,
+      const HeapVector<Member<Node>>& new_slotted);
 
   void SetNeedsDistributionRecalcWillBeSetNeedsAssignmentRecalc();
-
-  const HeapVector<Member<Node>>& GetDistributedNodes();
 
   void RecalcFlatTreeChildren();
   void UpdateFlatTreeNodeDataForAssignedNodes();

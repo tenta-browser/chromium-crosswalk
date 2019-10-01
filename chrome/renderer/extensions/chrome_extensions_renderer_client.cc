@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/lazy_instance.h"
 #include "chrome/common/chrome_isolated_world_ids.h"
@@ -36,8 +37,9 @@
 #include "extensions/renderer/guest_view/extensions_guest_view_container.h"
 #include "extensions/renderer/guest_view/extensions_guest_view_container_dispatcher.h"
 #include "extensions/renderer/guest_view/mime_handler_view/mime_handler_view_container.h"
-#include "extensions/renderer/guest_view/mime_handler_view/mime_handler_view_frame_container.h"
+#include "extensions/renderer/guest_view/mime_handler_view/mime_handler_view_container_manager.h"
 #include "extensions/renderer/script_context.h"
+#include "services/network/public/cpp/features.h"
 #include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/public/web/web_document.h"
 #include "third_party/blink/public/web/web_local_frame.h"
@@ -182,7 +184,7 @@ bool ChromeExtensionsRendererClient::OverrideCreatePlugin(
     return true;
 
   bool guest_view_api_available = false;
-  extension_dispatcher_->script_context_set().ForEach(
+  extension_dispatcher_->script_context_set_iterator()->ForEach(
       render_frame, base::Bind(&IsGuestViewApiAvailableToScriptContext,
                                &guest_view_api_available));
   return !guest_view_api_available;
@@ -240,6 +242,13 @@ void ChromeExtensionsRendererClient::WillSendRequest(
               extensions::PermissionsData::PageAccess::kAllowed) {
         *attach_same_site_cookies = true;
       }
+    } else if (base::FeatureList::IsEnabled(
+                   network::features::kNetworkService)) {
+      // If there is no extension installed for the origin, it may be from a
+      // recently uninstalled extension.  The tabs of such extensions are
+      // automatically closed, but subframes and content scripts may stick
+      // around. Fail such requests without killing the process.
+      *new_url = GURL(chrome::kExtensionInvalidRequestURL);
     }
   }
 
@@ -310,16 +319,44 @@ ChromeExtensionsRendererClient::CreateBrowserPluginDelegate(
 }
 
 // static
+void ChromeExtensionsRendererClient::DidBlockMimeHandlerViewForDisallowedPlugin(
+    const blink::WebElement& plugin_element) {
+  extensions::MimeHandlerViewContainerManager::Get(
+      content::RenderFrame::FromWebFrame(
+          plugin_element.GetDocument().GetFrame()),
+      true /* create_if_does_not_exist */)
+      ->DidBlockMimeHandlerViewForDisallowedPlugin(plugin_element);
+}
+
+// static
 bool ChromeExtensionsRendererClient::MaybeCreateMimeHandlerView(
     const blink::WebElement& plugin_element,
     const GURL& resource_url,
     const std::string& mime_type,
-    const content::WebPluginInfo& plugin_info,
-    int32_t element_instance_id) {
+    const content::WebPluginInfo& plugin_info) {
   CHECK(content::MimeHandlerViewMode::UsesCrossProcessFrame());
-  return extensions::MimeHandlerViewFrameContainer::Create(
-      plugin_element, resource_url, mime_type, plugin_info,
-      element_instance_id);
+  return extensions::MimeHandlerViewContainerManager::Get(
+             content::RenderFrame::FromWebFrame(
+                 plugin_element.GetDocument().GetFrame()),
+             true /* create_if_does_not_exist */)
+      ->CreateFrameContainer(plugin_element, resource_url, mime_type,
+                             plugin_info);
+}
+
+v8::Local<v8::Object> ChromeExtensionsRendererClient::GetScriptableObject(
+    const blink::WebElement& plugin_element,
+    v8::Isolate* isolate) {
+  CHECK(content::MimeHandlerViewMode::UsesCrossProcessFrame());
+  // If there is a MimeHandlerView that can provide the scriptable object then
+  // MaybeCreateMimeHandlerView must have been called before and a container
+  // manager should exist.
+  auto* container_manager = extensions::MimeHandlerViewContainerManager::Get(
+      content::RenderFrame::FromWebFrame(
+          plugin_element.GetDocument().GetFrame()),
+      false /* create_if_does_not_exist */);
+  if (container_manager)
+    return container_manager->GetScriptableObject(plugin_element, isolate);
+  return v8::Local<v8::Object>();
 }
 
 // static

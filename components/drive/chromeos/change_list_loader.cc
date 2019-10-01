@@ -10,8 +10,9 @@
 #include <set>
 #include <utility>
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/callback.h"
-#include "base/callback_helpers.h"
 #include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/strcat.h"
@@ -398,7 +399,10 @@ void ChangeListLoader::OnChangeListLoadComplete(FileError error) {
   // If there is pending update check, try to load the change from the server
   // again, because there may exist an update during the completed loading.
   if (pending_update_check_callback_) {
-    Load(base::ResetAndReturn(&pending_update_check_callback_));
+    auto cb = std::move(pending_update_check_callback_);
+    // TODO(dcheng): Rewrite this to use OnceCallback. Load() currently takes a
+    // callback by const ref, so std::move() won't do anything. :(
+    Load(cb);
   }
 }
 
@@ -496,7 +500,7 @@ void ChangeListLoader::LoadChangeListFromServerAfterUpdate(
   logger_->Log(logging::LOG_INFO,
                "Change lists applied (%s) (elapsed time: %sms)",
                team_drive_msg_.c_str(),
-               base::Int64ToString(elapsed.InMilliseconds()).c_str());
+               base::NumberToString(elapsed.InMilliseconds()).c_str());
 
   if (should_notify_changed_directories) {
     for (auto& observer : observers_)

@@ -105,6 +105,11 @@ public class SnippetArticleViewHolder extends CardViewHolder {
     }
 
     @Override
+    public String getContextMenuTitle() {
+        return mArticle.mTitle;
+    }
+
+    @Override
     public boolean isItemSupported(@ContextMenuItemId int menuItemId) {
         Boolean isSupported = mCategoryInfo.isContextMenuItemSupported(menuItemId);
         if (isSupported != null) return isSupported;
@@ -156,7 +161,7 @@ public class SnippetArticleViewHolder extends CardViewHolder {
     }
 
     protected SuggestionsBinder createBinder(SuggestionsUiDelegate uiDelegate) {
-        return new SuggestionsBinder(itemView, uiDelegate, false);
+        return new SuggestionsBinder(itemView, uiDelegate);
     }
 
     /**
@@ -195,7 +200,7 @@ public class SnippetArticleViewHolder extends CardViewHolder {
 
     /** Updates the visibility of the card's offline badge by checking the bound article's info. */
     private void refreshOfflineBadgeVisibility() {
-        boolean visible = mArticle.getOfflinePageOfflineId() != null || mArticle.isAssetDownload();
+        boolean visible = mArticle.getOfflinePageOfflineId() != null;
         mSuggestionsBinder.updateOfflineBadgeVisibility(visible);
     }
 

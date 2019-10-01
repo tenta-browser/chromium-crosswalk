@@ -23,10 +23,13 @@ using base::android::AttachCurrentThread;
 using base::android::ConvertJavaStringToUTF8;
 using base::android::ConvertUTF8ToJavaString;
 using base::android::JavaParamRef;
-using base::android::ScopedJavaLocalRef;
 using base::android::ScopedJavaGlobalRef;
+using base::android::ScopedJavaLocalRef;
 
 namespace offline_items_collection {
+
+using GetVisualsOptions = OfflineContentProvider::GetVisualsOptions;
+
 namespace android {
 
 namespace {
@@ -64,6 +67,11 @@ void ForwardShareInfoToJavaCallback(
       ConvertUTF8ToJavaString(env, id.id),
       OfflineItemShareInfoBridge::CreateOfflineItemShareInfo(
           env, std::move(shareInfo)));
+}
+
+void RenameItemCallback(ScopedJavaGlobalRef<jobject> j_callback,
+                        RenameResult result) {
+  base::android::RunIntCallbackAndroid(j_callback, static_cast<int>(result));
 }
 
 void RunGetAllItemsCallback(const base::android::JavaRef<jobject>& j_callback,
@@ -202,6 +210,7 @@ void OfflineContentAggregatorBridge::GetVisualsForItem(
   provider_->GetVisualsForItem(
       JNI_OfflineContentAggregatorBridge_CreateContentId(env, j_namespace,
                                                          j_id),
+      GetVisualsOptions::IconOnly(),
       base::BindOnce(&GetVisualsForItemHelperCallback,
                      ScopedJavaGlobalRef<jobject>(env, j_callback)));
 }
@@ -217,6 +226,23 @@ void OfflineContentAggregatorBridge::GetShareInfoForItem(
                                                          j_id),
       base::BindOnce(&ForwardShareInfoToJavaCallback,
                      ScopedJavaGlobalRef<jobject>(env, j_callback)));
+}
+
+void OfflineContentAggregatorBridge::RenameItem(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& jobj,
+    const JavaParamRef<jstring>& j_namespace,
+    const JavaParamRef<jstring>& j_id,
+    const JavaParamRef<jstring>& j_name,
+    const JavaParamRef<jobject>& j_callback) {
+  base::OnceCallback<void(RenameResult)> callback = base::BindOnce(
+      &RenameItemCallback,
+      base::android::ScopedJavaGlobalRef<jobject>(env, j_callback));
+
+  provider_->RenameItem(JNI_OfflineContentAggregatorBridge_CreateContentId(
+                            env, j_namespace, j_id),
+                        ConvertJavaStringToUTF8(env, j_name),
+                        std::move(callback));
 }
 
 void OfflineContentAggregatorBridge::OnItemsAdded(

@@ -384,10 +384,9 @@ TEST_F(DataReductionProxyChromeSettingsTest, MigrateIgnoreOtherProxy) {
 TEST_F(DataReductionProxyChromeSettingsTest, CreateDataBasic) {
   content::MockNavigationHandle handle(GURL(kUrl), main_rfh());
   std::string raw_headers = "HTTP/1.0 200 OK\n";
-  scoped_refptr<net::HttpResponseHeaders> headers =
-      new net::HttpResponseHeaders(net::HttpUtil::AssembleRawHeaders(
-          raw_headers.c_str(), raw_headers.size()));
-  handle.set_response_headers(headers.get());
+  auto headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(raw_headers));
+  handle.set_response_headers(headers);
   auto data = drp_chrome_settings_->CreateDataFromNavigationHandle(
       &handle, headers.get());
 
@@ -403,10 +402,9 @@ TEST_F(DataReductionProxyChromeSettingsTest, CreateDataUsedDataReductionProxy) {
   content::MockNavigationHandle handle(GURL(kUrl), main_rfh());
   handle.set_proxy_server(net::ProxyServer::FromPacString(kProxyPac));
   std::string raw_headers = "HTTP/1.0 200 OK\n";
-  scoped_refptr<net::HttpResponseHeaders> headers =
-      new net::HttpResponseHeaders(net::HttpUtil::AssembleRawHeaders(
-          raw_headers.c_str(), raw_headers.size()));
-  handle.set_response_headers(headers.get());
+  auto headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(raw_headers));
+  handle.set_response_headers(headers);
   auto data = drp_chrome_settings_->CreateDataFromNavigationHandle(
       &handle, headers.get());
 
@@ -418,10 +416,9 @@ TEST_F(DataReductionProxyChromeSettingsTest, CreateDataCachedResponse) {
       "HTTP/1.0 200 OK\n"
       "chrome-proxy: foo\n";
   content::MockNavigationHandle handle(GURL(kUrl), main_rfh());
-  scoped_refptr<net::HttpResponseHeaders> headers =
-      new net::HttpResponseHeaders(net::HttpUtil::AssembleRawHeaders(
-          raw_headers.c_str(), raw_headers.size()));
-  handle.set_response_headers(headers.get());
+  auto headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(raw_headers));
+  handle.set_response_headers(headers);
   handle.set_was_response_cached(true);
   auto data = drp_chrome_settings_->CreateDataFromNavigationHandle(
       &handle, headers.get());
@@ -432,10 +429,9 @@ TEST_F(DataReductionProxyChromeSettingsTest, CreateDataCachedResponse) {
 TEST_F(DataReductionProxyChromeSettingsTest, CreateHTTPSDataCachedResponse) {
   std::string raw_headers = "HTTP/1.0 200 OK\nchrome-proxy: foo\n";
   content::MockNavigationHandle handle(GURL("https://secure.com"), main_rfh());
-  scoped_refptr<net::HttpResponseHeaders> headers =
-      new net::HttpResponseHeaders(net::HttpUtil::AssembleRawHeaders(
-          raw_headers.c_str(), raw_headers.size()));
-  handle.set_response_headers(headers.get());
+  auto headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(raw_headers));
+  handle.set_response_headers(headers);
   handle.set_was_response_cached(true);
   auto data = drp_chrome_settings_->CreateDataFromNavigationHandle(
       &handle, headers.get());
@@ -449,10 +445,9 @@ TEST_F(DataReductionProxyChromeSettingsTest,
       "HTTP/1.0 200 OK\n"
       "via: 1.1 Chrome-Compression-Proxy\n";
   content::MockNavigationHandle handle(GURL(kUrl), main_rfh());
-  scoped_refptr<net::HttpResponseHeaders> headers =
-      new net::HttpResponseHeaders(net::HttpUtil::AssembleRawHeaders(
-          raw_headers.c_str(), raw_headers.size()));
-  handle.set_response_headers(headers.get());
+  auto headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(raw_headers));
+  handle.set_response_headers(headers);
   handle.set_was_response_cached(true);
   auto data = drp_chrome_settings_->CreateDataFromNavigationHandle(
       &handle, headers.get());
@@ -465,10 +460,9 @@ TEST_F(DataReductionProxyChromeSettingsTest, CreateDataWithLitePage) {
       "HTTP/1.0 200 OK\n"
       "chrome-proxy-content-transform: lite-page\n";
   content::MockNavigationHandle handle(GURL(kUrl), main_rfh());
-  scoped_refptr<net::HttpResponseHeaders> headers =
-      new net::HttpResponseHeaders(net::HttpUtil::AssembleRawHeaders(
-          raw_headers.c_str(), raw_headers.size()));
-  handle.set_response_headers(headers.get());
+  auto headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(raw_headers));
+  handle.set_response_headers(headers);
   auto data = drp_chrome_settings_->CreateDataFromNavigationHandle(
       &handle, headers.get());
 
@@ -482,10 +476,9 @@ TEST_F(DataReductionProxyChromeSettingsTest, CreateDataWithLofiPolicyReceived) {
       "HTTP/1.0 200 OK\n"
       "chrome-proxy: page-policies=empty-image\n";
   content::MockNavigationHandle handle(GURL(kUrl), main_rfh());
-  scoped_refptr<net::HttpResponseHeaders> headers =
-      new net::HttpResponseHeaders(net::HttpUtil::AssembleRawHeaders(
-          raw_headers.c_str(), raw_headers.size()));
-  handle.set_response_headers(headers.get());
+  auto headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(raw_headers));
+  handle.set_response_headers(headers);
   auto data = drp_chrome_settings_->CreateDataFromNavigationHandle(
       &handle, headers.get());
 
@@ -499,10 +492,9 @@ TEST_F(DataReductionProxyChromeSettingsTest, CreateDataWithLofiReceived) {
       "HTTP/1.0 200 OK\n"
       "chrome-proxy-content-transform: empty-image\n";
   content::MockNavigationHandle handle(GURL(kUrl), main_rfh());
-  scoped_refptr<net::HttpResponseHeaders> headers =
-      new net::HttpResponseHeaders(net::HttpUtil::AssembleRawHeaders(
-          raw_headers.c_str(), raw_headers.size()));
-  handle.set_response_headers(headers.get());
+  auto headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(raw_headers));
+  handle.set_response_headers(headers);
   auto data = drp_chrome_settings_->CreateDataFromNavigationHandle(
       &handle, headers.get());
 

@@ -8,10 +8,15 @@
 #include <sstream>
 #include <utility>
 
+#include "ash/public/cpp/ash_pref_names.h"
+#include "ash/public/cpp/login_screen.h"
+#include "ash/public/cpp/shelf_item.h"
+#include "ash/public/cpp/tablet_mode.h"
 #include "ash/public/interfaces/ash_message_center_controller.mojom.h"
 #include "ash/public/interfaces/constants.mojom.h"
 #include "ash/shell.h"
 #include "base/base64.h"
+#include "base/bind.h"
 #include "base/feature_list.h"
 #include "base/lazy_instance.h"
 #include "base/metrics/histogram_base.h"
@@ -25,14 +30,18 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
+#include "chrome/browser/chromeos/assistant/assistant_util.h"
+#include "chrome/browser/chromeos/crostini/crostini_export_import.h"
 #include "chrome/browser/chromeos/crostini/crostini_manager.h"
 #include "chrome/browser/chromeos/crostini/crostini_pref_names.h"
 #include "chrome/browser/chromeos/crostini/crostini_registry_service.h"
 #include "chrome/browser/chromeos/crostini/crostini_registry_service_factory.h"
 #include "chrome/browser/chromeos/crostini/crostini_util.h"
+#include "chrome/browser/chromeos/file_manager/path_util.h"
 #include "chrome/browser/chromeos/login/lock/screen_locker.h"
 #include "chrome/browser/chromeos/printing/cups_printers_manager.h"
 #include "chrome/browser/chromeos/system/input_device_settings.h"
+#include "chrome/browser/extensions/extension_action.h"
 #include "chrome/browser/extensions/extension_action_manager.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
@@ -42,13 +51,15 @@
 #include "chrome/browser/ui/app_list/arc/arc_app_utils.h"
 #include "chrome/browser/ui/ash/launcher/chrome_launcher_controller.h"
 #include "chrome/browser/ui/ash/launcher/shelf_spinner_controller.h"
-#include "chrome/browser/ui/ash/login_screen_client.h"
+#include "chrome/browser/ui/ash/tablet_mode_client.h"
 #include "chrome/browser/ui/views/crostini/crostini_installer_view.h"
 #include "chrome/browser/ui/views/crostini/crostini_uninstaller_view.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/extensions/api/autotest_private.h"
+#include "chrome/common/extensions/api/extension_action/action_info.h"
+#include "chrome/common/pref_names.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/session_manager_client.h"
+#include "chromeos/dbus/session_manager/session_manager_client.h"
 #include "chromeos/printing/printer_configuration.h"
 #include "chromeos/services/assistant/public/mojom/constants.mojom.h"
 #include "chromeos/services/machine_learning/public/cpp/service_connection.h"
@@ -69,7 +80,7 @@
 #include "mojo/public/cpp/bindings/associated_binding.h"
 #include "net/base/filename_util.h"
 #include "services/service_manager/public/cpp/connector.h"
-#include "services/ws/public/mojom/constants.mojom.h"
+#include "ui/base/ime/ime_bridge.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
@@ -77,6 +88,8 @@
 
 namespace extensions {
 namespace {
+
+using chromeos::PrinterClass;
 
 constexpr char kCrostiniNotAvailableForCurrentUserError[] =
     "Crostini is not available for the current user";
@@ -94,7 +107,9 @@ std::unique_ptr<base::ListValue> GetHostPermissions(const Extension* ext,
   const PermissionsData* permissions_data = ext->permissions_data();
   const URLPatternSet& pattern_set =
       effective_perm ? static_cast<const URLPatternSet&>(
-                           permissions_data->GetEffectiveHostPermissions())
+                           permissions_data->GetEffectiveHostPermissions(
+                               PermissionsData::EffectiveHostPermissionsMode::
+                                   kIncludeTabSpecific))
                      : permissions_data->active_permissions().explicit_hosts();
 
   auto permissions = std::make_unique<base::ListValue>();
@@ -151,19 +166,47 @@ std::unique_ptr<base::DictionaryValue> MakeDictionaryFromNotification(
   return result;
 }
 
-std::string GetPrinterType(chromeos::CupsPrintersManager::PrinterClass type) {
+std::string GetPrinterType(PrinterClass type) {
   switch (type) {
-    case chromeos::CupsPrintersManager::PrinterClass::kConfigured:
+    case PrinterClass::kSaved:
       return "configured";
-    case chromeos::CupsPrintersManager::PrinterClass::kEnterprise:
+    case PrinterClass::kEnterprise:
       return "enterprise";
-    case chromeos::CupsPrintersManager::PrinterClass::kAutomatic:
+    case PrinterClass::kAutomatic:
       return "automatic";
-    case chromeos::CupsPrintersManager::PrinterClass::kDiscovered:
+    case PrinterClass::kDiscovered:
       return "discovered";
     default:
       return "unknown";
   }
+}
+
+// Helper function to set whitelisted user pref based on |pref_name| with any
+// specific pref validations. Returns error messages if any.
+std::string SetWhitelistedPref(Profile* profile,
+                               const std::string& pref_name,
+                               const base::Value& value) {
+  if (pref_name == arc::prefs::kVoiceInteractionEnabled ||
+      pref_name == arc::prefs::kVoiceInteractionHotwordEnabled) {
+    DCHECK(value.is_bool());
+    ash::mojom::AssistantAllowedState allowed_state =
+        assistant::IsAssistantAllowedForProfile(profile);
+    if (allowed_state != ash::mojom::AssistantAllowedState::ALLOWED) {
+      return base::StringPrintf("Assistant not allowed - state: %d",
+                                allowed_state);
+    }
+  } else if (pref_name == ash::prefs::kAccessibilityVirtualKeyboardEnabled) {
+    DCHECK(value.is_bool());
+  } else if (pref_name == prefs::kLanguagePreloadEngines) {
+    DCHECK(value.is_string());
+  } else {
+    return "The pref " + pref_name + "is not whitelisted.";
+  }
+
+  // Set value for the specified user pref after validation.
+  profile->GetPrefs()->Set(pref_name, value);
+
+  return std::string();
 }
 
 }  // namespace
@@ -220,13 +263,6 @@ AutotestPrivateLoginStatusFunction::~AutotestPrivateLoginStatusFunction() =
 
 ExtensionFunction::ResponseAction AutotestPrivateLoginStatusFunction::Run() {
   DVLOG(1) << "AutotestPrivateLoginStatusFunction";
-
-  LoginScreenClient::Get()->login_screen()->IsReadyForPassword(base::BindOnce(
-      &AutotestPrivateLoginStatusFunction::OnIsReadyForPassword, this));
-  return RespondLater();
-}
-
-void AutotestPrivateLoginStatusFunction::OnIsReadyForPassword(bool is_ready) {
   auto result = std::make_unique<base::DictionaryValue>();
   const user_manager::UserManager* user_manager =
       user_manager::UserManager::Get();
@@ -241,7 +277,8 @@ void AutotestPrivateLoginStatusFunction::OnIsReadyForPassword(bool is_ready) {
     result->SetBoolean("isLoggedIn", user_manager->IsUserLoggedIn());
     result->SetBoolean("isOwner", user_manager->IsCurrentUserOwner());
     result->SetBoolean("isScreenLocked", is_screen_locked);
-    result->SetBoolean("isReadyForPassword", is_ready);
+    result->SetBoolean("isReadyForPassword",
+                       ash::LoginScreen::Get()->IsReadyForPassword());
     if (user_manager->IsUserLoggedIn()) {
       result->SetBoolean("isRegularUser",
                          user_manager->IsLoggedInAsUserWithGaiaAccount());
@@ -263,13 +300,13 @@ void AutotestPrivateLoginStatusFunction::OnIsReadyForPassword(bool is_ready) {
           break;
 
         default:
-          user_image = base::IntToString(user->image_index());
+          user_image = base::NumberToString(user->image_index());
           break;
       }
       result->SetString("userImage", user_image);
     }
   }
-  Respond(OneArgument(std::move(result)));
+  return RespondNow(OneArgument(std::move(result)));
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -282,9 +319,7 @@ AutotestPrivateLockScreenFunction::~AutotestPrivateLockScreenFunction() =
 ExtensionFunction::ResponseAction AutotestPrivateLockScreenFunction::Run() {
   DVLOG(1) << "AutotestPrivateLockScreenFunction";
 
-  chromeos::DBusThreadManager::Get()
-      ->GetSessionManagerClient()
-      ->RequestLockScreen();
+  chromeos::SessionManagerClient::Get()->RequestLockScreen();
   return RespondNow(NoArguments());
 }
 
@@ -341,9 +376,11 @@ AutotestPrivateGetExtensionsInfoFunction::Run() {
     extension_value->SetBoolean("isEnabled", service->IsExtensionEnabled(id));
     extension_value->SetBoolean(
         "allowedInIncognito", util::IsIncognitoEnabled(id, browser_context()));
+    const ExtensionAction* action =
+        extension_action_manager->GetExtensionAction(*extension);
     extension_value->SetBoolean(
         "hasPageAction",
-        extension_action_manager->GetPageAction(*extension) != NULL);
+        action && action->action_type() == ActionInfo::TYPE_PAGE);
 
     extensions_values->Append(std::move(extension_value));
   }
@@ -557,6 +594,27 @@ void AutotestPrivateGetVisibleNotificationsFunction::OnGotNotifications(
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+// AutotestPrivateGetArcStateFunction
+///////////////////////////////////////////////////////////////////////////////
+
+AutotestPrivateGetArcStateFunction::~AutotestPrivateGetArcStateFunction() =
+    default;
+
+ExtensionFunction::ResponseAction AutotestPrivateGetArcStateFunction::Run() {
+  DVLOG(1) << "AutotestPrivateGetArcStateFunction";
+
+  api::autotest_private::ArcState arc_state;
+  Profile* const profile = Profile::FromBrowserContext(browser_context());
+
+  if (!arc::IsArcAllowedForProfile(profile))
+    return RespondNow(Error("ARC is not available for the current user"));
+
+  arc_state.provisioned = arc::IsArcProvisioned(profile);
+  arc_state.tos_needed = arc::IsArcTermsOfServiceNegotiationNeeded(profile);
+  return RespondNow(OneArgument(arc_state.ToValue()));
+}
+
+///////////////////////////////////////////////////////////////////////////////
 // AutotestPrivateGetPlayStoreStateFunction
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -600,6 +658,12 @@ AutotestPrivateSetPlayStoreEnabledFunction::Run() {
       return RespondNow(
           Error("ARC enabled state cannot be changed for the current user"));
     }
+    // kArcLocationServiceEnabled and kArcBackupRestoreEnabled are prefs that
+    // set together with enabling ARC. That is why we set it here not using
+    // SetWhitelistedPref. At this moment, we don't distinguish the actual
+    // values and set kArcLocationServiceEnabled to true and leave
+    // kArcBackupRestoreEnabled unmodified, which is acceptable for autotests
+    // currently.
     profile->GetPrefs()->SetBoolean(arc::prefs::kArcLocationServiceEnabled,
                                     true);
     return RespondNow(NoArguments());
@@ -783,7 +847,7 @@ ExtensionFunction::ResponseAction AutotestPrivateGetArcPackageFunction::Run() {
                         base::Value(package_info->package_version));
   package_value->SetKey(
       "lastBackupAndroidId",
-      base::Value(base::Int64ToString(package_info->last_backup_android_id)));
+      base::Value(base::NumberToString(package_info->last_backup_android_id)));
   package_value->SetKey("lastBackupTime",
                         base::Value(base::Time::FromDeltaSinceWindowsEpoch(
                                         base::TimeDelta::FromMicroseconds(
@@ -966,6 +1030,88 @@ void AutotestPrivateRunCrostiniUninstallerFunction::CrostiniRemoved(
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+// AutotestPrivateExportCrostiniFunction
+///////////////////////////////////////////////////////////////////////////////
+
+AutotestPrivateExportCrostiniFunction::
+    ~AutotestPrivateExportCrostiniFunction() = default;
+
+ExtensionFunction::ResponseAction AutotestPrivateExportCrostiniFunction::Run() {
+  std::unique_ptr<api::autotest_private::ExportCrostini::Params> params(
+      api::autotest_private::ExportCrostini::Params::Create(*args_));
+  EXTENSION_FUNCTION_VALIDATE(params);
+  DVLOG(1) << "AutotestPrivateExportCrostiniFunction " << params->path;
+
+  Profile* profile = Profile::FromBrowserContext(browser_context());
+  if (!crostini::IsCrostiniUIAllowedForProfile(profile)) {
+    return RespondNow(Error(kCrostiniNotAvailableForCurrentUserError));
+  }
+
+  base::FilePath path(params->path);
+  if (path.ReferencesParent()) {
+    return RespondNow(Error("Invalid export path must not reference parent"));
+  }
+
+  crostini::CrostiniExportImport::GetForProfile(profile)->ExportContainer(
+      crostini::ContainerId(crostini::kCrostiniDefaultVmName,
+                            crostini::kCrostiniDefaultContainerName),
+      file_manager::util::GetDownloadsFolderForProfile(profile).Append(path),
+      base::BindOnce(&AutotestPrivateExportCrostiniFunction::CrostiniExported,
+                     this));
+
+  return RespondLater();
+}
+
+void AutotestPrivateExportCrostiniFunction::CrostiniExported(
+    crostini::CrostiniResult result) {
+  if (result == crostini::CrostiniResult::SUCCESS) {
+    Respond(NoArguments());
+  } else {
+    Respond(Error("Error exporting crostini"));
+  }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// AutotestPrivateImportCrostiniFunction
+///////////////////////////////////////////////////////////////////////////////
+
+AutotestPrivateImportCrostiniFunction::
+    ~AutotestPrivateImportCrostiniFunction() = default;
+
+ExtensionFunction::ResponseAction AutotestPrivateImportCrostiniFunction::Run() {
+  std::unique_ptr<api::autotest_private::ImportCrostini::Params> params(
+      api::autotest_private::ImportCrostini::Params::Create(*args_));
+  EXTENSION_FUNCTION_VALIDATE(params);
+  DVLOG(1) << "AutotestPrivateImportCrostiniFunction " << params->path;
+
+  Profile* profile = Profile::FromBrowserContext(browser_context());
+  if (!crostini::IsCrostiniUIAllowedForProfile(profile))
+    return RespondNow(Error(kCrostiniNotAvailableForCurrentUserError));
+
+  base::FilePath path(params->path);
+  if (path.ReferencesParent()) {
+    return RespondNow(Error("Invalid import path must not reference parent"));
+  }
+  crostini::CrostiniExportImport::GetForProfile(profile)->ImportContainer(
+      crostini::ContainerId(crostini::kCrostiniDefaultVmName,
+                            crostini::kCrostiniDefaultContainerName),
+      file_manager::util::GetDownloadsFolderForProfile(profile).Append(path),
+      base::BindOnce(&AutotestPrivateImportCrostiniFunction::CrostiniImported,
+                     this));
+
+  return RespondLater();
+}
+
+void AutotestPrivateImportCrostiniFunction::CrostiniImported(
+    crostini::CrostiniResult result) {
+  if (result == crostini::CrostiniResult::SUCCESS) {
+    Respond(NoArguments());
+  } else {
+    Respond(Error("Error importing crostini"));
+  }
+}
+
+///////////////////////////////////////////////////////////////////////////////
 // AutotestPrivateTakeScreenshotFunction
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -1008,32 +1154,71 @@ void AutotestPrivateTakeScreenshotFunction::ScreenshotTaken(
 // AutotestPrivateGetPrinterListFunction
 ///////////////////////////////////////////////////////////////////////////////
 
+AutotestPrivateGetPrinterListFunction::AutotestPrivateGetPrinterListFunction()
+    : results_(std::make_unique<base::Value>(base::Value::Type::LIST)) {}
+
 AutotestPrivateGetPrinterListFunction::
-    ~AutotestPrivateGetPrinterListFunction() = default;
+    ~AutotestPrivateGetPrinterListFunction() {
+  printers_manager_->RemoveObserver(this);
+}
 
 ExtensionFunction::ResponseAction AutotestPrivateGetPrinterListFunction::Run() {
   DVLOG(1) << "AutotestPrivateGetPrinterListFunction";
 
-  auto values = std::make_unique<base::ListValue>();
   Profile* profile = Profile::FromBrowserContext(browser_context());
-  std::unique_ptr<chromeos::CupsPrintersManager> printers_manager =
-      chromeos::CupsPrintersManager::Create(profile);
-  std::vector<chromeos::CupsPrintersManager::PrinterClass> printer_type = {
-      chromeos::CupsPrintersManager::PrinterClass::kConfigured,
-      chromeos::CupsPrintersManager::PrinterClass::kEnterprise,
-      chromeos::CupsPrintersManager::PrinterClass::kAutomatic};
-  for (const auto& type : printer_type) {
+  printers_manager_ = chromeos::CupsPrintersManager::Create(profile);
+  printers_manager_->AddObserver(this);
+
+  // Set up a timer to finish waiting after 10 seconds
+  timeout_timer_.Start(
+      FROM_HERE, base::TimeDelta::FromSeconds(10),
+      base::BindOnce(
+          &AutotestPrivateGetPrinterListFunction::RespondWithTimeoutError,
+          this));
+
+  return RespondLater();
+}
+
+void AutotestPrivateGetPrinterListFunction::RespondWithTimeoutError() {
+  if (did_respond())
+    return;
+  Respond(
+      Error("Timeout occurred before Enterprise printers were initialized"));
+}
+
+void AutotestPrivateGetPrinterListFunction::RespondWithSuccess() {
+  if (did_respond())
+    return;
+  Respond(OneArgument(std::move(results_)));
+  timeout_timer_.AbandonAndStop();
+}
+
+void AutotestPrivateGetPrinterListFunction::OnEnterprisePrintersInitialized() {
+  constexpr PrinterClass kClassesToFetch[] = {
+      PrinterClass::kEnterprise,
+      PrinterClass::kSaved,
+      PrinterClass::kAutomatic,
+  };
+
+  // We are ready to get the list of printers and finish.
+  base::Value::ListStorage& vresults = results_->GetList();
+  for (const auto& type : kClassesToFetch) {
     std::vector<chromeos::Printer> printer_list =
-        printers_manager->GetPrinters(type);
+        printers_manager_->GetPrinters(type);
     for (const auto& printer : printer_list) {
-      auto result = std::make_unique<base::DictionaryValue>();
-      result->SetString("printerName", printer.display_name());
-      result->SetString("printerId", printer.id());
-      result->SetString("printerType", GetPrinterType(type));
-      values->Append(std::move(result));
+      vresults.push_back(base::Value(base::Value::Type::DICTIONARY));
+      base::Value& result = vresults.back();
+      result.SetKey("printerName", base::Value(printer.display_name()));
+      result.SetKey("printerId", base::Value(printer.id()));
+      result.SetKey("printerType", base::Value(GetPrinterType(type)));
     }
   }
-  return RespondNow(OneArgument(std::move(values)));
+  // We have to respond in separate task, because it will cause a destruction of
+  // CupsPrintersManager
+  PostTask(
+      FROM_HERE,
+      base::BindOnce(&AutotestPrivateGetPrinterListFunction::RespondWithSuccess,
+                     this));
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1072,7 +1257,7 @@ ExtensionFunction::ResponseAction AutotestPrivateUpdatePrinterFunction::Run() {
   }
   auto printers_manager = chromeos::CupsPrintersManager::Create(
       Profile::FromBrowserContext(browser_context()));
-  printers_manager->UpdateConfiguredPrinter(printer);
+  printers_manager->SavePrinter(printer);
   return RespondNow(NoArguments());
 }
 
@@ -1091,7 +1276,7 @@ ExtensionFunction::ResponseAction AutotestPrivateRemovePrinterFunction::Run() {
 
   auto printers_manager = chromeos::CupsPrintersManager::Create(
       Profile::FromBrowserContext(browser_context()));
-  printers_manager->RemoveConfiguredPrinter(params->printer_id);
+  printers_manager->RemoveSavedPrinter(params->printer_id);
   return RespondNow(NoArguments());
 }
 
@@ -1161,13 +1346,12 @@ AutotestPrivateSetAssistantEnabledFunction::Run() {
   EXTENSION_FUNCTION_VALIDATE(params);
 
   Profile* profile = Profile::FromBrowserContext(browser_context());
-  if (arc::IsAssistantAllowedForProfile(profile) !=
-      ash::mojom::AssistantAllowedState::ALLOWED) {
-    return RespondNow(Error("Assistant is not available for the current user"));
-  }
+  const std::string& err_msg =
+      SetWhitelistedPref(profile, arc::prefs::kVoiceInteractionEnabled,
+                         base::Value(params->enabled));
+  if (!err_msg.empty())
+    return RespondNow(Error(err_msg));
 
-  profile->GetPrefs()->SetBoolean(arc::prefs::kVoiceInteractionEnabled,
-                                  params->enabled);
   // |NOT_READY| means service not running
   // |STOPPED| means service running but UI not shown
   auto new_state = params->enabled
@@ -1209,6 +1393,7 @@ void AutotestPrivateSetAssistantEnabledFunction::Timeout() {
 ///////////////////////////////////////////////////////////////////////////////
 // AutotestPrivateSendAssistantTextQueryFunction
 ///////////////////////////////////////////////////////////////////////////////
+
 AutotestPrivateSendAssistantTextQueryFunction::
     AutotestPrivateSendAssistantTextQueryFunction()
     : assistant_interaction_subscriber_binding_(this),
@@ -1226,9 +1411,11 @@ AutotestPrivateSendAssistantTextQueryFunction::Run() {
   EXTENSION_FUNCTION_VALIDATE(params);
 
   Profile* profile = Profile::FromBrowserContext(browser_context());
-  if (!profile || arc::IsAssistantAllowedForProfile(profile) !=
-                      ash::mojom::AssistantAllowedState::ALLOWED) {
-    return RespondNow(Error("Assistant is not available for the current user"));
+  ash::mojom::AssistantAllowedState allowed_state =
+      assistant::IsAssistantAllowedForProfile(profile);
+  if (allowed_state != ash::mojom::AssistantAllowedState::ALLOWED) {
+    return RespondNow(Error(base::StringPrintf(
+        "Assistant not allowed - state: %d", allowed_state)));
   }
 
   // Bind to Assistant service interface.
@@ -1243,7 +1430,7 @@ AutotestPrivateSendAssistantTextQueryFunction::Run() {
   assistant_->AddAssistantInteractionSubscriber(std::move(ptr));
 
   // Start text interaction with Assistant server.
-  assistant_->StartTextInteraction(params->query, true);
+  assistant_->StartTextInteraction(params->query, /*allow_tts*/ false);
 
   // Set up a delayed timer to wait for the query response and hold a reference
   // to |this| to avoid being destructed. Also make sure we stop and respond
@@ -1270,6 +1457,13 @@ void AutotestPrivateSendAssistantTextQueryFunction::OnHtmlResponse(
 
 void AutotestPrivateSendAssistantTextQueryFunction::OnInteractionFinished(
     AssistantInteractionResolution resolution) {
+  // Only return a result to the caller and stop the timer when |result_|
+  // is not empty to avoid an early return before the entire interaction is
+  // completed. This happens when sending queries to modify device settings,
+  // e.g. "turn on bluetooth", which results in two rounds of interaction.
+  if (result_->empty())
+    return;
+
   if (resolution != AssistantInteractionResolution::kNormal) {
     Respond(Error("Interaction ends abnormally."));
     timeout_timer_.AbandonAndStop();
@@ -1282,6 +1476,33 @@ void AutotestPrivateSendAssistantTextQueryFunction::OnInteractionFinished(
 
 void AutotestPrivateSendAssistantTextQueryFunction::Timeout() {
   Respond(Error("Assistant response timeout."));
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// AutotestPrivateSetWhitelistedPrefFunction
+///////////////////////////////////////////////////////////////////////////////
+
+AutotestPrivateSetWhitelistedPrefFunction::
+    ~AutotestPrivateSetWhitelistedPrefFunction() = default;
+
+ExtensionFunction::ResponseAction
+AutotestPrivateSetWhitelistedPrefFunction::Run() {
+  DVLOG(1) << "AutotestPrivateSetWhitelistedPrefFunction";
+
+  std::unique_ptr<api::autotest_private::SetWhitelistedPref::Params> params(
+      api::autotest_private::SetWhitelistedPref::Params::Create(*args_));
+  EXTENSION_FUNCTION_VALIDATE(params);
+
+  const std::string& pref_name = params->pref_name;
+  const base::Value& value = *(params->value);
+
+  Profile* profile = Profile::FromBrowserContext(browser_context());
+  const std::string& err_msg = SetWhitelistedPref(profile, pref_name, value);
+
+  if (!err_msg.empty())
+    return RespondNow(Error(err_msg));
+
+  return RespondNow(NoArguments());
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1315,63 +1536,6 @@ AutotestPrivateSetCrostiniAppScaledFunction::Run() {
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// AutotestPrivateEnsureWindowServiceClientHasDrawnWindowFunction
-///////////////////////////////////////////////////////////////////////////////
-
-AutotestPrivateEnsureWindowServiceClientHasDrawnWindowFunction::
-    AutotestPrivateEnsureWindowServiceClientHasDrawnWindowFunction() = default;
-AutotestPrivateEnsureWindowServiceClientHasDrawnWindowFunction::
-    ~AutotestPrivateEnsureWindowServiceClientHasDrawnWindowFunction() = default;
-
-ExtensionFunction::ResponseAction
-AutotestPrivateEnsureWindowServiceClientHasDrawnWindowFunction::Run() {
-  auto params = api::autotest_private::EnsureWindowServiceClientHasDrawnWindow::
-      Params::Create(*args_);
-  EXTENSION_FUNCTION_VALIDATE(params);
-
-  service_manager::Connector* connector =
-      content::ServiceManagerConnection::GetForProcess()->GetConnector();
-  connector->BindInterface(
-      service_manager::ServiceFilter::ByName(ws::mojom::kServiceName),
-      mojo::MakeRequest(&window_server_test_ptr_));
-  window_server_test_ptr_->EnsureClientHasDrawnWindow(
-      params->client_name,
-      base::BindOnce(
-          &AutotestPrivateEnsureWindowServiceClientHasDrawnWindowFunction::
-              OnEnsureClientHasDrawnWindowCallback,
-          this));
-
-  timeout_timer_.Start(
-      FROM_HERE, base::TimeDelta::FromMilliseconds(params->timeout_ms),
-      base::BindOnce(
-          &AutotestPrivateEnsureWindowServiceClientHasDrawnWindowFunction::
-              OnTimeout,
-          this));
-
-  return RespondLater();
-}
-
-void AutotestPrivateEnsureWindowServiceClientHasDrawnWindowFunction::
-    OnEnsureClientHasDrawnWindowCallback(bool success) {
-  if (did_respond()) {
-    LOG(ERROR) << "EnsureClientHasDrawnWindow returned after timeout: "
-               << success;
-    return;
-  }
-
-  Respond(OneArgument(std::make_unique<base::Value>(success)));
-  timeout_timer_.AbandonAndStop();
-}
-
-void AutotestPrivateEnsureWindowServiceClientHasDrawnWindowFunction::
-    OnTimeout() {
-  if (did_respond())
-    return;
-
-  Respond(Error("EnsureWindowServiceClientHasDrawnWindowFunction timeout."));
-}
-
-///////////////////////////////////////////////////////////////////////////////
 // AutotestPrivateGetPrimaryDisplayScaleFactorFunction
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -1386,6 +1550,296 @@ AutotestPrivateGetPrimaryDisplayScaleFactorFunction::Run() {
       display::Screen::GetScreen()->GetPrimaryDisplay();
   float scale_factor = primary_display.device_scale_factor();
   return RespondNow(OneArgument(std::make_unique<base::Value>(scale_factor)));
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// AutotestPrivateIsTabletModeEnabledFunction
+///////////////////////////////////////////////////////////////////////////////
+
+AutotestPrivateIsTabletModeEnabledFunction::
+    ~AutotestPrivateIsTabletModeEnabledFunction() = default;
+
+ExtensionFunction::ResponseAction
+AutotestPrivateIsTabletModeEnabledFunction::Run() {
+  DVLOG(1) << "AutotestPrivateIsTabletModeEnabledFunction";
+
+  return RespondNow(OneArgument(std::make_unique<base::Value>(
+      TabletModeClient::Get()->tablet_mode_enabled())));
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// AutotestPrivateSetTabletModeEnabledFunction
+///////////////////////////////////////////////////////////////////////////////
+
+AutotestPrivateSetTabletModeEnabledFunction::
+    ~AutotestPrivateSetTabletModeEnabledFunction() = default;
+
+ExtensionFunction::ResponseAction
+AutotestPrivateSetTabletModeEnabledFunction::Run() {
+  DVLOG(1) << "AutotestPrivateSetTabletModeEnabledFunction";
+
+  std::unique_ptr<api::autotest_private::SetTabletModeEnabled::Params> params(
+      api::autotest_private::SetTabletModeEnabled::Params::Create(*args_));
+  EXTENSION_FUNCTION_VALIDATE(params);
+  ash::TabletMode::Get()->SetEnabledForTest(params->enabled);
+  return RespondNow(OneArgument(
+      std::make_unique<base::Value>(ash::TabletMode::Get()->IsEnabled())));
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// AutotestPrivateGetShelfAutoHideBehaviorFunction
+///////////////////////////////////////////////////////////////////////////////
+
+AutotestPrivateGetShelfAutoHideBehaviorFunction::
+    AutotestPrivateGetShelfAutoHideBehaviorFunction() = default;
+
+AutotestPrivateGetShelfAutoHideBehaviorFunction::
+    ~AutotestPrivateGetShelfAutoHideBehaviorFunction() = default;
+
+ExtensionFunction::ResponseAction
+AutotestPrivateGetShelfAutoHideBehaviorFunction::Run() {
+  DVLOG(1) << "AutotestPrivateGetShelfAutoHideBehaviorFunction";
+
+  std::unique_ptr<api::autotest_private::GetShelfAutoHideBehavior::Params>
+      params(api::autotest_private::GetShelfAutoHideBehavior::Params::Create(
+          *args_));
+  EXTENSION_FUNCTION_VALIDATE(params);
+
+  service_manager::Connector* connector =
+      content::ServiceManagerConnection::GetForProcess()->GetConnector();
+  connector->BindInterface(ash::mojom::kServiceName, &shelf_test_api_);
+
+  int64_t display_id;
+  if (!base::StringToInt64(params->display_id, &display_id)) {
+    return RespondNow(Error(base::StrCat(
+        {"Invalid display_id; expected string with numbers only, got ",
+         params->display_id})));
+  }
+
+  shelf_test_api_->GetAutoHideBehavior(
+      display_id,
+      base::BindOnce(&AutotestPrivateGetShelfAutoHideBehaviorFunction::
+                         OnGetShelfAutoHideBehaviorCompleted,
+                     this));
+  return RespondLater();
+}
+
+void AutotestPrivateGetShelfAutoHideBehaviorFunction::
+    OnGetShelfAutoHideBehaviorCompleted(ash::ShelfAutoHideBehavior behavior) {
+  std::string str_behavior;
+  switch (behavior) {
+    case ash::ShelfAutoHideBehavior::SHELF_AUTO_HIDE_BEHAVIOR_ALWAYS:
+      str_behavior = "always";
+      break;
+    case ash::ShelfAutoHideBehavior::SHELF_AUTO_HIDE_BEHAVIOR_NEVER:
+      str_behavior = "never";
+      break;
+    case ash::ShelfAutoHideBehavior::SHELF_AUTO_HIDE_ALWAYS_HIDDEN:
+      str_behavior = "hidden";
+      break;
+  }
+  Respond(OneArgument(std::make_unique<base::Value>(str_behavior)));
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// AutotestPrivateSetShelfAutoHideBehaviorFunction
+///////////////////////////////////////////////////////////////////////////////
+
+AutotestPrivateSetShelfAutoHideBehaviorFunction::
+    AutotestPrivateSetShelfAutoHideBehaviorFunction() = default;
+
+AutotestPrivateSetShelfAutoHideBehaviorFunction::
+    ~AutotestPrivateSetShelfAutoHideBehaviorFunction() = default;
+
+ExtensionFunction::ResponseAction
+AutotestPrivateSetShelfAutoHideBehaviorFunction::Run() {
+  DVLOG(1) << "AutotestPrivateSetShelfAutoHideBehaviorFunction";
+
+  std::unique_ptr<api::autotest_private::SetShelfAutoHideBehavior::Params>
+      params(api::autotest_private::SetShelfAutoHideBehavior::Params::Create(
+          *args_));
+  EXTENSION_FUNCTION_VALIDATE(params);
+
+  service_manager::Connector* connector =
+      content::ServiceManagerConnection::GetForProcess()->GetConnector();
+  connector->BindInterface(ash::mojom::kServiceName, &shelf_test_api_);
+
+  ash::ShelfAutoHideBehavior behavior;
+  if (params->behavior == "always") {
+    behavior = ash::ShelfAutoHideBehavior::SHELF_AUTO_HIDE_BEHAVIOR_ALWAYS;
+  } else if (params->behavior == "never") {
+    behavior = ash::ShelfAutoHideBehavior::SHELF_AUTO_HIDE_BEHAVIOR_NEVER;
+  } else if (params->behavior == "hidden") {
+    behavior = ash::ShelfAutoHideBehavior::SHELF_AUTO_HIDE_ALWAYS_HIDDEN;
+  } else {
+    return RespondNow(Error(base::StrCat(
+        {"Invalid behavior; expected 'always', 'never' or 'hidden', got ",
+         params->behavior})));
+  }
+  int64_t display_id;
+  if (!base::StringToInt64(params->display_id, &display_id)) {
+    return RespondNow(Error(base::StrCat(
+        {"Invalid display_id; expected string with numbers only, got ",
+         params->display_id})));
+  }
+
+  shelf_test_api_->SetAutoHideBehavior(
+      display_id, behavior,
+      base::BindOnce(&AutotestPrivateSetShelfAutoHideBehaviorFunction::
+                         OnSetShelfAutoHideBehaviorCompleted,
+                     this));
+  return RespondLater();
+}
+
+void AutotestPrivateSetShelfAutoHideBehaviorFunction::
+    OnSetShelfAutoHideBehaviorCompleted() {
+  Respond(NoArguments());
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// AutotestPrivateGetShelfAlignmentFunction
+///////////////////////////////////////////////////////////////////////////////
+
+AutotestPrivateGetShelfAlignmentFunction::
+    AutotestPrivateGetShelfAlignmentFunction() = default;
+
+AutotestPrivateGetShelfAlignmentFunction::
+    ~AutotestPrivateGetShelfAlignmentFunction() = default;
+
+ExtensionFunction::ResponseAction
+AutotestPrivateGetShelfAlignmentFunction::Run() {
+  DVLOG(1) << "AutotestPrivateGetShelfAlignmentFunction";
+
+  std::unique_ptr<api::autotest_private::GetShelfAlignment::Params> params(
+      api::autotest_private::GetShelfAlignment::Params::Create(*args_));
+  EXTENSION_FUNCTION_VALIDATE(params);
+
+  service_manager::Connector* connector =
+      content::ServiceManagerConnection::GetForProcess()->GetConnector();
+  connector->BindInterface(ash::mojom::kServiceName, &shelf_test_api_);
+
+  int64_t display_id;
+  if (!base::StringToInt64(params->display_id, &display_id)) {
+    return RespondNow(Error(base::StrCat(
+        {"Invalid display_id; expected string with numbers only, got ",
+         params->display_id})));
+  }
+
+  shelf_test_api_->GetAlignment(
+      display_id, base::BindOnce(&AutotestPrivateGetShelfAlignmentFunction::
+                                     OnGetShelfAlignmentCompleted,
+                                 this));
+  return RespondLater();
+}
+
+void AutotestPrivateGetShelfAlignmentFunction::OnGetShelfAlignmentCompleted(
+    ash::ShelfAlignment alignment) {
+  api::autotest_private::ShelfAlignmentType alignment_type;
+  switch (alignment) {
+    case ash::ShelfAlignment::SHELF_ALIGNMENT_BOTTOM:
+      alignment_type = api::autotest_private::ShelfAlignmentType::
+          SHELF_ALIGNMENT_TYPE_BOTTOM;
+      break;
+    case ash::ShelfAlignment::SHELF_ALIGNMENT_LEFT:
+      alignment_type =
+          api::autotest_private::ShelfAlignmentType::SHELF_ALIGNMENT_TYPE_LEFT;
+      break;
+    case ash::ShelfAlignment::SHELF_ALIGNMENT_RIGHT:
+      alignment_type =
+          api::autotest_private::ShelfAlignmentType::SHELF_ALIGNMENT_TYPE_RIGHT;
+      break;
+    case ash::ShelfAlignment::SHELF_ALIGNMENT_BOTTOM_LOCKED:
+      alignment_type = api::autotest_private::ShelfAlignmentType::
+          SHELF_ALIGNMENT_TYPE_BOTTOMLOCKED;
+      break;
+  }
+  Respond(OneArgument(std::make_unique<base::Value>(
+      api::autotest_private::ToString(alignment_type))));
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// AutotestPrivateSetShelfAlignmentFunction
+///////////////////////////////////////////////////////////////////////////////
+
+AutotestPrivateSetShelfAlignmentFunction::
+    AutotestPrivateSetShelfAlignmentFunction() = default;
+
+AutotestPrivateSetShelfAlignmentFunction::
+    ~AutotestPrivateSetShelfAlignmentFunction() = default;
+
+ExtensionFunction::ResponseAction
+AutotestPrivateSetShelfAlignmentFunction::Run() {
+  DVLOG(1) << "AutotestPrivateSetShelfAlignmentFunction";
+
+  std::unique_ptr<api::autotest_private::SetShelfAlignment::Params> params(
+      api::autotest_private::SetShelfAlignment::Params::Create(*args_));
+  EXTENSION_FUNCTION_VALIDATE(params);
+
+  service_manager::Connector* connector =
+      content::ServiceManagerConnection::GetForProcess()->GetConnector();
+  connector->BindInterface(ash::mojom::kServiceName, &shelf_test_api_);
+
+  ash::ShelfAlignment alignment;
+  switch (params->alignment) {
+    case api::autotest_private::ShelfAlignmentType::SHELF_ALIGNMENT_TYPE_BOTTOM:
+      alignment = ash::ShelfAlignment::SHELF_ALIGNMENT_BOTTOM;
+      break;
+    case api::autotest_private::ShelfAlignmentType::SHELF_ALIGNMENT_TYPE_LEFT:
+      alignment = ash::ShelfAlignment::SHELF_ALIGNMENT_LEFT;
+      break;
+    case api::autotest_private::ShelfAlignmentType::SHELF_ALIGNMENT_TYPE_RIGHT:
+      alignment = ash::ShelfAlignment::SHELF_ALIGNMENT_RIGHT;
+      break;
+    case api::autotest_private::ShelfAlignmentType::
+        SHELF_ALIGNMENT_TYPE_BOTTOMLOCKED:
+      alignment = ash::ShelfAlignment::SHELF_ALIGNMENT_BOTTOM_LOCKED;
+      break;
+    case api::autotest_private::ShelfAlignmentType::SHELF_ALIGNMENT_TYPE_NONE:
+      return RespondNow(
+          Error("Unsupported None alignment; expected 'Bottom', 'Left', "
+                "'Right' or 'BottomLocked'"));
+  }
+  int64_t display_id;
+  if (!base::StringToInt64(params->display_id, &display_id)) {
+    return RespondNow(Error(base::StrCat(
+        {"Invalid display_id; expected string with numbers only, got ",
+         params->display_id})));
+  }
+
+  shelf_test_api_->SetAlignment(
+      display_id, alignment,
+      base::BindOnce(&AutotestPrivateSetShelfAlignmentFunction::
+                         OnSetShelfAlignmentCompleted,
+                     this));
+  return RespondLater();
+}
+
+void AutotestPrivateSetShelfAlignmentFunction::OnSetShelfAlignmentCompleted() {
+  Respond(NoArguments());
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// AutotestPrivateShowVirtualKeyboardIfEnabledFunction
+///////////////////////////////////////////////////////////////////////////////
+
+AutotestPrivateShowVirtualKeyboardIfEnabledFunction::
+    AutotestPrivateShowVirtualKeyboardIfEnabledFunction() = default;
+AutotestPrivateShowVirtualKeyboardIfEnabledFunction::
+    ~AutotestPrivateShowVirtualKeyboardIfEnabledFunction() = default;
+
+ExtensionFunction::ResponseAction
+AutotestPrivateShowVirtualKeyboardIfEnabledFunction::Run() {
+  if (!ui::IMEBridge::Get() ||
+      !ui::IMEBridge::Get()->GetInputContextHandler() ||
+      !ui::IMEBridge::Get()->GetInputContextHandler()->GetInputMethod()) {
+    return RespondNow(NoArguments());
+  }
+
+  ui::IMEBridge::Get()
+      ->GetInputContextHandler()
+      ->GetInputMethod()
+      ->ShowVirtualKeyboardIfEnabled();
+  return RespondNow(NoArguments());
 }
 
 ///////////////////////////////////////////////////////////////////////////////

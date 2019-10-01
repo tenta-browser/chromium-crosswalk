@@ -11,10 +11,11 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/files/file_util.h"
+#include "base/hash/md5.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/logging.h"
-#include "base/md5.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
@@ -539,20 +540,12 @@ CancelCallback FakeDriveService::GetRemainingChangeList(
       if (parameters[i].first == "changestamp") {
         base::StringToInt64(parameters[i].second, &start_changestamp);
       } else if (parameters[i].first == "q") {
-        search_query = net::UnescapeURLComponent(
-            parameters[i].second,
-            net::UnescapeRule::PATH_SEPARATORS |
-                net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS);
+        search_query = net::UnescapeBinaryURLComponent(parameters[i].second);
       } else if (parameters[i].first == "parent") {
-        directory_resource_id = net::UnescapeURLComponent(
-            parameters[i].second,
-            net::UnescapeRule::PATH_SEPARATORS |
-                net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS);
+        directory_resource_id =
+            net::UnescapeBinaryURLComponent(parameters[i].second);
       } else if (parameters[i].first == "team-drive-id") {
-        team_drive_id = net::UnescapeURLComponent(
-            parameters[i].second,
-            net::UnescapeRule::PATH_SEPARATORS |
-                net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS);
+        team_drive_id = net::UnescapeBinaryURLComponent(parameters[i].second);
       } else if (parameters[i].first == "start-offset") {
         base::StringToInt(parameters[i].second, &start_offset);
       } else if (parameters[i].first == "max-results") {
@@ -1887,7 +1880,7 @@ void FakeDriveService::GetChangeListInternal(
         max_results));
     if (start_changestamp > 0) {
       next_url = net::AppendOrReplaceQueryParameter(
-          next_url, "changestamp", base::Int64ToString(start_changestamp));
+          next_url, "changestamp", base::NumberToString(start_changestamp));
     }
     if (!search_query.empty()) {
       next_url = net::AppendOrReplaceQueryParameter(
@@ -1915,7 +1908,7 @@ void FakeDriveService::GetChangeListInternal(
 
 GURL FakeDriveService::GetNewUploadSessionUrl() {
   return GURL("https://upload_session_url/" +
-              base::Int64ToString(next_upload_sequence_number_++));
+              base::NumberToString(next_upload_sequence_number_++));
 }
 
 google_apis::CancelCallback FakeDriveService::AddPermission(

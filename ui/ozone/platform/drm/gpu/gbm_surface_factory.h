@@ -6,7 +6,6 @@
 #define UI_OZONE_PLATFORM_DRM_GPU_GBM_SURFACE_FACTORY_H_
 
 #include <stdint.h>
-
 #include <map>
 #include <memory>
 #include <vector>
@@ -57,6 +56,7 @@ class GbmSurfaceFactory : public SurfaceFactoryOzone {
       gfx::AcceleratedWidget widget) override;
   scoped_refptr<gfx::NativePixmap> CreateNativePixmap(
       gfx::AcceleratedWidget widget,
+      VkDevice vk_device,
       gfx::Size size,
       gfx::BufferFormat format,
       gfx::BufferUsage usage) override;
@@ -64,7 +64,7 @@ class GbmSurfaceFactory : public SurfaceFactoryOzone {
       gfx::AcceleratedWidget widget,
       gfx::Size size,
       gfx::BufferFormat format,
-      const gfx::NativePixmapHandle& handle) override;
+      gfx::NativePixmapHandle handle) override;
   void SetGetProtectedNativePixmapDelegate(
       const GetProtectedNativePixmapCallback&
           get_protected_native_pixmap_callback) override;
@@ -72,14 +72,17 @@ class GbmSurfaceFactory : public SurfaceFactoryOzone {
       gfx::AcceleratedWidget widget,
       gfx::Size size,
       gfx::BufferFormat format,
-      const gfx::NativePixmapHandle& handle) override;
+      gfx::NativePixmapHandle handle) override;
+
+  std::vector<gfx::BufferFormat> GetSupportedFormatsForTexturing()
+      const override;
 
  private:
   scoped_refptr<gfx::NativePixmap> CreateNativePixmapFromHandleInternal(
       gfx::AcceleratedWidget widget,
       gfx::Size size,
       gfx::BufferFormat format,
-      const gfx::NativePixmapHandle& handle);
+      gfx::NativePixmapHandle handle);
 
   std::unique_ptr<GLOzone> egl_implementation_;
 

@@ -9,7 +9,11 @@ namespace ash {
 LoginDataDispatcher::Observer::~Observer() = default;
 
 void LoginDataDispatcher::Observer::OnUsersChanged(
-    const std::vector<mojom::LoginUserInfoPtr>& users) {}
+    const std::vector<LoginUserInfo>& users) {}
+
+void LoginDataDispatcher::Observer::OnUserAvatarChanged(
+    const AccountId& account_id,
+    const UserAvatar& avatar) {}
 
 void LoginDataDispatcher::Observer::OnPinEnabledForUserChanged(
     const AccountId& user,
@@ -17,16 +21,18 @@ void LoginDataDispatcher::Observer::OnPinEnabledForUserChanged(
 
 void LoginDataDispatcher::Observer::OnFingerprintStateChanged(
     const AccountId& account_id,
-    mojom::FingerprintState state) {}
+    FingerprintState state) {}
 
 void LoginDataDispatcher::Observer::OnFingerprintAuthResult(
     const AccountId& account_id,
     bool successful) {}
 
-void LoginDataDispatcher::Observer::OnAuthEnabledForUserChanged(
+void LoginDataDispatcher::Observer::OnAuthEnabledForUser(
+    const AccountId& user) {}
+
+void LoginDataDispatcher::Observer::OnAuthDisabledForUser(
     const AccountId& user,
-    bool enabled,
-    const base::Optional<base::Time>& auth_reenabled_time) {}
+    const AuthDisabledData& auth_disabled_data) {}
 
 void LoginDataDispatcher::Observer::OnTapToUnlockEnabledForUserChanged(
     const AccountId& user,
@@ -40,12 +46,10 @@ void LoginDataDispatcher::Observer::OnLockScreenNoteStateChanged(
 
 void LoginDataDispatcher::Observer::OnShowEasyUnlockIcon(
     const AccountId& user,
-    const mojom::EasyUnlockIconOptionsPtr& icon) {}
+    const EasyUnlockIconOptions& icon) {}
 
-void LoginDataDispatcher::Observer::OnShowWarningBanner(
+void LoginDataDispatcher::Observer::OnWarningMessageUpdated(
     const base::string16& message) {}
-
-void LoginDataDispatcher::Observer::OnHideWarningBanner() {}
 
 void LoginDataDispatcher::Observer::OnSystemInfoChanged(
     bool show,
@@ -59,14 +63,14 @@ void LoginDataDispatcher::Observer::OnPublicSessionDisplayNameChanged(
 
 void LoginDataDispatcher::Observer::OnPublicSessionLocalesChanged(
     const AccountId& account_id,
-    const std::vector<mojom::LocaleItemPtr>& locales,
+    const std::vector<LocaleItem>& locales,
     const std::string& default_locale,
     bool show_advanced_view) {}
 
 void LoginDataDispatcher::Observer::OnPublicSessionKeyboardLayoutsChanged(
     const AccountId& account_id,
     const std::string& locale,
-    const std::vector<mojom::InputMethodItemPtr>& keyboard_layouts) {}
+    const std::vector<InputMethodItem>& keyboard_layouts) {}
 
 void LoginDataDispatcher::Observer::
     OnPublicSessionShowFullManagementDisclosureChanged(
@@ -74,6 +78,12 @@ void LoginDataDispatcher::Observer::
 
 void LoginDataDispatcher::Observer::OnDetachableBasePairingStatusChanged(
     DetachableBasePairingStatus pairing_status) {}
+
+void LoginDataDispatcher::Observer::OnFocusLeavingLockScreenApps(bool reverse) {
+}
+
+void LoginDataDispatcher::Observer::OnOobeDialogStateChanged(
+    OobeDialogState state) {}
 
 LoginDataDispatcher::LoginDataDispatcher() = default;
 
@@ -87,22 +97,35 @@ void LoginDataDispatcher::RemoveObserver(Observer* observer) {
   observers_.RemoveObserver(observer);
 }
 
-void LoginDataDispatcher::NotifyUsers(
-    const std::vector<mojom::LoginUserInfoPtr>& users) {
+void LoginDataDispatcher::SetTapToUnlockEnabledForUser(const AccountId& user,
+                                                       bool enabled) {
+  for (auto& observer : observers_)
+    observer.OnTapToUnlockEnabledForUserChanged(user, enabled);
+}
+
+void LoginDataDispatcher::SetUserList(const std::vector<LoginUserInfo>& users) {
   for (auto& observer : observers_)
     observer.OnUsersChanged(users);
 }
 
 void LoginDataDispatcher::SetPinEnabledForUser(const AccountId& user,
                                                bool enabled) {
+  // Chrome will update pin pod state every time user tries to authenticate.
+  // LockScreen is destroyed in the case of authentication success.
   for (auto& observer : observers_)
     observer.OnPinEnabledForUserChanged(user, enabled);
 }
 
 void LoginDataDispatcher::SetFingerprintState(const AccountId& account_id,
-                                              mojom::FingerprintState state) {
+                                              FingerprintState state) {
   for (auto& observer : observers_)
     observer.OnFingerprintStateChanged(account_id, state);
+}
+
+void LoginDataDispatcher::SetAvatarForUser(const AccountId& account_id,
+                                           const UserAvatar& avatar) {
+  for (auto& observer : observers_)
+    observer.OnUserAvatarChanged(account_id, avatar);
 }
 
 void LoginDataDispatcher::NotifyFingerprintAuthResult(
@@ -112,23 +135,23 @@ void LoginDataDispatcher::NotifyFingerprintAuthResult(
     observer.OnFingerprintAuthResult(account_id, successful);
 }
 
-void LoginDataDispatcher::SetAuthEnabledForUser(
-    const AccountId& account_id,
-    bool is_enabled,
-    base::Optional<base::Time> auth_reenabled_time) {
-  for (auto& observer : observers_) {
-    observer.OnAuthEnabledForUserChanged(account_id, is_enabled,
-                                         auth_reenabled_time);
-  }
-}
-
-void LoginDataDispatcher::SetTapToUnlockEnabledForUser(const AccountId& user,
-                                                       bool enabled) {
+void LoginDataDispatcher::EnableAuthForUser(const AccountId& account_id) {
   for (auto& observer : observers_)
-    observer.OnTapToUnlockEnabledForUserChanged(user, enabled);
+    observer.OnAuthEnabledForUser(account_id);
 }
 
-void LoginDataDispatcher::SetForceOnlineSignInForUser(const AccountId& user) {
+void LoginDataDispatcher::DisableAuthForUser(
+    const AccountId& account_id,
+    const AuthDisabledData& auth_disabled_data) {
+  for (auto& observer : observers_)
+    observer.OnAuthDisabledForUser(account_id, auth_disabled_data);
+}
+
+void LoginDataDispatcher::EnableTapToUnlockForUser(const AccountId& user) {
+  SetTapToUnlockEnabledForUser(user, true);
+}
+
+void LoginDataDispatcher::ForceOnlineSignInForUser(const AccountId& user) {
   for (auto& observer : observers_)
     observer.OnForceOnlineSignInForUser(user);
 }
@@ -140,19 +163,14 @@ void LoginDataDispatcher::SetLockScreenNoteState(mojom::TrayActionState state) {
 
 void LoginDataDispatcher::ShowEasyUnlockIcon(
     const AccountId& user,
-    const mojom::EasyUnlockIconOptionsPtr& icon) {
+    const EasyUnlockIconOptions& icon) {
   for (auto& observer : observers_)
     observer.OnShowEasyUnlockIcon(user, icon);
 }
 
-void LoginDataDispatcher::ShowWarningBanner(const base::string16& message) {
+void LoginDataDispatcher::UpdateWarningMessage(const base::string16& message) {
   for (auto& observer : observers_)
-    observer.OnShowWarningBanner(message);
-}
-
-void LoginDataDispatcher::HideWarningBanner() {
-  for (auto& observer : observers_)
-    observer.OnHideWarningBanner();
+    observer.OnWarningMessageUpdated(message);
 }
 
 void LoginDataDispatcher::SetSystemInfo(
@@ -175,7 +193,7 @@ void LoginDataDispatcher::SetPublicSessionDisplayName(
 
 void LoginDataDispatcher::SetPublicSessionLocales(
     const AccountId& account_id,
-    const std::vector<mojom::LocaleItemPtr>& locales,
+    const std::vector<LocaleItem>& locales,
     const std::string& default_locale,
     bool show_advanced_view) {
   for (auto& observer : observers_) {
@@ -187,7 +205,7 @@ void LoginDataDispatcher::SetPublicSessionLocales(
 void LoginDataDispatcher::SetPublicSessionKeyboardLayouts(
     const AccountId& account_id,
     const std::string& locale,
-    const std::vector<mojom::InputMethodItemPtr>& keyboard_layouts) {
+    const std::vector<InputMethodItem>& keyboard_layouts) {
   for (auto& observer : observers_) {
     observer.OnPublicSessionKeyboardLayoutsChanged(account_id, locale,
                                                    keyboard_layouts);
@@ -206,6 +224,16 @@ void LoginDataDispatcher::SetDetachableBasePairingStatus(
     DetachableBasePairingStatus pairing_status) {
   for (auto& observer : observers_)
     observer.OnDetachableBasePairingStatusChanged(pairing_status);
+}
+
+void LoginDataDispatcher::HandleFocusLeavingLockScreenApps(bool reverse) {
+  for (auto& observer : observers_)
+    observer.OnFocusLeavingLockScreenApps(reverse);
+}
+
+void LoginDataDispatcher::NotifyOobeDialogState(OobeDialogState state) {
+  for (auto& observer : observers_)
+    observer.OnOobeDialogStateChanged(state);
 }
 
 }  // namespace ash

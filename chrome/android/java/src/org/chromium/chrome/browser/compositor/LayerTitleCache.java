@@ -20,8 +20,10 @@ import org.chromium.chrome.browser.favicon.FaviconHelper.DefaultFaviconHelper;
 import org.chromium.chrome.browser.favicon.FaviconHelper.FaviconImageCallback;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabFavicon;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.ui.base.DeviceFormFactor;
+import org.chromium.ui.base.LocalizationUtils;
 import org.chromium.ui.resources.ResourceManager;
 import org.chromium.ui.resources.dynamics.BitmapDynamicResource;
 import org.chromium.ui.resources.dynamics.DynamicResourceLoader;
@@ -125,13 +127,12 @@ public class LayerTitleCache implements TitleCache {
         boolean isHTSEnabled = !DeviceFormFactor.isNonMultiDisplayContextOnTablet(tab.getActivity())
                 && ChromeFeatureList.isEnabled(ChromeFeatureList.HORIZONTAL_TAB_SWITCHER_ANDROID);
         boolean isDarkTheme = tab.isIncognito() && !isHTSEnabled;
-        Bitmap originalFavicon = tab.getFavicon();
+        Bitmap originalFavicon = TabFavicon.getBitmap(tab);
         if (originalFavicon == null) {
             originalFavicon = mDefaultFaviconHelper.getDefaultFaviconBitmap(
                     mContext, tab.getUrl(), !isDarkTheme);
         }
 
-        boolean isRtl = tab.isTitleDirectionRtl();
         TitleBitmapFactory titleBitmapFactory =
                 isDarkTheme ? mDarkTitleBitmapFactory : mStandardTitleBitmapFactory;
 
@@ -146,6 +147,10 @@ public class LayerTitleCache implements TitleCache {
                 titleBitmapFactory.getFaviconBitmap(originalFavicon), fetchFaviconFromHistory);
 
         if (mNativeLayerTitleCache != 0) {
+            String tabTitle = tab.getTitle();
+            boolean isRtl = tabTitle != null
+                    && LocalizationUtils.getFirstStrongCharacterDirection(tabTitle)
+                            == LocalizationUtils.RIGHT_TO_LEFT;
             nativeUpdateLayer(mNativeLayerTitleCache, tabId, title.getTitleResId(),
                     title.getFaviconResId(), isDarkTheme, isRtl);
         }

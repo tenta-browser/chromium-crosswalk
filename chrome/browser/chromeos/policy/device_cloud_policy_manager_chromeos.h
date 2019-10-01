@@ -27,10 +27,14 @@ namespace chromeos {
 class InstallAttributes;
 
 namespace attestation {
+
 class AttestationPolicyObserver;
 class EnrollmentPolicyObserver;
-}
-}
+class EnrollmentCertificateUploader;
+class MachineCertificateUploader;
+
+}  // namespace attestation
+}  // namespace chromeos
 
 class PrefRegistrySimple;
 class PrefService;
@@ -81,6 +85,10 @@ class DeviceCloudPolicyManagerChromeOS : public CloudPolicyManager {
   void SetDeviceRequisition(const std::string& requisition);
   bool IsRemoraRequisition() const;
   bool IsSharkRequisition() const;
+
+  // Gets/Sets the sub organization.
+  std::string GetSubOrganization() const;
+  void SetSubOrganization(const std::string& sub_organization);
 
   // If set, the device will start the enterprise enrollment OOBE.
   void SetDeviceEnrollmentAutoStart();
@@ -139,6 +147,20 @@ class DeviceCloudPolicyManagerChromeOS : public CloudPolicyManager {
         component_policy_disabled_for_testing;
   }
 
+  // Return a pointer to the enrollment certificate uploader. The callers do
+  // not take ownership of that pointer.
+  chromeos::attestation::EnrollmentCertificateUploader*
+  GetEnrollmentCertificateUploader() {
+    return enrollment_certificate_uploader_.get();
+  }
+
+  // Return a pointer to the machine certificate uploader. The callers do
+  // not take ownership of that pointer.
+  chromeos::attestation::MachineCertificateUploader*
+  GetMachineCertificateUploader() {
+    return machine_certificate_uploader_.get();
+  }
+
  private:
   // Saves the state keys received from |session_manager_client_|.
   void OnStateKeysUpdated();
@@ -180,8 +202,12 @@ class DeviceCloudPolicyManagerChromeOS : public CloudPolicyManager {
   // PrefService instance to read the policy refresh rate from.
   PrefService* local_state_;
 
+  std::unique_ptr<chromeos::attestation::EnrollmentCertificateUploader>
+      enrollment_certificate_uploader_;
   std::unique_ptr<chromeos::attestation::EnrollmentPolicyObserver>
       enrollment_policy_observer_;
+  std::unique_ptr<chromeos::attestation::MachineCertificateUploader>
+      machine_certificate_uploader_;
   std::unique_ptr<chromeos::attestation::AttestationPolicyObserver>
       attestation_policy_observer_;
 

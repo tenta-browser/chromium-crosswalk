@@ -5,6 +5,7 @@
 package org.chromium.chrome.browser.contacts_picker;
 
 import android.content.Context;
+import android.text.style.StyleSpan;
 import android.util.AttributeSet;
 import android.view.View;
 import android.widget.CheckBox;
@@ -13,6 +14,8 @@ import android.widget.RelativeLayout;
 import android.widget.TextView;
 
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeFeatureList;
+import org.chromium.ui.text.SpanApplier;
 
 import java.text.NumberFormat;
 
@@ -58,6 +61,9 @@ public class TopView extends RelativeLayout implements CompoundButton.OnCheckedC
         super.onFinishInflate();
 
         mCheckboxContainer = findViewById(R.id.content);
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.CONTACTS_PICKER_SELECT_ALL)) {
+            mCheckboxContainer.setVisibility(View.VISIBLE);
+        }
         mSelectAllBox = findViewById(R.id.checkbox);
         mContactCount = findViewById(R.id.checkbox_details);
 
@@ -70,9 +76,11 @@ public class TopView extends RelativeLayout implements CompoundButton.OnCheckedC
      * @param origin The origin string to display.
      */
     public void setSiteString(String origin) {
-        String siteString = mContext.getString(R.string.disclaimer_sharing_contact_details, origin);
         TextView explanation = findViewById(R.id.explanation);
-        explanation.setText(siteString);
+        StyleSpan boldSpan = new StyleSpan(android.graphics.Typeface.BOLD);
+        explanation.setText(SpanApplier.applySpans(
+                mContext.getString(R.string.disclaimer_sharing_contact_details, origin),
+                new SpanApplier.SpanInfo("<b>", "</b>", boldSpan)));
     }
 
     /**
@@ -107,7 +115,9 @@ public class TopView extends RelativeLayout implements CompoundButton.OnCheckedC
      * Toggles the Select All checkbox.
      */
     public void toggle() {
-        mSelectAllBox.setChecked(!mSelectAllBox.isChecked());
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.CONTACTS_PICKER_SELECT_ALL)) {
+            mSelectAllBox.setChecked(!mSelectAllBox.isChecked());
+        }
     }
 
     /**

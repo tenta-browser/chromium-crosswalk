@@ -11,13 +11,13 @@
 
 #include "base/macros.h"
 #include "base/time/time.h"
-#include "content/browser/service_worker/service_worker_context_request_handler.h"
 #include "content/browser/service_worker/service_worker_database.h"
 #include "content/browser/service_worker/service_worker_installed_script_reader.h"
-#include "content/common/service_worker/embedded_worker.mojom.h"
 #include "content/common/service_worker/service_worker_types.h"
 #include "content/public/browser/service_worker_context.h"
+#include "content/public/common/resource_type.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/embedded_worker.mojom.h"
 #include "ui/base/page_transition_types.h"
 
 class GURL;
@@ -175,8 +175,9 @@ class ServiceWorkerMetrics {
     COOKIE_CHANGE = 30,
     LONG_RUNNING_MESSAGE = 31,
     BACKGROUND_FETCH_SUCCESS = 32,
+    PERIODIC_SYNC = 33,
     // Add new events to record here.
-    kMaxValue = BACKGROUND_FETCH_SUCCESS,
+    kMaxValue = PERIODIC_SYNC,
   };
 
   // Used for UMA. Append only.
@@ -269,6 +270,9 @@ class ServiceWorkerMetrics {
 
     // The browser received the worker started IPC.
     base::TimeTicks local_end;
+
+    // Counts the time overhead of UI/IO thread hops during startup.
+    base::TimeDelta thread_hop_time;
   };
 
   // Records worker activities. Currently this only records
@@ -409,21 +413,14 @@ class ServiceWorkerMetrics {
   // |start_situation| describe the preparation needed.
   // |response_start| is the time it took until the navigation preload response
   // started.
-  // |resource_type| must be RESOURCE_TYPE_MAIN_FRAME or
-  // RESOURCE_TYPE_SUB_FRAME.
+  // |resource_type| must be ResourceType::kMainFrame or
+  // ResourceType::kSubFrame.
   CONTENT_EXPORT static void RecordNavigationPreloadResponse(
       base::TimeDelta worker_start,
       base::TimeDelta response_start,
       EmbeddedWorkerStatus initial_worker_status,
       StartSituation start_situation,
       ResourceType resource_type);
-
-  // Records the result of trying to handle a request for a service worker
-  // script.
-  static void RecordContextRequestHandlerStatus(
-      ServiceWorkerContextRequestHandler::CreateJobStatus status,
-      bool is_installed,
-      bool is_main_script);
 
   static void RecordRuntime(base::TimeDelta time);
 
@@ -433,6 +430,15 @@ class ServiceWorkerMetrics {
 
   // Records the number of origins with a registered service worker.
   static void RecordRegisteredOriginCount(size_t origin_count);
+
+  // Records the duration of looking up an existing registration.
+  // |status| is the result of lookup. The records for the cases where
+  // the registration is found (kOk), not found (kErrorNotFound), or an error
+  // happens (other errors) are saved separately into a relevant suffixed
+  // histogram.
+  static void RecordLookupRegistrationTime(
+      blink::ServiceWorkerStatusCode status,
+      base::TimeDelta duration);
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(ServiceWorkerMetrics);

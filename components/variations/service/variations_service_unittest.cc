@@ -11,12 +11,12 @@
 #include <vector>
 
 #include "base/base64.h"
+#include "base/bind.h"
 #include "base/feature_list.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
-#include "base/sha1.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
@@ -558,8 +558,8 @@ TEST_F(VariationsServiceTest, InstanceManipulations) {
 
     std::string headers("HTTP/1.1 200 OK\n\n");
     network::ResourceResponseHead head;
-    head.headers = new net::HttpResponseHeaders(
-        net::HttpUtil::AssembleRawHeaders(headers.c_str(), headers.size()));
+    head.headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+        net::HttpUtil::AssembleRawHeaders(headers));
     if (!cases[i].im.empty())
       head.headers->AddHeader(cases[i].im);
     network::URLLoaderCompletionStatus status;
@@ -588,8 +588,8 @@ TEST_F(VariationsServiceTest, CountryHeader) {
 
   std::string headers("HTTP/1.1 200 OK\n\n");
   network::ResourceResponseHead head;
-  head.headers = new net::HttpResponseHeaders(
-      net::HttpUtil::AssembleRawHeaders(headers.c_str(), headers.size()));
+  head.headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(headers));
   head.headers->AddHeader("X-Country: test");
   network::URLLoaderCompletionStatus status;
   status.decoded_body_length = serialized_seed.size();
@@ -850,8 +850,8 @@ TEST_F(VariationsServiceTest, SafeMode_SuccessfulFetchClearsFailureStreaks) {
 
   std::string headers("HTTP/1.1 200 OK\n\n");
   network::ResourceResponseHead head;
-  head.headers = new net::HttpResponseHeaders(
-      net::HttpUtil::AssembleRawHeaders(headers.c_str(), headers.size()));
+  head.headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(headers));
   head.headers->AddHeader(seed_signature_header);
   network::URLLoaderCompletionStatus status;
   status.decoded_body_length = response.size();
@@ -880,8 +880,8 @@ TEST_F(VariationsServiceTest, SafeMode_NotModifiedFetchClearsFailureStreaks) {
 
   std::string headers("HTTP/1.1 304 Not Modified\n\n");
   network::ResourceResponseHead head;
-  head.headers = new net::HttpResponseHeaders(
-      net::HttpUtil::AssembleRawHeaders(headers.c_str(), headers.size()));
+  head.headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(headers));
   network::URLLoaderCompletionStatus status;
   service.test_url_loader_factory()->AddResponse(service.interception_url(),
                                                  head, "", status);
@@ -1020,8 +1020,8 @@ TEST_F(VariationsServiceTest, NullResponseReceivedWithHTTPOk) {
 
   std::string headers("HTTP/1.1 200 OK\n\n");
   network::ResourceResponseHead head;
-  head.headers = new net::HttpResponseHeaders(
-      net::HttpUtil::AssembleRawHeaders(headers.c_str(), headers.size()));
+  head.headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(headers));
   EXPECT_EQ(net::HTTP_OK, head.headers->response_code());
   head.headers->AddHeader(seed_signature_header);
   // Set ERR_FAILED status code despite the 200 response code.
@@ -1039,6 +1039,38 @@ TEST_F(VariationsServiceTest, NullResponseReceivedWithHTTPOk) {
   EXPECT_FALSE(service.seed_stored());
   histogram_tester.ExpectUniqueSample("Variations.SeedFetchResponseOrErrorCode",
                                       net::ERR_FAILED, 1);
+}
+
+TEST_F(VariationsServiceTest,
+       VariationsServiceStartsRequestOnNetworkChange) {
+  // Verifies VariationsService does a request when network status changes from
+  // none to connected. This is a regression test for https://crbug.com/826930.
+  VariationsService::EnableFetchForTesting();
+  network_tracker_->SetConnectionType(
+      network::mojom::ConnectionType::CONNECTION_NONE);
+  TestVariationsService service(
+      std::make_unique<web_resource::TestRequestAllowedNotifier>(
+          &prefs_, network_tracker_),
+      &prefs_, GetMetricsStateManager(), true);
+  service.set_intercepts_fetch(false);
+  service.CancelCurrentRequestForTesting();
+  base::RunLoop().RunUntilIdle();
+  // Simulate starting Chrome browser.
+  service.StartRepeatedVariationsSeedFetchForTesting();
+  const int initial_request_count = service.request_count();
+  // The variations seed can not be fetched if disconnected. So even we start
+  // repeated variations seed fetch (on Chrome start), no requests will be made.
+  EXPECT_EQ(0, initial_request_count);
+
+  service.GetResourceRequestAllowedNotifierForTesting()
+      ->SetObserverRequestedForTesting(true);
+  network_tracker_->SetConnectionType(
+      network::mojom::ConnectionType::CONNECTION_WIFI);
+  base::RunLoop().RunUntilIdle();
+
+  const int final_request_count = service.request_count();
+  // The request will be made once Chrome gets online.
+  EXPECT_EQ(initial_request_count + 1, final_request_count);
 }
 
 // TODO(isherman): Add an integration test for saving and loading a safe seed,

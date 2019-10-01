@@ -5,6 +5,7 @@
 #include "ash/voice_interaction/voice_interaction_controller.h"
 
 #include <memory>
+#include <utility>
 
 #include "ash/public/interfaces/voice_interaction_controller.mojom.h"
 #include "ash/shell.h"
@@ -37,12 +38,17 @@ class TestVoiceInteractionObserver : public mojom::VoiceInteractionObserver {
   void OnVoiceInteractionHotwordEnabled(bool enabled) override {
     hotword_enabled_ = enabled;
   }
-  void OnVoiceInteractionSetupCompleted(bool completed) override {
-    setup_completed_ = completed;
+  void OnVoiceInteractionConsentStatusUpdated(
+      mojom::ConsentStatus consent_status) override {
+    consent_status_ = consent_status;
   }
   void OnAssistantFeatureAllowedChanged(
       mojom::AssistantAllowedState state) override {}
   void OnLocaleChanged(const std::string& locale) override {}
+  void OnArcPlayStoreEnabledChanged(bool enabled) override {
+    arc_play_store_enabled_ = enabled;
+  }
+  void OnLockedFullScreenStateChanged(bool enabled) override {}
 
   mojom::VoiceInteractionState voice_interaction_state() const {
     return state_;
@@ -51,7 +57,8 @@ class TestVoiceInteractionObserver : public mojom::VoiceInteractionObserver {
   bool context_enabled() const { return context_enabled_; }
   bool hotword_always_on() const { return hotword_always_on_; }
   bool hotword_enabled() const { return hotword_enabled_; }
-  bool setup_completed() const { return setup_completed_; }
+  bool arc_play_store_enabled() const { return arc_play_store_enabled_; }
+  mojom::ConsentStatus consent_status() const { return consent_status_; }
 
   void SetVoiceInteractionController(VoiceInteractionController* controller) {
     mojom::VoiceInteractionObserverPtr ptr;
@@ -65,7 +72,8 @@ class TestVoiceInteractionObserver : public mojom::VoiceInteractionObserver {
   bool context_enabled_ = false;
   bool hotword_always_on_ = false;
   bool hotword_enabled_ = false;
-  bool setup_completed_ = false;
+  bool arc_play_store_enabled_ = false;
+  mojom::ConsentStatus consent_status_ = mojom::ConsentStatus::kUnknown;
 
   mojo::Binding<mojom::VoiceInteractionObserver> voice_interaction_binding_;
 
@@ -147,13 +155,23 @@ TEST_F(VoiceInteractionControllerTest, NotifyHotwordEnabled) {
   EXPECT_TRUE(observer()->hotword_enabled());
 }
 
-TEST_F(VoiceInteractionControllerTest, NotifySetupCompleted) {
-  controller()->NotifySetupCompleted(true);
+TEST_F(VoiceInteractionControllerTest, NotifyConsentStatus) {
+  controller()->NotifyConsentStatus(
+      mojom::ConsentStatus::kActivityControlAccepted);
   controller()->FlushForTesting();
   // The cached state should be updated.
-  EXPECT_TRUE(controller()->setup_completed());
+  EXPECT_TRUE(controller()->consent_status() ==
+              mojom::ConsentStatus::kActivityControlAccepted);
   // The observers should be notified.
-  EXPECT_TRUE(observer()->setup_completed());
+  EXPECT_TRUE(observer()->consent_status() ==
+              mojom::ConsentStatus::kActivityControlAccepted);
+}
+
+TEST_F(VoiceInteractionControllerTest, NotifyArcPlayStoreEnabledChanged) {
+  controller()->NotifyArcPlayStoreEnabledChanged(true);
+  controller()->FlushForTesting();
+  // The observers should be notified.
+  EXPECT_TRUE(observer()->arc_play_store_enabled());
 }
 
 }  // namespace ash

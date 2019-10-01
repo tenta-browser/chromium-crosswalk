@@ -17,12 +17,15 @@
 #include "base/test/bind_test_util.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/chromeos/arc/icon_decode_request.h"
+#include "chrome/browser/chromeos/crostini/crostini_registry_service.h"
+#include "chrome/browser/chromeos/crostini/crostini_registry_service_factory.h"
+#include "chrome/browser/chromeos/crostini/crostini_test_helper.h"
+#include "chrome/browser/chromeos/crostini/crostini_util.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_test.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_utils.h"
 #include "chrome/browser/ui/app_list/internal_app/internal_app_metadata.h"
-#include "chrome/browser/ui/ash/fake_tablet_mode_controller.h"
 #include "chrome/browser/ui/ash/launcher/arc_app_shelf_id.h"
 #include "chrome/browser/ui/ash/launcher/arc_launcher_context_menu.h"
 #include "chrome/browser/ui/ash/launcher/browser_shortcut_launcher_item_controller.h"
@@ -77,8 +80,6 @@ class LauncherContextMenuTest : public ChromeAshTestBase {
         std::make_unique<ChromeLauncherController>(&profile_, model_.get());
 
     tablet_mode_client_ = std::make_unique<TabletModeClient>();
-    tablet_mode_client_->InitForTesting(
-        fake_tablet_mode_controller_.CreateInterfacePtr());
 
     // Disable safe icon decoding to ensure ArcAppShortcutRequests returns in
     // the test environment.
@@ -111,7 +112,7 @@ class LauncherContextMenuTest : public ChromeAshTestBase {
     base::RunLoop run_loop;
     std::unique_ptr<ui::MenuModel> menu;
     launcher_context_menu->GetMenuModel(base::BindLambdaForTesting(
-        [&](std::unique_ptr<ui::MenuModel> created_menu) {
+        [&](std::unique_ptr<ui::SimpleMenuModel> created_menu) {
           menu = std::move(created_menu);
           run_loop.Quit();
         }));
@@ -126,7 +127,7 @@ class LauncherContextMenuTest : public ChromeAshTestBase {
     std::unique_ptr<ui::MenuModel> menu;
     item_delegate->GetContextMenu(
         display_id, base::BindLambdaForTesting(
-                        [&](std::unique_ptr<ui::MenuModel> created_menu) {
+                        [&](std::unique_ptr<ui::SimpleMenuModel> created_menu) {
                           menu = std::move(created_menu);
                           run_loop.Quit();
                         }));
@@ -137,6 +138,9 @@ class LauncherContextMenuTest : public ChromeAshTestBase {
   void TearDown() override {
     launcher_controller_.reset();
     ChromeAshTestBase::TearDown();
+    // To match ChromeBrowserMainExtraPartsAsh, shut down the TabletModeClient
+    // after Shell.
+    tablet_mode_client_.reset();
   }
 
   ArcAppTest& arc_test() { return arc_test_; }
@@ -154,7 +158,6 @@ class LauncherContextMenuTest : public ChromeAshTestBase {
   std::unique_ptr<ash::ShelfModel> model_;
   std::unique_ptr<ChromeLauncherController> launcher_controller_;
 
-  FakeTabletModeController fake_tablet_mode_controller_;
   std::unique_ptr<TabletModeClient> tablet_mode_client_;
 
   DISALLOW_COPY_AND_ASSIGN(LauncherContextMenuTest);
@@ -223,7 +226,6 @@ TEST_F(LauncherContextMenuTest,
 
 // Verifies context menu and app menu items for ARC app.
 TEST_F(LauncherContextMenuTest, ArcLauncherMenusCheck) {
-  arc_test().app_instance()->RefreshAppList();
   arc_test().app_instance()->SendRefreshAppList(
       std::vector<arc::mojom::AppInfo>(arc_test().fake_apps().begin(),
                                        arc_test().fake_apps().begin() + 1));
@@ -259,10 +261,9 @@ TEST_F(LauncherContextMenuTest, ArcLauncherMenusCheck) {
 
   item_delegate = model()->GetShelfItemDelegate(shelf_id);
   ASSERT_TRUE(item_delegate);
-  ash::MenuItemList menu_list =
-      item_delegate->GetAppMenuItems(0 /* event_flags */);
+  auto menu_list = item_delegate->GetAppMenuItems(0 /* event_flags */);
   ASSERT_EQ(1U, menu_list.size());
-  EXPECT_EQ(base::UTF8ToUTF16(app_name), menu_list[0]->label);
+  EXPECT_EQ(base::UTF8ToUTF16(app_name), menu_list[0].first);
 
   menu = GetContextMenu(item_delegate, display_id);
   ASSERT_TRUE(menu);
@@ -288,7 +289,7 @@ TEST_F(LauncherContextMenuTest, ArcLauncherMenusCheck) {
 
   menu_list = item_delegate2->GetAppMenuItems(0 /* event_flags */);
   ASSERT_EQ(1U, menu_list.size());
-  EXPECT_EQ(base::UTF8ToUTF16(app_name2), menu_list[0]->label);
+  EXPECT_EQ(base::UTF8ToUTF16(app_name2), menu_list[0].first);
 
   menu = GetContextMenu(item_delegate2, display_id);
   ASSERT_TRUE(menu);
@@ -345,7 +346,7 @@ TEST_F(LauncherContextMenuTest, ArcLauncherMenusCheck) {
     // in reverse order, based on activation order.
     for (uint32_t j = 0; j <= i; ++j) {
       EXPECT_EQ(base::UTF8ToUTF16(GetAppNameInShelfGroup(3 + j)),
-                menu_list[i - j]->label);
+                menu_list[i - j].first);
     }
   }
 }
@@ -353,7 +354,6 @@ TEST_F(LauncherContextMenuTest, ArcLauncherMenusCheck) {
 TEST_F(LauncherContextMenuTest, ArcLauncherSuspendAppMenu) {
   arc::mojom::AppInfo app = arc_test().fake_apps()[0];
   app.suspended = true;
-  arc_test().app_instance()->RefreshAppList();
   arc_test().app_instance()->SendRefreshAppList({app});
   const std::string app_id = ArcAppTest::GetAppId(app);
 
@@ -378,7 +378,6 @@ TEST_F(LauncherContextMenuTest, ArcLauncherSuspendAppMenu) {
 }
 
 TEST_F(LauncherContextMenuTest, ArcDeferredLauncherContextMenuItemCheck) {
-  arc_test().app_instance()->RefreshAppList();
   arc_test().app_instance()->SendRefreshAppList(
       std::vector<arc::mojom::AppInfo>(arc_test().fake_apps().begin(),
                                        arc_test().fake_apps().begin() + 2));
@@ -444,7 +443,6 @@ TEST_F(LauncherContextMenuTest, ArcContextMenuOptions) {
   // adding a context menu option ensure that you have added the enum to
   // tools/metrics/enums.xml and that you haven't modified the order of the
   // existing enums.
-  arc_test().app_instance()->RefreshAppList();
   arc_test().app_instance()->SendRefreshAppList(
       std::vector<arc::mojom::AppInfo>(arc_test().fake_apps().begin(),
                                        arc_test().fake_apps().begin() + 1));
@@ -515,6 +513,103 @@ TEST_F(LauncherContextMenuTest, InternalAppShelfContextMenuOptionsNumber) {
     const int expected_options_num = internal_app.show_in_launcher ? 2 : 1;
     EXPECT_EQ(expected_options_num, menu->GetItemCount());
   }
+}
+
+// Checks some properties for crostini's terminal app's context menu,
+// specifically that every menu item has an icon.
+TEST_F(LauncherContextMenuTest, CrostiniTerminalApp) {
+  crostini::CrostiniTestHelper crostini_helper(profile());
+  const std::string app_id = crostini::kCrostiniTerminalId;
+  crostini::CrostiniManager::GetForProfile(profile())->AddRunningVmForTesting(
+      crostini::kCrostiniDefaultVmName);
+
+  controller()->PinAppWithID(app_id);
+  const ash::ShelfItem* item = controller()->GetItem(ash::ShelfID(app_id));
+  ASSERT_TRUE(item);
+
+  ash::ShelfItemDelegate* item_delegate =
+      model()->GetShelfItemDelegate(ash::ShelfID(app_id));
+  ASSERT_TRUE(item_delegate);
+  int64_t primary_id = GetPrimaryDisplay().id();
+  std::unique_ptr<ui::MenuModel> menu =
+      GetContextMenu(item_delegate, primary_id);
+
+  // Check that every menu item has an icon
+  for (int i = 0; i < menu->GetItemCount(); ++i) {
+    gfx::Image icon;
+    EXPECT_TRUE(menu->GetIconAt(i, &icon));
+    EXPECT_FALSE(icon.IsEmpty());
+  }
+
+  // When crostini is running, the terminal should have an option to kill the
+  // vm.
+  EXPECT_TRUE(IsItemEnabledInMenu(menu.get(), ash::STOP_APP));
+}
+
+// Checks the context menu for a "normal" crostini app (i.e. a registered one).
+// Particularly, we ensure that the density changing option exists.
+TEST_F(LauncherContextMenuTest, CrostiniNormalApp) {
+  crostini::CrostiniTestHelper crostini_helper(profile());
+
+  const std::string app_name = "foo";
+  crostini_helper.AddApp(crostini::CrostiniTestHelper::BasicApp(app_name));
+  const std::string app_id =
+      crostini::CrostiniTestHelper::GenerateAppId(app_name);
+  crostini::CrostiniRegistryServiceFactory::GetForProfile(profile())
+      ->AppLaunched(app_id);
+
+  controller()->PinAppWithID(app_id);
+  const ash::ShelfItem* item = controller()->GetItem(ash::ShelfID(app_id));
+  ASSERT_TRUE(item);
+
+  ash::ShelfItemDelegate* item_delegate =
+      model()->GetShelfItemDelegate(ash::ShelfID(app_id));
+  ASSERT_TRUE(item_delegate);
+  int64_t primary_id = GetPrimaryDisplay().id();
+
+  // We force a scale factor of 2.0, to check that the normal app has a menu
+  // option to change the dpi settings.
+  UpdateDisplay("1920x1080*2.0");
+
+  std::unique_ptr<ui::MenuModel> menu =
+      GetContextMenu(item_delegate, primary_id);
+
+  // Check that every menu item has an icon
+  for (int i = 0; i < menu->GetItemCount(); ++i) {
+    gfx::Image icon;
+    EXPECT_TRUE(menu->GetIconAt(i, &icon));
+    EXPECT_FALSE(icon.IsEmpty());
+  }
+
+  // Precisely which density option is shown is not important to us, we only
+  // care that one is shown.
+  EXPECT_TRUE(IsItemEnabledInMenu(menu.get(), ash::CROSTINI_USE_LOW_DENSITY) ||
+              IsItemEnabledInMenu(menu.get(), ash::CROSTINI_USE_HIGH_DENSITY));
+}
+
+// Confirms the menu items for unregistered crostini apps (i.e. apps that do not
+// have an associated .desktop file, and therefore can only be closed).
+TEST_F(LauncherContextMenuTest, CrostiniUnregisteredApps) {
+  crostini::CrostiniTestHelper crostini_helper(profile());
+
+  const std::string fake_window_app_id = "foo";
+  const std::string fake_window_startup_id = "bar";
+  const std::string app_id =
+      crostini::CrostiniRegistryServiceFactory::GetForProfile(profile())
+          ->GetCrostiniShelfAppId(&fake_window_app_id, &fake_window_startup_id);
+  controller()->PinAppWithID(app_id);
+  const ash::ShelfItem* item = controller()->GetItem(ash::ShelfID(app_id));
+  ASSERT_TRUE(item);
+
+  ash::ShelfItemDelegate* item_delegate =
+      model()->GetShelfItemDelegate(ash::ShelfID(app_id));
+  ASSERT_TRUE(item_delegate);
+  int64_t primary_id = GetPrimaryDisplay().id();
+  std::unique_ptr<ui::MenuModel> menu =
+      GetContextMenu(item_delegate, primary_id);
+
+  EXPECT_EQ(menu->GetItemCount(), 1);
+  EXPECT_FALSE(IsItemEnabledInMenu(menu.get(), ash::MENU_NEW_WINDOW));
 }
 
 }  // namespace

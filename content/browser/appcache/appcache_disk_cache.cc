@@ -119,7 +119,7 @@ class AppCacheDiskCache::ActiveCall
     scoped_refptr<ActiveCall> active_call(
         new ActiveCall(owner, entry, std::move(callback)));
     net::Error return_value = owner->disk_cache()->CreateEntry(
-        base::Int64ToString(key), net::HIGHEST, &active_call->entry_ptr_,
+        base::NumberToString(key), net::HIGHEST, &active_call->entry_ptr_,
         base::BindOnce(&ActiveCall::OnAsyncCompletion, active_call));
     return active_call->HandleImmediateReturnValue(return_value);
   }
@@ -131,7 +131,7 @@ class AppCacheDiskCache::ActiveCall
     scoped_refptr<ActiveCall> active_call(
         new ActiveCall(owner, entry, std::move(callback)));
     net::Error return_value = owner->disk_cache()->OpenEntry(
-        base::Int64ToString(key), net::HIGHEST, &active_call->entry_ptr_,
+        base::NumberToString(key), net::HIGHEST, &active_call->entry_ptr_,
         base::BindOnce(&ActiveCall::OnAsyncCompletion, active_call));
     return active_call->HandleImmediateReturnValue(return_value);
   }
@@ -142,7 +142,7 @@ class AppCacheDiskCache::ActiveCall
     scoped_refptr<ActiveCall> active_call(
         new ActiveCall(owner, nullptr, std::move(callback)));
     net::Error return_value = owner->disk_cache()->DoomEntry(
-        base::Int64ToString(key), net::HIGHEST,
+        base::NumberToString(key), net::HIGHEST,
         base::BindOnce(&ActiveCall::OnAsyncCompletion, active_call));
     return active_call->HandleImmediateReturnValue(return_value);
   }
@@ -209,16 +209,16 @@ AppCacheDiskCache::~AppCacheDiskCache() {
 
 net::Error AppCacheDiskCache::InitWithDiskBackend(
     const base::FilePath& disk_cache_directory,
-    int disk_cache_size,
     bool force,
     base::OnceClosure post_cleanup_callback,
     net::CompletionOnceCallback callback) {
-  return Init(net::APP_CACHE, disk_cache_directory, disk_cache_size, force,
+  return Init(net::APP_CACHE, disk_cache_directory,
+              std::numeric_limits<int64_t>::max(), force,
               std::move(post_cleanup_callback), std::move(callback));
 }
 
 net::Error AppCacheDiskCache::InitWithMemBackend(
-    int mem_cache_size,
+    int64_t mem_cache_size,
     net::CompletionOnceCallback callback) {
   return Init(net::MEMORY_CACHE, base::FilePath(), mem_cache_size, false,
               base::OnceClosure(), std::move(callback));
@@ -339,7 +339,7 @@ AppCacheDiskCache::PendingCall::~PendingCall() = default;
 
 net::Error AppCacheDiskCache::Init(net::CacheType cache_type,
                                    const base::FilePath& cache_directory,
-                                   int cache_size,
+                                   int64_t cache_size,
                                    bool force,
                                    base::OnceClosure post_cleanup_callback,
                                    net::CompletionOnceCallback callback) {

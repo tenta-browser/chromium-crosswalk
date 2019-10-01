@@ -22,6 +22,7 @@ namespace content {
 class BrowserContext;
 class RenderViewHost;
 class SiteInstance;
+struct MediaPlayerId;
 }  // namespace content
 
 namespace chromecast {
@@ -50,7 +51,6 @@ class CastWebViewDefault : public CastWebView,
   void InitializeWindow(CastWindowManager* window_manager,
                         CastWindowManager::WindowId z_order,
                         VisibilityPriority initial_priority) override;
-  void SetContext(base::Value context) override;
   void GrantScreenAccess() override;
   void RevokeScreenAccess() override;
 
@@ -61,10 +61,10 @@ class CastWebViewDefault : public CastWebView,
   void DidStartNavigation(
       content::NavigationHandle* navigation_handle) override;
   void MediaStartedPlaying(const MediaPlayerInfo& media_info,
-                           const MediaPlayerId& id) override;
+                           const content::MediaPlayerId& id) override;
   void MediaStoppedPlaying(
       const MediaPlayerInfo& media_info,
-      const MediaPlayerId& id,
+      const content::MediaPlayerId& id,
       WebContentsObserver::MediaStoppedReason reason) override;
 
   // WebContentsDelegate implementation:
@@ -77,7 +77,7 @@ class CastWebViewDefault : public CastWebView,
                                   const GURL& security_origin,
                                   blink::MediaStreamType type) override;
   bool DidAddMessageToConsole(content::WebContents* source,
-                              int32_t level,
+                              blink::mojom::ConsoleMessageLevel log_level,
                               const base::string16& message,
                               int32_t line_no,
                               const base::string16& source_id) override;

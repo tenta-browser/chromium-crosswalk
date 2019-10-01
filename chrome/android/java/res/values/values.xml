@@ -85,4 +85,11 @@
     <integer name="download_infobar_bar_start_offset">800</integer>
     <integer name="download_infobar_bar_fill_in_delay">400</integer>
     <integer name="download_infobar_bar_fill_out_delay">200</integer>
+
+    <!-- Bottom navigation bar styling. -->
+    <bool name="window_light_navigation_bar">true</bool>
+
+    <!-- Preferences-Languages -->
+    <!-- Used for 90% = 230/255 alpha -->
+    <integer name="pref_languages_item_dragged_alpha">230</integer>
 </resources>

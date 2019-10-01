@@ -62,8 +62,7 @@ class CONTENT_EXPORT FileSystemManagerImpl
   // and pepper (via the render process host).
   FileSystemManagerImpl(
       int process_id,
-      int frame_id,
-      storage::FileSystemContext* file_system_context,
+      scoped_refptr<storage::FileSystemContext> file_system_context,
       scoped_refptr<ChromeBlobStorageContext> blob_storage_context);
   ~FileSystemManagerImpl() override;
   base::WeakPtr<FileSystemManagerImpl> GetWeakPtr();
@@ -123,13 +122,6 @@ class CONTENT_EXPORT FileSystemManagerImpl
                           CreateSnapshotFileCallback callback) override;
   void GetPlatformPath(const GURL& file_path,
                        GetPlatformPathCallback callback) override;
-  void CreateWriter(const GURL& file_path,
-                    CreateWriterCallback callback) override;
-  void ChooseEntry(
-      blink::mojom::ChooseFileSystemEntryType type,
-      std::vector<blink::mojom::ChooseFileSystemEntryAcceptsOptionPtr> accepts,
-      bool include_accepts_all,
-      ChooseEntryCallback callback) override;
 
  private:
   class FileSystemCancellableOperationImpl;
@@ -193,7 +185,7 @@ class CONTENT_EXPORT FileSystemManagerImpl
   static void GetPlatformPathOnFileThread(
       const GURL& path,
       int process_id,
-      storage::FileSystemContext* context,
+      scoped_refptr<storage::FileSystemContext> context,
       base::WeakPtr<FileSystemManagerImpl> file_system_manager,
       GetPlatformPathCallback callback);
   // Returns an error if |url| is invalid.
@@ -212,8 +204,7 @@ class CONTENT_EXPORT FileSystemManagerImpl
   void OnConnectionErrorForOpListeners(OperationListenerID listener_id);
 
   const int process_id_;
-  const int frame_id_;
-  storage::FileSystemContext* const context_;
+  const scoped_refptr<storage::FileSystemContext> context_;
   ChildProcessSecurityPolicyImpl* const security_policy_;
   const scoped_refptr<ChromeBlobStorageContext> blob_storage_context_;
   std::unique_ptr<storage::FileSystemOperationRunner> operation_runner_;

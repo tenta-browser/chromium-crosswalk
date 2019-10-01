@@ -6,15 +6,17 @@
 
 #include "base/single_thread_task_runner.h"
 #include "services/network/public/mojom/fetch_api.mojom-shared.h"
+#include "third_party/blink/public/mojom/web_feature/web_feature.mojom-shared.h"
 #include "third_party/blink/public/platform/task_type.h"
-#include "third_party/blink/public/platform/web_feature.mojom-shared.h"
 #include "third_party/blink/public/platform/web_url_request.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/fetch/request.h"
 #include "third_party/blink/renderer/core/frame/use_counter.h"
+#include "third_party/blink/renderer/core/loader/worker_resource_timing_notifier_impl.h"
 #include "third_party/blink/renderer/core/workers/worklet_pending_tasks.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_client_settings_object_snapshot.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher_properties.h"
@@ -43,14 +45,15 @@ ScriptPromise Worklet::addModule(ScriptState* script_state,
   DCHECK(IsMainThread());
   if (!GetExecutionContext()) {
     return ScriptPromise::RejectWithDOMException(
-        script_state, DOMException::Create(DOMExceptionCode::kInvalidStateError,
+        script_state,
+        MakeGarbageCollected<DOMException>(DOMExceptionCode::kInvalidStateError,
                                            "This frame is already detached"));
   }
   UseCounter::Count(GetExecutionContext(),
                     mojom::WebFeature::kWorkletAddModule);
 
   // Step 1: "Let promise be a new promise."
-  ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   ScriptPromise promise = resolver->Promise();
 
   // Step 2: "Let worklet be the current Worklet."
@@ -63,9 +66,9 @@ ScriptPromise Worklet::addModule(ScriptState* script_state,
   // Step 4: "If moduleURLRecord is failure, then reject promise with a
   // "SyntaxError" DOMException and return promise."
   if (!module_url_record.IsValid()) {
-    resolver->Reject(
-        DOMException::Create(DOMExceptionCode::kSyntaxError,
-                             "'" + module_url + "' is not a valid URL."));
+    resolver->Reject(MakeGarbageCollected<DOMException>(
+        DOMExceptionCode::kSyntaxError,
+        "'" + module_url + "' is not a valid URL."));
     return promise;
   }
 
@@ -130,6 +133,10 @@ void Worklet::FetchAndInvokeScript(const KURL& module_url_record,
               ->Fetcher()
               ->GetProperties()
               .GetFetchClientSettingsObject());
+  // Worklets don't support resource timing APIs yet.
+  auto* outside_resource_timing_notifier =
+      MakeGarbageCollected<NullWorkerResourceTimingNotifier>();
+
   // Specify TaskType::kInternalLoading because it's commonly used for module
   // loading.
   scoped_refptr<base::SingleThreadTaskRunner> outside_settings_task_runner =
@@ -166,7 +173,8 @@ void Worklet::FetchAndInvokeScript(const KURL& module_url_record,
   // TODO(nhiroki): Queue a task instead of executing this here.
   for (const auto& proxy : proxies_) {
     proxy->FetchAndInvokeScript(module_url_record, credentials_mode,
-                                outside_settings_object,
+                                *outside_settings_object,
+                                *outside_resource_timing_notifier,
                                 outside_settings_task_runner, pending_tasks);
   }
 }

@@ -79,9 +79,9 @@ class NetworkListSorterTest : public testing::Test {
 
 TEST_F(NetworkListSorterTest, ConnectionState) {
   GenerateTestList();
-  NetworkAtIndex(0)->set_connection_state(shill::kStateIdle);
-  NetworkAtIndex(1)->set_connection_state(shill::kStateAssociation);
-  NetworkAtIndex(2)->set_connection_state(shill::kStateOnline);
+  NetworkAtIndex(0)->set_connection_state_for_testing(shill::kStateIdle);
+  NetworkAtIndex(1)->set_connection_state_for_testing(shill::kStateAssociation);
+  NetworkAtIndex(2)->set_connection_state_for_testing(shill::kStateOnline);
   SortAndVerifySortOrder(2, 1, 0);
 }
 
@@ -117,9 +117,9 @@ TEST_F(NetworkListSorterTest, Name) {
 
 TEST_F(NetworkListSorterTest, Carrier) {
   GenerateTestList();
-  NetworkAtIndex(0)->set_carrier("c");
-  NetworkAtIndex(1)->set_carrier("b");
-  NetworkAtIndex(2)->set_carrier("a");
+  NetworkAtIndex(0)->set_tether_carrier("c");
+  NetworkAtIndex(1)->set_tether_carrier("b");
+  NetworkAtIndex(2)->set_tether_carrier("a");
   SortAndVerifySortOrder(2, 1, 0);
 }
 

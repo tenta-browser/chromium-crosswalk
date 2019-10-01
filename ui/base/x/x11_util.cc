@@ -269,9 +269,7 @@ class XCustomCursorCache {
       return false;
     }
 
-    const XcursorImage* image() const {
-      return image_;
-    };
+    const XcursorImage* image() const { return image_; }
 
    private:
     XcursorImage* image_;
@@ -1301,6 +1299,14 @@ gfx::ICCProfile GetICCProfileForMonitor(int monitor) {
   return icc_profile;
 }
 
+bool IsSyncExtensionAvailable() {
+  auto* display = gfx::GetXDisplay();
+  int unused;
+  static bool result = XSyncQueryExtension(display, &unused, &unused) &&
+                       XSyncInitialize(display, &unused, &unused);
+  return result;
+}
+
 XRefcountedMemory::XRefcountedMemory(unsigned char* x11_data, size_t length)
     : x11_data_(length ? x11_data : nullptr), length_(length) {
 }
@@ -1397,7 +1403,7 @@ void LogErrorEventDescription(XDisplay* dpy,
 
   strncpy(request_str, "Unknown", sizeof(request_str));
   if (error_event.request_code < 128) {
-    std::string num = base::UintToString(error_event.request_code);
+    std::string num = base::NumberToString(error_event.request_code);
     XGetErrorDatabaseText(
         dpy, "XRequest", num.c_str(), "Unknown", request_str,
         sizeof(request_str));

@@ -13,7 +13,6 @@
 #include "components/exo/wm_helper.h"
 #include "components/viz/common/quads/compositor_frame.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
-#include "services/ws/public/mojom/window_tree_constants.mojom.h"
 #include "third_party/skia/include/core/SkPath.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window.h"
@@ -82,23 +81,22 @@ class CustomWindowTargeter : public aura::WindowTargeter {
 SurfaceTreeHost::SurfaceTreeHost(const std::string& window_name)
     : host_window_(
           std::make_unique<aura::Window>(nullptr,
-                                         aura::client::WINDOW_TYPE_CONTROL,
-                                         WMHelper::GetInstance()->env())) {
+                                         aura::client::WINDOW_TYPE_CONTROL)) {
   host_window_->SetName(window_name);
   host_window_->Init(ui::LAYER_SOLID_COLOR);
   host_window_->set_owned_by_parent(false);
   // The host window is a container of surface tree. It doesn't handle pointer
   // events.
   host_window_->SetEventTargetingPolicy(
-      ws::mojom::EventTargetingPolicy::DESCENDANTS_ONLY);
+      aura::EventTargetingPolicy::kDescendantsOnly);
   host_window_->SetEventTargeter(std::make_unique<CustomWindowTargeter>(this));
   layer_tree_frame_sink_holder_ = std::make_unique<LayerTreeFrameSinkHolder>(
       this, host_window_->CreateLayerTreeFrameSink());
-  WMHelper::GetInstance()->env()->context_factory()->AddObserver(this);
+  aura::Env::GetInstance()->context_factory()->AddObserver(this);
 }
 
 SurfaceTreeHost::~SurfaceTreeHost() {
-  WMHelper::GetInstance()->env()->context_factory()->RemoveObserver(this);
+  aura::Env::GetInstance()->context_factory()->RemoveObserver(this);
   SetRootSurface(nullptr);
   LayerTreeFrameSinkHolder::DeleteWhenLastResourceHasBeenReclaimed(
       std::move(layer_tree_frame_sink_holder_));
@@ -111,8 +109,7 @@ void SurfaceTreeHost::SetRootSurface(Surface* root_surface) {
   // This method applies multiple changes to the window tree. Use ScopedPause to
   // ensure that occlusion isn't recomputed before all changes have been
   // applied.
-  aura::WindowOcclusionTracker::ScopedPause pause_occlusion(
-      host_window_->env());
+  aura::WindowOcclusionTracker::ScopedPause pause_occlusion;
 
   if (root_surface_) {
     root_surface_->window()->Hide();
@@ -206,13 +203,19 @@ void SurfaceTreeHost::OnLostSharedContext() {
   SubmitCompositorFrame();
 }
 
-void SurfaceTreeHost::OnLostVizProcess() {}
-
 ////////////////////////////////////////////////////////////////////////////////
 // SurfaceTreeHost, protected:
 
 void SurfaceTreeHost::SubmitCompositorFrame() {
   DCHECK(root_surface_);
+
+  if (layer_tree_frame_sink_holder_->is_lost()) {
+    // We can immediately delete the old LayerTreeFrameSinkHolder because all of
+    // it's resources are lost anyways.
+    layer_tree_frame_sink_holder_ = std::make_unique<LayerTreeFrameSinkHolder>(
+        this, host_window_->CreateLayerTreeFrameSink());
+  }
+
   viz::CompositorFrame frame;
   frame.metadata.begin_frame_ack =
       viz::BeginFrameAck::CreateManualAckWithDamage();
@@ -250,13 +253,13 @@ void SurfaceTreeHost::SubmitCompositorFrame() {
       host_window()->GetLocalSurfaceIdAllocation().allocation_time();
   root_surface_->AppendSurfaceHierarchyContentsToFrame(
       root_surface_origin_, device_scale_factor,
-      layer_tree_frame_sink_holder_.get(), &frame);
+      layer_tree_frame_sink_holder_->resource_manager(), &frame);
 
   std::vector<GLbyte*> sync_tokens;
   for (auto& resource : frame.resource_list)
     sync_tokens.push_back(resource.mailbox_holder.sync_token.GetData());
   ui::ContextFactory* context_factory =
-      WMHelper::GetInstance()->env()->context_factory();
+      aura::Env::GetInstance()->context_factory();
   gpu::gles2::GLES2Interface* gles2 =
       context_factory->SharedMainThreadContextProvider()->ContextGL();
   gles2->VerifySyncTokensCHROMIUM(sync_tokens.data(), sync_tokens.size());
@@ -271,8 +274,7 @@ void SurfaceTreeHost::UpdateHostWindowBounds() {
   // This method applies multiple changes to the window tree. Use ScopedPause
   // to ensure that occlusion isn't recomputed before all changes have been
   // applied.
-  aura::WindowOcclusionTracker::ScopedPause pause_occlusion(
-      host_window_->env());
+  aura::WindowOcclusionTracker::ScopedPause pause_occlusion;
 
   gfx::Rect bounds = root_surface_->surface_hierarchy_content_bounds();
   host_window_->SetBounds(

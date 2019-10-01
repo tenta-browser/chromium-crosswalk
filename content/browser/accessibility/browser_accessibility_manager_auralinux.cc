@@ -4,6 +4,7 @@
 
 #include "content/browser/accessibility/browser_accessibility_manager_auralinux.h"
 
+#include <atk/atk.h>
 #include <vector>
 
 #include "content/browser/accessibility/browser_accessibility_auralinux.h"
@@ -34,12 +35,10 @@ BrowserAccessibilityManagerAuraLinux::BrowserAccessibilityManagerAuraLinux(
   Initialize(initial_tree);
 }
 
-BrowserAccessibilityManagerAuraLinux::~BrowserAccessibilityManagerAuraLinux() {
-}
+BrowserAccessibilityManagerAuraLinux::~BrowserAccessibilityManagerAuraLinux() {}
 
 // static
-ui::AXTreeUpdate
-    BrowserAccessibilityManagerAuraLinux::GetEmptyDocument() {
+ui::AXTreeUpdate BrowserAccessibilityManagerAuraLinux::GetEmptyDocument() {
   ui::AXNodeData empty_document;
   empty_document.id = 0;
   empty_document.role = ax::mojom::Role::kRootWebArea;
@@ -110,38 +109,130 @@ void BrowserAccessibilityManagerAuraLinux::FireBlinkEvent(
   // Need to implement.
 }
 
+void BrowserAccessibilityManagerAuraLinux::FireNameChangedEvent(
+    BrowserAccessibility* node) {
+  ToBrowserAccessibilityAuraLinux(node)->GetNode()->OnNameChanged();
+}
+
+void BrowserAccessibilityManagerAuraLinux::FireDescriptionChangedEvent(
+    BrowserAccessibility* node) {
+  ToBrowserAccessibilityAuraLinux(node)->GetNode()->OnDescriptionChanged();
+}
+
+void BrowserAccessibilityManagerAuraLinux::FireSubtreeCreatedEvent(
+    BrowserAccessibility* node) {
+  // Sending events during a load would create a lot of spam, don't do that.
+  if (GetTreeData().loaded)
+    ToBrowserAccessibilityAuraLinux(node)->GetNode()->OnSubtreeCreated();
+}
+
 void BrowserAccessibilityManagerAuraLinux::FireGeneratedEvent(
     ui::AXEventGenerator::Event event_type,
     BrowserAccessibility* node) {
   BrowserAccessibilityManager::FireGeneratedEvent(event_type, node);
 
   switch (event_type) {
+    case ui::AXEventGenerator::Event::DOCUMENT_SELECTION_CHANGED: {
+      int32_t focus_id = GetTreeData().sel_focus_object_id;
+      BrowserAccessibility* focus_object = GetFromID(focus_id);
+      if (focus_object)
+        FireEvent(focus_object, ax::mojom::Event::kTextSelectionChanged);
+      break;
+    }
+    case ui::AXEventGenerator::Event::ACTIVE_DESCENDANT_CHANGED:
+      FireEvent(node, ax::mojom::Event::kActiveDescendantChanged);
+      break;
     case ui::AXEventGenerator::Event::CHECKED_STATE_CHANGED:
       FireEvent(node, ax::mojom::Event::kCheckedStateChanged);
       break;
     case ui::AXEventGenerator::Event::COLLAPSED:
       FireExpandedEvent(node, false);
       break;
+    case ui::AXEventGenerator::Event::DOCUMENT_TITLE_CHANGED:
+      FireEvent(node, ax::mojom::Event::kDocumentTitleChanged);
+      break;
     case ui::AXEventGenerator::Event::EXPANDED:
       FireExpandedEvent(node, true);
       break;
     case ui::AXEventGenerator::Event::LOAD_COMPLETE:
       FireLoadingEvent(node, false);
+      FireEvent(node, ax::mojom::Event::kLoadComplete);
       break;
     case ui::AXEventGenerator::Event::LOAD_START:
       FireLoadingEvent(node, true);
+      break;
+    case ui::AXEventGenerator::Event::SELECTED_CHILDREN_CHANGED:
+      FireEvent(node, ax::mojom::Event::kSelectedChildrenChanged);
       break;
     case ui::AXEventGenerator::Event::MENU_ITEM_SELECTED:
     case ui::AXEventGenerator::Event::SELECTED_CHANGED:
       FireSelectedEvent(node);
       break;
+    case ui::AXEventGenerator::Event::SUBTREE_CREATED:
+      FireSubtreeCreatedEvent(node);
+      break;
     case ui::AXEventGenerator::Event::VALUE_CHANGED:
       FireEvent(node, ax::mojom::Event::kValueChanged);
+      break;
+    case ui::AXEventGenerator::Event::NAME_CHANGED:
+      FireNameChangedEvent(node);
+      break;
+    case ui::AXEventGenerator::Event::DESCRIPTION_CHANGED:
+      FireDescriptionChangedEvent(node);
+      break;
+    case ui::AXEventGenerator::Event::INVALID_STATUS_CHANGED:
+      FireEvent(node, ax::mojom::Event::kInvalidStatusChanged);
       break;
     default:
       // Need to implement.
       break;
   }
+}
+
+static AtkObject* GetParentFrameIfToplevelDocument(AtkObject* object) {
+  while (object) {
+    if (atk_object_get_role(object) == ATK_ROLE_DOCUMENT_WEB)
+      return nullptr;
+    if (atk_object_get_role(object) == ATK_ROLE_FRAME)
+      return object;
+    object = atk_object_get_parent(object);
+  }
+  return nullptr;
+}
+
+static void EstablishEmbeddedRelationship(AtkObject* document_object) {
+  if (!document_object)
+    return;
+
+  AtkObject* window =
+      GetParentFrameIfToplevelDocument(atk_object_get_parent(document_object));
+  if (!window)
+    return;
+
+  ui::AXPlatformNodeAuraLinux* window_platform_node =
+      static_cast<ui::AXPlatformNodeAuraLinux*>(
+          ui::AXPlatformNode::FromNativeViewAccessible(window));
+  ui::AXPlatformNodeAuraLinux* document_platform_node =
+      static_cast<ui::AXPlatformNodeAuraLinux*>(
+          ui::AXPlatformNode::FromNativeViewAccessible(document_object));
+  if (!window_platform_node || !document_platform_node)
+    return;
+
+  window_platform_node->SetEmbeddedDocument(document_object);
+  document_platform_node->SetEmbeddingWindow(window);
+}
+
+void BrowserAccessibilityManagerAuraLinux::OnSubtreeWillBeDeleted(
+    ui::AXTree* tree,
+    ui::AXNode* node) {
+  BrowserAccessibilityManager::OnSubtreeWillBeDeleted(tree, node);
+  // Sending events on load/destruction would create a lot of spam, avoid that.
+  if (!GetTreeData().loaded)
+    return;
+
+  BrowserAccessibility* obj = GetFromAXNode(node);
+  if (obj && obj->IsNative())
+    ToBrowserAccessibilityAuraLinux(obj)->GetNode()->OnSubtreeWillBeDeleted();
 }
 
 void BrowserAccessibilityManagerAuraLinux::OnAtomicUpdateFinished(
@@ -150,6 +241,14 @@ void BrowserAccessibilityManagerAuraLinux::OnAtomicUpdateFinished(
     const std::vector<ui::AXTreeObserver::Change>& changes) {
   BrowserAccessibilityManager::OnAtomicUpdateFinished(tree, root_changed,
                                                       changes);
+
+  // Ideally we would like to do this only when `root_changed` is true, but it
+  // seems that our parent ATK frame can switch between multiple
+  // BrowserAccessibilityManagers with no way to detect that here. Instead
+  // whenever an update happens we reestablish the relationship to our parent
+  // frame.
+  if (GetRoot() && GetRoot()->IsNative() && IsRootTree())
+    EstablishEmbeddedRelationship(GetRoot()->GetNativeViewAccessible());
 
   // This is the second step in what will be a three step process mirroring that
   // used in BrowserAccessibilityManagerWin.

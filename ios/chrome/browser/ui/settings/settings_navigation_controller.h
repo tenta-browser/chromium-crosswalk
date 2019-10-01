@@ -17,6 +17,9 @@ namespace ios {
 class ChromeBrowserState;
 }  // namespace ios
 
+// The accessibility identifier for the settings' "Done" button.
+extern NSString* const kSettingsDoneButtonId;
+
 @protocol SettingsControllerProtocol<NSObject>
 
 @optional
@@ -66,12 +69,19 @@ newSettingsMainControllerWithBrowserState:(ios::ChromeBrowserState*)browserState
 newAccountsController:(ios::ChromeBrowserState*)browserState
              delegate:(id<SettingsNavigationControllerDelegate>)delegate;
 
-// Creates a new SignInSettingsCollectionViewController and the chrome around
+// Creates a new GoogleServicesSettingsCollectionViewController and the chrome
+// around it. |browserState| is used to personalize some settings aspects and
+// should not be nil. |delegate| may be nil.
++ (SettingsNavigationController*)
+    newGoogleServicesController:(ios::ChromeBrowserState*)browserState
+                       delegate:
+                           (id<SettingsNavigationControllerDelegate>)delegate;
+
+// Creates a new SyncSettingsCollectionViewController and the chrome around
 // it. |browserState| is used to personalize some settings aspects and should
 // not be nil. |delegate| may be nil.
 + (SettingsNavigationController*)
      newSyncController:(ios::ChromeBrowserState*)browserState
-allowSwitchSyncAccount:(BOOL)allowSwitchSyncAccount
               delegate:(id<SettingsNavigationControllerDelegate>)delegate;
 
 // Creates a new SyncEncryptionPassphraseCollectionViewController and the chrome

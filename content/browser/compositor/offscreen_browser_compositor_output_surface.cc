@@ -6,12 +6,13 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "build/build_config.h"
 #include "components/viz/common/resources/resource_format_utils.h"
 #include "components/viz/service/display/output_surface_client.h"
 #include "components/viz/service/display/output_surface_frame.h"
-#include "components/viz/service/display_embedder/compositor_overlay_candidate_validator.h"
+#include "components/viz/service/display/overlay_candidate_validator.h"
 #include "content/browser/compositor/reflector_impl.h"
 #include "content/browser/compositor/reflector_texture.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
@@ -31,11 +32,9 @@ static viz::ResourceFormat kFboTextureFormat = viz::RGBA_8888;
 OffscreenBrowserCompositorOutputSurface::
     OffscreenBrowserCompositorOutputSurface(
         scoped_refptr<ws::ContextProviderCommandBuffer> context,
-        const UpdateVSyncParametersCallback& update_vsync_parameters_callback,
-        std::unique_ptr<viz::CompositorOverlayCandidateValidator>
+        std::unique_ptr<viz::OverlayCandidateValidator>
             overlay_candidate_validator)
     : BrowserCompositorOutputSurface(std::move(context),
-                                     update_vsync_parameters_callback,
                                      std::move(overlay_candidate_validator)),
       weak_ptr_factory_(this) {
   capabilities_.uses_default_gl_framebuffer = false;
@@ -109,9 +108,7 @@ void OffscreenBrowserCompositorOutputSurface::DiscardBackbuffer() {
 }
 
 void OffscreenBrowserCompositorOutputSurface::SetDrawRectangle(
-    const gfx::Rect& draw_rectangle) {
-  NOTREACHED();
-}
+    const gfx::Rect& draw_rectangle) {}
 
 void OffscreenBrowserCompositorOutputSurface::Reshape(
     const gfx::Size& size,
@@ -195,14 +192,6 @@ void OffscreenBrowserCompositorOutputSurface::OnSwapBuffersComplete(
   client_->DidReceiveSwapBuffersAck();
   client_->DidReceivePresentationFeedback(gfx::PresentationFeedback());
 }
-
-#if BUILDFLAG(ENABLE_VULKAN)
-gpu::VulkanSurface*
-OffscreenBrowserCompositorOutputSurface::GetVulkanSurface() {
-  NOTIMPLEMENTED();
-  return nullptr;
-}
-#endif
 
 unsigned OffscreenBrowserCompositorOutputSurface::UpdateGpuFence() {
   return 0;

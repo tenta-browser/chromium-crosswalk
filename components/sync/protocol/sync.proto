@@ -46,6 +46,7 @@ import "printer_specifics.proto";
 import "priority_preference_specifics.proto";
 import "reading_list_specifics.proto";
 import "search_engine_specifics.proto";
+import "security_event_specifics.proto";
 import "send_tab_to_self_specifics.proto";
 import "session_specifics.proto";
 import "sync_enums.proto";
@@ -56,6 +57,7 @@ import "typed_url_specifics.proto";
 import "unique_position.proto";
 import "user_consent_specifics.proto";
 import "user_event_specifics.proto";
+import "wifi_configuration_specifics.proto";
 import "wifi_credential_specifics.proto";
 
 // Used for inspecting how long we spent performing operations in different
@@ -147,6 +149,8 @@ message EntitySpecifics {
     UserConsentSpecifics user_consent = 556014;
     MountainShareSpecifics mountain_share = 545005;
     SendTabToSelfSpecifics send_tab_to_self = 601980;
+    SecurityEventSpecifics security_event = 600372;
+    WifiConfigurationSpecifics wifi_configuration = 662827;
   }
 }
 
@@ -380,8 +384,7 @@ message SyncEntity {
   // This field is present in both GetUpdatesResponse and CommitMessage, if the
   // item's type requires it and the client that wrote the item supports it (M26
   // or higher).  Clients must also be prepared to handle updates from clients
-  // that do not set this field.  See the comments on
-  // |server_position_in_parent| for more information on how this is handled.
+  // that do not set this field.
   //
   // This field will not be set for items whose type ignores positioning.
   // Clients should not attempt to read this field on the receipt of an item of
@@ -538,7 +541,7 @@ message GarbageCollectionDirective {
     UNKNOWN = 0;
     VERSION_WATERMARK = 1;
     AGE_WATERMARK = 2;
-    MAX_ITEM_COUNT = 3;
+    DEPRECATED_MAX_ITEM_COUNT = 3 [deprecated = true];
   }
 
   optional Type type = 1 [default = UNKNOWN];
@@ -560,7 +563,8 @@ message GarbageCollectionDirective {
   // This field specifies the max number of items that the client should keep
   // for a specific datatype.  If the number of items exceeds this limit, the
   // client should purge the extra sync entities based on the LRU rule.
-  optional int32 max_number_of_items = 4;
+  // Deprecated in M76.
+  optional int32 deprecated_max_number_of_items = 4 [deprecated = true];
 }
 
 message DataTypeProgressMarker {
@@ -856,12 +860,9 @@ message CommitResponse {
     // should be filled if our parent was assigned a new ID.
     optional string parent_id_string = 4;
 
-    // This value is the same as the position_in_parent value returned within
-    // the SyncEntity message in GetUpdatesResponse.  There was a time when the
-    // client would attempt to honor this position, but nowadays the server
-    // should ensure it is no different from the position_in_parent sent up in
-    // the commit request and the client should not read it.
-    optional int64 position_in_parent = 5;
+    // This used to be set to the same as the position_in_parent value in
+    // the SyncEntity message in GetUpdatesResponse, but it's not set anymore.
+    optional int64 deprecated_position_in_parent = 5 [deprecated = true];
 
     // The item's current version.
     optional int64 version = 6;

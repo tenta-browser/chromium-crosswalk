@@ -57,8 +57,6 @@ class PickerIndicatorElement final : public HTMLDivElement,
     virtual bool SetupDateTimeChooserParameters(DateTimeChooserParameters&) = 0;
   };
 
-  static PickerIndicatorElement* Create(Document&, PickerIndicatorOwner&);
-
   PickerIndicatorElement(Document&, PickerIndicatorOwner&);
   ~PickerIndicatorElement() override;
   void Trace(Visitor*) override;
@@ -76,7 +74,7 @@ class PickerIndicatorElement final : public HTMLDivElement,
   void DidEndChooser() override;
 
  private:
-  LayoutObject* CreateLayoutObject(const ComputedStyle&) override;
+  LayoutObject* CreateLayoutObject(const ComputedStyle&, LegacyLayout) override;
   void DefaultEventHandler(Event&) override;
   void DetachLayoutTree(const AttachContext& = AttachContext()) override;
   bool IsPickerIndicatorElement() const override;

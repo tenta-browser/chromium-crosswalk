@@ -44,12 +44,12 @@ class SpellCheckClient : public blink::WebTextCheckClient {
   bool IsSpellCheckingEnabled() const override;
   void CheckSpelling(
       const blink::WebString& text,
-      int& offset,
-      int& length,
+      size_t& offset,
+      size_t& length,
       blink::WebVector<blink::WebString>* optional_suggestions) override;
   void RequestCheckingOfText(
       const blink::WebString& text,
-      blink::WebTextCheckingCompletion* completion) override;
+      std::unique_ptr<blink::WebTextCheckingCompletion> completion) override;
 
  private:
   void FinishLastTextCheck();
@@ -64,7 +64,8 @@ class SpellCheckClient : public blink::WebTextCheckClient {
   MockSpellCheck spell_check_;
 
   blink::WebString last_requested_text_check_string_;
-  blink::WebTextCheckingCompletion* last_requested_text_checking_completion_;
+  std::unique_ptr<blink::WebTextCheckingCompletion>
+      last_requested_text_checking_completion_;
 
   v8::Persistent<v8::Function> resolved_callback_;
 

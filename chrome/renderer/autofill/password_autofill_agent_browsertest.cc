@@ -4,6 +4,7 @@
 
 #include "components/autofill/content/renderer/password_autofill_agent.h"
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
@@ -41,18 +42,24 @@
 #include "third_party/blink/public/web/web_widget.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 
+#if defined(OS_WIN)
+#include "third_party/blink/public/web/win/web_font_rendering.h"
+#endif
+
 using autofill::FillingStatus;
 using autofill::FormTracker;
 using autofill::PasswordForm;
+using autofill::mojom::FocusedFieldType;
 using base::ASCIIToUTF16;
-using blink::WebAutofillState;
 using base::UTF16ToUTF8;
+using blink::WebAutofillState;
 using blink::WebDocument;
 using blink::WebElement;
 using blink::WebFormElement;
 using blink::WebFrame;
 using blink::WebInputElement;
 using blink::WebString;
+using testing::_;
 
 namespace {
 
@@ -288,6 +295,13 @@ class PasswordAutofillAgentTest : public ChromeRenderViewTest {
   void SetUp() override {
     ChromeRenderViewTest::SetUp();
 
+#if defined(OS_WIN)
+    // Autofill uses the system font to render suggestion previews. On Windows
+    // an extra step is required to ensure that the system font is configured.
+    blink::WebFontRendering::SetMenuFontMetrics(
+        base::ASCIIToUTF16("Arial").c_str(), 12);
+#endif
+
     // TODO(crbug/862989): Remove workaround preventing non-test classes to bind
     // fake_driver_ or fake_pw_client_.
     password_autofill_agent_->GetPasswordManagerDriver();
@@ -481,7 +495,7 @@ class PasswordAutofillAgentTest : public ChromeRenderViewTest {
   void SimulateUsernameFieldAutofill(const std::string& text) {
     // Simulate set |username_element_| in focus.
     static_cast<content::RenderFrameObserver*>(autofill_agent_)
-        ->FocusedNodeChanged(username_element_);
+        ->FocusedElementChanged(username_element_);
     // Fill focused element (i.e. |username_element_|).
     autofill_agent_->FillFieldWithValue(ASCIIToUTF16(text));
   }
@@ -672,11 +686,6 @@ class PasswordAutofillAgentTest : public ChromeRenderViewTest {
     }
   }
 
-  bool GetCalledAutomaticGenerationStatusChangedTrue() {
-    fake_pw_client_.Flush();
-    return fake_pw_client_.called_automatic_generation_status_changed_true();
-  }
-
   void BindPasswordManagerDriver(mojo::ScopedInterfaceEndpointHandle handle) {
     fake_driver_.BindRequest(
         mojom::PasswordManagerDriverAssociatedRequest(std::move(handle)));
@@ -720,7 +729,7 @@ class PasswordAutofillAgentTest : public ChromeRenderViewTest {
   }
 
   FakeMojoPasswordManagerDriver fake_driver_;
-  FakePasswordGenerationDriver fake_pw_client_;
+  testing::NiceMock<FakePasswordGenerationDriver> fake_pw_client_;
 
   base::string16 username1_;
   base::string16 username2_;
@@ -745,28 +754,6 @@ class PasswordAutofillAgentTest : public ChromeRenderViewTest {
 // Tests that the password login is autocompleted as expected when the browser
 // sends back the password info.
 TEST_F(PasswordAutofillAgentTest, InitialAutocomplete) {
-  /*
-   * Right now we are not sending the message to the browser because we are
-   * loading a data URL and the security origin canAccessPasswordManager()
-   * returns false.  May be we should mock URL loading to cirmcuvent this?
-   TODO(jcivelli): find a way to make the security origin not deny access to the
-                   password manager and then reenable this code.
-
-  // The form has been loaded, we should have sent the browser a message about
-  // the form.
-  const IPC::Message* msg = render_thread_.sink().GetFirstMessageMatching(
-      AutofillHostMsg_PasswordFormsParsed::ID);
-  ASSERT_TRUE(msg != NULL);
-
-  std::tuple<std::vector<PasswordForm> > forms;
-  AutofillHostMsg_PasswordFormsParsed::Read(msg, &forms);
-  ASSERT_EQ(1U, forms.a.size());
-  PasswordForm password_form = forms.a[0];
-  EXPECT_EQ(PasswordForm::SCHEME_HTML, password_form.scheme);
-  EXPECT_EQ(ASCIIToUTF16(kUsernameName), password_form.username_element);
-  EXPECT_EQ(ASCIIToUTF16(kPasswordName), password_form.password_element);
-  */
-
   // Simulate the browser sending back the login info, it triggers the
   // autocomplete.
   SimulateOnFillPasswordForm(fill_data_);
@@ -1720,6 +1707,22 @@ TEST_F(PasswordAutofillAgentTest,
   }
 }
 
+// Tests that HasFillData() works correctly for fiiable and non-fillable fields.
+TEST_F(PasswordAutofillAgentTest, HasFillData) {
+  // Initially no fill data is available.
+  WebInputElement random_element = GetInputElementByID("random_field");
+  EXPECT_FALSE(password_autofill_agent_->HasFillData(username_element_));
+  EXPECT_FALSE(password_autofill_agent_->HasFillData(password_element_));
+  EXPECT_FALSE(password_autofill_agent_->HasFillData(random_element));
+
+  // This changes once fill data is simulated. |random_element| continue  to
+  // have no fill data, though.
+  SimulateOnFillPasswordForm(fill_data_);
+  EXPECT_TRUE(password_autofill_agent_->HasFillData(username_element_));
+  EXPECT_TRUE(password_autofill_agent_->HasFillData(password_element_));
+  EXPECT_FALSE(password_autofill_agent_->HasFillData(random_element));
+}
+
 // Tests that |FillIntoFocusedField| doesn't fill read-only text fields.
 TEST_F(PasswordAutofillAgentTest, FillIntoFocusedReadonlyTextField) {
   // Neither field should be autocompleted.
@@ -2570,6 +2573,9 @@ TEST_F(PasswordAutofillAgentTest, PasswordGenerationTriggered_TypedPassword) {
   SetAccountCreationFormsDetectedMessage(password_generation_,
                                          GetMainFrame()->GetDocument(), 0, 2);
 
+  // Generation event is triggered due to focus events.
+  EXPECT_CALL(fake_pw_client_, GenerationElementLostFocus())
+      .Times(testing::AnyNumber());
   SimulateUsernameTyping("NewGuy");
   SimulatePasswordTyping("NewPassword");
 
@@ -2660,9 +2666,14 @@ TEST_F(PasswordAutofillAgentTest, PasswordGenerationSupersedesAutofill) {
   // Simulate the field being clicked to start typing. This should trigger
   // generation but not password autofill.
   SetFocused(password_element_);
+  EXPECT_CALL(fake_pw_client_, AutomaticGenerationAvailable(_));
   SimulateElementClick("new_password");
+  base::RunLoop().RunUntilIdle();
+  testing::Mock::VerifyAndClearExpectations(&fake_pw_client_);
   EXPECT_FALSE(GetCalledShowPasswordSuggestions());
-  EXPECT_TRUE(GetCalledAutomaticGenerationStatusChangedTrue());
+  // On destruction the state is updated.
+  EXPECT_CALL(fake_pw_client_, GenerationElementLostFocus())
+      .Times(testing::AnyNumber());
 }
 
 // Tests that a password change form is properly filled with the username and
@@ -3010,25 +3021,45 @@ TEST_F(PasswordAutofillAgentTest,
 }
 
 TEST_F(PasswordAutofillAgentTest, DriverIsInformedAboutUnfillableField) {
-  EXPECT_FALSE(fake_driver_.last_focused_element_was_fillable());
+  EXPECT_EQ(FocusedFieldType::kUnknown, fake_driver_.last_focused_field_type());
   SimulateElementClick(kPasswordName);
   fake_driver_.Flush();
-  EXPECT_TRUE(fake_driver_.last_focused_element_was_fillable());
+  EXPECT_EQ(FocusedFieldType::kFillablePasswordField,
+            fake_driver_.last_focused_field_type());
 
+  // Even though the focused element is a username field, it should be treated
+  // as unfillable, since it is read-only.
   SetElementReadOnly(username_element_, true);
   FocusElement(kUsernameName);
   fake_driver_.Flush();
-  EXPECT_FALSE(fake_driver_.last_focused_element_was_fillable());
+  EXPECT_EQ(FocusedFieldType::kUnfillableElement,
+            fake_driver_.last_focused_field_type());
 }
 
-TEST_F(PasswordAutofillAgentTest, DriverIsInformedAboutPasswordFields) {
+TEST_F(PasswordAutofillAgentTest, DriverIsInformedAboutFillableFields) {
+  SimulateElementClick("random_field");
+  fake_driver_.Flush();
+  EXPECT_EQ(FocusedFieldType::kFillableTextField,
+            fake_driver_.last_focused_field_type());
+
+  // A username field without fill data is indistinguishable from any other text
+  // field.
   SimulateElementClick(kUsernameName);
   fake_driver_.Flush();
-  EXPECT_FALSE(fake_driver_.last_focused_input_was_password());
+  EXPECT_EQ(FocusedFieldType::kFillableTextField,
+            fake_driver_.last_focused_field_type());
 
   SimulateElementClick(kPasswordName);
   fake_driver_.Flush();
-  EXPECT_TRUE(fake_driver_.last_focused_input_was_password());
+  EXPECT_EQ(FocusedFieldType::kFillablePasswordField,
+            fake_driver_.last_focused_field_type());
+
+  // A username field with fill data should be detected.
+  SimulateOnFillPasswordForm(fill_data_);
+  SimulateElementClick(kUsernameName);
+  fake_driver_.Flush();
+  EXPECT_EQ(FocusedFieldType::kFillableUsernameField,
+            fake_driver_.last_focused_field_type());
 }
 
 // Tests that credential suggestions are autofilled on a password (and change
@@ -3771,7 +3802,7 @@ TEST_F(PasswordAutofillAgentTest, AutofillsAfterUserGesture) {
 
   password_autofill_agent_->UserGestureObserved();
   // It's a way to call PasswordValueGatekeeper::Reset().
-  password_autofill_agent_->DidStartProvisionalLoad(nullptr, false);
+  password_autofill_agent_->ReadyToCommitNavigation(nullptr);
 
   fill_data_.username_may_use_prefilled_placeholder = true;
   fill_data_.password_field.value = ASCIIToUTF16(kBobPassword);

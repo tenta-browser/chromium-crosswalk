@@ -10,8 +10,8 @@
 #include <memory>
 #include <string>
 
+#include "ash/public/cpp/app_list/app_list_client.h"
 #include "ash/public/cpp/shelf_types.h"
-#include "ash/public/interfaces/app_list.mojom.h"
 #include "base/callback_forward.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
@@ -22,8 +22,6 @@
 #include "components/search_engines/template_url_service.h"
 #include "components/search_engines/template_url_service_observer.h"
 #include "components/user_manager/user_manager.h"
-#include "mojo/public/cpp/bindings/associated_binding.h"
-#include "mojo/public/cpp/bindings/binding.h"
 #include "ui/display/types/display_constants.h"
 
 namespace app_list {
@@ -31,12 +29,13 @@ class SearchController;
 class SearchResourceManager;
 }  // namespace app_list
 
+class AppListClientWithProfileTest;
 class AppListModelUpdater;
 class AppSyncUIStateWatcher;
 class Profile;
 
 class AppListClientImpl
-    : public ash::mojom::AppListClient,
+    : public app_list::AppListClient,
       public AppListControllerDelegate,
       public user_manager::UserManager::UserSessionStateObserver,
       public TemplateURLServiceObserver {
@@ -46,36 +45,45 @@ class AppListClientImpl
 
   static AppListClientImpl* GetInstance();
 
-  // ash::mojom::AppListClient:
+  // app_list::AppListClient:
+  void OnAppListControllerDestroyed() override;
   void StartSearch(const base::string16& trimmed_query) override;
-  void OpenSearchResult(const std::string& result_id, int event_flags) override;
+  void OpenSearchResult(const std::string& result_id,
+                        int event_flags,
+                        ash::AppListLaunchedFrom launched_from,
+                        ash::AppListLaunchType launch_type,
+                        int suggestion_index) override;
   void InvokeSearchResultAction(const std::string& result_id,
                                 int action_index,
                                 int event_flags) override;
   void GetSearchResultContextMenuModel(
       const std::string& result_id,
       GetContextMenuModelCallback callback) override;
-  void SearchResultContextMenuItemSelected(const std::string& result_id,
-                                           int command_id,
-                                           int event_flags) override;
   void ViewClosing() override;
   void ViewShown(int64_t display_id) override;
-  void ActivateItem(const std::string& id, int event_flags) override;
-  void GetContextMenuModel(const std::string& id,
+  void ActivateItem(int profile_id,
+                    const std::string& id,
+                    int event_flags) override;
+  void GetContextMenuModel(int profile_id,
+                           const std::string& id,
                            GetContextMenuModelCallback callback) override;
-  void ContextMenuItemSelected(const std::string& id,
-                               int command_id,
-                               int event_flags) override;
   void OnAppListTargetVisibilityChanged(bool visible) override;
   void OnAppListVisibilityChanged(bool visible) override;
-  void OnFolderCreated(ash::mojom::AppListItemMetadataPtr item) override;
-  void OnFolderDeleted(ash::mojom::AppListItemMetadataPtr item) override;
-  void OnItemUpdated(ash::mojom::AppListItemMetadataPtr item) override;
-  void OnPageBreakItemAdded(const std::string& id,
+  void OnFolderCreated(int profile_id,
+                       std::unique_ptr<ash::AppListItemMetadata> item) override;
+  void OnFolderDeleted(int profile_id,
+                       std::unique_ptr<ash::AppListItemMetadata> item) override;
+  void OnItemUpdated(int profile_id,
+                     std::unique_ptr<ash::AppListItemMetadata> item) override;
+  void OnPageBreakItemAdded(int profile_id,
+                            const std::string& id,
                             const syncer::StringOrdinal& position) override;
-  void OnPageBreakItemDeleted(const std::string& id) override;
+  void OnPageBreakItemDeleted(int profile_id, const std::string& id) override;
   void GetNavigableContentsFactory(
-      content::mojom::NavigableContentsFactoryRequest request) override;
+      mojo::PendingReceiver<content::mojom::NavigableContentsFactory> receiver)
+      override;
+  void OnSearchResultVisibilityChanged(const std::string& id,
+                                       bool visible) override;
 
   // user_manager::UserManager::UserSessionStateObserver:
   void ActiveUserChanged(const user_manager::User* active_user) override;
@@ -120,17 +128,18 @@ class AppListClientImpl
   bool app_list_visible() const { return app_list_visible_; }
 
   // Returns a pointer to control the app list views in ash.
-  ash::mojom::AppListController* GetAppListController() const;
+  app_list::AppListController* GetAppListController() const;
 
   AppListControllerDelegate* GetControllerDelegate();
   Profile* GetCurrentAppListProfile() const;
 
-  app_list::SearchController* GetSearchControllerForTest();
+  app_list::SearchController* search_controller();
 
-  // Flushes all pending mojo call to Ash for testing.
-  void FlushMojoForTesting();
+  AppListModelUpdater* GetModelUpdaterForTest();
 
  private:
+  FRIEND_TEST_ALL_PREFIXES(AppListClientWithProfileTest, CheckDataRace);
+
   // Overridden from TemplateURLServiceObserver:
   void OnTemplateURLServiceChanged() override;
 
@@ -149,26 +158,34 @@ class AppListClientImpl
   // called.
   Profile* profile_ = nullptr;
 
-  // Unowned pointer to the model updater owned by AppListSyncableService.
-  // Will change if |profile_| changes.
-  AppListModelUpdater* model_updater_ = nullptr;
+  // Unowned pointer to the model updater owned by AppListSyncableService. Will
+  // change if |profile_| changes.
+  AppListModelUpdater* current_model_updater_ = nullptr;
+
+  // Store the mappings between profiles and AppListModelUpdater instances.
+  // In multi-profile mode, mojo callings from the Ash process to access the app
+  // list items should be dealt with the correct AppListModelUpdater instance.
+  // Otherwise data race may happen, like the issue 939755
+  // (https://crbug.com/939755).
+  // TODO: Replace the mojo interface functions provided by AppListClient with
+  // callbacks.
+  std::map<int, AppListModelUpdater*> profile_model_mappings_;
 
   std::unique_ptr<app_list::SearchResourceManager> search_resource_manager_;
   std::unique_ptr<app_list::SearchController> search_controller_;
   std::unique_ptr<AppSyncUIStateWatcher> app_sync_ui_state_watcher_;
 
   ScopedObserver<TemplateURLService, AppListClientImpl>
-      template_url_service_observer_;
+      template_url_service_observer_{this};
 
-  mojo::Binding<ash::mojom::AppListClient> binding_;
-  ash::mojom::AppListControllerPtr app_list_controller_;
+  app_list::AppListController* app_list_controller_ = nullptr;
 
   bool app_list_target_visibility_ = false;
   bool app_list_visible_ = false;
 
   app_list::AppLaunchEventLogger app_launch_event_logger_;
 
-  base::WeakPtrFactory<AppListClientImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<AppListClientImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(AppListClientImpl);
 };

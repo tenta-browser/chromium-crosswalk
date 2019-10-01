@@ -103,10 +103,10 @@ bool URLRequestContentJob::GetMimeType(std::string* mime_type) const {
 
 void URLRequestContentJob::SetExtraRequestHeaders(
     const net::HttpRequestHeaders& headers) {
-  const content::ResourceRequestInfo* resource_request_info =
+  content::ResourceRequestInfo* resource_request_info =
       content::ResourceRequestInfo::ForRequest(request());
   if (resource_request_info && resource_request_info->GetResourceType() ==
-                                   content::RESOURCE_TYPE_MAIN_FRAME) {
+                                   content::ResourceType::kMainFrame) {
     std::string intent_type_header;
     if (headers.GetHeader("X-Chrome-intent-type", &intent_type_header))
       mime_type_from_intent_ = intent_type_header;

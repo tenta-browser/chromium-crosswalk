@@ -7,9 +7,9 @@ package org.chromium.chrome.browser.upgrade;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.os.Build;
 
 import org.chromium.base.task.AsyncTask;
+import org.chromium.base.task.BackgroundOnlyAsyncTask;
 import org.chromium.chrome.browser.notifications.channels.ChannelsUpdater;
 import org.chromium.chrome.browser.vr.VrModuleProvider;
 
@@ -33,22 +33,19 @@ public final class PackageReplacedBroadcastReceiver extends BroadcastReceiver {
         if (!Intent.ACTION_MY_PACKAGE_REPLACED.equals(intent.getAction())) return;
         updateChannelsIfNecessary();
         VrModuleProvider.maybeRequestModuleIfDaydreamReady();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) return;
-        UpgradeIntentService.startMigrationIfNecessary(context);
     }
 
     private void updateChannelsIfNecessary() {
         if (!ChannelsUpdater.getInstance().shouldUpdateChannels()) return;
 
         final PendingResult result = goAsync();
-        new AsyncTask<Void>() {
+        new BackgroundOnlyAsyncTask<Void>() {
             @Override
             protected Void doInBackground() {
                 ChannelsUpdater.getInstance().updateChannels();
                 result.finish();
                 return null;
             }
-        }
-                .executeOnExecutor(AsyncTask.SERIAL_EXECUTOR);
+        }.executeOnExecutor(AsyncTask.SERIAL_EXECUTOR);
     }
 }

@@ -4,6 +4,7 @@
 
 #include "components/supervised_user_error_page/gin_wrapper.h"
 
+#include "base/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "content/public/renderer/render_frame.h"
 #include "gin/handle.h"
@@ -46,7 +47,10 @@ void GinWrapper::Loader::InstallGinWrapper() {
   if (controller.IsEmpty())
     return;
   v8::Local<v8::Object> global = context->Global();
-  global->Set(gin::StringToV8(isolate, "webRestrictions"), controller.ToV8());
+  global
+      ->Set(context, gin::StringToV8(isolate, "webRestrictions"),
+            controller.ToV8())
+      .Check();
 }
 
 void GinWrapper::Loader::OnDestruct() {

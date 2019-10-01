@@ -23,6 +23,7 @@
 #include "ui/display/types/gamma_ramp_rgb_entry.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/gfx/mojo/color_space_mojom_traits.h"
 
 namespace display {
 namespace {
@@ -45,6 +46,7 @@ void CheckDisplaysEqual(const Display& input, const Display& output) {
   EXPECT_EQ(input.color_depth(), output.color_depth());
   EXPECT_EQ(input.depth_per_component(), output.depth_per_component());
   EXPECT_EQ(input.is_monochrome(), output.is_monochrome());
+  EXPECT_EQ(input.display_frequency(), output.display_frequency());
 }
 
 void CheckDisplayLayoutsEqual(const DisplayLayout& input,
@@ -139,6 +141,7 @@ TEST(DisplayStructTraitsTest, SetAllDisplayValues) {
   input.set_color_depth(input.color_depth() + 1);
   input.set_depth_per_component(input.depth_per_component() + 1);
   input.set_is_monochrome(!input.is_monochrome());
+  input.set_display_frequency(input.display_frequency() + 1);
 
   Display output;
   SerializeAndDeserialize<mojom::Display>(input, &output);

@@ -76,6 +76,12 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
   }
   void SetWebContents(WebContents* web_contents, const gfx::Size& size) {
     contents_view_->SetLayoutManager(std::make_unique<views::FillLayout>());
+    // If there was a previous WebView in this Shell it should be removed and
+    // deleted.
+    if (web_view_) {
+      contents_view_->RemoveChildView(web_view_);
+      delete web_view_;
+    }
     web_view_ = new views::WebView(web_contents->GetBrowserContext());
     web_view_->SetWebContents(web_contents);
     web_view_->SetPreferredSize(size);
@@ -136,7 +142,8 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
           toolbar_layout->AddColumnSet(0);
       // Back button
       back_button_ =
-          views::MdTextButton::Create(this, base::ASCIIToUTF16("Back"));
+          views::MdTextButton::Create(this, base::ASCIIToUTF16("Back"))
+              .release();
       gfx::Size back_button_size = back_button_->GetPreferredSize();
       toolbar_column_set->AddColumn(views::GridLayout::CENTER,
                                     views::GridLayout::CENTER, 0,
@@ -145,7 +152,8 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
                                     back_button_size.width() / 2);
       // Forward button
       forward_button_ =
-          views::MdTextButton::Create(this, base::ASCIIToUTF16("Forward"));
+          views::MdTextButton::Create(this, base::ASCIIToUTF16("Forward"))
+              .release();
       gfx::Size forward_button_size = forward_button_->GetPreferredSize();
       toolbar_column_set->AddColumn(views::GridLayout::CENTER,
                                     views::GridLayout::CENTER, 0,
@@ -154,7 +162,8 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
                                     forward_button_size.width() / 2);
       // Refresh button
       refresh_button_ =
-          views::MdTextButton::Create(this, base::ASCIIToUTF16("Refresh"));
+          views::MdTextButton::Create(this, base::ASCIIToUTF16("Refresh"))
+              .release();
       gfx::Size refresh_button_size = refresh_button_->GetPreferredSize();
       toolbar_column_set->AddColumn(views::GridLayout::CENTER,
                                     views::GridLayout::CENTER, 0,
@@ -163,7 +172,8 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
                                     refresh_button_size.width() / 2);
       // Stop button
       stop_button_ =
-          views::MdTextButton::Create(this, base::ASCIIToUTF16("Stop"));
+          views::MdTextButton::Create(this, base::ASCIIToUTF16("Stop"))
+              .release();
       gfx::Size stop_button_size = stop_button_->GetPreferredSize();
       toolbar_column_set->AddColumn(views::GridLayout::CENTER,
                                     views::GridLayout::CENTER, 0,
@@ -266,7 +276,7 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
     return gfx::Size();
   }
   void ViewHierarchyChanged(
-      const ViewHierarchyChangedDetails& details) override {
+      const views::ViewHierarchyChangedDetails& details) override {
     if (details.is_add && details.child == this) {
       InitShellWindow();
     }
@@ -306,7 +316,7 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
 
   // Contents view contains the web contents view
   View* contents_view_;
-  views::WebView* web_view_;
+  views::WebView* web_view_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(ShellWindowDelegateView);
 };
@@ -330,14 +340,7 @@ void Shell::PlatformInitialize(const gfx::Size& default_window_size) {
   _setmode(_fileno(stderr), _O_BINARY);
 #endif
 #if defined(OS_CHROMEOS)
-  ui::ContextFactory* ui_context_factory =
-      aura::Env::GetInstance()->mode() == aura::Env::Mode::LOCAL
-          ? GetContextFactory()
-          : nullptr;
-  wm_test_helper_ = new wm::WMTestHelper(
-      default_window_size,
-      ServiceManagerConnection::GetForProcess()->GetConnector(),
-      ui_context_factory);
+  wm_test_helper_ = new wm::WMTestHelper(default_window_size);
 #else
   wm_state_ = new wm::WMState;
   views::InstallDesktopScreenIfNecessary();

@@ -40,7 +40,7 @@ std::string OfflineContentAggregator::CreateUniqueNameSpace(
     return prefix;
 
   static int num_registrations = 0;
-  return prefix + "_" + base::IntToString(++num_registrations);
+  return prefix + "_" + base::NumberToString(++num_registrations);
 }
 
 void OfflineContentAggregator::RegisterProvider(
@@ -195,6 +195,7 @@ void OfflineContentAggregator::OnGetAllItemsDone(
 }
 
 void OfflineContentAggregator::GetVisualsForItem(const ContentId& id,
+                                                 GetVisualsOptions options,
                                                  VisualsCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   auto it = providers_.find(id.name_space);
@@ -205,7 +206,7 @@ void OfflineContentAggregator::GetVisualsForItem(const ContentId& id,
     return;
   }
 
-  it->second->GetVisualsForItem(id, std::move(callback));
+  it->second->GetVisualsForItem(id, options, std::move(callback));
 }
 
 void OfflineContentAggregator::GetShareInfoForItem(const ContentId& id,
@@ -219,6 +220,19 @@ void OfflineContentAggregator::GetShareInfoForItem(const ContentId& id,
   }
 
   it->second->GetShareInfoForItem(id, std::move(callback));
+}
+
+void OfflineContentAggregator::RenameItem(const ContentId& id,
+                                          const std::string& name,
+                                          RenameCallback callback) {
+  auto it = providers_.find(id.name_space);
+  if (it == providers_.end()) {
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE,
+        base::BindOnce(std::move(callback), RenameResult::FAILURE_UNAVAILABLE));
+    return;
+  }
+  it->second->RenameItem(id, name, std::move(callback));
 }
 
 void OfflineContentAggregator::AddObserver(

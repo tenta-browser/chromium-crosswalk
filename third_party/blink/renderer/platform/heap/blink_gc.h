@@ -25,7 +25,6 @@ using MarkingVisitorCallback = void (*)(MarkingVisitor*, void*);
 using TraceCallback = VisitorCallback;
 using WeakCallback = VisitorCallback;
 using EphemeronCallback = VisitorCallback;
-using NameCallback = const char* (*)(const void* self);
 
 // Simple alias to avoid heap compaction type signatures turning into
 // a sea of generic |void*|s.
@@ -86,19 +85,23 @@ class PLATFORM_EXPORT BlinkGC final {
     kEagerSweeping,
   };
 
+  // Commented out reasons have been used in the past but are not used any
+  // longer. We keep them here as the corresponding UMA histograms cannot be
+  // changed.
   enum class GCReason {
-    kIdleGC = 0,
+    // kIdleGC = 0,
     kPreciseGC = 1,
     kConservativeGC = 2,
-    kForcedGC = 3,
+    kForcedGCForTesting = 3,
     kMemoryPressureGC = 4,
-    kPageNavigationGC = 5,
+    // kPageNavigationGC = 5,
     kThreadTerminationGC = 6,
-    kTesting = 7,
-    kIncrementalIdleGC = 8,
+    // kTesting = 7,
+    // kIncrementalIdleGC = 8,
     kIncrementalV8FollowupGC = 9,
     kUnifiedHeapGC = 10,
-    kMaxValue = kUnifiedHeapGC,
+    kUnifiedHeapForMemoryReductionGC = 11,
+    kMaxValue = kUnifiedHeapForMemoryReductionGC,
   };
 
   enum ArenaIndices {
@@ -125,6 +128,11 @@ class PLATFORM_EXPORT BlinkGC final {
 
   // Sentinel used to mark not-fully-constructed during mixins.
   static constexpr void* kNotFullyConstructedObject = nullptr;
+
+  static const char* ToString(GCReason);
+  static const char* ToString(MarkingType);
+  static const char* ToString(StackState);
+  static const char* ToString(SweepingType);
 };
 
 }  // namespace blink

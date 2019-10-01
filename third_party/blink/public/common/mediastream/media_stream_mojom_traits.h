@@ -5,6 +5,7 @@
 #ifndef THIRD_PARTY_BLINK_PUBLIC_COMMON_MEDIASTREAM_MEDIA_STREAM_MOJOM_TRAITS_H_
 #define THIRD_PARTY_BLINK_PUBLIC_COMMON_MEDIASTREAM_MEDIA_STREAM_MOJOM_TRAITS_H_
 
+#include "third_party/blink/public/common/common_export.h"
 #include "third_party/blink/public/common/mediastream/media_stream_controls.h"
 #include "third_party/blink/public/common/mediastream/media_stream_request.h"
 #include "third_party/blink/public/mojom/mediastream/media_stream.mojom.h"
@@ -12,7 +13,8 @@
 namespace mojo {
 
 template <>
-struct EnumTraits<blink::mojom::MediaStreamType, blink::MediaStreamType> {
+struct BLINK_COMMON_EXPORT
+    EnumTraits<blink::mojom::MediaStreamType, blink::MediaStreamType> {
   static blink::mojom::MediaStreamType ToMojom(blink::MediaStreamType type);
 
   static bool FromMojom(blink::mojom::MediaStreamType input,
@@ -20,8 +22,8 @@ struct EnumTraits<blink::mojom::MediaStreamType, blink::MediaStreamType> {
 };
 
 template <>
-struct EnumTraits<blink::mojom::MediaStreamRequestResult,
-                  blink::MediaStreamRequestResult> {
+struct BLINK_COMMON_EXPORT EnumTraits<blink::mojom::MediaStreamRequestResult,
+                                      blink::MediaStreamRequestResult> {
   static blink::mojom::MediaStreamRequestResult ToMojom(
       blink::MediaStreamRequestResult result);
 
@@ -30,8 +32,8 @@ struct EnumTraits<blink::mojom::MediaStreamRequestResult,
 };
 
 template <>
-struct StructTraits<blink::mojom::MediaStreamDeviceDataView,
-                    blink::MediaStreamDevice> {
+struct BLINK_COMMON_EXPORT StructTraits<blink::mojom::MediaStreamDeviceDataView,
+                                        blink::MediaStreamDevice> {
   static const blink::MediaStreamType& type(
       const blink::MediaStreamDevice& device) {
     return device.type;
@@ -69,12 +71,6 @@ struct StructTraits<blink::mojom::MediaStreamDeviceDataView,
     return device.session_id;
   }
 
-  static const base::Optional<
-      media::VideoCaptureDeviceDescriptor::CameraCalibration>&
-  camera_calibration(const blink::MediaStreamDevice& device) {
-    return device.camera_calibration;
-  }
-
   static const base::Optional<media::mojom::DisplayMediaInformationPtr>&
   display_media_info(const blink::MediaStreamDevice& device) {
     return device.display_media_info;
@@ -85,7 +81,8 @@ struct StructTraits<blink::mojom::MediaStreamDeviceDataView,
 };
 
 template <>
-struct StructTraits<blink::mojom::TrackControlsDataView, blink::TrackControls> {
+struct BLINK_COMMON_EXPORT
+    StructTraits<blink::mojom::TrackControlsDataView, blink::TrackControls> {
   static bool requested(const blink::TrackControls& controls) {
     return controls.requested;
   }
@@ -104,8 +101,8 @@ struct StructTraits<blink::mojom::TrackControlsDataView, blink::TrackControls> {
 };
 
 template <>
-struct StructTraits<blink::mojom::StreamControlsDataView,
-                    blink::StreamControls> {
+struct BLINK_COMMON_EXPORT
+    StructTraits<blink::mojom::StreamControlsDataView, blink::StreamControls> {
   static const blink::TrackControls& audio(
       const blink::StreamControls& controls) {
     return controls.audio;

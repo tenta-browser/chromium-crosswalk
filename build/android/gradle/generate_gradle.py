@@ -29,9 +29,8 @@ sys.path.append(os.path.join(_BUILD_ANDROID, 'gyp'))
 import jinja_template
 from util import build_utils
 
-sys.path.append(os.path.join(host_paths.DIR_SOURCE_ROOT, 'build'))
-import find_depot_tools  # pylint: disable=import-error
-
+_DEPOT_TOOLS_PATH = os.path.join(host_paths.DIR_SOURCE_ROOT, 'third_party',
+                                 'depot_tools')
 _DEFAULT_ANDROID_MANIFEST_PATH = os.path.join(
     host_paths.DIR_SOURCE_ROOT, 'build', 'android', 'gradle',
     'AndroidManifest.xml')
@@ -114,9 +113,9 @@ def _ReadPropertiesFile(path):
 
 def _RunGnGen(output_dir, args=None):
   cmd = [
-    os.path.join(find_depot_tools.DEPOT_TOOLS_PATH, 'gn'),
-    'gen',
-    output_dir,
+      os.path.join(_DEPOT_TOOLS_PATH, 'gn'),
+      'gen',
+      output_dir,
   ]
   if args:
     cmd.extend(args)
@@ -124,12 +123,11 @@ def _RunGnGen(output_dir, args=None):
   subprocess.check_call(cmd)
 
 
-def _RunNinja(output_dir, args, j):
+def _RunNinja(output_dir, args):
   cmd = [
-    os.path.join(find_depot_tools.DEPOT_TOOLS_PATH, 'ninja'),
-    '-C',
-    output_dir,
-    '-j{}'.format(j),
+      os.path.join(_DEPOT_TOOLS_PATH, 'autoninja'),
+      '-C',
+      output_dir,
   ]
   cmd.extend(args)
   logging.info('Running: %r', cmd)
@@ -139,11 +137,11 @@ def _RunNinja(output_dir, args, j):
 def _QueryForAllGnTargets(output_dir):
   # Query ninja rather than GN since it's faster.
   cmd = [
-    os.path.join(find_depot_tools.DEPOT_TOOLS_PATH, 'ninja'),
-    '-C',
-    output_dir,
-    '-t',
-    'targets',
+      os.path.join(_DEPOT_TOOLS_PATH, 'ninja'),
+      '-C',
+      output_dir,
+      '-t',
+      'targets',
   ]
   logging.info('Running: %r', cmd)
   ninja_output = build_utils.CheckOutput(cmd)
@@ -808,9 +806,6 @@ def main():
   parser.add_argument('--fast',
                       action='store_true',
                       help='Skip generating R.java and other generated files.')
-  parser.add_argument('-j',
-                      default=1000 if os.path.exists(_SRC_INTERNAL) else 50,
-                      help='Value for number of parallel jobs for ninja')
   parser.add_argument('--native-target',
                       dest='native_targets',
                       action='append',
@@ -869,7 +864,7 @@ def main():
       _RunGnGen(output_dir)
     else:
       # Faster than running "gn gen" in the no-op case.
-      _RunNinja(output_dir, ['build.ninja'], args.j)
+      _RunNinja(output_dir, ['build.ninja'])
     # Query ninja for all __build_config_crbug_908819 targets.
     targets = _QueryForAllGnTargets(output_dir)
   else:
@@ -899,8 +894,7 @@ def main():
   main_entries = [_ProjectEntry.FromGnTarget(t) for t in targets]
 
   logging.warning('Building .build_config files...')
-  _RunNinja(
-      output_dir, [e.NinjaBuildConfigTarget() for e in main_entries], args.j)
+  _RunNinja(output_dir, [e.NinjaBuildConfigTarget() for e in main_entries])
 
   if args.all:
     # There are many unused libraries, so restrict to those that are actually
@@ -962,7 +956,7 @@ def main():
   if generated_inputs:
     logging.warning('Building generated source files...')
     targets = _RebasePath(generated_inputs, output_dir)
-    _RunNinja(output_dir, targets, args.j)
+    _RunNinja(output_dir, targets)
   if zip_tuples:
     _ExtractZips(generator.project_dir, zip_tuples)
 

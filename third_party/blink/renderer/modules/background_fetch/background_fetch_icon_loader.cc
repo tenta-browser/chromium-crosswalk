@@ -21,8 +21,8 @@
 #include "third_party/blink/renderer/platform/image-decoders/segment_reader.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loader_options.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
-#include "third_party/blink/renderer/platform/scheduler/public/background_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
+#include "third_party/blink/renderer/platform/scheduler/public/worker_pool.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_impl.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -32,7 +32,7 @@ namespace blink {
 
 namespace {
 
-constexpr unsigned long kIconFetchTimeoutInMs = 30000;
+constexpr uint32_t kIconFetchTimeoutInMs = 30000;
 constexpr int kMinimumIconSizeInPx = 0;
 
 // Because including base::ClampToRange would be a dependency violation.
@@ -128,7 +128,7 @@ KURL BackgroundFetchIconLoader::PickBestIconForDisplay(
     icons.emplace_back(candidate_icon);
   }
 
-  return KURL(ManifestIconSelector::FindBestMatchingIcon(
+  return KURL(ManifestIconSelector::FindBestMatchingSquareIcon(
       std::move(icons), icon_display_size_pixels_.height, kMinimumIconSizeInPx,
       Manifest::ImageResource::Purpose::ANY));
 }
@@ -151,8 +151,7 @@ void BackgroundFetchIconLoader::DidReceiveData(const char* data,
   data_->Append(data, length);
 }
 
-void BackgroundFetchIconLoader::DidFinishLoading(
-    unsigned long resource_identifier) {
+void BackgroundFetchIconLoader::DidFinishLoading(uint64_t resource_identifier) {
   if (stopped_)
     return;
 
@@ -164,9 +163,9 @@ void BackgroundFetchIconLoader::DidFinishLoading(
   scoped_refptr<base::SingleThreadTaskRunner> task_runner =
       Thread::Current()->GetTaskRunner();
 
-  background_scheduler::PostOnBackgroundThread(
+  worker_pool::PostTask(
       FROM_HERE,
-      CrossThreadBind(
+      CrossThreadBindOnce(
           &BackgroundFetchIconLoader::DecodeAndResizeImageOnBackgroundThread,
           WrapCrossThreadPersistent(this), std::move(task_runner),
           SegmentReader::CreateFromSharedBuffer(std::move(data_))));
@@ -215,10 +214,11 @@ void BackgroundFetchIconLoader::DecodeAndResizeImageOnBackgroundThread(
     }
   }
 
-  PostCrossThreadTask(*task_runner, FROM_HERE,
-                      CrossThreadBind(&BackgroundFetchIconLoader::RunCallback,
-                                      WrapCrossThreadPersistent(this),
-                                      ideal_to_chosen_icon_size_times_hundred));
+  PostCrossThreadTask(
+      *task_runner, FROM_HERE,
+      CrossThreadBindOnce(&BackgroundFetchIconLoader::RunCallback,
+                          WrapCrossThreadPersistent(this),
+                          ideal_to_chosen_icon_size_times_hundred));
 }
 
 void BackgroundFetchIconLoader::DidFail(const ResourceError& error) {

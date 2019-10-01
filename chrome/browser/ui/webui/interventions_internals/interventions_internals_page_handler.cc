@@ -18,6 +18,7 @@
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_switches.h"
 #include "components/previews/core/previews_experiments.h"
 #include "components/previews/core/previews_switches.h"
+#include "net/base/features.h"
 #include "net/nqe/network_quality_estimator_params.h"
 #include "services/network/public/cpp/network_quality_tracker.h"
 #include "services/network/public/cpp/network_switches.h"
@@ -99,7 +100,8 @@ std::string GetFeatureFlagStatus(const std::string& feature_name) {
 
 std::string GetNonFlagEctValue() {
   std::map<std::string, std::string> nqe_params;
-  base::GetFieldTrialParams("NetworkQualityEstimator", &nqe_params);
+  base::GetFieldTrialParamsByFeature(net::features::kNetworkQualityEstimator,
+                                     &nqe_params);
   if (nqe_params.find(net::kForceEffectiveConnectionType) != nqe_params.end()) {
     return "Fieldtrial forced " +
            nqe_params[net::kForceEffectiveConnectionType];
@@ -118,9 +120,11 @@ std::string GetEnabledStateForSwitch(const std::string& switch_name) {
 
 InterventionsInternalsPageHandler::InterventionsInternalsPageHandler(
     mojom::InterventionsInternalsPageHandlerRequest request,
-    previews::PreviewsUIService* previews_ui_service)
+    previews::PreviewsUIService* previews_ui_service,
+    network::NetworkQualityTracker* network_quality_tracker)
     : binding_(this, std::move(request)),
       previews_ui_service_(previews_ui_service),
+      network_quality_tracker_(network_quality_tracker),
       current_estimated_ect_(net::EFFECTIVE_CONNECTION_TYPE_UNKNOWN) {
   logger_ = previews_ui_service_->previews_logger();
   DCHECK(logger_);
@@ -129,7 +133,8 @@ InterventionsInternalsPageHandler::InterventionsInternalsPageHandler(
 InterventionsInternalsPageHandler::~InterventionsInternalsPageHandler() {
   DCHECK(logger_);
   logger_->RemoveObserver(this);
-  g_browser_process->network_quality_tracker()
+  (network_quality_tracker_ ? network_quality_tracker_
+                            : g_browser_process->network_quality_tracker())
       ->RemoveEffectiveConnectionTypeObserver(this);
 }
 
@@ -138,7 +143,8 @@ void InterventionsInternalsPageHandler::SetClientPage(
   page_ = std::move(page);
   DCHECK(page_);
   logger_->AddAndNotifyObserver(this);
-  g_browser_process->network_quality_tracker()
+  (network_quality_tracker_ ? network_quality_tracker_
+                            : g_browser_process->network_quality_tracker())
       ->AddEffectiveConnectionTypeObserver(this);
 }
 
@@ -184,8 +190,7 @@ void InterventionsInternalsPageHandler::SetIgnorePreviewsBlacklistDecision(
 void InterventionsInternalsPageHandler::OnLastObserverRemove() {
   // Reset the status of ignoring PreviewsBlackList decisions to default value.
   previews_ui_service_->SetIgnorePreviewsBlacklistDecision(
-      base::CommandLine::ForCurrentProcess()->HasSwitch(
-          previews::switches::kIgnorePreviewsBlacklist));
+      previews::switches::ShouldIgnorePreviewsBlacklist());
 }
 
 void InterventionsInternalsPageHandler::OnIgnoreBlacklistDecisionStatusChanged(

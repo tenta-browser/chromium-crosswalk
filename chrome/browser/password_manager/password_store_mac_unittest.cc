@@ -245,7 +245,7 @@ TEST_P(PasswordStoreMacTest, OperationsOnABadDatabaseSilentlyFail) {
 
   // Add a new autofillable login + a blacklisted login.
   password_manager::PasswordFormData www_form_data = {
-      PasswordForm::SCHEME_HTML,
+      PasswordForm::Scheme::kHtml,
       "http://www.facebook.com/",
       "http://www.facebook.com/index.html",
       "login",
@@ -276,7 +276,7 @@ TEST_P(PasswordStoreMacTest, OperationsOnABadDatabaseSilentlyFail) {
   FinishAsyncProcessing();
   EXPECT_THAT(mock_consumer.forms(), IsEmpty());
 
-  store()->GetBlacklistLogins(&mock_consumer);
+  store()->GetAllLogins(&mock_consumer);
   FinishAsyncProcessing();
   EXPECT_THAT(mock_consumer.forms(), IsEmpty());
 
@@ -300,14 +300,14 @@ TEST_P(PasswordStoreMacTest, OperationsOnABadDatabaseSilentlyFail) {
   ClosePasswordStore();
 }
 
-INSTANTIATE_TEST_CASE_P(,
-                        PasswordStoreMacTest,
-                        testing::Values(MigrationStatus::NOT_STARTED,
-                                        MigrationStatus::MIGRATED,
-                                        MigrationStatus::FAILED_ONCE,
-                                        MigrationStatus::FAILED_TWICE,
-                                        MigrationStatus::MIGRATED_DELETED,
-                                        MigrationStatus::MIGRATED_PARTIALLY,
-                                        MigrationStatus::MIGRATION_STOPPED));
+INSTANTIATE_TEST_SUITE_P(,
+                         PasswordStoreMacTest,
+                         testing::Values(MigrationStatus::NOT_STARTED,
+                                         MigrationStatus::MIGRATED,
+                                         MigrationStatus::FAILED_ONCE,
+                                         MigrationStatus::FAILED_TWICE,
+                                         MigrationStatus::MIGRATED_DELETED,
+                                         MigrationStatus::MIGRATED_PARTIALLY,
+                                         MigrationStatus::MIGRATION_STOPPED));
 
 }  // namespace

@@ -10,6 +10,7 @@
 #include "components/prefs/pref_change_registrar.h"
 #include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_ui_controller.h"
+#include "ui/native_theme/dark_mode_observer.h"
 
 class GURL;
 class Profile;
@@ -73,10 +74,13 @@ class NewTabUI : public content::WebUIController {
     DISALLOW_COPY_AND_ASSIGN(NewTabHTMLSource);
   };
 
-  void OnShowBookmarkBarChanged();
+  void OnDarkModeChanged(bool dark_mode);
   void OnDefaultFontSizeChanged();
+  void OnShowBookmarkBarChanged();
 
   Profile* GetProfile() const;
+
+  ui::DarkModeObserver dark_mode_observer_;
 
   PrefChangeRegistrar pref_change_registrar_;
 

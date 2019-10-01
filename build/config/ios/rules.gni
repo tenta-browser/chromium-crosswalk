@@ -297,7 +297,6 @@ template("create_signed_bundle") {
     bundle_contents_dir = bundle_root_dir
     bundle_resources_dir = bundle_contents_dir
     bundle_executable_dir = bundle_contents_dir
-    bundle_plugins_dir = "$bundle_contents_dir/PlugIns"
 
     if (!defined(public_deps)) {
       public_deps = []
@@ -1661,14 +1660,23 @@ template("ios_xctest_bundle") {
       info_plist = "//build/config/ios/Module-Info.plist"
       executable_name = _output_name
 
+      if (defined(invoker.xctest_bundle_principal_class)) {
+        _principal_class = invoker.xctest_bundle_principal_class
+      } else {
+        # Fall back to a reasonable default value.
+        _principal_class = "NSObject"
+      }
+      extra_substitutions =
+          [ "XCTEST_BUNDLE_PRINCIPAL_CLASS=${_principal_class}" ]
+
       if (ios_automatically_manage_certs) {
         # Use a fixed bundle identifier for EarlGrey tests when using Xcode to
         # manage the certificates as the number of free certs is limited.
-        extra_substitutions = [
+        extra_substitutions += [
           "MODULE_BUNDLE_ID=gtest.${ios_generic_test_bundle_id_suffix}-module",
         ]
       } else {
-        extra_substitutions = [ "MODULE_BUNDLE_ID=gtest.$_output_name" ]
+        extra_substitutions += [ "MODULE_BUNDLE_ID=gtest.$_output_name" ]
       }
     }
 
@@ -1757,7 +1765,7 @@ template("ios_xctest_bundle") {
         "$root_out_dir/$_output_name.xctest",
       ]
       outputs = [
-        "{{bundle_plugins_dir}}/$_output_name.xctest",
+        "{{bundle_contents_dir}}/PlugIns/$_output_name.xctest",
       ]
     }
   }
@@ -1824,22 +1832,15 @@ template("ios_xctest_test") {
       }
     }
 
-    # Xcode needs those two framework installed in the application (and signed)
-    # for the XCTest to run, so install them using extra_system_frameworks.
+    # Xcode needs the following frameworks installed in the application (and
+    # signed) for the XCTest to run, so install them using
+    # extra_system_frameworks.
     _ios_platform_library = "$ios_sdk_platform_path/Developer/Library"
-    extra_system_frameworks =
-        [ "$_ios_platform_library/Frameworks/XCTest.framework" ]
-
-    # TODO: Remove this once support for Xcode 9.x is dropped.
-    if (xcode_version_int >= 1000) {
-      extra_system_frameworks += [
-        "$ios_sdk_platform_path/Developer/usr/lib/libXCTestBundleInject.dylib",
-      ]
-    } else {
-      extra_system_frameworks += [
-        "$_ios_platform_library/PrivateFrameworks/IDEBundleInjection.framework",
-      ]
-    }
+    extra_system_frameworks = [
+      "$_ios_platform_library/Frameworks/XCTest.framework",
+      "$ios_sdk_platform_path/Developer/Library/PrivateFrameworks/XCTAutomationSupport.framework",
+      "$ios_sdk_platform_path/Developer/usr/lib/libXCTestBundleInject.dylib",
+    ]
 
     _xctest_bundle = _xctest_target + "_bundle"
     if (current_toolchain == default_toolchain) {
@@ -1988,7 +1989,11 @@ template("ios_xcuitest_test_runner_bundle") {
       "$ios_sdk_platform_path/Developer/Library/PrivateFrameworks/XCTAutomationSupport.framework",
     ]
 
-    bundle_deps = [
+    bundle_deps = []
+    if (defined(invoker.bundle_deps)) {
+      bundle_deps += invoker.bundle_deps
+    }
+    bundle_deps += [
       ":$_info_plist_bundle",
       ":$_pkginfo_bundle",
       ":$_xctest_bundle",
@@ -2031,7 +2036,11 @@ template("ios_xcuitest_test") {
 
   _xcuitest_module_output = _xcuitest_target
   ios_xctest_bundle(_xcuitest_module_target) {
-    forward_variables_from(invoker, [ "xcode_test_application_name" ])
+    forward_variables_from(invoker,
+                           [
+                             "xcode_test_application_name",
+                             "xctest_bundle_principal_class",
+                           ])
 
     product_type = _ios_xcode_xcuitest_bundle_id
     host_target = _xcuitest_runner_target
@@ -2044,6 +2053,7 @@ template("ios_xcuitest_test") {
   ios_xcuitest_test_runner_bundle(_xcuitest_runner_target) {
     output_name = _xcuitest_runner_output
     xctest_bundle = _xcuitest_module_target + "_bundle"
+    forward_variables_from(invoker, [ "bundle_deps" ])
   }
 }
 

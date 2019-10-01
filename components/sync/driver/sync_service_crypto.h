@@ -44,13 +44,6 @@ class SyncServiceCrypto : public SyncEncryptionHandler::Observer {
   // Returns the actual passphrase type being used for encryption.
   PassphraseType GetPassphraseType() const;
 
-  // Returns true if encrypting all the sync data is allowed. If this method
-  // returns false, EnableEncryptEverything() should not be called.
-  bool IsEncryptEverythingAllowed() const;
-
-  // Sets whether encrypting all the sync data is allowed or not.
-  void SetEncryptEverythingAllowed(bool allowed);
-
   // Returns the current set of encrypted data types.
   ModelTypeSet GetEncryptedDataTypes() const;
 
@@ -68,20 +61,12 @@ class SyncServiceCrypto : public SyncEncryptionHandler::Observer {
   void OnCryptographerStateChanged(Cryptographer* cryptographer) override;
   void OnPassphraseTypeChanged(PassphraseType type,
                                base::Time passphrase_time) override;
-  void OnLocalSetPassphraseEncryption(
-      const SyncEncryptionHandler::NigoriState& nigori_state) override;
-
-  // Calls data type manager to start catch up configure.
-  void BeginConfigureCatchUpBeforeClear();
 
   // Used to provide the engine when it is initialized.
   void SetSyncEngine(SyncEngine* engine) { state_.engine = engine; }
 
   // Creates a proxy observer object that will post calls to this thread.
   std::unique_ptr<SyncEncryptionHandler::Observer> GetEncryptionObserverProxy();
-
-  // Takes the previously saved nigori state; null if there isn't any.
-  std::unique_ptr<SyncEncryptionHandler::NigoriState> TakeSavedNigoriState();
 
   PassphraseRequiredReason passphrase_required_reason() const {
     return state_.passphrase_required_reason;
@@ -119,9 +104,6 @@ class SyncServiceCrypto : public SyncEncryptionHandler::Observer {
     // Cryptographer::SensitiveTypes().
     ModelTypeSet encrypted_types = SyncEncryptionHandler::SensitiveTypes();
 
-    // Whether encrypting everything is allowed.
-    bool encrypt_everything_allowed = true;
-
     // Whether we want to encrypt everything.
     bool encrypt_everything = false;
 
@@ -129,11 +111,6 @@ class SyncServiceCrypto : public SyncEncryptionHandler::Observer {
     // complete. We track this at this layer in order to allow the user to
     // cancel if they e.g. don't remember their explicit passphrase.
     bool encryption_pending = false;
-
-    // Nigori state after user switching to custom passphrase, saved until
-    // transition steps complete. It will be injected into new engine after sync
-    // restart.
-    std::unique_ptr<SyncEncryptionHandler::NigoriState> saved_nigori_state;
 
     // We cache the cryptographer's pending keys whenever
     // NotifyPassphraseRequired is called. This way, before the UI calls

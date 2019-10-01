@@ -24,7 +24,6 @@
 #include "chrome/browser/autocomplete/chrome_autocomplete_provider_client.h"
 #include "chrome/browser/bitmap_fetcher/bitmap_fetcher_service_factory.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
-#include "chrome/browser/bookmarks/bookmark_stats.h"
 #include "chrome/browser/browser_about_handler.h"
 #include "chrome/browser/command_updater.h"
 #include "chrome/browser/extensions/api/omnibox/omnibox_api.h"
@@ -40,6 +39,7 @@
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
 #include "chrome/browser/translate/chrome_translate_client.h"
+#include "chrome/browser/ui/bookmarks/bookmark_stats.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_finder.h"
@@ -60,6 +60,7 @@
 #include "components/omnibox/browser/omnibox_controller_emitter.h"
 #include "components/omnibox/browser/omnibox_field_trial.h"
 #include "components/omnibox/browser/search_provider.h"
+#include "components/omnibox/common/omnibox_features.h"
 #include "components/prefs/pref_service.h"
 #include "components/search/search.h"
 #include "components/search_engines/search_engines_pref_names.h"
@@ -176,31 +177,12 @@ gfx::Image ChromeOmniboxClient::GetFavicon() const {
       ->GetFavicon();
 }
 
-bool ChromeOmniboxClient::IsInstantNTP() const {
-  return search::IsInstantNTP(controller_->GetWebContents());
-}
-
-bool ChromeOmniboxClient::IsSearchResultsPage() const {
-  Profile* profile = Profile::FromBrowserContext(
-      controller_->GetWebContents()->GetBrowserContext());
-  return TemplateURLServiceFactory::GetForProfile(profile)->
-      IsSearchResultsPageFromDefaultSearchProvider(GetURL());
-}
-
 bool ChromeOmniboxClient::IsLoading() const {
   return controller_->GetWebContents()->IsLoading();
 }
 
 bool ChromeOmniboxClient::IsPasteAndGoEnabled() const {
   return controller_->command_updater()->IsCommandEnabled(IDC_OPEN_CURRENT_URL);
-}
-
-bool ChromeOmniboxClient::IsNewTabPage(const GURL& url) const {
-  return url.spec() == chrome::kChromeUINewTabURL;
-}
-
-bool ChromeOmniboxClient::IsHomePage(const GURL& url) const {
-  return url.spec() == profile_->GetPrefs()->GetString(prefs::kHomePage);
 }
 
 bool ChromeOmniboxClient::IsDefaultSearchProviderEnabled() const {
@@ -411,6 +393,16 @@ gfx::Image ChromeOmniboxClient::GetFaviconForDefaultSearchProvider(
     return gfx::Image();
 
   return favicon_cache_.GetFaviconForIconUrl(default_provider->favicon_url(),
+                                             std::move(on_favicon_fetched));
+}
+
+gfx::Image ChromeOmniboxClient::GetFaviconForKeywordSearchProvider(
+    const TemplateURL* template_url,
+    FaviconFetchedCallback on_favicon_fetched) {
+  if (!template_url)
+    return gfx::Image();
+
+  return favicon_cache_.GetFaviconForIconUrl(template_url->favicon_url(),
                                              std::move(on_favicon_fetched));
 }
 

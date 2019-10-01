@@ -17,10 +17,11 @@
 #include "base/memory/weak_ptr.h"
 #include "base/process/process_handle.h"
 #include "content/browser/appcache/chrome_appcache_service.h"
-#include "content/browser/background_sync/background_sync_context.h"
+#include "content/browser/background_sync/background_sync_context_impl.h"
 #include "content/browser/bluetooth/bluetooth_allowed_devices_map.h"
 #include "content/browser/broadcast_channel/broadcast_channel_provider.h"
 #include "content/browser/cache_storage/cache_storage_context_impl.h"
+#include "content/browser/devtools/devtools_background_services_context_impl.h"
 #include "content/browser/dom_storage/dom_storage_context_wrapper.h"
 #include "content/browser/idle/idle_manager.h"
 #include "content/browser/indexed_db/indexed_db_context_impl.h"
@@ -51,6 +52,7 @@ class CookieStoreContext;
 class BlobRegistryWrapper;
 class PrefetchURLLoaderService;
 class GeneratedCodeCacheContext;
+class NativeFileSystemManagerImpl;
 
 class CONTENT_EXPORT StoragePartitionImpl
     : public StoragePartition,
@@ -94,6 +96,7 @@ class CONTENT_EXPORT StoragePartitionImpl
   network::mojom::CookieManager* GetCookieManagerForBrowserProcess() override;
   storage::QuotaManager* GetQuotaManager() override;
   ChromeAppCacheService* GetAppCacheService() override;
+  BackgroundSyncContextImpl* GetBackgroundSyncContext() override;
   storage::FileSystemContext* GetFileSystemContext() override;
   storage::DatabaseTracker* GetDatabaseTracker() override;
   DOMStorageContextWrapper* GetDOMStorageContext() override;
@@ -104,6 +107,8 @@ class CONTENT_EXPORT StoragePartitionImpl
   ServiceWorkerContextWrapper* GetServiceWorkerContext() override;
   SharedWorkerServiceImpl* GetSharedWorkerService() override;
   GeneratedCodeCacheContext* GetGeneratedCodeCacheContext() override;
+  DevToolsBackgroundServicesContextImpl* GetDevToolsBackgroundServicesContext()
+      override;
 #if !defined(OS_ANDROID)
   HostZoomMap* GetHostZoomMap() override;
   HostZoomLevelContext* GetHostZoomLevelContext() override;
@@ -132,21 +137,24 @@ class CONTENT_EXPORT StoragePartitionImpl
       const base::Time end,
       const base::Callback<bool(const GURL&)>& url_matcher,
       base::OnceClosure callback) override;
-  void ClearCodeCaches(base::OnceClosure callback) override;
+  void ClearCodeCaches(
+      const base::Time begin,
+      const base::Time end,
+      const base::RepeatingCallback<bool(const GURL&)>& url_matcher,
+      base::OnceClosure callback) override;
   void Flush() override;
   void ResetURLLoaderFactories() override;
   void ClearBluetoothAllowedDevicesMapForTesting() override;
   void FlushNetworkInterfaceForTesting() override;
   void WaitForDeletionTasksForTesting() override;
-
   BackgroundFetchContext* GetBackgroundFetchContext();
-  BackgroundSyncContext* GetBackgroundSyncContext();
   PaymentAppContextImpl* GetPaymentAppContext();
   BroadcastChannelProvider* GetBroadcastChannelProvider();
   BluetoothAllowedDevicesMap* GetBluetoothAllowedDevicesMap();
   BlobRegistryWrapper* GetBlobRegistry();
   PrefetchURLLoaderService* GetPrefetchURLLoaderService();
   CookieStoreContext* GetCookieStoreContext();
+  NativeFileSystemManagerImpl* GetNativeFileSystemManager();
 
   // blink::mojom::StoragePartitionService interface.
   void OpenLocalStorage(const url::Origin& origin,
@@ -162,6 +170,12 @@ class CONTENT_EXPORT StoragePartitionImpl
   void OnCanSendDomainReliabilityUpload(
       const GURL& origin,
       OnCanSendDomainReliabilityUploadCallback callback) override;
+  void OnClearSiteData(uint32_t process_id,
+                       int32_t routing_id,
+                       const GURL& url,
+                       const std::string& header_value,
+                       int load_flags,
+                       OnClearSiteDataCallback callback) override;
 
   scoped_refptr<URLLoaderFactoryGetter> url_loader_factory_getter() {
     return url_loader_factory_getter_;
@@ -194,6 +208,15 @@ class CONTENT_EXPORT StoragePartitionImpl
   const GURL& site_for_service_worker() const {
     return site_for_service_worker_;
   }
+
+  // Use the network context to retrieve the origin policy manager.
+  network::mojom::OriginPolicyManager*
+  GetOriginPolicyManagerForBrowserProcess();
+
+  // Override the origin policy manager for testing use only.
+  void SetOriginPolicyManagerForBrowserProcessForTesting(
+      network::mojom::OriginPolicyManagerPtr test_origin_policy_manager);
+  void ResetOriginPolicyManagerForBrowserProcessForTesting();
 
  private:
   class DataDeletionHelper;
@@ -325,7 +348,7 @@ class CONTENT_EXPORT StoragePartitionImpl
 #endif  // !defined(OS_ANDROID)
   scoped_refptr<PlatformNotificationContextImpl> platform_notification_context_;
   scoped_refptr<BackgroundFetchContext> background_fetch_context_;
-  scoped_refptr<BackgroundSyncContext> background_sync_context_;
+  scoped_refptr<BackgroundSyncContextImpl> background_sync_context_;
   scoped_refptr<PaymentAppContextImpl> payment_app_context_;
   scoped_refptr<BroadcastChannelProvider> broadcast_channel_provider_;
   scoped_refptr<BluetoothAllowedDevicesMap> bluetooth_allowed_devices_map_;
@@ -333,6 +356,9 @@ class CONTENT_EXPORT StoragePartitionImpl
   scoped_refptr<PrefetchURLLoaderService> prefetch_url_loader_service_;
   scoped_refptr<CookieStoreContext> cookie_store_context_;
   scoped_refptr<GeneratedCodeCacheContext> generated_code_cache_context_;
+  scoped_refptr<DevToolsBackgroundServicesContextImpl>
+      devtools_background_services_context_;
+  scoped_refptr<NativeFileSystemManagerImpl> native_file_system_manager_;
 
   // BindingSet for StoragePartitionService, using the process id as the
   // binding context type. The process id can subsequently be used during
@@ -360,6 +386,8 @@ class CONTENT_EXPORT StoragePartitionImpl
   network::mojom::URLLoaderFactoryPtr url_loader_factory_for_browser_process_;
   bool is_test_url_loader_factory_for_browser_process_ = false;
   network::mojom::CookieManagerPtr cookie_manager_for_browser_process_;
+  network::mojom::OriginPolicyManagerPtr
+      origin_policy_manager_for_browser_process_;
 
   // When the network service is disabled, a NetworkContext is created on the IO
   // thread that wraps access to the URLRequestContext.

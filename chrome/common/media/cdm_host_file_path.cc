@@ -75,15 +75,12 @@ void AddCdmHostFilePaths(
 
 #elif defined(OS_MACOSX)
 
+  base::FilePath framework_dir = base::mac::FrameworkBundlePath();
   base::FilePath chrome_framework_path =
-      base::mac::FrameworkBundlePath().Append(chrome::kFrameworkExecutableName);
-
-  // Framework signature is in the "Widevine Resources.bundle" next to the
-  // framework directory, not next to the actual framework executable.
-  static const base::FilePath::CharType kWidevineResourcesPath[] =
-      FILE_PATH_LITERAL("Widevine Resources.bundle/Contents/Resources");
-  base::FilePath widevine_signature_path =
-      base::mac::FrameworkBundlePath().DirName().Append(kWidevineResourcesPath);
+      framework_dir.Append(chrome::kFrameworkExecutableName);
+  // The signature file lives inside
+  // Google Chrome Framework.framework/Versions/X/Resources/.
+  base::FilePath widevine_signature_path = framework_dir.Append("Resources");
   base::FilePath chrome_framework_sig_path = GetSigFilePath(
       widevine_signature_path.Append(chrome::kFrameworkExecutableName));
 

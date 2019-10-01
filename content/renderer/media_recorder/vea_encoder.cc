@@ -6,6 +6,7 @@
 
 #include <string>
 
+#include "base/bind.h"
 #include "base/containers/queue.h"
 #include "base/metrics/histogram_macros.h"
 #include "content/renderer/media/gpu/gpu_video_accelerator_factories_impl.h"
@@ -161,6 +162,7 @@ void VEAEncoder::UseOutputBitstreamBufferId(int32_t bitstream_buffer_id) {
 
   video_encoder_->UseOutputBitstreamBuffer(media::BitstreamBuffer(
       bitstream_buffer_id, output_buffers_[bitstream_buffer_id]->handle(),
+      false /* read_only */,
       output_buffers_[bitstream_buffer_id]->mapped_size()));
 }
 

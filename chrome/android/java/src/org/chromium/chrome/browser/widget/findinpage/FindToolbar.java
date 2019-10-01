@@ -38,7 +38,6 @@ import org.chromium.chrome.browser.findinpage.FindNotificationDetails;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabObserver;
-import org.chromium.chrome.browser.tab.TabWebContentsDelegateAndroid;
 import org.chromium.chrome.browser.tabmodel.EmptyTabModelObserver;
 import org.chromium.chrome.browser.tabmodel.EmptyTabModelSelectorObserver;
 import org.chromium.chrome.browser.tabmodel.TabModel;
@@ -53,9 +52,7 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 
 /** A toolbar providing find in page functionality. */
-public class FindToolbar extends LinearLayout
-        implements TabWebContentsDelegateAndroid.FindResultListener,
-                   TabWebContentsDelegateAndroid.FindMatchRectsListener {
+public class FindToolbar extends LinearLayout {
     private static final String TAG = "FindInPage";
 
     private static final long ACCESSIBLE_ANNOUNCEMENT_DELAY_MILLIS = 500;
@@ -76,6 +73,7 @@ public class FindToolbar extends LinearLayout
     protected ImageButton mCloseFindButton;
     protected ImageButton mFindPrevButton;
     protected ImageButton mFindNextButton;
+    protected View mDivider;
 
     private FindResultBar mResultBar;
 
@@ -199,6 +197,16 @@ public class FindToolbar extends LinearLayout
             @Override
             public void onClosingStateChanged(Tab tab, boolean closing) {
                 if (closing) deactivate();
+            }
+
+            @Override
+            public void onFindResultAvailable(FindNotificationDetails result) {
+                onFindResult(result);
+            }
+
+            @Override
+            public void onFindMatchRectsAvailable(FindMatchRectsDetails result) {
+                onFindMatchRects(result);
             }
         };
 
@@ -335,6 +343,8 @@ public class FindToolbar extends LinearLayout
                 deactivate();
             }
         });
+
+        mDivider = findViewById(R.id.find_separator);
     }
 
     // Overriden by subclasses.
@@ -385,8 +395,7 @@ public class FindToolbar extends LinearLayout
         }
     }
 
-    @Override
-    public void onFindMatchRects(FindMatchRectsDetails matchRects) {
+    private void onFindMatchRects(FindMatchRectsDetails matchRects) {
         if (mResultBar == null) return;
         if (mFindQuery.getText().length() > 0) {
             mResultBar.setMatchRects(matchRects.version, matchRects.rects, matchRects.activeRect);
@@ -402,8 +411,7 @@ public class FindToolbar extends LinearLayout
         }
     }
 
-    @Override
-    public void onFindResult(FindNotificationDetails result) {
+    private void onFindResult(FindNotificationDetails result) {
         if (mResultBar != null) mResultBar.mWaitingForActivateAck = false;
 
         assert mFindInPageBridge != null;
@@ -582,8 +590,6 @@ public class FindToolbar extends LinearLayout
         mCurrentTab = mTabModelSelector.getCurrentTab();
         mCurrentTab.addObserver(mTabObserver);
         mFindInPageBridge = new FindInPageBridge(mCurrentTab.getWebContents());
-        mCurrentTab.getTabWebContentsDelegateAndroid().setFindResultListener(this);
-        mCurrentTab.getTabWebContentsDelegateAndroid().setFindMatchRectsListener(this);
         initializeFindText();
         mFindQuery.requestFocus();
         // The keyboard doesn't show itself automatically.
@@ -624,12 +630,6 @@ public class FindToolbar extends LinearLayout
         mTabModelSelector.removeObserver(mTabModelSelectorObserver);
         for (TabModel model : mTabModelSelector.getModels()) {
             model.removeObserver(mTabModelObserver);
-        }
-
-        TabWebContentsDelegateAndroid delegate = mCurrentTab.getTabWebContentsDelegateAndroid();
-        if (delegate != null) {
-            delegate.setFindResultListener(null);
-            delegate.setFindMatchRectsListener(null);
         }
 
         mCurrentTab.removeObserver(mTabObserver);
@@ -762,8 +762,8 @@ public class FindToolbar extends LinearLayout
      * @return          The color of the status text.
      */
     protected int getStatusColor(boolean failed, boolean incognito) {
-        int colorResourceId =
-                failed ? R.color.find_in_page_failed_results_status_color : R.color.black_alpha_38;
+        int colorResourceId = failed ? R.color.find_in_page_failed_results_status_color
+                                     : R.color.default_text_color_tertiary;
         return ApiCompatibilityUtils.getColor(getContext().getResources(), colorResourceId);
     }
 

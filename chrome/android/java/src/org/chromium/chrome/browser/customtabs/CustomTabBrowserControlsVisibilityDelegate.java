@@ -9,7 +9,7 @@ import org.chromium.chrome.browser.dependency_injection.ActivityScope;
 import org.chromium.chrome.browser.fullscreen.BrowserStateBrowserControlsVisibilityDelegate;
 import org.chromium.chrome.browser.fullscreen.ChromeFullscreenManager;
 import org.chromium.chrome.browser.tab.BrowserControlsVisibilityDelegate;
-import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabBrowserControlsState;
 
 import javax.inject.Inject;
 
@@ -24,6 +24,7 @@ public class CustomTabBrowserControlsVisibilityDelegate
     private final Lazy<ChromeFullscreenManager> mFullscreenManagerDelegate;
     private final ActivityTabProvider mTabProvider;
     private boolean mIsInTwaMode;
+    private boolean mIsInModuleLoadingMode;
 
     @Inject
     public CustomTabBrowserControlsVisibilityDelegate(
@@ -41,15 +42,24 @@ public class CustomTabBrowserControlsVisibilityDelegate
             return;
         }
         mIsInTwaMode = isInTwaMode;
-        Tab activeTab = mTabProvider.getActivityTab();
-        if (activeTab != null) {
-            activeTab.updateFullscreenEnabledState();
+        updateActiveTabFullscreenEnabledState();
+    }
+
+    /**
+     * Sets module loading mode. In module loading mode browser controls should be hidden.
+     */
+    public void setModuleLoadingMode(boolean isInModuleLoadingMode) {
+        if (mIsInModuleLoadingMode == isInModuleLoadingMode) {
+            return;
         }
+        mIsInModuleLoadingMode = isInModuleLoadingMode;
+        updateActiveTabFullscreenEnabledState();
     }
 
     @Override
     public boolean canShowBrowserControls() {
-        return !mIsInTwaMode && getDefaultVisibilityDelegate().canShowBrowserControls();
+        return !mIsInTwaMode && !mIsInModuleLoadingMode
+                && getDefaultVisibilityDelegate().canShowBrowserControls();
     }
 
     @Override
@@ -59,5 +69,9 @@ public class CustomTabBrowserControlsVisibilityDelegate
 
     private BrowserStateBrowserControlsVisibilityDelegate getDefaultVisibilityDelegate() {
         return mFullscreenManagerDelegate.get().getBrowserVisibilityDelegate();
+    }
+
+    private void updateActiveTabFullscreenEnabledState() {
+        TabBrowserControlsState.updateEnabledState(mTabProvider.get());
     }
 }

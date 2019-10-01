@@ -5,7 +5,7 @@
 
 import os.path
 import sys
-import optparse
+import argparse
 import collections
 import functools
 import re
@@ -16,6 +16,13 @@ except ImportError:
     import simplejson as json
 
 import pdl
+
+try:
+    unicode
+except NameError:
+    # Define unicode for Py3
+    def unicode(s, *_):
+        return s
 
 # Path handling for libraries and templates
 # Paths have to be normalized because Jinja uses the exact template path to
@@ -33,14 +40,14 @@ def read_config():
         def json_object_hook(object_dict):
             items = [(k, os.path.join(config_base, v) if k == "path" else v) for (k, v) in object_dict.items()]
             items = [(k, os.path.join(output_base, v) if k == "output" else v) for (k, v) in items]
-            keys, values = zip(*items)
+            keys, values = list(zip(*items))
             return collections.namedtuple('X', keys)(*values)
         return json.loads(data, object_hook=json_object_hook)
 
     def init_defaults(config_tuple, path, defaults):
         keys = list(config_tuple._fields)  # pylint: disable=E1101
         values = [getattr(config_tuple, k) for k in keys]
-        for i in xrange(len(keys)):
+        for i in range(len(keys)):
             if hasattr(values[i], "_fields"):
                 values[i] = init_defaults(values[i], path + "." + keys[i], defaults)
         for optional in defaults:
@@ -53,28 +60,17 @@ def read_config():
         return collections.namedtuple('X', keys)(*values)
 
     try:
-        cmdline_parser = optparse.OptionParser()
-        cmdline_parser.add_option("--output_base")
-        cmdline_parser.add_option("--jinja_dir")
-        cmdline_parser.add_option("--config")
-        cmdline_parser.add_option("--config_value", action="append", type="string")
-        arg_options, _ = cmdline_parser.parse_args()
+        cmdline_parser = argparse.ArgumentParser()
+        cmdline_parser.add_argument("--output_base", type=unicode, required=True)
+        cmdline_parser.add_argument("--jinja_dir", type=unicode, required=True)
+        cmdline_parser.add_argument("--config", type=unicode, required=True)
+        cmdline_parser.add_argument("--config_value", default=[], action="append")
+        arg_options = cmdline_parser.parse_args()
         jinja_dir = arg_options.jinja_dir
-        if not jinja_dir:
-            raise Exception("jinja directory must be specified")
-        jinja_dir = jinja_dir.decode('utf8')
         output_base = arg_options.output_base
-        if not output_base:
-            raise Exception("Base output directory must be specified")
-        output_base = output_base.decode('utf8')
         config_file = arg_options.config
-        if not config_file:
-            raise Exception("Config file name must be specified")
-        config_file = config_file.decode('utf8')
         config_base = os.path.dirname(config_file)
         config_values = arg_options.config_value
-        if not config_values:
-            config_values = []
     except Exception:
         # Work with python 2 and 3 http://docs.python.org/py3k/howto/pyporting.html
         exc = sys.exc_info()[1]
@@ -105,6 +101,17 @@ def read_config():
             ".lib": False,
             ".lib.export_macro": "",
             ".lib.export_header": False,
+            # The encoding lib consists of encoding/encoding.h and
+            # encoding/encoding.cc in its subdirectory, which binaries
+            # may link / depend on, instead of relying on the
+            # JINJA2 templates lib/encoding_{h,cc}.template.
+            # In that case, |header| identifies the include file
+            # and |namespace| is the namespace it's using. Usually
+            # inspector_protocol_encoding but for v8's copy it's
+            # v8_inspector_protocol_encoding.
+            # TODO(johannes): Migrate away from lib/encoding_{h,cc}.template
+            #                 in favor of this.
+            ".encoding_lib": { "header": "", "namespace": []},
         }
         for key_value in config_values:
             parts = key_value.split("=")
@@ -134,7 +141,7 @@ def dash_to_camelcase(word):
 
 
 def to_snake_case(name):
-    return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name, sys.maxint).lower()
+    return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name, sys.maxsize).lower()
 
 
 def to_method_case(config, name):
@@ -623,7 +630,7 @@ def main():
         lib_templates_dir = os.path.join(module_path, "lib")
         # Note these should be sorted in the right order.
         # TODO(dgozman): sort them programmatically based on commented includes.
-        lib_h_templates = [
+        protocol_h_templates = [
             "ErrorSupport_h.template",
             "Values_h.template",
             "Object_h.template",
@@ -632,21 +639,31 @@ def main():
             "Array_h.template",
             "DispatcherBase_h.template",
             "Parser_h.template",
+            "encoding_h.template",
         ]
 
-        lib_cpp_templates = [
+        protocol_cpp_templates = [
             "Protocol_cpp.template",
             "ErrorSupport_cpp.template",
             "Values_cpp.template",
             "Object_cpp.template",
             "DispatcherBase_cpp.template",
             "Parser_cpp.template",
+            "encoding_cpp.template",
         ]
 
         forward_h_templates = [
             "Forward_h.template",
             "Allocator_h.template",
             "FrontendChannel_h.template",
+        ]
+
+        base_string_adapter_h_templates = [
+            "base_string_adapter_h.template",
+        ]
+
+        base_string_adapter_cc_templates = [
+            "base_string_adapter_cc.template",
         ]
 
         def generate_lib_file(file_name, template_files):
@@ -658,20 +675,22 @@ def main():
             outputs[file_name] = "\n\n".join(parts)
 
         generate_lib_file(os.path.join(config.lib.output, to_file_name(config, "Forward.h")), forward_h_templates)
-        generate_lib_file(os.path.join(config.lib.output, to_file_name(config, "Protocol.h")), lib_h_templates)
-        generate_lib_file(os.path.join(config.lib.output, to_file_name(config, "Protocol.cpp")), lib_cpp_templates)
+        generate_lib_file(os.path.join(config.lib.output, to_file_name(config, "Protocol.h")), protocol_h_templates)
+        generate_lib_file(os.path.join(config.lib.output, to_file_name(config, "Protocol.cpp")), protocol_cpp_templates)
+        generate_lib_file(os.path.join(config.lib.output, to_file_name(config, "base_string_adapter.h")), base_string_adapter_h_templates)
+        generate_lib_file(os.path.join(config.lib.output, to_file_name(config, "base_string_adapter.cc")), base_string_adapter_cc_templates)
 
     # Make gyp / make generatos happy, otherwise make rebuilds world.
     inputs_ts = max(map(os.path.getmtime, inputs))
     up_to_date = True
-    for output_file in outputs.iterkeys():
+    for output_file in outputs.keys():
         if not os.path.exists(output_file) or os.path.getmtime(output_file) < inputs_ts:
             up_to_date = False
             break
     if up_to_date:
         sys.exit()
 
-    for file_name, content in outputs.iteritems():
+    for file_name, content in outputs.items():
         out_file = open(file_name, "w")
         out_file.write(content)
         out_file.close()

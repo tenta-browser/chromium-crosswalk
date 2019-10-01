@@ -5,6 +5,7 @@
 package org.chromium.chrome.browser.history;
 
 import android.content.res.Resources;
+import android.support.annotation.Nullable;
 import android.support.v7.widget.RecyclerView;
 import android.support.v7.widget.RecyclerView.ViewHolder;
 import android.text.SpannableString;
@@ -16,7 +17,6 @@ import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.TextView;
 
-import org.chromium.base.ContextUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.UrlConstants;
@@ -41,11 +41,11 @@ public class HistoryAdapter extends DateDividedAdapter implements BrowsingHistor
     private static final String EMPTY_QUERY = "";
 
     private final SelectionDelegate<HistoryItem> mSelectionDelegate;
-    private final HistoryProvider mHistoryProvider;
     private final HistoryManager mHistoryManager;
     private final ArrayList<HistoryItemView> mItemViews;
     private final DefaultFaviconHelper mFaviconHelper;
     private RecyclerView mRecyclerView;
+    private @Nullable HistoryProvider mHistoryProvider;
 
     private View mPrivacyDisclaimerBottomSpace;
     private Button mClearBrowsingDataButton;
@@ -78,8 +78,11 @@ public class HistoryAdapter extends DateDividedAdapter implements BrowsingHistor
      * Called when the activity/native page is destroyed.
      */
     public void onDestroyed() {
-        mHistoryProvider.destroy();
         mIsDestroyed = true;
+
+        mHistoryProvider.destroy();
+        mHistoryProvider = null;
+
         mRecyclerView = null;
         mFaviconHelper.clearCache();
     }
@@ -244,6 +247,9 @@ public class HistoryAdapter extends DateDividedAdapter implements BrowsingHistor
 
     @Override
     public void onHistoryDeleted() {
+        // Return early if this call comes in after the activity/native page is destroyed.
+        if (mIsDestroyed) return;
+
         mSelectionDelegate.clearSelection();
         // TODO(twellington): Account for items that have been paged in due to infinite scroll.
         //                    This currently removes all items and re-issues a query.
@@ -275,7 +281,8 @@ public class HistoryAdapter extends DateDividedAdapter implements BrowsingHistor
         TextView privacyDisclaimerTextView =
                 privacyDisclaimerContainer.findViewById(R.id.privacy_disclaimer);
         privacyDisclaimerTextView.setMovementMethod(LinkMovementMethod.getInstance());
-        privacyDisclaimerTextView.setText(getPrivacyDisclaimerText());
+        privacyDisclaimerTextView.setText(
+                getPrivacyDisclaimerText(privacyDisclaimerTextView.getResources()));
         mPrivacyDisclaimerBottomSpace =
                 privacyDisclaimerContainer.findViewById(R.id.privacy_disclaimer_bottom_space);
 
@@ -312,9 +319,8 @@ public class HistoryAdapter extends DateDividedAdapter implements BrowsingHistor
      * Create a {@SpannableString} for privacy disclaimer.
      * @return The {@SpannableString} with the privacy disclaimer string resource and url.
      */
-    private SpannableString getPrivacyDisclaimerText() {
-        final Resources resources = ContextUtils.getApplicationContext().getResources();
-        NoUnderlineClickableSpan link = new NoUnderlineClickableSpan((view) -> {
+    private SpannableString getPrivacyDisclaimerText(Resources resources) {
+        NoUnderlineClickableSpan link = new NoUnderlineClickableSpan(resources, (view) -> {
             mHistoryManager.openUrl(UrlConstants.MY_ACTIVITY_URL_IN_HISTORY, null, true);
         });
         return SpanApplier.applySpans(

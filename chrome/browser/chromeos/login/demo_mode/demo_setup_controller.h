@@ -157,9 +157,6 @@ class DemoSetupController
   using OnSetupError = base::OnceCallback<void(const DemoSetupError&)>;
   using HasPreinstalledDemoResourcesCallback = base::OnceCallback<void(bool)>;
 
-  // Domain that demo mode devices are enrolled into.
-  static constexpr char kDemoModeDomain[] = "cros-demo-mode.com";
-
   static void RegisterLocalStatePrefs(PrefRegistrySimple* registry);
 
   // Clears demo device enrollment requisition on the given |policy_manager| if
@@ -173,6 +170,11 @@ class DemoSetupController
   // Utility method that returns whether demo mode setup flow is in progress in
   // OOBE.
   static bool IsOobeDemoSetupFlowInProgress();
+
+  // If the current country requires customization, returns an user email that
+  // corresponds to the sub organization the device should be enrolled into.
+  // Otherwise, returns an empty string.
+  static std::string GetSubOrganizationEmail();
 
   DemoSetupController();
   ~DemoSetupController() override;

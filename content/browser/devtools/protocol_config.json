@@ -10,8 +10,12 @@
         "export_header": "content/common/content_export.h",
         "options": [
             {
+                "domain": "BackgroundService",
+                "async": ["startObserving"]
+            },
+            {
                 "domain": "Browser",
-                "include": ["getVersion", "getHistograms", "getHistogram", "getBrowserCommandLine", "grantPermissions", "resetPermissions", "crash"]
+                "include": ["getVersion", "getHistograms", "getHistogram", "getBrowserCommandLine", "grantPermissions", "resetPermissions", "crash", "crashGpuProcess"]
             },
             {
                 "domain": "DOM",
@@ -46,12 +50,16 @@
                 "async": ["clearBrowserCookies", "clearBrowserCache", "getCookies", "getAllCookies", "deleteCookies", "setCookie", "setCookies", "continueInterceptedRequest", "getResponseBodyForInterception", "takeResponseBodyForInterceptionAsStream"]
             },
             {
+                "domain": "Overlay",
+                "include": ["setInspectMode", "setPausedInDebuggerMessage"]
+            },
+            {
                 "domain": "Page",
                 "include": ["enable", "disable", "reload", "navigate", "stopLoading", "getNavigationHistory", "navigateToHistoryEntry", "resetNavigationHistory", "captureScreenshot",
                     "startScreencast", "stopScreencast", "screencastFrameAck", "handleJavaScriptDialog", "setColorPickerEnabled",
-                    "printToPDF", "bringToFront", "setDownloadBehavior", "getAppManifest", "crash", "close", "setWebLifecycleState", "captureSnapshot"],
-                "include_events": ["colorPicked", "interstitialShown", "interstitialHidden", "javascriptDialogOpening", "javascriptDialogClosed", "screencastVisibilityChanged", "screencastFrame"],
-                "async": ["captureScreenshot", "printToPDF", "navigate", "getAppManifest", "reload", "captureSnapshot"]
+                    "printToPDF", "bringToFront", "setDownloadBehavior", "getAppManifest", "crash", "close", "setWebLifecycleState", "captureSnapshot", "getInstallabilityErrors"],
+                "include_events": ["colorPicked", "interstitialShown", "interstitialHidden", "javascriptDialogOpening", "javascriptDialogClosed", "downloadWillBegin", "screencastVisibilityChanged", "screencastFrame"],
+                "async": ["captureScreenshot", "printToPDF", "navigate", "getAppManifest", "reload", "captureSnapshot", "getInstallabilityErrors"]
             },
             {
                 "domain": "Runtime",
@@ -90,7 +98,11 @@
             },
             {
                 "domain": "Fetch",
-                "async": ["continueRequest", "failRequest", "fulfillRequest", "continueWithAuth", "getResponseBody", "takeResponseBodyAsStream"]
+                "async": ["enable", "continueRequest", "failRequest", "fulfillRequest", "continueWithAuth", "getResponseBody", "takeResponseBodyAsStream"]
+            },
+            {
+                "domain": "WebAuthn",
+                "include": ["enable", "disable"]
             }
         ]
     },
@@ -98,8 +110,13 @@
     "lib": {
         "package": "content/browser/devtools/protocol",
         "output": "protocol",
-        "string_header": "content/browser/devtools/protocol_string.h",
+        "string_header": "content/browser/devtools/protocol/base_string_adapter.h",
         "export_macro": "CONTENT_EXPORT",
         "export_header": "content/common/content_export.h"
+    },
+
+    "encoding_lib": {
+        "header": "third_party/inspector_protocol/encoding/encoding.h",
+        "namespace": ["inspector_protocol_encoding"]
     }
 }

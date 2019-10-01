@@ -149,6 +149,11 @@ const std::vector<InputDevice>& DeviceDataManager::GetTouchpadDevices() const {
   return touchpad_devices_;
 }
 
+const std::vector<InputDevice>& DeviceDataManager::GetUncategorizedDevices()
+    const {
+  return uncategorized_devices_;
+}
+
 bool DeviceDataManager::AreDeviceListsComplete() const {
   return device_lists_complete_;
 }
@@ -217,6 +222,17 @@ void DeviceDataManager::OnTouchpadDevicesUpdated(
   NotifyObserversTouchpadDeviceConfigurationChanged();
 }
 
+void DeviceDataManager::OnUncategorizedDevicesUpdated(
+    const std::vector<InputDevice>& devices) {
+  if (devices.size() == uncategorized_devices_.size() &&
+      std::equal(devices.begin(), devices.end(), uncategorized_devices_.begin(),
+                 InputDeviceEquals)) {
+    return;
+  }
+  uncategorized_devices_ = devices;
+  NotifyObserversUncategorizedDeviceConfigurationChanged();
+}
+
 void DeviceDataManager::OnDeviceListsComplete() {
   if (!device_lists_complete_) {
     device_lists_complete_ = true;
@@ -230,24 +246,28 @@ void DeviceDataManager::OnStylusStateChanged(StylusState state) {
 
 NOTIFY_OBSERVERS(
     NotifyObserversKeyboardDeviceConfigurationChanged(),
-    OnInputDeviceConfigurationChanged(InputDeviceEventObserver::kKeyboard));
+    OnInputDeviceConfigurationChanged(InputDeviceEventObserver::kKeyboard))
 
 NOTIFY_OBSERVERS(
     NotifyObserversMouseDeviceConfigurationChanged(),
-    OnInputDeviceConfigurationChanged(InputDeviceEventObserver::kMouse));
+    OnInputDeviceConfigurationChanged(InputDeviceEventObserver::kMouse))
 
 NOTIFY_OBSERVERS(
     NotifyObserversTouchpadDeviceConfigurationChanged(),
-    OnInputDeviceConfigurationChanged(InputDeviceEventObserver::kTouchpad));
+    OnInputDeviceConfigurationChanged(InputDeviceEventObserver::kTouchpad))
+
+NOTIFY_OBSERVERS(
+    NotifyObserversUncategorizedDeviceConfigurationChanged(),
+    OnInputDeviceConfigurationChanged(InputDeviceEventObserver::kUncategorized))
 
 NOTIFY_OBSERVERS(
     NotifyObserversTouchscreenDeviceConfigurationChanged(),
-    OnInputDeviceConfigurationChanged(InputDeviceEventObserver::kTouchscreen));
+    OnInputDeviceConfigurationChanged(InputDeviceEventObserver::kTouchscreen))
 
-NOTIFY_OBSERVERS(NotifyObserversDeviceListsComplete(), OnDeviceListsComplete());
+NOTIFY_OBSERVERS(NotifyObserversDeviceListsComplete(), OnDeviceListsComplete())
 
 NOTIFY_OBSERVERS(NotifyObserversStylusStateChanged(StylusState state),
-                 OnStylusStateChanged(state));
+                 OnStylusStateChanged(state))
 
 void DeviceDataManager::AddObserver(InputDeviceEventObserver* observer) {
   observers_.AddObserver(observer);

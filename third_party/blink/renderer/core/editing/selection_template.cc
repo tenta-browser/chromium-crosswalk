@@ -49,7 +49,7 @@ bool SelectionTemplate<Strategy>::operator!=(
 }
 
 template <typename Strategy>
-void SelectionTemplate<Strategy>::Trace(blink::Visitor* visitor) {
+void SelectionTemplate<Strategy>::Trace(Visitor* visitor) {
   visitor->Trace(base_);
   visitor->Trace(extent_);
 }
@@ -120,7 +120,7 @@ bool SelectionTemplate<Strategy>::AssertValid() const {
 }
 #endif
 
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
 template <typename Strategy>
 void SelectionTemplate<Strategy>::ShowTreeForThis() const {
   if (base_.IsNull()) {

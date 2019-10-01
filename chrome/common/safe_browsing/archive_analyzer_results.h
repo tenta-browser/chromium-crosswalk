@@ -33,15 +33,20 @@ struct ArchiveAnalyzerResults {
       ClientDownloadRequest_DetachedCodeSignature>
       detached_code_signatures;
 #endif  // OS_MACOSX
+  int file_count;
+  int directory_count;
   ArchiveAnalyzerResults();
   ArchiveAnalyzerResults(const ArchiveAnalyzerResults& other);
   ~ArchiveAnalyzerResults();
 };
 
 // Updates |results| with the results of inspecting |file|, given that it will
-// be extracted to |path|.
+// be extracted to |path|. Due to complications with the utility process sandbox
+// (see https://crbug.com/944633), the file inspection is limited to the first
+// |file_length| bytes of |file|.
 void UpdateArchiveAnalyzerResultsWithFile(base::FilePath path,
                                           base::File* file,
+                                          int file_length,
                                           bool is_encrypted,
                                           ArchiveAnalyzerResults* results);
 

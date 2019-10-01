@@ -97,15 +97,8 @@ Audits2.AuditController = class extends Common.Object {
     const inspectedURL = mainTarget && mainTarget.inspectedURL();
     if (inspectedURL && !/^(http|chrome-extension)/.test(inspectedURL)) {
       return Common.UIString(
-          'Can only audit HTTP/HTTPS pages and Chrome extensions. ' +
-          'Navigate to a different page to start an audit.');
+          'Can only audit HTTP/HTTPS pages and Chrome extensions. Navigate to a different page to start an audit.');
     }
-
-    // Audits don't work on most undockable targets (extension popup pages, remote debugging, etc).
-    // However, the tests run in a content shell which is not dockable yet audits just fine,
-    // so disable this check when under test.
-    if (!Host.isUnderTest() && !Runtime.queryParam('can_dock'))
-      return Common.UIString('Can only audit tabs. Navigate to this page in a separate tab to start an audit.');
 
     return null;
   }
@@ -185,8 +178,7 @@ Audits2.AuditController = class extends Common.Object {
     let helpText = '';
     if (hasActiveServiceWorker) {
       helpText = Common.UIString(
-          'Multiple tabs are being controlled by the same service worker. ' +
-          'Close your other tabs on the same origin to audit this page.');
+          'Multiple tabs are being controlled by the same service worker. Close your other tabs on the same origin to audit this page.');
     } else if (!hasAtLeastOneCategory) {
       helpText = Common.UIString('At least one category must be selected.');
     } else if (unauditablePageMessage) {
@@ -207,32 +199,32 @@ Audits2.Presets = [
   {
     setting: Common.settings.createSetting('audits2.cat_perf', true),
     configID: 'performance',
-    title: 'Performance',
-    description: 'How long does this app take to show content and become usable'
+    title: ls`Performance`,
+    description: ls`How long does this app take to show content and become usable`
   },
   {
     setting: Common.settings.createSetting('audits2.cat_pwa', true),
     configID: 'pwa',
-    title: 'Progressive Web App',
-    description: 'Does this page meet the standard of a Progressive Web App'
+    title: ls`Progressive Web App`,
+    description: ls`Does this page meet the standard of a Progressive Web App`
   },
   {
     setting: Common.settings.createSetting('audits2.cat_best_practices', true),
     configID: 'best-practices',
-    title: 'Best practices',
-    description: 'Does this page follow best practices for modern web development'
+    title: ls`Best practices`,
+    description: ls`Does this page follow best practices for modern web development`
   },
   {
     setting: Common.settings.createSetting('audits2.cat_a11y', true),
     configID: 'accessibility',
-    title: 'Accessibility',
-    description: 'Is this page usable by people with disabilities or impairments'
+    title: ls`Accessibility`,
+    description: ls`Is this page usable by people with disabilities or impairments`
   },
   {
     setting: Common.settings.createSetting('audits2.cat_seo', true),
     configID: 'seo',
-    title: 'SEO',
-    description: 'Is this page optimized for search engine results ranking'
+    title: ls`SEO`,
+    description: ls`Is this page optimized for search engine results ranking`
   },
 ];
 
@@ -245,7 +237,9 @@ Audits2.RuntimeSettings = [
     setting: Common.settings.createSetting('audits2.device_type', 'mobile'),
     description: ls`Apply mobile emulation during auditing`,
     setFlags: (flags, value) => {
-      flags.disableDeviceEmulation = value === 'desktop';
+      flags._devtoolsEmulationType = value;
+      // See Audits.AuditsPanel._setupEmulationAndProtocolConnection()
+      flags.emulatedFormFactor = 'none';
     },
     options: [
       {label: ls`Mobile`, value: 'mobile'},
@@ -268,19 +262,19 @@ Audits2.RuntimeSettings = [
     },
     options: [
       {
-        label: ls`Simulated Fast 3G, 4x CPU Slowdown`,
+        label: ls`Simulated Slow 4G, 4x CPU Slowdown`,
         value: 'default',
-        title: 'Throttling is simulated, resulting in faster audit runs with similar measurement accuracy'
+        title: ls`Throttling is simulated, resulting in faster audit runs with similar measurement accuracy`
       },
       {
-        label: ls`Applied Fast 3G, 4x CPU Slowdown`,
+        label: ls`Applied Slow 4G, 4x CPU Slowdown`,
         value: 'devtools',
-        title: 'Typical DevTools throttling, with actual traffic shaping and CPU slowdown applied'
+        title: ls`Typical DevTools throttling, with actual traffic shaping and CPU slowdown applied`
       },
       {
         label: ls`No throttling`,
         value: 'off',
-        title: 'No network or CPU throttling used. (Useful when not evaluating performance)'
+        title: ls`No network or CPU throttling used. (Useful when not evaluating performance)`
       },
     ],
   },

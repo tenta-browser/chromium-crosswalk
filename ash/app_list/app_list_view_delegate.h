@@ -8,23 +8,31 @@
 #include <string>
 #include <vector>
 
+#include "ash/app_list/app_list_metrics.h"
+#include "ash/assistant/ui/assistant_view_delegate.h"
 #include "ash/public/cpp/ash_public_export.h"
-#include "ash/public/interfaces/menu.mojom.h"
 #include "base/callback_forward.h"
 #include "base/strings/string16.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "services/content/public/mojom/navigable_contents_factory.mojom.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/events/event_constants.h"
 #include "ui/gfx/geometry/point.h"
 
+namespace ash {
+enum class AppListViewState;
+}
+
 namespace ui {
 class GestureEvent;
+class SimpleMenuModel;
 }  // namespace ui
 
 namespace app_list {
 
 class AppListModel;
+struct AppLaunchedMetricParams;
 class SearchModel;
 
 class ASH_PUBLIC_EXPORT AppListViewDelegate {
@@ -46,9 +54,31 @@ class ASH_PUBLIC_EXPORT AppListViewDelegate {
   // box by the user.
   virtual void StartSearch(const base::string16& raw_query) = 0;
 
-  // Invoked to open the search result.
+  // Invoked to open the search result and log a click. If the result is
+  // represented by a SuggestedChipView or is a zero state result,
+  // |suggested_index| is the index of the view in the list of suggestions.
+  // |launched_from| values must match the LaunchedFrom enum in
+  // chrome/browser/ui/app_list/app_launch_event_logger.proto. |launch_type| is
+  // either kAppSearchResult or kSearchResult and is used to determine which
+  // histograms to log to.
   virtual void OpenSearchResult(const std::string& result_id,
-                                int event_flags) = 0;
+                                int event_flags,
+                                ash::AppListLaunchedFrom launched_from,
+                                ash::AppListLaunchType launch_type,
+                                int suggestion_index) = 0;
+
+  // Called to log UMA metrics for the launch of an item either in the app tile
+  // list or the search result list. The |launch_location| argument determines
+  // which histogram to log to. |suggestion_index| represents the index of the
+  // launched item in its list view, not the overall position in the suggestion
+  // window. For instance, the first launcher result item is index 0, regardless
+  // of if there is an answer card above it.
+  virtual void LogResultLaunchHistogram(
+      app_list::SearchResultLaunchLocation launch_location,
+      int suggestion_index) = 0;
+
+  // Logs the UMA histogram metrics for user's abandonment of launcher search.
+  virtual void LogSearchAbandonHistogram() = 0;
 
   // Called to invoke a custom action on a result with |result_id|.
   // |action_index| corresponds to the index of an icon in
@@ -61,18 +91,10 @@ class ASH_PUBLIC_EXPORT AppListViewDelegate {
   // or NULL if there is currently no menu for the result.
   // Note the returned menu model is owned by that result.
   using GetContextMenuModelCallback =
-      base::OnceCallback<void(std::vector<ash::mojom::MenuItemPtr>)>;
+      base::OnceCallback<void(std::unique_ptr<ui::SimpleMenuModel>)>;
   virtual void GetSearchResultContextMenuModel(
       const std::string& result_id,
       GetContextMenuModelCallback callback) = 0;
-
-  // Invoked when a context menu item of a search result is clicked.
-  // |result_id| is the clicked SearchResult's id
-  // |command_id| is the clicked menu item's command id
-  // |event_flags| is flags from the event which triggered this command
-  virtual void SearchResultContextMenuItemSelected(const std::string& result_id,
-                                                   int command_id,
-                                                   int event_flags) = 0;
 
   // Invoked when the app list is shown.
   virtual void ViewShown(int64_t display_id) = 0;
@@ -88,27 +110,18 @@ class ASH_PUBLIC_EXPORT AppListViewDelegate {
   virtual void ViewClosed() = 0;
 
   // Gets the wallpaper prominent colors.
-  using GetWallpaperProminentColorsCallback =
-      base::OnceCallback<void(const std::vector<SkColor>&)>;
-  virtual void GetWallpaperProminentColors(
-      GetWallpaperProminentColorsCallback callback) = 0;
+  virtual const std::vector<SkColor>& GetWallpaperProminentColors() = 0;
 
   // Activates (opens) the item.
-  virtual void ActivateItem(const std::string& id, int event_flags) = 0;
+  virtual void ActivateItem(const std::string& id,
+                            int event_flags,
+                            ash::AppListLaunchedFrom launched_from) = 0;
 
   // Returns the context menu model for a ChromeAppListItem with |id|, or NULL
   // if there is currently no menu for the item (e.g. during install).
   // Note the returned menu model is owned by that item.
   virtual void GetContextMenuModel(const std::string& id,
                                    GetContextMenuModelCallback callback) = 0;
-
-  // Invoked when a context menu item of an app list item is clicked.
-  // |id| is the clicked AppListItem's id
-  // |command_id| is the clicked menu item's command id
-  // |event_flags| is flags from the event which triggered this command
-  virtual void ContextMenuItemSelected(const std::string& id,
-                                       int command_id,
-                                       int event_flags) = 0;
 
   // Show wallpaper context menu from the specified onscreen location.
   virtual void ShowWallpaperContextMenu(const gfx::Point& onscreen_location,
@@ -120,6 +133,10 @@ class ASH_PUBLIC_EXPORT AppListViewDelegate {
       ui::GestureEvent* event,
       const gfx::Point& screen_location) = 0;
 
+  // Returns True if the last event passing through app list was a key event.
+  // This is stored in the controller and managed by the presenter.
+  virtual bool KeyboardTraversalEngaged() = 0;
+
   // Checks if we are allowed to process events on the app list main view and
   // its descendants.
   virtual bool CanProcessEventsOnApplistViews() = 0;
@@ -128,7 +145,38 @@ class ASH_PUBLIC_EXPORT AppListViewDelegate {
   // initialize new NavigableContents objects for embedding web contents into
   // the app list UI.
   virtual void GetNavigableContentsFactory(
-      content::mojom::NavigableContentsFactoryRequest request) = 0;
+      mojo::PendingReceiver<content::mojom::NavigableContentsFactory>
+          receiver) = 0;
+
+  // Returns the AssistantViewDelegate.
+  virtual ash::AssistantViewDelegate* GetAssistantViewDelegate() = 0;
+
+  // Called if a search result has its visibility updated and wants to
+  // be notified (i.e. its notify_visibility_change() returns true).
+  virtual void OnSearchResultVisibilityChanged(const std::string& id,
+                                               bool visibility) = 0;
+
+  // Returns true if the Assistant feature is allowed and enabled.
+  virtual bool IsAssistantAllowedAndEnabled() const = 0;
+
+  // Returns true if the Assistant privacy info view should be shown.
+  virtual bool ShouldShowAssistantPrivacyInfo() const = 0;
+
+  // If the |prefs::kAssistantPrivacyInfoShownInLauncher| value is in the range
+  // of allowed, we will increment this value.
+  virtual void MaybeIncreaseAssistantPrivacyInfoShownCount() = 0;
+
+  // Called when close button in the Assistant privacy info view is pressed to
+  // indicate not to show the view any more.
+  virtual void MarkAssistantPrivacyInfoDismissed() = 0;
+
+  // Called when the app list view animation is completed.
+  virtual void OnStateTransitionAnimationCompleted(
+      ash::AppListViewState state) = 0;
+
+  // Fills the given AppLaunchedMetricParams with info known by the delegate.
+  virtual void GetAppLaunchedMetricParams(
+      AppLaunchedMetricParams* metric_params) = 0;
 };
 
 }  // namespace app_list

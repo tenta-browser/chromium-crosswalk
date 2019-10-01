@@ -25,6 +25,7 @@
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/extension_protocols.h"
 #include "extensions/browser/extension_system.h"
+#include "extensions/browser/sandboxed_unpacker.h"
 #include "extensions/browser/scoped_ignore_content_verifier_for_test.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/feature_switch.h"
@@ -61,6 +62,10 @@ class ExtensionBrowserTest : virtual public InProcessBrowserTest {
     // Allow older manifest versions (typically these can't be loaded - we allow
     // them for testing).
     kFlagAllowOldManifestVersions = 1 << 3,
+
+    // Pass the FOR_LOGIN_SCREEN flag when loading the extension. This flag is
+    // usually provided for force-installed extension on the login screen.
+    kFlagLoadForLoginScreen = 1 << 4,
   };
 
   ExtensionBrowserTest();
@@ -418,6 +423,10 @@ class ExtensionBrowserTest : virtual public InProcessBrowserTest {
   // Conditionally disable install verification.
   std::unique_ptr<ScopedInstallVerifierBypassForTest>
       ignore_install_verification_;
+
+  // Used to disable CRX publisher signature checking.
+  SandboxedUnpacker::ScopedVerifierFormatOverrideForTest
+      verifier_format_override_;
 
   ExtensionUpdater::ScopedSkipScheduledCheckForTest skip_scheduled_check_;
 

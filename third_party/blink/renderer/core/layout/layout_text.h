@@ -25,6 +25,7 @@
 
 #include <iterator>
 #include "base/memory/scoped_refptr.h"
+#include "third_party/blink/renderer/core/content_capture/content_holder.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/text.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
@@ -36,6 +37,7 @@
 namespace blink {
 
 class AbstractInlineTextBox;
+class ContentCaptureManager;
 class InlineTextBox;
 class NGInlineItem;
 class NGInlineItems;
@@ -82,11 +84,12 @@ class CORE_EXPORT LayoutText : public LayoutObject {
   ~LayoutText() override;
 
   static LayoutText* CreateEmptyAnonymous(Document&,
-                                          scoped_refptr<ComputedStyle>);
+                                          scoped_refptr<ComputedStyle>,
+                                          LegacyLayout);
 
   const char* GetName() const override { return "LayoutText"; }
 
-  virtual bool IsTextFragment() const;
+  bool IsTextFragment() const { return is_text_fragment_; }
   virtual bool IsWordBreak() const;
 
   virtual scoped_refptr<StringImpl> OriginalText() const;
@@ -105,12 +108,9 @@ class CORE_EXPORT LayoutText : public LayoutObject {
   // Returns first letter part of |LayoutTextFragment|.
   virtual LayoutText* GetFirstLetterPart() const { return nullptr; }
 
-  InlineTextBox* CreateInlineTextBox(int start, unsigned short length);
+  InlineTextBox* CreateInlineTextBox(int start, uint16_t length);
   void DirtyOrDeleteLineBoxesIfNeeded(bool full_layout);
   void DirtyLineBoxes();
-
-  void AbsoluteRects(Vector<IntRect>&,
-                     const LayoutPoint& accumulated_offset) const final;
 
   void AbsoluteQuads(Vector<FloatQuad>&,
                      MapCoordinatesFlags mode = 0) const final;
@@ -120,11 +120,8 @@ class CORE_EXPORT LayoutText : public LayoutObject {
   FloatRect LocalBoundingBoxRectForAccessibility() const final;
 
   enum ClippingOption { kNoClipping, kClipToEllipsis };
-  enum LocalOrAbsoluteOption { kLocalQuads, kAbsoluteQuads };
-  void Quads(Vector<FloatQuad>&,
-             ClippingOption = kNoClipping,
-             LocalOrAbsoluteOption = kAbsoluteQuads,
-             MapCoordinatesFlags mode = 0) const;
+  void LocalQuadsInFlippedBlocksDirection(Vector<FloatQuad>&,
+                                          ClippingOption = kNoClipping) const;
 
   PositionWithAffinity PositionForPoint(const LayoutPoint&) const override;
 
@@ -183,12 +180,13 @@ class CORE_EXPORT LayoutText : public LayoutObject {
                          bool& strip_front_spaces,
                          TextDirection);
 
-  virtual LayoutRect LinesBoundingBox() const;
+  virtual PhysicalRect PhysicalLinesBoundingBox() const;
 
-  // Returns the bounding box of visual overflow rects of all line boxes.
-  LayoutRect VisualOverflowRect() const;
+  // Returns the bounding box of visual overflow rects of all line boxes,
+  // in containing block's physical coordinates with flipped blocks direction.
+  PhysicalRect PhysicalVisualOverflowRect() const;
 
-  FloatPoint FirstRunOrigin() const;
+  PhysicalOffset FirstLineBoxTopLeft() const;
 
   virtual void SetText(scoped_refptr<StringImpl>,
                        bool force = false,
@@ -198,13 +196,9 @@ class CORE_EXPORT LayoutText : public LayoutObject {
                          unsigned len,
                          bool force = false);
 
-  // TODO(kojii): setTextInternal() is temporarily public for NGInlineNode.
-  // This will be back to protected when NGInlineNode can paint directly.
-  virtual void SetTextInternal(scoped_refptr<StringImpl>);
-
   virtual void TransformText();
 
-  LayoutRect LocalSelectionRect() const final;
+  PhysicalRect LocalSelectionVisualRect() const final;
   LayoutRect LocalCaretRect(
       const InlineBox*,
       int caret_offset,
@@ -222,10 +216,6 @@ class CORE_EXPORT LayoutText : public LayoutObject {
   // returns first-letter part of |InlineTextBox| instead of remaining part.
   InlineTextBox* FirstTextBox() const { return TextBoxes().First(); }
   InlineTextBox* LastTextBox() const { return TextBoxes().Last(); }
-
-  // Returns upper left corner point in local physical coordinates with flipped
-  // block-flow direction if this object has rendered text.
-  base::Optional<FloatPoint> GetUpperLeftCorner() const;
 
   // True if we have inline text box children which implies rendered text (or
   // whitespace) output.
@@ -287,15 +277,22 @@ class CORE_EXPORT LayoutText : public LayoutObject {
 
   scoped_refptr<AbstractInlineTextBox> FirstAbstractInlineTextBox();
 
+  bool HasAbstractInlineTextBox() const {
+    return has_abstract_inline_text_box_;
+  }
+
+  void SetHasAbstractInlineTextBox() { has_abstract_inline_text_box_ = true; }
+
   float HyphenWidth(const Font&, TextDirection);
 
-  LayoutRect DebugRect() const override;
+  PhysicalRect DebugRect() const override;
 
   void AutosizingMultiplerChanged() {
     known_to_have_no_overflow_and_no_fallback_fonts_ = false;
 
     // The font size is changing, so we need to make sure to rebuild everything.
     valid_ng_items_ = false;
+    SetNeedsCollectInlines();
   }
 
   OnlyWhitespaceOrNbsp ContainsOnlyWhitespaceOrNbsp() const;
@@ -313,14 +310,20 @@ class CORE_EXPORT LayoutText : public LayoutObject {
   bool MapDOMOffsetToTextContentOffset(const NGOffsetMapping&,
                                        unsigned* start,
                                        unsigned* end) const;
+  NodeHolder EnsureNodeHolder();
+  bool HasNodeHolder() const { return !node_holder_.is_empty; }
 
-  void AddInlineItem(NGInlineItem* item);
+  void SetInlineItems(NGInlineItem* begin, NGInlineItem* end);
   void ClearInlineItems();
   bool HasValidInlineItems() const { return valid_ng_items_; }
-  const Vector<NGInlineItem*>& InlineItems() const;
+  const NGInlineItems& InlineItems() const;
   // Inline items depends on context. It needs to be invalidated not only when
   // it was inserted/changed but also it was moved.
   void InvalidateInlineItems() { valid_ng_items_ = false; }
+
+  bool HasBidiControlInlineItems() const { return has_bidi_control_items_; }
+  void SetHasBidiControlInlineItems() { has_bidi_control_items_ = true; }
+  void ClearHasBidiControlInlineItems() { has_bidi_control_items_ = false; }
 
  protected:
   virtual const NGInlineItems* GetNGInlineItems() const { return nullptr; }
@@ -332,17 +335,10 @@ class CORE_EXPORT LayoutText : public LayoutObject {
 
   void InLayoutNGInlineFormattingContextWillChange(bool) final;
 
-  void AddLayerHitTestRects(
-      LayerHitTestRects&,
-      const PaintLayer* current_layer,
-      const LayoutPoint& layer_offset,
-      TouchAction supported_fast_actions,
-      const LayoutRect& container_rect,
-      TouchAction container_whitelisted_touch_action) const override;
+  virtual void SetTextInternal(scoped_refptr<StringImpl>);
 
-  virtual InlineTextBox* CreateTextBox(
-      int start,
-      unsigned short length);  // Subclassed by SVG.
+  virtual InlineTextBox* CreateTextBox(int start,
+                                       uint16_t length);  // Subclassed by SVG.
 
   void InvalidateDisplayItemClients(PaintInvalidationReason) const override;
 
@@ -351,11 +347,11 @@ class CORE_EXPORT LayoutText : public LayoutObject {
  private:
   InlineTextBoxList& MutableTextBoxes();
 
-  void AccumlateQuads(Vector<FloatQuad>&,
-                      const IntRect& ellipsis_rect,
-                      LocalOrAbsoluteOption,
-                      MapCoordinatesFlags mode,
-                      const LayoutRect&) const;
+  // PhysicalRectCollector should be like a function:
+  // void (const PhysicalRect&).
+  template <typename PhysicalRectCollector>
+  void CollectLineBoxRects(const PhysicalRectCollector&,
+                           ClippingOption option = kNoClipping) const;
 
   void ComputePreferredLogicalWidths(float lead_width);
   void ComputePreferredLogicalWidths(
@@ -395,10 +391,14 @@ class CORE_EXPORT LayoutText : public LayoutObject {
   bool IsText() const =
       delete;  // This will catch anyone doing an unnecessary check.
 
-  LayoutRect LocalVisualRectIgnoringVisibility() const final;
+  PhysicalRect LocalVisualRectIgnoringVisibility() const final;
 
   bool CanOptimizeSetText() const;
   void SetFirstTextBoxLogicalLeft(float text_width) const;
+
+ private:
+  ContentCaptureManager* GetContentCaptureManager();
+  NodeHolder node_holder_;
 
   // We put the bitfield first to minimize padding on 64-bit.
  protected:
@@ -424,9 +424,15 @@ class CORE_EXPORT LayoutText : public LayoutObject {
   // Functionally the inverse equivalent of lines_dirty_ for LayoutNG.
   unsigned valid_ng_items_ : 1;
 
+  // Used by LayoutNGText. Whether there is any BidiControl type NGInlineItem
+  // associated with this object. Set after layout when associating items.
+  unsigned has_bidi_control_items_ : 1;
+
   unsigned contains_reversed_text_ : 1;
   mutable unsigned known_to_have_no_overflow_and_no_fallback_fonts_ : 1;
   unsigned contains_only_whitespace_or_nbsp_ : 2;
+
+  unsigned is_text_fragment_ : 1;
 
  private:
   // Used for LayoutNG with accessibility. True if inline fragments are

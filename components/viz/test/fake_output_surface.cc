@@ -11,7 +11,7 @@
 #include "components/viz/test/begin_frame_args_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/presentation_feedback.h"
-#include "ui/gl/gl_utils.h"
+#include "ui/gl/color_space_utils.h"
 
 namespace viz {
 
@@ -37,7 +37,7 @@ void FakeOutputSurface::Reshape(const gfx::Size& size,
   if (context_provider()) {
     context_provider()->ContextGL()->ResizeCHROMIUM(
         size.width(), size.height(), device_scale_factor,
-        gl::GetGLColorSpace(color_space), has_alpha);
+        gl::ColorSpaceUtils::GetGLColorSpace(color_space), has_alpha);
   } else {
     software_device()->Resize(size, device_scale_factor);
   }
@@ -84,9 +84,11 @@ bool FakeOutputSurface::HasExternalStencilTest() const {
   return has_external_stencil_test_;
 }
 
-OverlayCandidateValidator* FakeOutputSurface::GetOverlayCandidateValidator()
-    const {
-  return overlay_candidate_validator_;
+std::unique_ptr<OverlayCandidateValidator>
+FakeOutputSurface::TakeOverlayCandidateValidator() {
+  // TODO(weiliangc): Validators are set on tests explicitly. Use the validator
+  // where they are created. Don't pass it in. This should be removed soon.
+  return nullptr;
 }
 
 gfx::BufferFormat FakeOutputSurface::GetOverlayBufferFormat() const {
@@ -101,15 +103,20 @@ unsigned FakeOutputSurface::GetOverlayTextureId() const {
   return overlay_texture_id_;
 }
 
-#if BUILDFLAG(ENABLE_VULKAN)
-gpu::VulkanSurface* FakeOutputSurface::GetVulkanSurface() {
-  NOTIMPLEMENTED();
-  return nullptr;
-}
-#endif
-
 unsigned FakeOutputSurface::UpdateGpuFence() {
   return gpu_fence_id_;
 }
+
+void FakeOutputSurface::SetUpdateVSyncParametersCallback(
+    UpdateVSyncParametersCallback callback) {}
+
+gfx::OverlayTransform FakeOutputSurface::GetDisplayTransform() {
+  return gfx::OVERLAY_TRANSFORM_NONE;
+}
+
+#if defined(USE_X11)
+void FakeOutputSurface::SetNeedsSwapSizeNotifications(
+    bool needs_swap_size_notifications) {}
+#endif
 
 }  // namespace viz

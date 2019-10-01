@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium OS Authors. All rights reserved.
+// Copyright (c) 2013 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -153,24 +153,6 @@ cca.util.orientPhoto = function(blob, onSuccess, onFailure) {
       original.onerror = onFailure;
       original.src = URL.createObjectURL(blob);
     }
-  });
-};
-
-/**
- * Checks if the current device is in the given device list.
- * @param {Array<string>} ids Device ids.
- * @return {!Promise<boolean>} Promise for the result.
- */
-cca.util.isChromeOSDevice = function(ids) {
-  return new Promise((resolve) => {
-    if (!chrome.chromeosInfoPrivate) {
-      resolve(false);
-      return;
-    }
-    chrome.chromeosInfoPrivate.get(['customizationId'], (values) => {
-      var device = values['customizationId'];
-      resolve(device && ids.indexOf(device) >= 0);
-    });
   });
 };
 
@@ -866,15 +848,57 @@ cca.util.updateElementSize = function(
   child.height = Math.round(scale * srcHeight);
 };
 
-/*
+/**
  * Checks if the window is maximized or fullscreen.
  * @return {boolean} True if maximized or fullscreen, false otherwise.
  */
 cca.util.isWindowFullSize = function() {
-  // App-window's isFullscreen state and window's outer-size may not be updated
-  // immediately during resizing. Use app-window's isMaximized state and
-  // window's inner-size here as workarounds.
-  var fullscreen = window.innerWidth >= screen.width &&
-      window.innerHeight >= screen.height;
-  return chrome.app.window.current().isMaximized() || fullscreen;
+  // App-window's isFullscreen, isMaximized state and window's outer-size may
+  // not be updated immediately during resizing. Use if app-window's outerBounds
+  // width matches screen width here as workarounds.
+  return chrome.app.window.current().outerBounds.width >= screen.width;
+};
+
+/**
+ * Opens help.
+ */
+cca.util.openHelp = function() {
+  window.open(
+      'https://support.google.com/chromebook/?p=camera_usage_on_chromebook');
+};
+
+/**
+ * Sets up i18n messages on DOM subtree by i18n attributes.
+ * @param {HTMLElement} rootElement Root of DOM subtree to be set up with.
+ */
+cca.util.setupI18nElements = function(rootElement) {
+  var getElements = (attr) => rootElement.querySelectorAll('[' + attr + ']');
+  var getMessage = (element, attr) =>
+      chrome.i18n.getMessage(element.getAttribute(attr));
+  var setAriaLabel = (element, attr) =>
+      element.setAttribute('aria-label', getMessage(element, attr));
+
+  getElements('i18n-content')
+      .forEach(
+          (element) => element.textContent =
+              getMessage(element, 'i18n-content'));
+  getElements('i18n-aria')
+      .forEach((element) => setAriaLabel(element, 'i18n-aria'));
+  cca.tooltip.setup(getElements('i18n-label'))
+      .forEach((element) => setAriaLabel(element, 'i18n-label'));
+};
+
+/**
+ * Reads blob into Image.
+ * @param {Blob} blob
+ * @return {Promise<HTMLImageElement>}
+ * @throw {Error}
+ */
+cca.util.blobToImage = function(blob) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Failed to load unprocessed image'));
+    img.src = URL.createObjectURL(blob);
+  });
 };

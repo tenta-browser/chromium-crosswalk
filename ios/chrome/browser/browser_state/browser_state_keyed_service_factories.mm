@@ -34,19 +34,16 @@
 #include "ios/chrome/browser/passwords/ios_chrome_password_store_factory.h"
 #include "ios/chrome/browser/reading_list/reading_list_model_factory.h"
 #include "ios/chrome/browser/search_engines/template_url_service_factory.h"
+#include "ios/chrome/browser/send_tab_to_self/send_tab_to_self_client_service_factory.h"
 #include "ios/chrome/browser/sessions/tab_restore_service_delegate_impl_ios_factory.h"
 #include "ios/chrome/browser/signin/about_signin_internals_factory.h"
 #include "ios/chrome/browser/signin/account_consistency_service_factory.h"
-#include "ios/chrome/browser/signin/account_fetcher_service_factory.h"
 #include "ios/chrome/browser/signin/account_reconcilor_factory.h"
-#include "ios/chrome/browser/signin/account_tracker_service_factory.h"
 #include "ios/chrome/browser/signin/authentication_service_factory.h"
-#include "ios/chrome/browser/signin/gaia_cookie_manager_service_factory.h"
-#include "ios/chrome/browser/signin/profile_oauth2_token_service_factory.h"
+#include "ios/chrome/browser/signin/identity_manager_factory.h"
 #include "ios/chrome/browser/signin/signin_browser_state_info_updater_factory.h"
 #include "ios/chrome/browser/signin/signin_client_factory.h"
 #include "ios/chrome/browser/signin/signin_error_controller_factory.h"
-#include "ios/chrome/browser/signin/signin_manager_factory.h"
 #import "ios/chrome/browser/snapshots/snapshot_cache_factory.h"
 #include "ios/chrome/browser/suggestions/suggestions_service_factory.h"
 #include "ios/chrome/browser/sync/consent_auditor_factory.h"
@@ -82,21 +79,17 @@ void EnsureBrowserStateKeyedServiceFactoriesBuilt() {
   feature_engagement::TrackerFactory::GetInstance();
   ios::AboutSigninInternalsFactory::GetInstance();
   ios::AccountConsistencyServiceFactory::GetInstance();
-  ios::AccountFetcherServiceFactory::GetInstance();
   ios::AccountReconcilorFactory::GetInstance();
-  ios::AccountTrackerServiceFactory::GetInstance();
   ios::AutocompleteClassifierFactory::GetInstance();
   ios::BookmarkModelFactory::GetInstance();
   ios::BookmarkUndoServiceFactory::GetInstance();
   ios::CookieSettingsFactory::GetInstance();
   ios::FaviconServiceFactory::GetInstance();
-  ios::GaiaCookieManagerServiceFactory::GetInstance();
   ios::GoogleURLTrackerFactory::GetInstance();
   ios::HistoryServiceFactory::GetInstance();
   ios::InMemoryURLIndexFactory::GetInstance();
   ios::ShortcutsBackendFactory::GetInstance();
   ios::SigninErrorControllerFactory::GetInstance();
-  ios::SigninManagerFactory::GetInstance();
   ios::StartupTaskRunnerServiceFactory::GetInstance();
   ios::TemplateURLServiceFactory::GetInstance();
   ios::TopSitesFactory::GetInstance();
@@ -110,6 +103,7 @@ void EnsureBrowserStateKeyedServiceFactoriesBuilt() {
   ConsentAuditorFactory::GetInstance();
   FullscreenControllerFactory::GetInstance();
   GoogleLogoServiceFactory::GetInstance();
+  IdentityManagerFactory::EnsureFactoryAndDependeeFactoriesBuilt();
   IOSChromeContentSuggestionsServiceFactory::GetInstance();
   IOSChromeDeprecatedProfileInvalidationProviderFactory::GetInstance();
   IOSChromeFaviconLoaderFactory::GetInstance();
@@ -121,9 +115,9 @@ void EnsureBrowserStateKeyedServiceFactoriesBuilt() {
   IOSUserEventServiceFactory::GetInstance();
   LanguageModelManagerFactory::GetInstance();
   ModelTypeStoreServiceFactory::GetInstance();
-  ProfileOAuth2TokenServiceFactory::GetInstance();
   ProfileSyncServiceFactory::GetInstance();
   ReadingListModelFactory::GetInstance();
+  send_tab_to_self::SendTabToSelfClientServiceFactory::GetInstance();
   SigninBrowserStateInfoUpdaterFactory::GetInstance();
   SigninClientFactory::GetInstance();
   SnapshotCacheFactory::GetInstance();

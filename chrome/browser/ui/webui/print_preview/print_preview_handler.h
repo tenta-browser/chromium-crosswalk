@@ -60,8 +60,8 @@ class PrintPreviewHandler : public content::WebUIMessageHandler,
   void OnJavascriptDisallowed() override;
 
   // IdentityManager::Observer implementation.
-  void OnAddAccountToCookieCompleted(
-      const std::string& account_id,
+  void OnAccountsInCookieUpdated(
+      const identity::AccountsInCookieJarInfo& accounts_in_cookie_jar_info,
       const GoogleServiceAuthError& error) override;
 
   // Called when print preview failed. |request_id| identifies the request that
@@ -124,6 +124,7 @@ class PrintPreviewHandler : public content::WebUIMessageHandler,
  protected:
   // Protected so unit tests can override.
   virtual PrinterHandler* GetPrinterHandler(PrinterType printer_type);
+  virtual bool IsCloudPrintEnabled();
 
   // Shuts down the initiator renderer. Called when a bad IPC message is
   // received.
@@ -220,12 +221,12 @@ class PrintPreviewHandler : public content::WebUIMessageHandler,
   void HandleShowSystemDialog(const base::ListValue* args);
 #endif
 
-  // Callback for the signin dialog to call once signin is complete.
-  void OnSigninComplete(const std::string& callback_id);
-
-  // Brings up a dialog to allow the user to sign into cloud print.
-  // |args| is unused.
+  // Opens a new tab to allow the user to sign into cloud print. |args| holds
+  // a boolean indicating whether the user is adding an account.
   void HandleSignin(const base::ListValue* args);
+
+  // Called when the tab opened by HandleSignIn() is closed.
+  void OnSignInTabClosed();
 
 #if defined(OS_CHROMEOS)
   // Generates new token and sends back to UI.
@@ -239,6 +240,11 @@ class PrintPreviewHandler : public content::WebUIMessageHandler,
   // Asks the browser for several settings that are needed before the first
   // preview is displayed.
   void HandleGetInitialSettings(const base::ListValue* args);
+
+#if defined(OS_CHROMEOS)
+  // Opens printer settings in the Chrome OS Settings App.
+  void HandleOpenPrinterSettings(const base::ListValue* args);
+#endif
 
   void SendInitialSettings(const std::string& callback_id,
                            const std::string& default_printer);
@@ -261,9 +267,6 @@ class PrintPreviewHandler : public content::WebUIMessageHandler,
                         const std::string& printer_name,
                         base::Value settings_info);
 
-  // Send whether cloud print integration should be enabled.
-  void SendCloudPrintEnabled();
-
   // Send the PDF data to the cloud to print.
   void SendCloudPrintJob(const std::string& callback_id,
                          const base::RefCountedMemory* data);
@@ -275,7 +278,10 @@ class PrintPreviewHandler : public content::WebUIMessageHandler,
   void ClearInitiatorDetails();
 
   // Populates |settings| according to the current locale.
-  void GetNumberFormatAndMeasurementSystem(base::DictionaryValue* settings);
+  void GetNumberFormatAndMeasurementSystem(base::Value* settings);
+
+  // Populates |settings| with the list of logged in accounts.
+  void GetUserAccountList(base::Value* settings);
 
   PdfPrinterHandler* GetPdfPrinterHandler();
 
@@ -317,8 +323,11 @@ class PrintPreviewHandler : public content::WebUIMessageHandler,
   // Whether we have already logged the number of printers this session.
   bool has_logged_printers_count_;
 
+  // Whether Google Cloud Print is enabled for the active profile.
+  bool cloud_print_enabled_ = false;
+
   // The settings used for the most recent preview request.
-  std::unique_ptr<base::DictionaryValue> last_preview_settings_;
+  base::Value last_preview_settings_;
 
 #if defined(OS_CHROMEOS)
   // Holds token service to get OAuth2 access tokens.

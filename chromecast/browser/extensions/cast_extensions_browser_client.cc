@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/task/post_task.h"
 #include "build/build_config.h"
@@ -30,6 +31,7 @@
 #include "extensions/browser/updater/null_extension_cache.h"
 #include "extensions/browser/url_request_util.h"
 #include "extensions/common/features/feature_channel.h"
+#include "services/network/public/mojom/url_loader.mojom.h"
 
 using content::BrowserContext;
 using content::BrowserThread;
@@ -159,7 +161,7 @@ PrefService* CastExtensionsBrowserClient::GetPrefServiceForContext(
 
 void CastExtensionsBrowserClient::GetEarlyExtensionPrefsObservers(
     content::BrowserContext* context,
-    std::vector<ExtensionPrefsObserver*>* observers) const {}
+    std::vector<EarlyExtensionPrefsObserver*>* observers) const {}
 
 ProcessManagerDelegate* CastExtensionsBrowserClient::GetProcessManagerDelegate()
     const {
@@ -238,10 +240,6 @@ void CastExtensionsBrowserClient::BroadcastEventToRenderers(
   std::unique_ptr<Event> event(
       new Event(histogram_value, event_name, std::move(args)));
   EventRouter::Get(browser_context_)->BroadcastEvent(std::move(event));
-}
-
-net::NetLog* CastExtensionsBrowserClient::GetNetLog() {
-  return nullptr;
 }
 
 ExtensionCache* CastExtensionsBrowserClient::GetExtensionCache() {

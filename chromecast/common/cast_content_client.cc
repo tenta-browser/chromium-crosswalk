@@ -5,6 +5,8 @@
 #include "chromecast/common/cast_content_client.h"
 
 #include <stdint.h>
+#include <memory>
+#include <utility>
 
 #include "base/strings/stringprintf.h"
 #include "base/system/sys_info.h"
@@ -23,6 +25,14 @@
 
 #if defined(OS_ANDROID)
 #include "chromecast/common/media/cast_media_drm_bridge_client.h"
+#endif
+
+#if !defined(OS_FUCHSIA)
+#include "base/no_destructor.h"
+#include "components/services/heap_profiling/public/cpp/profiling_client.h"  // nogncheck
+#include "content/public/common/service_manager_connection.h"
+#include "content/public/common/simple_connection_filter.h"
+#include "services/service_manager/public/cpp/binder_registry.h"
 #endif
 
 namespace chromecast {
@@ -87,8 +97,11 @@ CastContentClient::~CastContentClient() {
 }
 
 void CastContentClient::SetActiveURL(const GURL& url, std::string top_origin) {
+  if (url.is_empty() || url == last_active_url_)
+    return;
   LOG(INFO) << "Active URL: " << url.possibly_invalid_spec() << " for origin '"
             << top_origin << "'";
+  last_active_url_ = url;
 }
 
 void CastContentClient::AddAdditionalSchemes(Schemes* schemes) {
@@ -119,6 +132,10 @@ base::RefCountedMemory* CastContentClient::GetDataResourceBytes(
       resource_id);
 }
 
+bool CastContentClient::IsDataResourceGzipped(int resource_id) const {
+  return ui::ResourceBundle::GetSharedInstance().IsGzipped(resource_id);
+}
+
 gfx::Image& CastContentClient::GetNativeImageNamed(int resource_id) const {
   return ui::ResourceBundle::GetSharedInstance().GetNativeImageNamed(
       resource_id);
@@ -129,6 +146,20 @@ gfx::Image& CastContentClient::GetNativeImageNamed(int resource_id) const {
   return new media::CastMediaDrmBridgeClient();
 }
 #endif  // OS_ANDROID
+
+void CastContentClient::OnServiceManagerConnected(
+    content::ServiceManagerConnection* connection) {
+#if !defined(OS_FUCHSIA)
+  static base::NoDestructor<heap_profiling::ProfilingClient> profiling_client;
+
+  auto registry = std::make_unique<service_manager::BinderRegistry>();
+  registry->AddInterface(
+      base::BindRepeating(&heap_profiling::ProfilingClient::BindToInterface,
+                          base::Unretained(profiling_client.get())));
+  connection->AddConnectionFilter(
+      std::make_unique<content::SimpleConnectionFilter>(std::move(registry)));
+#endif  // !defined(OS_FUCHSIA)
+}
 
 }  // namespace shell
 }  // namespace chromecast

@@ -62,7 +62,7 @@ WebView::WebView(content::BrowserContext* browser_context)
 }
 
 WebView::~WebView() {
-  SetWebContents(NULL);  // Make sure all necessary tear-down takes place.
+  SetWebContents(nullptr);  // Make sure all necessary tear-down takes place.
 }
 
 content::WebContents* WebView::GetWebContents() {
@@ -75,6 +75,7 @@ content::WebContents* WebView::GetWebContents() {
 }
 
 void WebView::SetWebContents(content::WebContents* replacement) {
+  TRACE_EVENT0("views", "WebView::SetWebContents");
   if (replacement == web_contents())
     return;
   SetCrashedOverlayView(nullptr);
@@ -118,10 +119,6 @@ void WebView::EnableSizingFromWebContents(const gfx::Size& min_size,
   min_size_ = min_size;
   max_size_ = max_size;
   MaybeEnableAutoResize();
-}
-
-void WebView::SetResizeBackgroundColor(SkColor resize_background_color) {
-  holder_->set_resize_background_color(resize_background_color);
 }
 
 void WebView::SetCrashedOverlayView(View* crashed_overlay_view) {
@@ -352,6 +349,7 @@ void WebView::ResizeDueToAutoResize(content::WebContents* source,
 // WebView, private:
 
 void WebView::AttachWebContents() {
+  TRACE_EVENT0("views", "WebView::AttachWebContents");
   // Prevents attachment if the WebView isn't already in a Widget, or it's
   // already attached.
   if (!GetWidget() || !web_contents())
@@ -365,6 +363,11 @@ void WebView::AttachWebContents() {
     return;
 
   holder_->Attach(view_to_attach);
+  // Attach() asynchronously sets the bounds of the widget. Pepper expects
+  // fullscreen widgets to be sized immediately, so force a layout now.
+  // See https://crbug.com/361408 and https://crbug.com/id=959118.
+  if (is_embedding_fullscreen_widget_)
+    holder_->Layout();
 
   // We set the parent accessible of the native view to be our parent.
   if (parent())
@@ -379,6 +382,7 @@ void WebView::AttachWebContents() {
 }
 
 void WebView::DetachWebContents() {
+  TRACE_EVENT0("views", "WebView::DetachWebContents");
   if (web_contents()) {
     holder_->Detach();
   }
@@ -432,8 +436,7 @@ std::unique_ptr<content::WebContents> WebView::CreateWebContents(
   }
 
   if (!contents) {
-    content::WebContents::CreateParams create_params(
-        browser_context, NULL);
+    content::WebContents::CreateParams create_params(browser_context, nullptr);
     return content::WebContents::Create(create_params);
   }
 

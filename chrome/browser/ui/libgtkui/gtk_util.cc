@@ -169,13 +169,13 @@ void ParseButtonLayout(const std::string& button_string,
       base::StringPiece token = tokenizer.token_piece();
       if (token == "minimize") {
         (left_side ? leading_buttons : trailing_buttons)
-            ->push_back(views::FRAME_BUTTON_MINIMIZE);
+            ->push_back(views::FrameButton::kMinimize);
       } else if (token == "maximize") {
         (left_side ? leading_buttons : trailing_buttons)
-            ->push_back(views::FRAME_BUTTON_MAXIMIZE);
+            ->push_back(views::FrameButton::kMaximize);
       } else if (token == "close") {
         (left_side ? leading_buttons : trailing_buttons)
-            ->push_back(views::FRAME_BUTTON_CLOSE);
+            ->push_back(views::FrameButton::kClose);
       }
     }
   }
@@ -587,6 +587,17 @@ SkColor GetSeparatorColor(const std::string& css_selector) {
   gtk_render_background(context, surface.cairo(), 0, 0, w, h);
   gtk_render_frame(context, surface.cairo(), 0, 0, w, h);
   return surface.GetAveragePixelValue(false);
+}
+
+std::string GetGtkSettingsStringProperty(GtkSettings* settings,
+                                         const gchar* prop_name) {
+  GValue layout = G_VALUE_INIT;
+  g_value_init(&layout, G_TYPE_STRING);
+  g_object_get_property(G_OBJECT(settings), prop_name, &layout);
+  DCHECK(G_VALUE_HOLDS_STRING(&layout));
+  std::string prop_value(g_value_get_string(&layout));
+  g_value_unset(&layout);
+  return prop_value;
 }
 
 }  // namespace libgtkui

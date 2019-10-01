@@ -51,9 +51,9 @@
 #include "third_party/blink/renderer/core/page/scrolling/sticky_position_scrolling_constraints.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_fragment.h"
 #include "third_party/blink/renderer/core/scroll/scrollable_area.h"
+#include "third_party/blink/renderer/platform/graphics/scroll_types.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
-#include "third_party/blink/renderer/platform/scroll/scroll_types.h"
 
 namespace blink {
 
@@ -321,7 +321,7 @@ class CORE_EXPORT PaintLayerScrollableArea final
 
   // Similar to |ContentsSize| but snapped considering |paint_offset| which can
   // have subpixel accumulation.
-  IntSize PixelSnappedContentsSize(const LayoutPoint& paint_offset) const;
+  IntSize PixelSnappedContentsSize(const PhysicalOffset& paint_offset) const;
 
   void ContentsResized() override;
   IntPoint LastKnownMousePosition() const override;
@@ -337,7 +337,7 @@ class CORE_EXPORT PaintLayerScrollableArea final
   bool ShouldPlaceVerticalScrollbarOnLeft() const override;
   int PageStep(ScrollbarOrientation) const override;
   ScrollBehavior ScrollBehaviorStyle() const override;
-  CompositorAnimationHost* GetCompositorAnimationHost() const override;
+  cc::AnimationHost* GetCompositorAnimationHost() const override;
   CompositorAnimationTimeline* GetCompositorAnimationTimeline() const override;
   void GetTickmarks(Vector<IntRect>&) const override;
 
@@ -538,7 +538,9 @@ class CORE_EXPORT PaintLayerScrollableArea final
   // Should be called when the previous visual rects are no longer valid.
   void ClearPreviousVisualRects();
 
-  void DidScrollWithScrollbar(ScrollbarPart, ScrollbarOrientation) override;
+  void DidScrollWithScrollbar(ScrollbarPart,
+                              ScrollbarOrientation,
+                              WebInputEvent::Type) override;
   CompositorElementId GetCompositorElementId() const override;
 
   bool VisualViewportSuppliesScrollbars() const override;
@@ -619,9 +621,9 @@ class CORE_EXPORT PaintLayerScrollableArea final
 
   void ScrollControlWasSetNeedsPaintInvalidation() override;
 
-  void SetHorizontalScrollbarVisualRect(const LayoutRect&);
-  void SetVerticalScrollbarVisualRect(const LayoutRect&);
-  void SetScrollCornerAndResizerVisualRect(const LayoutRect&);
+  void SetHorizontalScrollbarVisualRect(const IntRect&);
+  void SetVerticalScrollbarVisualRect(const IntRect&);
+  void SetScrollCornerAndResizerVisualRect(const IntRect&);
 
   // PaintLayer is destructed before PaintLayerScrollable area, during this
   // time before PaintLayerScrollableArea has been collected layer_ will
@@ -696,11 +698,11 @@ class CORE_EXPORT PaintLayerScrollableArea final
 
   bool horizontal_scrollbar_previously_was_overlay_;
   bool vertical_scrollbar_previously_was_overlay_;
-  LayoutRect horizontal_scrollbar_visual_rect_;
-  LayoutRect vertical_scrollbar_visual_rect_;
-  LayoutRect scroll_corner_and_resizer_visual_rect_;
+  IntRect horizontal_scrollbar_visual_rect_;
+  IntRect vertical_scrollbar_visual_rect_;
+  IntRect scroll_corner_and_resizer_visual_rect_;
 
-  class ScrollingBackgroundDisplayItemClient : public DisplayItemClient {
+  class ScrollingBackgroundDisplayItemClient final : public DisplayItemClient {
     DISALLOW_NEW();
 
    public:
@@ -708,13 +710,14 @@ class CORE_EXPORT PaintLayerScrollableArea final
         const PaintLayerScrollableArea& scrollable_area)
         : scrollable_area_(&scrollable_area) {}
 
-    LayoutRect VisualRect() const override;
-    String DebugName() const override;
-    bool PaintedOutputOfObjectHasNoEffectRegardlessOfSize() const override;
-
     void Trace(Visitor* visitor) { visitor->Trace(scrollable_area_); }
 
    private:
+    IntRect VisualRect() const final;
+    String DebugName() const final;
+    DOMNodeId OwnerNodeId() const final;
+    bool PaintedOutputOfObjectHasNoEffectRegardlessOfSize() const final;
+
     Member<const PaintLayerScrollableArea> scrollable_area_;
   };
 

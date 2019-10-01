@@ -150,7 +150,7 @@ class AudioParamHandler final : public ThreadSafeRefCounted<AudioParamHandler>,
   AutomationRate GetAutomationRate() const { return automation_rate_; }
   void SetAutomationRate(AutomationRate automation_rate) {
     automation_rate_ = automation_rate;
-  };
+  }
 
   bool IsAutomationRateFixed() const {
     return rate_mode_ == AutomationRateMode::kFixed;
@@ -215,8 +215,6 @@ class AudioParamHandler final : public ThreadSafeRefCounted<AudioParamHandler>,
                             unsigned number_of_values,
                             bool sample_accurate);
   void CalculateTimelineValues(float* values, unsigned number_of_values);
-
-  int ComputeQHistogramValue(float) const;
 
   // The type of AudioParam, indicating what this AudioParam represents and what
   // node it belongs to.  Mostly for informational purposes and doesn't affect

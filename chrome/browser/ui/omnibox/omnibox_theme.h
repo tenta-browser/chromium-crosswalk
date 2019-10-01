@@ -19,21 +19,16 @@ enum class OmniboxPart {
   LOCATION_BAR_TEXT_DEFAULT,
   LOCATION_BAR_TEXT_DIMMED,
   LOCATION_BAR_BUBBLE_OUTLINE,
-  LOCATION_BAR_FOCUS_RING,
 
   RESULTS_BACKGROUND,  // Background of the results dropdown.
   RESULTS_ICON,
   RESULTS_TEXT_DEFAULT,
   RESULTS_TEXT_DIMMED,
-  RESULTS_TEXT_INVISIBLE,
-  RESULTS_TEXT_NEGATIVE,
-  RESULTS_TEXT_POSITIVE,
   RESULTS_TEXT_URL,
 };
 
-// The tint of the omnibox theme. E.g. Incognito may use a DARK tint. NATIVE is
-// only used on Desktop Linux.
-enum class OmniboxTint { DARK, LIGHT, NATIVE };
+// The tint of the omnibox theme. E.g. Incognito may use a DARK tint.
+enum class OmniboxTint { DARK, LIGHT };
 
 // An optional state for a given |OmniboxPart|.
 enum class OmniboxPartState {

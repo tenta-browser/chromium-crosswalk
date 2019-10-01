@@ -11,7 +11,6 @@
 #include "ash/shelf/shelf_constants.h"
 #include "ash/shelf/shelf_view.h"
 #include "ash/shelf/shelf_widget.h"
-#include "ash/shell.h"
 #include "ash/wm/window_util.h"
 #include "base/i18n/rtl.h"
 #include "ui/display/display.h"
@@ -39,16 +38,10 @@ OverflowBubbleView::OverflowBubbleView(ShelfView* shelf_view,
                                        SkColor background_color)
     : ShelfBubble(anchor, shelf_view->shelf()->alignment(), background_color),
       shelf_(shelf_view->shelf()),
-      shelf_view_(shelf_view),
-      background_animator_(SHELF_BACKGROUND_DEFAULT,
-                           // Don't pass the Shelf so the translucent color is
-                           // always used.
-                           nullptr,
-                           Shell::Get()->wallpaper_controller()) {
+      shelf_view_(shelf_view) {
   DCHECK(shelf_);
 
   set_border_radius(ShelfConstants::shelf_size() / 2);
-  background_animator_.AddObserver(this);
   SetArrow(views::BubbleBorder::NONE);
   SetBackground(nullptr);
   set_shadow(views::BubbleBorder::NO_ASSETS);
@@ -70,9 +63,7 @@ OverflowBubbleView::OverflowBubbleView(ShelfView* shelf_view,
   AddChildView(shelf_view_);
 }
 
-OverflowBubbleView::~OverflowBubbleView() {
-  background_animator_.RemoveObserver(this);
-}
+OverflowBubbleView::~OverflowBubbleView() = default;
 
 bool OverflowBubbleView::ProcessGestureEvent(const ui::GestureEvent& event) {
   // Handle scroll-related events, but don't do anything special for begin and
@@ -168,6 +159,10 @@ bool OverflowBubbleView::OnMouseWheel(const ui::MouseWheelEvent& event) {
   return true;
 }
 
+const char* OverflowBubbleView::GetClassName() const {
+  return "OverflowBubbleView";
+}
+
 void OverflowBubbleView::OnScrollEvent(ui::ScrollEvent* event) {
   if (shelf_->IsHorizontalAlignment())
     ScrollByXOffset(static_cast<int>(-event->x_offset()));
@@ -179,6 +174,8 @@ void OverflowBubbleView::OnScrollEvent(ui::ScrollEvent* event) {
 gfx::Rect OverflowBubbleView::GetBubbleBounds() {
   const gfx::Size content_size = GetPreferredSize();
   const gfx::Rect anchor_rect = GetAnchorRect();
+  const int distance_to_overflow_button =
+      kDistanceToMainShelf + (kShelfSize - kShelfControlSize) / 2;
   gfx::Rect monitor_rect =
       display::Screen::GetScreen()
           ->GetDisplayNearestPoint(anchor_rect.CenterPoint())
@@ -191,7 +188,7 @@ gfx::Rect OverflowBubbleView::GetBubbleBounds() {
         base::i18n::IsRTL()
             ? anchor_rect.x() - kEndPadding
             : anchor_rect.right() - content_size.width() - kEndPadding,
-        anchor_rect.y() - kDistanceToMainShelf - content_size.height(),
+        anchor_rect.y() - distance_to_overflow_button - content_size.height(),
         content_size.width() + 2 * kEndPadding, content_size.height());
     if (bounds.x() < monitor_rect.x())
       bounds.Offset(monitor_rect.x() - bounds.x(), 0);
@@ -203,9 +200,10 @@ gfx::Rect OverflowBubbleView::GetBubbleBounds() {
       0, anchor_rect.bottom() - content_size.height() - kEndPadding,
       content_size.width(), content_size.height() + 2 * kEndPadding);
   if (shelf_->alignment() == SHELF_ALIGNMENT_LEFT)
-    bounds.set_x(anchor_rect.right() + kDistanceToMainShelf);
+    bounds.set_x(anchor_rect.right() + distance_to_overflow_button);
   else
-    bounds.set_x(anchor_rect.x() - kDistanceToMainShelf - content_size.width());
+    bounds.set_x(anchor_rect.x() - distance_to_overflow_button -
+                 content_size.width());
   if (bounds.y() < monitor_rect.y())
     bounds.Offset(0, monitor_rect.y() - bounds.y());
   if (bounds.bottom() > monitor_rect.bottom())
@@ -231,10 +229,6 @@ bool OverflowBubbleView::ShouldCloseOnPressDown() {
 
 bool OverflowBubbleView::ShouldCloseOnMouseExit() {
   return false;
-}
-
-void OverflowBubbleView::UpdateShelfBackground(SkColor color) {
-  set_color(color);
 }
 
 }  // namespace ash

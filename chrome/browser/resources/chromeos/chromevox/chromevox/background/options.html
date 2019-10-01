@@ -12,6 +12,9 @@
 <script type="text/javascript" src="options_loader.js"></script>
 <script type="text/javascript" src="../../chromeVoxChromeOptionsScript.js">
 </script>
+  <link rel="import" href="chrome://resources/cr_elements/cr_expand_button/cr_expand_button.html">
+  <link rel="import" href="chrome://resources/cr_elements/cr_link_row/cr_link_row.html">
+  <link rel="import" href="chrome://resources/html/polymer.html">
 </head>
 
 <body>
@@ -45,6 +48,14 @@
            name="speakTextUnderMouse">
     <label for="speakTextUnderMouse" class="i18n" msgid="options_speak_mouse">
       Speak text under the mouse.
+    </label>
+  </div>
+
+  <div class="option">
+    <input id="announceDownloadNotifications" type="checkbox" class="checkbox pref"
+        name="announceDownloadNotifications">
+    <label for="announceDownloadNotifications" class="i18n" msgid="options_announce_download">
+      Announce download notifications.
     </label>
   </div>
 
@@ -83,6 +94,16 @@
            msgid="options_lang_switching_checkbox_label">
       Automatically detect and switch ChromeVox language.
     </label>
+  </div>
+
+  <div id="richTextIndicationOption">
+    <h2 class="i18n" msgid="options_rich_text_header">Rich Text Attributes</h2>
+    <div class="option">
+      <input id="announceRichTextAttributes" type="checkbox" class="checkbox pref" name="announceRichTextAttributes">
+      <label for="announceRichTextAttributes" class="i18n" msgid="options_rich_text_checkbox_label">
+        Announce rich text attributes
+      </label>
+    </div>
   </div>
 
   <h2 class="chromeos i18n" msgid="options_braille">Braille</h2>
@@ -141,7 +162,6 @@
     <input type="number" min="1" id="virtual_braille_display_columns_input">
   </label>
   </div>
-
   <div class="option">
     <span id="currentDisplayStyle"></span>
     <button id="changeDisplayStyle"></button>
@@ -150,6 +170,17 @@
   <h2 class="i18n" msgid="options_developer_options" id="developerDescription">
     Developer Options
   </h2>
+  <div class="chromeos option" id="developerLog">
+    <label>
+      <cr-expand-button class="developer-option-icon-button"
+          id="chromeVoxDeveloperOptions" name="chromeVoxDeveloperOptions">
+        <span class="i18n" msgid="options_developer_options"
+              id="developer-options-label">
+          Enable developer options
+        </span>
+      </cr-expand-button>
+    </label>
+  </div>
   <div class="option" id="developerSpeechLogging">
     <label>
       <input id="enableSpeechLogging" type="checkbox"
@@ -179,14 +210,23 @@
   </div>
   <div class="option" id="developerEventStream">
     <label>
-      <input id="enableEventStreamLogging" type="checkbox"
-             class="checkbox pref logging" name="enableEventStreamLogging">
       <span class="i18n" msgid="options_event_stream_logging">
         Enable event stream logging
       </span>
     </label>
     <button id="toggleEventStreamFilters"></button>
   </div>
+   <div class="option" id="showDeveloperLog">
+    <label>
+      <cr-link-row class="developer-option-icon-button" id="openDeveloperLog"
+          using-slotted-label external embedded>
+        <span slot="label" class="i18n" msgid="options_show_log"></span>
+        <span slot="sub-label" class="i18n sub-description"
+            msgid="options_show_log_key"></span>
+      </cr-link-row>
+    </label>
+  </div>
+
   <div id="eventStreamFilters" hidden>
     <label><div class="option-eventstream">
       <input name="activedescendantchanged" type="checkbox"

@@ -9,10 +9,11 @@
 #include <string>
 #include <utility>
 
+#include "ash/public/cpp/app_list/app_list_metrics.h"
 #include "ash/public/cpp/app_list/app_list_types.h"
-#include "ash/public/interfaces/app_list.mojom.h"
 #include "base/macros.h"
 #include "chrome/browser/ui/app_list/app_list_model_updater.h"
+#include "ui/base/models/simple_menu_model.h"
 
 namespace app_list {
 class AppContextMenu;
@@ -57,6 +58,10 @@ class ChromeSearchResult {
   const gfx::ImageSkia& chip_icon() const { return metadata_->chip_icon; }
   const gfx::ImageSkia& badge_icon() const { return metadata_->badge_icon; }
 
+  bool notify_visibility_change() const {
+    return metadata_->notify_visibility_change;
+  }
+
   // The following methods set Chrome side data here, and call model updater
   // interface to update Ash.
   void SetTitle(const base::string16& title);
@@ -77,16 +82,17 @@ class ChromeSearchResult {
   void SetIcon(const gfx::ImageSkia& icon);
   void SetChipIcon(const gfx::ImageSkia& icon);
   void SetBadgeIcon(const gfx::ImageSkia& badge_icon);
+  void SetNotifyVisibilityChange(bool notify_visibility_change);
 
   // The following methods call model updater to update Ash.
   void SetPercentDownloaded(int percent_downloaded);
   void NotifyItemInstalled();
 
-  void SetMetadata(ash::mojom::SearchResultMetadataPtr metadata) {
+  void SetMetadata(std::unique_ptr<ash::SearchResultMetadata> metadata) {
     metadata_ = std::move(metadata);
   }
-  ash::mojom::SearchResultMetadataPtr CloneMetadata() const {
-    return metadata_.Clone();
+  std::unique_ptr<ash::SearchResultMetadata> CloneMetadata() const {
+    return std::make_unique<ash::SearchResultMetadata>(*metadata_);
   }
 
   void set_model_updater(AppListModelUpdater* model_updater) {
@@ -103,6 +109,9 @@ class ChromeSearchResult {
   // Opens the result. Clients should use AppListViewDelegate::OpenSearchResult.
   virtual void Open(int event_flags) = 0;
 
+  // Called if set visible/hidden.
+  virtual void OnVisibilityChanged(bool visibility);
+
   // Updates the result's relevance score, and sets its title and title tags,
   // based on a string match result.
   void UpdateFromMatch(const app_list::TokenizedString& title,
@@ -112,14 +121,19 @@ class ChromeSearchResult {
   // no menu for the item (e.g. during install). |callback| takes the ownership
   // of the returned menu model.
   using GetMenuModelCallback =
-      base::OnceCallback<void(std::unique_ptr<ui::MenuModel>)>;
+      base::OnceCallback<void(std::unique_ptr<ui::SimpleMenuModel>)>;
   virtual void GetContextMenuModel(GetMenuModelCallback callback);
-
-  // Invoked when a context menu item of this search result is selected.
-  void ContextMenuItemSelected(int command_id, int event_flags);
 
   static std::string TagsDebugStringForTest(const std::string& text,
                                             const Tags& tags);
+
+  // Subtype of a search result. -1 means no sub type. Derived class
+  // can use this to return useful values for rankers etc. Currently,
+  // OmniboxResult overrides it to return AutocompleteMatch::Type.
+  virtual int GetSubType() const;
+
+  // Get the type of the result, used in metrics.
+  virtual app_list::SearchResultType GetSearchResultType() const = 0;
 
  protected:
   // These id setters should be called in derived class constructors only.
@@ -136,7 +150,7 @@ class ChromeSearchResult {
   // sorted order, group multiplier and group boost.
   double relevance_ = 0;
 
-  ash::mojom::SearchResultMetadataPtr metadata_;
+  std::unique_ptr<ash::SearchResultMetadata> metadata_;
 
   AppListModelUpdater* model_updater_ = nullptr;
 

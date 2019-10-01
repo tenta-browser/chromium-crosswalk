@@ -18,6 +18,7 @@ class WebViewBrowserState;
 
 namespace password_manager {
 class PasswordFormManagerForUI;
+class PasswordManagerDriver;
 }
 
 @protocol CWVPasswordManagerClientDelegate
@@ -64,6 +65,9 @@ class WebViewPasswordManagerClient
       bool has_generated_password,
       bool is_update) override;
   void HideManualFallbackForSaving() override;
+  void FocusedInputChanged(
+      password_manager::PasswordManagerDriver* driver,
+      autofill::mojom::FocusedFieldType focused_field_type) override;
   bool PromptUserToChooseCredentials(
       std::vector<std::unique_ptr<autofill::PasswordForm>> local_forms,
       const GURL& origin,
@@ -91,6 +95,8 @@ class WebViewPasswordManagerClient
   ukm::SourceId GetUkmSourceId() override;
   password_manager::PasswordManagerMetricsRecorder* GetMetricsRecorder()
       override;
+  bool IsIsolationForPasswordSitesEnabled() const override;
+  bool IsNewTabPage() const override;
 
  private:
   // password_manager::PasswordManagerClientHelperDelegate implementation.

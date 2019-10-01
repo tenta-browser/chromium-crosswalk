@@ -16,8 +16,8 @@ import org.chromium.base.ContextUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeFeatureList;
-import org.chromium.chrome.browser.contextual_suggestions.ContextualSuggestionsEnabledStateUtils;
 import org.chromium.chrome.browser.net.spdyproxy.DataReductionProxySettings;
+import org.chromium.chrome.browser.night_mode.NightModeUtils;
 import org.chromium.chrome.browser.partnercustomizations.HomepageManager;
 import org.chromium.chrome.browser.password_manager.ManagePasswordsReferrer;
 import org.chromium.chrome.browser.preferences.autofill_assistant.AutofillAssistantPreferences;
@@ -26,6 +26,7 @@ import org.chromium.chrome.browser.preferences.developer.DeveloperPreferences;
 import org.chromium.chrome.browser.search_engines.TemplateUrl;
 import org.chromium.chrome.browser.search_engines.TemplateUrlService;
 import org.chromium.chrome.browser.signin.SigninManager;
+import org.chromium.chrome.browser.sync.ProfileSyncService;
 import org.chromium.chrome.browser.util.FeatureUtilities;
 
 import java.util.HashMap;
@@ -35,14 +36,15 @@ import java.util.Map;
  * The main settings screen, shown when the user first opens Settings.
  */
 public class MainPreferences extends PreferenceFragment
-        implements SigninManager.SignInStateObserver, TemplateUrlService.LoadListener {
+        implements TemplateUrlService.LoadListener, ProfileSyncService.SyncStateChangedListener,
+                   SigninManager.SignInStateObserver {
     public static final String PREF_ACCOUNT_SECTION = "account_section";
     public static final String PREF_SIGN_IN = "sign_in";
     public static final String PREF_SYNC_AND_SERVICES = "sync_and_services";
     public static final String PREF_SEARCH_ENGINE = "search_engine";
     public static final String PREF_SAVED_PASSWORDS = "saved_passwords";
-    public static final String PREF_CONTEXTUAL_SUGGESTIONS = "contextual_suggestions";
     public static final String PREF_HOMEPAGE = "homepage";
+    public static final String PREF_UI_THEME = "ui_theme";
     public static final String PREF_DATA_REDUCTION = "data_reduction";
     public static final String PREF_NOTIFICATIONS = "notifications";
     public static final String PREF_LANGUAGES = "languages";
@@ -83,6 +85,10 @@ public class MainPreferences extends PreferenceFragment
             SigninManager.get().addSignInStateObserver(this);
             mSignInPreference.registerForUpdates();
         }
+        ProfileSyncService syncService = ProfileSyncService.get();
+        if (syncService != null) {
+            syncService.addSyncStateChangedListener(this);
+        }
     }
 
     @Override
@@ -91,6 +97,10 @@ public class MainPreferences extends PreferenceFragment
         if (SigninManager.get().isSigninSupported()) {
             SigninManager.get().removeSignInStateObserver(this);
             mSignInPreference.unregisterForUpdates();
+        }
+        ProfileSyncService syncService = ProfileSyncService.get();
+        if (syncService != null) {
+            syncService.removeSyncStateChangedListener(this);
         }
     }
 
@@ -130,23 +140,15 @@ public class MainPreferences extends PreferenceFragment
                 // isn't triggered.
                 return true;
             });
-        } else if (!ChromeFeatureList.isEnabled(
-                           ChromeFeatureList.CONTENT_SUGGESTIONS_NOTIFICATIONS)) {
-            // The Notifications Preferences page currently only contains the Content Suggestions
-            // Notifications setting and a link to per-website notification settings. The latter can
-            // be access through Site Settings, so if the Content Suggestions Notifications feature
-            // isn't enabled we don't show the Notifications Preferences page.
+        } else {
+            // Since the Content Suggestions Notification feature has been removed, the
+            // Notifications Preferences page only contains a link to per-website notification
+            // settings, which can be access through Site Settings, so don't show the Notifications
+            // Preferences page.
 
-            // This checks whether the Content Suggestions Notifications *feature* is enabled on the
-            // user's device, not whether the user has Content Suggestions Notifications themselves
-            // enabled (which is what the user can toggle on the Notifications Preferences page).
+            // TODO(crbug.com/944912): Have the Offline Pages Prefetch Notifier start using the pref
+            // that can be set on this page, then re-enable.
             getPreferenceScreen().removePreference(findPreference(PREF_NOTIFICATIONS));
-        }
-
-        // This checks whether the Languages Preference *feature* is enabled on the user's device.
-        // If not, remove the languages preference.
-        if (!ChromeFeatureList.isEnabled(ChromeFeatureList.LANGUAGES_PREFERENCE)) {
-            getPreferenceScreen().removePreference(findPreference(PREF_LANGUAGES));
         }
 
         if (!TemplateUrlService.getInstance().isLoaded()) {
@@ -193,6 +195,7 @@ public class MainPreferences extends PreferenceFragment
             removePreferenceIfPresent(PREF_SIGN_IN);
         }
 
+        updateSyncAndServicesPreference();
         updateSearchEnginePreference();
 
         if (HomepageManager.shouldShowHomepageSetting()) {
@@ -205,14 +208,10 @@ public class MainPreferences extends PreferenceFragment
             removePreferenceIfPresent(PREF_HOMEPAGE);
         }
 
-        if (!ChromeFeatureList.isEnabled(ChromeFeatureList.UNIFIED_CONSENT)
-                && FeatureUtilities.areContextualSuggestionsEnabled(getActivity())
-                && ContextualSuggestionsEnabledStateUtils.shouldShowSettings()) {
-            Preference contextualSuggestions = addPreferenceIfAbsent(PREF_CONTEXTUAL_SUGGESTIONS);
-            setOnOffSummary(contextualSuggestions,
-                    ContextualSuggestionsEnabledStateUtils.getEnabledState());
+        if (NightModeUtils.isNightModeSupported() && FeatureUtilities.isNightModeAvailable()) {
+            addPreferenceIfAbsent(PREF_UI_THEME);
         } else {
-            removePreferenceIfPresent(PREF_CONTEXTUAL_SUGGESTIONS);
+            removePreferenceIfPresent(PREF_UI_THEME);
         }
 
         if (DeveloperPreferences.shouldShowDeveloperPreferences()) {
@@ -235,6 +234,15 @@ public class MainPreferences extends PreferenceFragment
     private void removePreferenceIfPresent(String key) {
         Preference preference = getPreferenceScreen().findPreference(key);
         if (preference != null) getPreferenceScreen().removePreference(preference);
+    }
+
+    private void updateSyncAndServicesPreference() {
+        if (!ChromeFeatureList.isEnabled(ChromeFeatureList.UNIFIED_CONSENT)) return;
+
+        ChromeBasePreference syncAndServices =
+                (ChromeBasePreference) findPreference(PREF_SYNC_AND_SERVICES);
+        syncAndServices.setIcon(SyncPreferenceUtils.getSyncStatusIcon(getActivity()));
+        syncAndServices.setSummary(SyncPreferenceUtils.getSyncStatusSummary(getActivity()));
     }
 
     private void updateSearchEnginePreference() {
@@ -295,6 +303,11 @@ public class MainPreferences extends PreferenceFragment
     public void onTemplateUrlServiceLoaded() {
         TemplateUrlService.getInstance().unregisterLoadListener(this);
         updateSearchEnginePreference();
+    }
+
+    @Override
+    public void syncStateChanged() {
+        updateSyncAndServicesPreference();
     }
 
     @VisibleForTesting

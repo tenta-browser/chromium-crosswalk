@@ -7,22 +7,15 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include <memory>
+
 #include "base/callback.h"
-#import "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
+#include "components/remote_cocoa/app_shim/drag_drop_client.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
 #include "ui/base/dragdrop/os_exchange_data.h"
 #include "ui/views/views_export.h"
 #include "ui/views/widget/drop_helper.h"
-#include "ui/views_bridge_mac/drag_drop_client.h"
-
-// This class acts as a bridge between NSPasteboardItem and OSExchangeData by
-// implementing NSPasteboardItemDataProvider and writing data from
-// OSExchangeData into the pasteboard.
-VIEWS_EXPORT
-@interface CocoaDragDropDataProvider : NSObject<NSPasteboardItemDataProvider>
-- (instancetype)initWithData:(const ui::OSExchangeData&)data;
-@end
 
 namespace gfx {
 class Point;
@@ -39,7 +32,7 @@ class View;
 // Implements drag and drop on MacViews. This class acts as a bridge between
 // the Views and native system's drag and drop. This class mimics
 // DesktopDragDropClientAuraX11.
-class VIEWS_EXPORT DragDropClientMac : public views_bridge_mac::DragDropClient {
+class VIEWS_EXPORT DragDropClientMac : public remote_cocoa::DragDropClient {
  public:
   DragDropClientMac(BridgedNativeWidgetImpl* bridge, View* root_view);
   ~DragDropClientMac() override;
@@ -53,7 +46,7 @@ class VIEWS_EXPORT DragDropClientMac : public views_bridge_mac::DragDropClient {
 
   DropHelper* drop_helper() { return &drop_helper_; }
 
-  // views_bridge_mac::DragDropClient:
+  // remote_cocoa::DragDropClient:
   NSDragOperation DragUpdate(id<NSDraggingInfo>) override;
   NSDragOperation Drop(id<NSDraggingInfo> sender) override;
   void EndDrag() override;
@@ -66,22 +59,23 @@ class VIEWS_EXPORT DragDropClientMac : public views_bridge_mac::DragDropClient {
   gfx::Point LocationInView(NSPoint point) const;
 
   // Provides the data for the drag and drop session.
-  base::scoped_nsobject<CocoaDragDropDataProvider> data_source_;
+  std::unique_ptr<ui::OSExchangeData> exchange_data_;
 
   // Used to handle drag and drop with Views.
   DropHelper drop_helper_;
 
   // The drag and drop operation.
-  int operation_;
+  int source_operation_ = 0;
+  int last_operation_ = 0;
 
   // The bridge between the content view and the drag drop client.
   BridgedNativeWidgetImpl* bridge_;  // Weak. Owns |this|.
 
   // The closure for the drag and drop's run loop.
-  base::Closure quit_closure_;
+  base::OnceClosure quit_closure_;
 
   // Whether |this| is the source of current dragging session.
-  bool is_drag_source_;
+  bool is_drag_source_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(DragDropClientMac);
 };

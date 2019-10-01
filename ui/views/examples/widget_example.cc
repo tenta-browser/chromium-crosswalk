@@ -34,7 +34,7 @@ class WidgetDialogExample : public DialogDelegateView {
 
 class ModalDialogExample : public WidgetDialogExample {
  public:
-  ModalDialogExample() {}
+  ModalDialogExample() = default;
 
   // WidgetDelegate:
   ui::ModalType GetModalType() const override { return ui::MODAL_TYPE_WINDOW; }
@@ -50,15 +50,17 @@ WidgetDialogExample::WidgetDialogExample() {
   AddChildView(new Label(ASCIIToUTF16("Dialog contents label!")));
 }
 
-WidgetDialogExample::~WidgetDialogExample() {}
+WidgetDialogExample::~WidgetDialogExample() = default;
 
 base::string16 WidgetDialogExample::GetWindowTitle() const {
   return ASCIIToUTF16("Dialog Widget Example");
 }
 
+// TODO(crbug.com/961660): CreateExtraView should return std::unique_ptr<View>
 View* WidgetDialogExample::CreateExtraView() {
-  return MdTextButton::CreateSecondaryUiButton(nullptr,
-                                               ASCIIToUTF16("Extra button!"));
+  auto view = MdTextButton::CreateSecondaryUiButton(
+      nullptr, ASCIIToUTF16("Extra button!"));
+  return view.release();
 }
 
 View* WidgetDialogExample::CreateFootnoteView() {
@@ -70,8 +72,7 @@ View* WidgetDialogExample::CreateFootnoteView() {
 WidgetExample::WidgetExample() : ExampleBase("Widget") {
 }
 
-WidgetExample::~WidgetExample() {
-}
+WidgetExample::~WidgetExample() = default;
 
 void WidgetExample::CreateExampleView(View* container) {
   container->SetLayoutManager(
@@ -123,14 +124,15 @@ void WidgetExample::ButtonPressed(Button* sender, const ui::Event& event) {
       ShowWidget(sender, Widget::InitParams(Widget::InitParams::TYPE_POPUP));
       break;
     case DIALOG: {
-      DialogDelegate::CreateDialogWidget(new WidgetDialogExample(), NULL,
+      DialogDelegate::CreateDialogWidget(new WidgetDialogExample(), nullptr,
                                          sender->GetWidget()->GetNativeView())
           ->Show();
       break;
     }
     case MODAL_DIALOG: {
-      DialogDelegate::CreateDialogWidget(new ModalDialogExample(), NULL,
-          sender->GetWidget()->GetNativeView())->Show();
+      DialogDelegate::CreateDialogWidget(new ModalDialogExample(), nullptr,
+                                         sender->GetWidget()->GetNativeView())
+          ->Show();
       break;
     }
     case CHILD:

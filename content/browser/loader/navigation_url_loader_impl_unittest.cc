@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/task/post_task.h"
 #include "base/test/scoped_feature_list.h"
@@ -16,6 +17,7 @@
 #include "content/browser/frame_host/navigation_request_info.h"
 #include "content/browser/loader/navigation_loader_interceptor.h"
 #include "content/browser/loader/navigation_url_loader.h"
+#include "content/browser/loader/prefetched_signed_exchange_cache.h"
 #include "content/common/navigation_params.h"
 #include "content/common/navigation_params.mojom.h"
 #include "content/common/service_manager/service_manager_connection_impl.h"
@@ -161,8 +163,7 @@ class NavigationURLLoaderImplTest : public testing::Test {
       const std::string& headers,
       const std::string& method,
       NavigationURLLoaderDelegate* delegate,
-      NavigationDownloadPolicy download_policy =
-          NavigationDownloadPolicy::kAllow,
+      NavigationDownloadPolicy download_policy = NavigationDownloadPolicy(),
       bool is_main_frame = true,
       bool upgrade_if_insecure = false) {
     mojom::BeginNavigationParamsPtr begin_params =
@@ -170,7 +171,9 @@ class NavigationURLLoaderImplTest : public testing::Test {
             headers, net::LOAD_NORMAL, false /* skip_service_worker */,
             blink::mojom::RequestContextType::LOCATION,
             blink::WebMixedContentContextType::kBlockable,
-            false /* is_form_submission */, GURL() /* searchable_form_url */,
+            false /* is_form_submission */,
+            false /* was_initiated_by_link_click */,
+            GURL() /* searchable_form_url */,
             std::string() /* searchable_form_encoding */,
             GURL() /* client_side_redirect_url */,
             base::nullopt /* devtools_initiator_info */);
@@ -202,7 +205,8 @@ class NavigationURLLoaderImplTest : public testing::Test {
         BrowserContext::GetDefaultStoragePartition(browser_context_.get()),
         std::move(request_info), nullptr /* navigation_ui_data */,
         nullptr /* service_worker_handle */, nullptr /* appcache_handle */,
-        delegate, std::move(interceptors));
+        nullptr /* prefetched_signed_exchange_cache */, delegate,
+        std::move(interceptors));
   }
 
   // Requests |redirect_url|, which must return a HTTP 3xx redirect. It's also
@@ -263,7 +267,7 @@ class NavigationURLLoaderImplTest : public testing::Test {
         url,
         base::StringPrintf("%s: %s", net::HttpRequestHeaders::kOrigin,
                            url.GetOrigin().spec().c_str()),
-        "GET", &delegate, NavigationDownloadPolicy::kAllow, is_main_frame);
+        "GET", &delegate, NavigationDownloadPolicy(), is_main_frame);
     delegate.WaitForRequestRedirected();
     loader->FollowRedirect({}, {}, PREVIEWS_OFF);
     delegate.WaitForResponseStarted();
@@ -279,8 +283,8 @@ class NavigationURLLoaderImplTest : public testing::Test {
         url,
         base::StringPrintf("%s: %s", net::HttpRequestHeaders::kOrigin,
                            url.GetOrigin().spec().c_str()),
-        "GET", &delegate, NavigationDownloadPolicy::kAllow,
-        true /*is_main_frame*/, upgrade_if_insecure);
+        "GET", &delegate, NavigationDownloadPolicy(), true /*is_main_frame*/,
+        upgrade_if_insecure);
     delegate.WaitForRequestRedirected();
     loader->FollowRedirect({}, {}, PREVIEWS_OFF);
     if (expect_request_fail) {
@@ -320,8 +324,8 @@ TEST_F(NavigationURLLoaderImplTest, TopFrameOriginOfMainFrameNavigation) {
       url,
       base::StringPrintf("%s: %s", net::HttpRequestHeaders::kOrigin,
                          url.GetOrigin().spec().c_str()),
-      "GET", &delegate, NavigationDownloadPolicy::kAllow,
-      true /*is_main_frame*/, false /*upgrade_if_insecure*/);
+      "GET", &delegate, NavigationDownloadPolicy(), true /*is_main_frame*/,
+      false /*upgrade_if_insecure*/);
   delegate.WaitForRequestStarted();
 
   ASSERT_TRUE(most_recent_resource_request_);

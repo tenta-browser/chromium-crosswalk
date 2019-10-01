@@ -92,6 +92,8 @@ const PrinterSetupResult = {
   DBUS_ERROR: 3,
   NATIVE_PRINTERS_NOT_ALLOWED: 4,
   INVALID_PRINTER_UPDATE: 5,
+  COMPONENT_UNAVAILAVLE: 6,
+  EDIT_SUCCESS: 7,
   PPD_TOO_LARGE: 10,
   INVALID_PPD: 11,
   PPD_NOT_FOUND: 12,
@@ -137,6 +139,11 @@ cr.define('settings', function() {
      */
     addCupsPrinter(newPrinter) {}
 
+    /**
+     * @param {!CupsPrinterInfo} printer
+     */
+    reconfigureCupsPrinter(printer) {}
+
     startDiscoveringPrinters() {}
     stopDiscoveringPrinters() {}
 
@@ -173,6 +180,14 @@ cr.define('settings', function() {
      * @param {!CupsPrinterInfo} newPrinter
      */
     cancelPrinterSetUp(newPrinter) {}
+
+    /**
+     * @param {string} ppdManufacturer
+     * @param {string} ppdModel
+     * @return {!Promise<string>} Returns the EULA URL of the printer. Returns
+     * an empty string if no EULA is required.
+     */
+    getEulaUrl(ppdManufacturer, ppdModel) {}
   }
 
   /**
@@ -197,6 +212,11 @@ cr.define('settings', function() {
     /** @override */
     addCupsPrinter(newPrinter) {
       chrome.send('addCupsPrinter', [newPrinter]);
+    }
+
+    /** @override */
+    reconfigureCupsPrinter(printer) {
+      chrome.send('reconfigureCupsPrinter', [printer]);
     }
 
     /** @override */
@@ -242,6 +262,11 @@ cr.define('settings', function() {
     /** @override */
     cancelPrinterSetUp(newPrinter) {
       chrome.send('cancelPrinterSetUp', [newPrinter]);
+    }
+
+    /** @override */
+    getEulaUrl(ppdManufacturer, ppdModel) {
+      return cr.sendWithPromise('getEulaUrl', ppdManufacturer, ppdModel);
     }
   }
 

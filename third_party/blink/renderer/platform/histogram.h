@@ -8,17 +8,21 @@
 #include <stdint.h>
 #include "base/metrics/histogram_base.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/time/default_tick_clock.h"
 #include "base/time/tick_clock.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
+#include "third_party/blink/renderer/platform/wtf/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/time.h"
 
 namespace base {
 class HistogramBase;
-};
+}
 
 namespace blink {
 
 class PLATFORM_EXPORT CustomCountHistogram {
+  USING_FAST_MALLOC(CustomCountHistogram);
+
  public:
   // Min values should be >=1 as emitted 0s still go into the underflow bucket.
   CustomCountHistogram(const char* name,
@@ -27,6 +31,7 @@ class PLATFORM_EXPORT CustomCountHistogram {
                        int32_t bucket_count);
   void Count(base::HistogramBase::Sample);
   void CountMicroseconds(base::TimeDelta);
+  void CountMilliseconds(base::TimeDelta);
 
  protected:
   explicit CustomCountHistogram(base::HistogramBase*);
@@ -47,6 +52,8 @@ class PLATFORM_EXPORT EnumerationHistogram : public CustomCountHistogram {
 };
 
 class PLATFORM_EXPORT SparseHistogram {
+  USING_FAST_MALLOC(SparseHistogram);
+
  public:
   explicit SparseHistogram(const char* name);
 
@@ -64,33 +71,42 @@ class PLATFORM_EXPORT LinearHistogram : public CustomCountHistogram {
                            int32_t bucket_count);
 };
 
-class PLATFORM_EXPORT ScopedUsHistogramTimer {
- public:
-  explicit ScopedUsHistogramTimer(CustomCountHistogram& counter)
-      : start_time_(CurrentTimeTicks()), counter_(counter) {}
+template <typename Derived>
+class ScopedUsHistogramTimerBase {
+  USING_FAST_MALLOC(ScopedUsHistogramTimerBase);
 
-  ~ScopedUsHistogramTimer() {
-    counter_.CountMicroseconds(CurrentTimeTicks() - start_time_);
+ public:
+  explicit ScopedUsHistogramTimerBase(CustomCountHistogram& counter)
+      : ScopedUsHistogramTimerBase(counter,
+                                   base::DefaultTickClock::GetInstance()) {}
+
+  ScopedUsHistogramTimerBase(CustomCountHistogram& counter,
+                             const base::TickClock* clock)
+      : clock_(*clock), start_time_(clock_.NowTicks()), counter_(counter) {}
+
+  ~ScopedUsHistogramTimerBase() {
+    if (Derived::ShouldRecord())
+      counter_.CountMicroseconds(clock_.NowTicks() - start_time_);
   }
 
  private:
+  const base::TickClock& clock_;
   TimeTicks start_time_;
   CustomCountHistogram& counter_;
 };
 
-class PLATFORM_EXPORT ScopedHighResUsHistogramTimer {
+class ScopedUsHistogramTimer
+    : public ScopedUsHistogramTimerBase<ScopedUsHistogramTimer> {
  public:
-  explicit ScopedHighResUsHistogramTimer(CustomCountHistogram& counter)
-      : start_time_(CurrentTimeTicks()), counter_(counter) {}
+  using ScopedUsHistogramTimerBase::ScopedUsHistogramTimerBase;
+  static bool ShouldRecord() { return true; }
+};
 
-  ~ScopedHighResUsHistogramTimer() {
-    if (TimeTicks::IsHighResolution())
-      counter_.CountMicroseconds(CurrentTimeTicks() - start_time_);
-  }
-
- private:
-  TimeTicks start_time_;
-  CustomCountHistogram& counter_;
+class ScopedHighResUsHistogramTimer
+    : public ScopedUsHistogramTimerBase<ScopedHighResUsHistogramTimer> {
+ public:
+  using ScopedUsHistogramTimerBase::ScopedUsHistogramTimerBase;
+  static bool ShouldRecord() { return TimeTicks::IsHighResolution(); }
 };
 
 #define SCOPED_BLINK_UMA_HISTOGRAM_TIMER_IMPL(name, allow_cross_thread)  \

@@ -12,6 +12,7 @@
 #include "components/password_manager/core/browser/log_manager.h"
 #include "components/password_manager/core/browser/password_form_manager_for_ui.h"
 #include "components/password_manager/core/browser/password_manager.h"
+#include "components/password_manager/core/browser/password_manager_driver.h"
 #include "components/password_manager/core/browser/password_manager_internals_service.h"
 #include "components/password_manager/core/browser/password_manager_util.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
@@ -88,6 +89,12 @@ void WebViewPasswordManagerClient::ShowManualFallbackForSaving(
 }
 
 void WebViewPasswordManagerClient::HideManualFallbackForSaving() {
+  NOTIMPLEMENTED();
+}
+
+void WebViewPasswordManagerClient::FocusedInputChanged(
+    password_manager::PasswordManagerDriver* driver,
+    autofill::mojom::FocusedFieldType focused_field_type) {
   NOTIMPLEMENTED();
 }
 
@@ -177,4 +184,13 @@ password_manager::PasswordManager*
 WebViewPasswordManagerClient::GetPasswordManager() {
   return delegate_.passwordManager;
 }
+
+bool WebViewPasswordManagerClient::IsIsolationForPasswordSitesEnabled() const {
+  return false;
+}
+
+bool WebViewPasswordManagerClient::IsNewTabPage() const {
+  return false;
+}
+
 }  // namespace ios_web_view

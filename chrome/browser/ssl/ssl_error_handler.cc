@@ -5,11 +5,12 @@
 #include "chrome/browser/ssl/ssl_error_handler.h"
 
 #include <stdint.h>
+
 #include <memory>
 #include <unordered_set>
 #include <utility>
 
-#include "base/callback_helpers.h"
+#include "base/bind.h"
 #include "base/feature_list.h"
 #include "base/files/file_util.h"
 #include "base/lazy_instance.h"
@@ -128,7 +129,7 @@ class CommonNameMismatchRedirectObserver
   void NavigationEntryCommitted(
       const content::LoadCommittedDetails& /* load_details */) override {
     web_contents_->GetMainFrame()->AddMessageToConsole(
-        content::CONSOLE_MESSAGE_LEVEL_INFO,
+        blink::mojom::ConsoleMessageLevel::kInfo,
         base::StringPrintf(
             "Redirecting navigation %s -> %s because the server presented a "
             "certificate valid for %s but not for %s. To disable such "
@@ -983,7 +984,7 @@ void SSLErrorHandler::DeleteSSLErrorHandler() {
   // Need to explicity deny the certificate via the callback, otherwise memory
   // is leaked.
   if (!decision_callback_.is_null()) {
-    base::ResetAndReturn(&decision_callback_)
+    std::move(decision_callback_)
         .Run(content::CERTIFICATE_REQUEST_RESULT_TYPE_DENY);
   }
   delegate_.reset();

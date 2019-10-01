@@ -27,6 +27,10 @@ namespace content {
 class BrowserContext;
 }
 
+namespace cryptohome {
+class BaseReply;
+}
+
 namespace chromeos {
 
 class AuthStatusConsumer;
@@ -158,6 +162,9 @@ class COMPONENT_EXPORT(CHROMEOS_LOGIN_AUTH) CryptohomeAuthenticator
   void RecoverEncryptedData(const std::string& old_password) override;
   void ResyncEncryptedData() override;
 
+  // Called after UnmountEx finishes.
+  void OnUnmountEx(base::Optional<cryptohome::BaseReply> reply);
+
   // AuthAttemptStateResolver overrides.
   // Attempts to make a decision and call back |consumer_| based on
   // the state we have gathered at the time of call.  If a decision
@@ -170,6 +177,10 @@ class COMPONENT_EXPORT(CHROMEOS_LOGIN_AUTH) CryptohomeAuthenticator
   void OnOffTheRecordAuthSuccess();
   void OnPasswordChangeDetected();
   void OnOldEncryptionDetected(bool has_incomplete_migration);
+
+  // Migrate cryptohome key for |user_context| using |old_password|.
+  void MigrateKey(const UserContext& user_context,
+                  const std::string& old_password);
 
  protected:
   ~CryptohomeAuthenticator() override;

@@ -36,7 +36,6 @@
 #include "chrome/common/render_messages.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/renderer/content_settings_observer.h"
-#include "chrome/renderer/security_filter_peer.h"
 #include "components/visitedlink/renderer/visitedlink_slave.h"
 #include "content/public/child/child_thread.h"
 #include "content/public/common/content_switches.h"
@@ -85,27 +84,16 @@ class RendererResourceDelegate : public content::ResourceDispatcherDelegate {
       : weak_factory_(this) {
   }
 
-  std::unique_ptr<content::RequestPeer> OnRequestComplete(
-      std::unique_ptr<content::RequestPeer> current_peer,
-      content::ResourceType resource_type,
-      int error_code) override {
+  void OnRequestComplete() override {
     // Update the browser about our cache.
     // Rate limit informing the host of our cache stats.
     if (!weak_factory_.HasWeakPtrs()) {
       base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
           FROM_HERE,
-          base::Bind(&RendererResourceDelegate::InformHostOfCacheStats,
-                     weak_factory_.GetWeakPtr()),
+          base::BindOnce(&RendererResourceDelegate::InformHostOfCacheStats,
+                         weak_factory_.GetWeakPtr()),
           base::TimeDelta::FromMilliseconds(kCacheStatsDelayMS));
     }
-
-    if (error_code == net::ERR_ABORTED) {
-      return current_peer;
-    }
-
-    // Resource canceled with a specific error are filtered.
-    return SecurityFilterPeer::CreateSecurityFilterPeerForDeniedRequest(
-        resource_type, std::move(current_peer), error_code);
   }
 
   std::unique_ptr<content::RequestPeer> OnReceivedResponse(
@@ -207,8 +195,7 @@ chrome::mojom::DynamicParams* GetDynamicConfigParams() {
 }
 
 ChromeRenderThreadObserver::ChromeRenderThreadObserver()
-    : visited_link_slave_(new visitedlink::VisitedLinkSlave),
-      weak_factory_(this) {
+    : visited_link_slave_(new visitedlink::VisitedLinkSlave) {
   RenderThread* thread = RenderThread::Get();
   resource_delegate_.reset(new RendererResourceDelegate());
   thread->SetResourceDispatcherDelegate(resource_delegate_.get());

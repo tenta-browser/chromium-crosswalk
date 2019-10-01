@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_SIGNIN_IDENTITY_TEST_ENVIRONMENT_PROFILE_ADAPTOR_H_
 #define CHROME_BROWSER_SIGNIN_IDENTITY_TEST_ENVIRONMENT_PROFILE_ADAPTOR_H_
 
+#include <string>
+
 #include "chrome/test/base/testing_profile.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "services/identity/public/cpp/identity_test_environment.h"
@@ -78,6 +80,11 @@ class IdentityTestEnvironmentProfileAdaptor {
   }
 
  private:
+  // Testing factory that creates an IdentityManager
+  // with a FakeProfileOAuth2TokenService.
+  static std::unique_ptr<KeyedService> BuildIdentityManagerForTests(
+      content::BrowserContext* context);
+
   identity::IdentityTestEnvironment identity_test_env_;
 
   DISALLOW_COPY_AND_ASSIGN(IdentityTestEnvironmentProfileAdaptor);

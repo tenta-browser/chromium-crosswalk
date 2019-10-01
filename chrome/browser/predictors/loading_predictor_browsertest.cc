@@ -9,11 +9,13 @@
 #include <vector>
 
 #include "base/base64.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/single_thread_task_runner.h"
+#include "base/strings/stringprintf.h"
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/predictors/loading_predictor.h"
 #include "chrome/browser/predictors/loading_predictor_factory.h"
@@ -791,8 +793,7 @@ class LoadingPredictorBrowserTestWithProxy
  public:
   void SetUp() override {
     pac_script_server_ = std::make_unique<net::EmbeddedTestServer>();
-    pac_script_server_->AddDefaultHandlers(
-        base::FilePath(FILE_PATH_LITERAL("chrome/test/data")));
+    pac_script_server_->AddDefaultHandlers(GetChromeTestDataDir());
     ASSERT_TRUE(pac_script_server_->InitializeAndListen());
     LoadingPredictorBrowserTest::SetUp();
   }

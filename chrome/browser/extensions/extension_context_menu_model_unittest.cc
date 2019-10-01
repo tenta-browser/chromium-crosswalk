@@ -9,9 +9,9 @@
 #include "base/bind.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/scoped_feature_list.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/extensions/api/extension_action/extension_action_api.h"
 #include "chrome/browser/extensions/chrome_extension_browser_constants.h"
@@ -729,10 +729,6 @@ TEST_F(ExtensionContextMenuModelTest, ExtensionContextUninstall) {
 }
 
 TEST_F(ExtensionContextMenuModelTest, TestPageAccessSubmenu) {
-  // This test relies on the click-to-script feature.
-  auto scoped_feature_list = std::make_unique<base::test::ScopedFeatureList>();
-  scoped_feature_list->InitAndEnableFeature(
-      extensions_features::kRuntimeHostPermissions);
   InitializeEmptyExtensionService();
 
   // Add an extension with all urls, and withhold permission.
@@ -876,22 +872,6 @@ TEST_F(ExtensionContextMenuModelTest, TestPageAccessSubmenu) {
       nullptr);
   EXPECT_NE(-1, single_host_menu.GetIndexOfCommandId(
                     ExtensionContextMenuModel::PAGE_ACCESS_SUBMENU));
-
-  // Disable the click-to-script feature, and install a new extension requiring
-  // all hosts. Since the feature isn't on, it shouldn't have the page access
-  // submenu either.
-  scoped_feature_list.reset();  // Need to delete the old list first.
-  scoped_feature_list = std::make_unique<base::test::ScopedFeatureList>();
-  scoped_feature_list->InitAndDisableFeature(
-      extensions_features::kRuntimeHostPermissions);
-  const Extension* feature_disabled_extension = AddExtensionWithHostPermission(
-      "feature_disabled_extension", manifest_keys::kBrowserAction,
-      Manifest::INTERNAL, "http://www.google.com/*");
-  ExtensionContextMenuModel feature_disabled_menu(
-      feature_disabled_extension, GetBrowser(),
-      ExtensionContextMenuModel::VISIBLE, nullptr);
-  EXPECT_EQ(-1, feature_disabled_menu.GetIndexOfCommandId(
-                    ExtensionContextMenuModel::PAGE_ACCESS_SUBMENU));
 }
 
 TEST_F(ExtensionContextMenuModelTest, TestInspectPopupPresence) {
@@ -929,10 +909,6 @@ TEST_F(ExtensionContextMenuModelTest, TestInspectPopupPresence) {
 }
 
 TEST_F(ExtensionContextMenuModelTest, PageAccessMenuOptions) {
-  // This test relies on the click-to-script feature.
-  auto scoped_feature_list = std::make_unique<base::test::ScopedFeatureList>();
-  scoped_feature_list->InitAndEnableFeature(
-      extensions_features::kRuntimeHostPermissions);
   InitializeEmptyExtensionService();
 
   // For laziness.
@@ -1188,10 +1164,6 @@ TEST_F(ExtensionContextMenuModelTest, PageAccessMenuOptions) {
 }
 
 TEST_F(ExtensionContextMenuModelTest, PageAccessWithActiveTab) {
-  // This test relies on the click-to-script feature.
-  auto scoped_feature_list = std::make_unique<base::test::ScopedFeatureList>();
-  scoped_feature_list->InitAndEnableFeature(
-      extensions_features::kRuntimeHostPermissions);
   InitializeEmptyExtensionService();
 
   // For laziness.
@@ -1225,10 +1197,6 @@ TEST_F(ExtensionContextMenuModelTest, PageAccessWithActiveTab) {
 
 TEST_F(ExtensionContextMenuModelTest,
        TestTogglingAccessWithSpecificSitesWithUnrequestedUrl) {
-  // This test relies on the click-to-script feature.
-  auto scoped_feature_list = std::make_unique<base::test::ScopedFeatureList>();
-  scoped_feature_list->InitAndEnableFeature(
-      extensions_features::kRuntimeHostPermissions);
   InitializeEmptyExtensionService();
 
   // For laziness.
@@ -1337,10 +1305,6 @@ TEST_F(ExtensionContextMenuModelTest,
 
 TEST_F(ExtensionContextMenuModelTest,
        TestTogglingAccessWithSpecificSitesWithRequestedSites) {
-  // This test relies on the click-to-script feature.
-  auto scoped_feature_list = std::make_unique<base::test::ScopedFeatureList>();
-  scoped_feature_list->InitAndEnableFeature(
-      extensions_features::kRuntimeHostPermissions);
   InitializeEmptyExtensionService();
 
   // For laziness.
@@ -1389,10 +1353,6 @@ TEST_F(ExtensionContextMenuModelTest,
 }
 
 TEST_F(ExtensionContextMenuModelTest, TestClickingPageAccessLearnMore) {
-  // This test relies on the click-to-script feature.
-  auto scoped_feature_list = std::make_unique<base::test::ScopedFeatureList>();
-  scoped_feature_list->InitAndEnableFeature(
-      extensions_features::kRuntimeHostPermissions);
   InitializeEmptyExtensionService();
 
   // Add an extension that wants access to a.com.

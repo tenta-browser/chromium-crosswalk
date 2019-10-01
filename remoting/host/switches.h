@@ -33,6 +33,7 @@ extern const char kProcessTypeDesktop[];
 extern const char kProcessTypeHost[];
 extern const char kProcessTypeRdpDesktopSession[];
 extern const char kProcessTypeEvaluateCapability[];
+extern const char kProcessTypeFileChooser[];
 
 extern const char kEvaluateCapabilitySwitchName[];
 
@@ -56,6 +57,9 @@ extern const char kOutputSwitchName[];
 // Token used to create a message pipe between a pair of child and parent
 // processes.
 extern const char kMojoPipeToken[];
+
+// Switch to upgrade the host config with a new refresh token.
+extern const char kUpgradeTokenSwitchName[];
 
 }  // namespace remoting
 

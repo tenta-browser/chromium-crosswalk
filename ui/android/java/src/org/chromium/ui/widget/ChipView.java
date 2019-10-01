@@ -4,11 +4,12 @@
 package org.chromium.ui.widget;
 
 import android.content.Context;
-import android.content.res.ColorStateList;
 import android.content.res.TypedArray;
+import android.graphics.drawable.Drawable;
 import android.support.annotation.DrawableRes;
+import android.support.annotation.IdRes;
+import android.support.annotation.Px;
 import android.support.annotation.StyleRes;
-import android.support.v4.view.MarginLayoutParamsCompat;
 import android.support.v4.view.ViewCompat;
 import android.util.AttributeSet;
 import android.view.ContextThemeWrapper;
@@ -21,14 +22,15 @@ import org.chromium.ui.R;
 
 /** The view responsible for displaying a material chip. */
 public class ChipView extends LinearLayout {
-    /** An id to use for {@link #setIcon(int)} when there is no icon on the chip. */
+    /** An id to use for {@link #setIcon(int, boolean)} when there is no icon on the chip. */
     public static final int INVALID_ICON_ID = -1;
-    private final int mTextStartPaddingWithIconPx;
-    private final int mTextStartPaddingWithNoIconPx;
 
     private final RippleBackgroundHelper mRippleBackgroundHelper;
-    private final TextView mText;
+    private final TextView mPrimaryText;
     private final ChromeImageView mIcon;
+    private final @IdRes int mSecondaryTextAppearanceId;
+
+    private TextView mSecondaryText;
 
     /**
      * Constructor for inflating from XML.
@@ -47,10 +49,9 @@ public class ChipView extends LinearLayout {
     private ChipView(Context context, AttributeSet attrs, @StyleRes int themeOverlay) {
         super(new ContextThemeWrapper(context, themeOverlay), attrs, R.attr.chipStyle);
 
-        mTextStartPaddingWithIconPx =
-                getResources().getDimensionPixelSize(R.dimen.chip_icon_padding);
-        mTextStartPaddingWithNoIconPx =
-                getResources().getDimensionPixelSize(R.dimen.chip_no_icon_padding);
+        final @Px int leadingElementPadding =
+                getResources().getDimensionPixelSize(R.dimen.chip_element_leading_padding);
+        final @Px int endPadding = getResources().getDimensionPixelSize(R.dimen.chip_end_padding);
 
         TypedArray a = getContext().obtainStyledAttributes(
                 attrs, R.styleable.ChipView, R.attr.chipStyle, 0);
@@ -64,25 +65,28 @@ public class ChipView extends LinearLayout {
                 getResources().getDimensionPixelSize(R.dimen.chip_icon_size));
         int iconHeight = a.getDimensionPixelSize(R.styleable.ChipView_iconHeight,
                 getResources().getDimensionPixelSize(R.dimen.chip_icon_size));
+        int primaryTextAppearance = a.getResourceId(
+                R.styleable.ChipView_primaryTextAppearance, R.style.TextAppearance_ChipText);
+        mSecondaryTextAppearanceId = a.getResourceId(
+                R.styleable.ChipView_secondaryTextAppearance, R.style.TextAppearance_ChipText);
         a.recycle();
 
         mIcon = new ChromeImageView(getContext());
-        LayoutParams lp = new LayoutParams(iconWidth, iconHeight);
-        MarginLayoutParamsCompat.setMarginStart(lp, mTextStartPaddingWithIconPx);
-        mIcon.setLayoutParams(lp);
+        mIcon.setLayoutParams(new LayoutParams(iconWidth, iconHeight));
         addView(mIcon);
 
-        mText = new TextView(new ContextThemeWrapper(getContext(), R.style.ChipTextView));
-        ApiCompatibilityUtils.setTextAppearance(mText, R.style.TextAppearance_ChipText);
-        addView(mText);
+        // Setting this enforces 16dp padding at the end and 8dp at the start. For text, the start
+        // padding needs to be 16dp which is why a ChipTextView contributes the remaining 8dp.
+        ViewCompat.setPaddingRelative(this, leadingElementPadding, 0, endPadding, 0);
+
+        mPrimaryText = new TextView(new ContextThemeWrapper(getContext(), R.style.ChipTextView));
+        ApiCompatibilityUtils.setTextAppearance(mPrimaryText, primaryTextAppearance);
+        addView(mPrimaryText);
 
         // Reset icon and background:
         mRippleBackgroundHelper = new RippleBackgroundHelper(this, chipColorId, rippleColorId,
                 cornerRadius, R.color.chip_stroke_color, R.dimen.chip_border_width);
-        setIcon(INVALID_ICON_ID);
-
-        ColorStateList textColors = mText.getTextColors();
-        if (textColors != null) ApiCompatibilityUtils.setImageTintList(mIcon, textColors);
+        setIcon(INVALID_ICON_ID, false);
     }
 
     @Override
@@ -97,26 +101,60 @@ public class ChipView extends LinearLayout {
      * Sets the icon at the start of the chip view.
      * @param icon The resource id pointing to the icon.
      */
-    public void setIcon(@DrawableRes int icon) {
-        final int textStartPadding;
+    public void setIcon(@DrawableRes int icon, boolean tintWithTextColor) {
         if (icon == INVALID_ICON_ID) {
             mIcon.setVisibility(ViewGroup.GONE);
-            textStartPadding = mTextStartPaddingWithNoIconPx;
-        } else {
-            textStartPadding = mTextStartPaddingWithIconPx;
-            mIcon.setVisibility(ViewGroup.VISIBLE);
-            mIcon.setImageResource(icon);
+            return;
         }
 
-        ViewCompat.setPaddingRelative(mText, textStartPadding, mText.getPaddingTop(),
-                ViewCompat.getPaddingEnd(mText), mText.getPaddingBottom());
+        mIcon.setVisibility(ViewGroup.VISIBLE);
+        mIcon.setImageResource(icon);
+        setTint(tintWithTextColor);
+    }
+
+    /**
+     * Sets the icon at the start of the chip view.
+     * @param drawable Drawable to display.
+     */
+    public void setIcon(Drawable drawable, boolean tintWithTextColor) {
+        mIcon.setVisibility(ViewGroup.VISIBLE);
+        mIcon.setImageDrawable(drawable);
+        setTint(tintWithTextColor);
     }
 
     /**
      * Returns the {@link TextView} that contains the label of the chip.
      * @return A {@link TextView}.
      */
-    public TextView getInnerTextView() {
-        return mText;
+    public TextView getPrimaryTextView() {
+        return mPrimaryText;
+    }
+
+    /**
+     * Returns the {@link TextView} that contains the secondary label of the chip. If it wasn't used
+     * until now, this creates the view.
+     * @return A {@link TextView}.
+     */
+    public TextView getSecondaryTextView() {
+        if (mSecondaryText == null) {
+            mSecondaryText =
+                    new TextView(new ContextThemeWrapper(getContext(), R.style.ChipTextView));
+            ApiCompatibilityUtils.setTextAppearance(mSecondaryText, mSecondaryTextAppearanceId);
+            addView(mSecondaryText);
+        }
+        return mSecondaryText;
+    }
+
+    /**
+     * Sets the correct tinting on the Chip's image view.
+     * @param tintWithTextColor If true then the image view will be tinted with the primary text
+     *      color. If not, the tint will be cleared.
+     */
+    private void setTint(boolean tintWithTextColor) {
+        if (mPrimaryText.getTextColors() != null && tintWithTextColor) {
+            ApiCompatibilityUtils.setImageTintList(mIcon, mPrimaryText.getTextColors());
+        } else {
+            ApiCompatibilityUtils.setImageTintList(mIcon, null);
+        }
     }
 }

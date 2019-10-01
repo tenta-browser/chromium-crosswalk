@@ -97,9 +97,10 @@ class IceTransportTest : public testing::Test {
   void ProcessTransportInfo(std::unique_ptr<IceTransport>* target_transport,
                             std::unique_ptr<jingle_xmpp::XmlElement> transport_info) {
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-        FROM_HERE, base::Bind(&IceTransportTest::DeliverTransportInfo,
-                              base::Unretained(this), target_transport,
-                              base::Passed(&transport_info)),
+        FROM_HERE,
+        base::BindOnce(&IceTransportTest::DeliverTransportInfo,
+                       base::Unretained(this), target_transport,
+                       std::move(transport_info)),
         transport_info_delay_);
   }
 
@@ -117,7 +118,7 @@ class IceTransportTest : public testing::Test {
         new TransportContext(nullptr,
                              std::make_unique<ChromiumPortAllocatorFactory>(),
                              nullptr, network_settings_, TransportRole::SERVER),
-        &host_event_handler_));
+        &host_event_handler_, false));
     if (!host_authenticator_) {
       host_authenticator_.reset(
           new FakeAuthenticator(FakeAuthenticator::ACCEPT));
@@ -127,7 +128,7 @@ class IceTransportTest : public testing::Test {
         new TransportContext(nullptr,
                              std::make_unique<ChromiumPortAllocatorFactory>(),
                              nullptr, network_settings_, TransportRole::CLIENT),
-        &client_event_handler_));
+        &client_event_handler_, false));
     if (!client_authenticator_) {
       client_authenticator_.reset(
           new FakeAuthenticator(FakeAuthenticator::ACCEPT));

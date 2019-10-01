@@ -20,6 +20,7 @@
 #include "gpu/config/gpu_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/gl/gl_version_info.h"
 #include "ui/gl/init/gl_factory.h"
 
 #if defined(OS_LINUX)
@@ -77,14 +78,14 @@ bool GLTestHelper::HasExtension(const char* extension) {
 }
 
 bool GLTestHelper::CheckGLError(const char* msg, int line) {
-   bool success = true;
-   GLenum error = GL_NO_ERROR;
-   while ((error = glGetError()) != GL_NO_ERROR) {
-     success = false;
-     EXPECT_EQ(static_cast<GLenum>(GL_NO_ERROR), error)
-         << "GL ERROR in " << msg << " at line " << line << " : " << error;
-   }
-   return success;
+  bool success = true;
+  GLenum error = GL_NO_ERROR;
+  while ((error = glGetError()) != GL_NO_ERROR) {
+    success = false;
+    EXPECT_EQ(static_cast<GLenum>(GL_NO_ERROR), error)
+        << "GL ERROR in " << msg << " at line " << line << " : " << error;
+  }
+  return success;
 }
 
 GLuint GLTestHelper::CompileShader(GLenum type, const char* shaderSrc) {
@@ -276,7 +277,7 @@ struct BitmapInfoHeader{
   uint8_t clr_important[4];
 };
 
-}
+}  // namespace
 
 bool GLTestHelper::SaveBackbufferAsBMP(
     const char* filename, int width, int height) {
@@ -373,7 +374,7 @@ bool GpuCommandBufferTestEGL::InitializeEGLGLES2(int width, int height) {
     }
 
     gpu::GPUInfo gpu_info;
-    gpu::CollectContextGraphicsInfo(&gpu_info, gpu::GpuPreferences());
+    gpu::CollectContextGraphicsInfo(&gpu_info);
     // See crbug.com/822716, the ATI proprietary driver has eglGetProcAddress
     // but eglInitialize crashes with x11.
     if (gpu_info.gl_vendor.find("ATI Technologies Inc.") != std::string::npos) {
@@ -399,14 +400,17 @@ bool GpuCommandBufferTestEGL::InitializeEGLGLES2(int width, int height) {
   gl_.Initialize(options);
   gl_.MakeCurrent();
 
-  bool result =
-      gl::init::GetGLWindowSystemBindingInfo(&window_system_binding_info_);
+  gl_extensions_ =
+      gfx::MakeExtensionSet(gl::GetGLExtensionsFromCurrentContext());
+  gl::GLVersionInfo gl_version_info(
+      reinterpret_cast<const char*>(glGetString(GL_VERSION)),
+      reinterpret_cast<const char*>(glGetString(GL_RENDERER)), gl_extensions_);
+  bool result = gl::init::GetGLWindowSystemBindingInfo(
+      gl_version_info, &window_system_binding_info_);
   DCHECK(result);
 
   egl_extensions_ =
       gfx::MakeExtensionSet(window_system_binding_info_.extensions);
-  gl_extensions_ =
-      gfx::MakeExtensionSet(gl::GetGLExtensionsFromCurrentContext());
 
   return true;
 }

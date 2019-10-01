@@ -32,9 +32,9 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/autofill/content/browser/content_autofill_driver.h"
 #include "components/autofill/content/browser/content_autofill_driver_factory.h"
-#include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/autofill/core/browser/personal_data_manager_observer.h"
 #include "components/autofill/core/browser/validation.h"
@@ -427,7 +427,8 @@ IN_PROC_BROWSER_TEST_F(AutofillTest, AppendCountryCodeForAggregatedPhones) {
 // This does not apply to US numbers. For US numbers, '+' is removed.
 
 // Flaky on Windows. http://crbug.com/500491
-#if defined(OS_WIN)
+// Also flaky on Linux. http://crbug.com/935629
+#if defined(OS_WIN) || defined(OS_LINUX)
 #define MAYBE_UsePlusSignForInternationalNumber \
     DISABLED_UsePlusSignForInternationalNumber
 #else

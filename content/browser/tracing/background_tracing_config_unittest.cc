@@ -24,7 +24,8 @@ class BackgroundTracingConfigTest : public testing::Test {
 
 std::unique_ptr<BackgroundTracingConfigImpl> ReadFromJSONString(
     const std::string& json_text) {
-  std::unique_ptr<base::Value> json_value(base::JSONReader::Read(json_text));
+  std::unique_ptr<base::Value> json_value(
+      base::JSONReader::ReadDeprecated(json_text));
 
   base::DictionaryValue* dict = nullptr;
   if (json_value)
@@ -36,7 +37,7 @@ std::unique_ptr<BackgroundTracingConfigImpl> ReadFromJSONString(
   return config;
 }
 
-std::string ConfigToString(const BackgroundTracingConfig* config) {
+std::string ConfigToString(BackgroundTracingConfig* config) {
   std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
 
   config->IntoDict(dict.get());
@@ -255,17 +256,6 @@ TEST_F(BackgroundTracingConfigTest, PreemptiveConfigFromValidString) {
   EXPECT_EQ(RuleToString(config->rules()[1]),
             "{\"rule\":\"MONITOR_AND_DUMP_WHEN_TRIGGER_NAMED\","
             "\"trigger_name\":\"foo2\"}");
-
-  config = ReadFromJSONString(
-      "{\"category\":\"BENCHMARK_DEEP\",\"configs\":[{\"rule\":"
-      "\"MONITOR_AND_DUMP_WHEN_TRIGGER_NAMED\",\"trigger_name\":"
-      "\"foo1\"}],\"disable_blink_features\":\"SlowerWeb1,SlowerWeb2\","
-      "\"enable_blink_features\":\"FasterWeb1,FasterWeb2\","
-      "\"mode\":\"PREEMPTIVE_TRACING_MODE\","
-      "\"scenario_name\":\"my_awesome_experiment\"}");
-  EXPECT_EQ(config->enable_blink_features(), "FasterWeb1,FasterWeb2");
-  EXPECT_EQ(config->disable_blink_features(), "SlowerWeb1,SlowerWeb2");
-  EXPECT_EQ(config->scenario_name(), "my_awesome_experiment");
 }
 
 TEST_F(BackgroundTracingConfigTest, ValidPreemptiveCategoryToString) {
@@ -286,6 +276,8 @@ TEST_F(BackgroundTracingConfigTest, ValidPreemptiveCategoryToString) {
       BackgroundTracingConfigImpl::BENCHMARK_EXECUTION_METRIC,
       BackgroundTracingConfigImpl::BENCHMARK_NAVIGATION,
       BackgroundTracingConfigImpl::BENCHMARK_RENDERERS,
+      BackgroundTracingConfigImpl::BENCHMARK_SERVICEWORKER,
+      BackgroundTracingConfigImpl::BENCHMARK_POWER,
       BackgroundTracingConfigImpl::BLINK_STYLE,
   };
 
@@ -300,6 +292,8 @@ TEST_F(BackgroundTracingConfigTest, ValidPreemptiveCategoryToString) {
                                     "BENCHMARK_EXECUTION_METRIC",
                                     "BENCHMARK_NAVIGATION",
                                     "BENCHMARK_RENDERERS",
+                                    "BENCHMARK_SERVICEWORKER",
+                                    "BENCHMARK_POWER",
                                     "BLINK_STYLE"};
   for (size_t i = 0;
        i <
@@ -507,29 +501,6 @@ TEST_F(BackgroundTracingConfigTest, ValidPreemptiveConfigToString) {
               "\"histogram_upper_value\":2,\"rule\":\"MONITOR_AND_DUMP_WHEN_"
               "SPECIFIC_HISTOGRAM_AND_VALUE\",\"trigger_delay\":10}],\"mode\":"
               "\"PREEMPTIVE_TRACING_MODE\"}");
-  }
-
-  {
-    config.reset(
-        new BackgroundTracingConfigImpl(BackgroundTracingConfig::PREEMPTIVE));
-    config->set_category_preset(BackgroundTracingConfigImpl::BENCHMARK_DEEP);
-
-    std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-    dict->SetString("rule", "MONITOR_AND_DUMP_WHEN_TRIGGER_NAMED");
-    dict->SetString("trigger_name", "foo1");
-    config->AddPreemptiveRule(dict.get());
-
-    config->scenario_name_ = "my_awesome_experiment";
-    config->enable_blink_features_ = "FasterWeb1,FasterWeb2";
-    config->disable_blink_features_ = "SlowerWeb1,SlowerWeb2";
-
-    EXPECT_EQ(ConfigToString(config.get()),
-              "{\"category\":\"BENCHMARK_DEEP\",\"configs\":[{\"rule\":"
-              "\"MONITOR_AND_DUMP_WHEN_TRIGGER_NAMED\",\"trigger_name\":"
-              "\"foo1\"}],\"disable_blink_features\":\"SlowerWeb1,SlowerWeb2\","
-              "\"enable_blink_features\":\"FasterWeb1,FasterWeb2\","
-              "\"mode\":\"PREEMPTIVE_TRACING_MODE\","
-              "\"scenario_name\":\"my_awesome_experiment\"}");
   }
 }
 

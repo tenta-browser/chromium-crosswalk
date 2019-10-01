@@ -7,6 +7,7 @@
 
 #include <stddef.h>
 
+#include <array>
 #include <memory>
 #include <string>
 #include <vector>
@@ -28,6 +29,7 @@
 #include "ui/compositor/layer_delegate.h"
 #include "ui/compositor/layer_type.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/transform.h"
 
@@ -80,7 +82,12 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   // content is only mirrored if painted by a delegate or backed by a surface.
   std::unique_ptr<Layer> Mirror();
 
-  void set_sync_bounds(bool sync_bounds) { sync_bounds_ = sync_bounds; }
+  // This method is relevant only if this layer is a mirror destination layer.
+  // Sets whether this mirror layer's bounds are synchronized with the source
+  // layer's bounds.
+  void set_sync_bounds_with_source(bool sync_bounds) {
+    sync_bounds_with_source_ = sync_bounds;
+  }
 
   // Retrieves the Layer's compositor. The Layer will walk up its parent chain
   // to locate it. Returns NULL if the Layer is not attached to a compositor.
@@ -172,8 +179,8 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   // otherwise.
   gfx::Rect GetTargetBounds() const;
 
-  // Sets/gets whether or not drawing of child layers should be clipped to the
-  // bounds of this layer.
+  // Sets/gets whether or not drawing of child layers, including drawing in
+  // this layer, should be clipped to the bounds of this layer.
   void SetMasksToBounds(bool masks_to_bounds);
   bool GetMasksToBounds() const;
 
@@ -268,6 +275,25 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   // and is not completely obscured by a child.
   bool ShouldDraw() const;
 
+  // If set to true, this layer can receive hit test events, this property does
+  // not affect the layer's descendants.
+  void SetAcceptEvents(bool accept_events);
+  bool accept_events() const { return accept_events_; }
+
+  // Sets a rounded corner clip on the layer.
+  void SetRoundedCornerRadius(const gfx::RoundedCornersF& corner_radii);
+  const gfx::RoundedCornersF& rounded_corner_radii() const {
+    return cc_layer_->corner_radii();
+  }
+
+  // If set to true, this layer would not trigger a render surface (if possible)
+  // due to having a rounded corner resulting in a better performance at the
+  // cost of maybe having some blending artifacts.
+  void SetIsFastRoundedCorner(bool enable);
+  bool is_fast_rounded_corner() const {
+    return cc_layer_->is_fast_rounded_corner();
+  }
+
   // Converts a point from the coordinates of |source| to the coordinates of
   // |target|. Necessarily, |source| and |target| must inhabit the same Layer
   // tree.
@@ -334,6 +360,12 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   // Show a solid color instead of delegated or surface contents.
   void SetShowSolidColorContent();
 
+  // Reorder the children to have all children inside |new_leading_children| to
+  // be at the front of the children vector, and the remaining children will
+  // stay in their relative order. |this| must be a parent of all the Layer*
+  // inside |new_leading_children|.
+  void StackChildrenAtBottom(const std::vector<Layer*>& new_leading_children);
+
   // Sets the layer's fill color.  May only be called for LAYER_SOLID_COLOR.
   void SetColor(SkColor color);
   SkColor GetTargetColor() const;
@@ -377,8 +409,8 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   // Invoked when scrolling performed by the cc::InputHandler is committed. This
   // will only occur if the Layer has set scroll container bounds.
   void SetDidScrollCallback(
-      base::Callback<void(const gfx::ScrollOffset&, const cc::ElementId&)>
-          callback);
+      base::RepeatingCallback<void(const gfx::ScrollOffset&,
+                                   const cc::ElementId&)> callback);
 
   cc::ElementId element_id() const { return cc_layer_->element_id(); }
 
@@ -410,7 +442,7 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
 
   // LayerClient implementation.
   std::unique_ptr<base::trace_event::TracedValue> TakeDebugInfo(
-      cc::Layer* layer) override;
+      const cc::Layer* layer) override;
   void DidChangeScrollbarsHiddenIfOverlay(bool) override;
 
   // Triggers a call to SwitchToLayer.
@@ -462,6 +494,8 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   // for proper scaling if the embedder is resized and the |surface_layer_| is
   // set to stretch to fill bounds.
   void SetSurfaceSize(gfx::Size surface_size_in_dip);
+
+  bool ContainsMirrorForTest(Layer* mirror) const;
 
  private:
   friend class LayerOwner;
@@ -542,14 +576,20 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
 
   std::vector<std::unique_ptr<LayerMirror>> mirrors_;
 
-  // If true, changes to the bounds of this layer are propagated to mirrors.
-  bool sync_bounds_ = false;
+  // If true, and this is a destination mirror layer, changes to the bounds of
+  // the source layer are propagated to this mirror layer.
+  bool sync_bounds_with_source_ = false;
 
   gfx::Rect bounds_;
   gfx::Vector2dF subpixel_position_offset_;
 
   // Visibility of this layer. See SetVisible/IsDrawn for more details.
   bool visible_;
+
+  // Whether or not the layer wants to receive hit testing events. When set to
+  // false, the layer will be ignored in hit testing even if it is visible. It
+  // does not affect the layer's descendants.
+  bool accept_events_ = true;
 
   // See SetFillsBoundsOpaquely(). Defaults to true.
   bool fills_bounds_opaquely_;

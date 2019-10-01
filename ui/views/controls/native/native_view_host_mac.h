@@ -30,9 +30,9 @@ class NativeViewHostMac : public NativeViewHostWrapper,
 
   // ViewsHostableView::Host:
   ui::Layer* GetUiLayer() const override;
-  uint64_t GetViewsFactoryHostId() const override;
+  remote_cocoa::mojom::BridgeFactory* GetRemoteCocoaApplication()
+      const override;
   uint64_t GetNSViewId() const override;
-  id GetAccessibilityElement() const override;
   void OnHostableViewDestroying() override;
 
   // NativeViewHostWrapper:
@@ -42,6 +42,7 @@ class NativeViewHostMac : public NativeViewHostWrapper,
   void RemovedFromWidget() override;
   bool SetCustomMask(std::unique_ptr<ui::LayerOwner> mask) override;
   void SetHitTestTopInset(int top_inset) override;
+  int GetHitTestTopInset() const override;
   void InstallClip(int x, int y, int w, int h) override;
   bool HasInstalledClip() override;
   void UninstallClip() override;

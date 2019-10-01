@@ -31,7 +31,6 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_FONTS_FONT_CACHE_H_
 
 #include <limits.h>
-
 #include <memory>
 
 #include "base/memory/scoped_refptr.h"
@@ -99,7 +98,6 @@ typedef HashMap<FallbackListCompositeKey,
 class PLATFORM_EXPORT FontCache {
   friend class FontCachePurgePreventer;
 
-  WTF_MAKE_NONCOPYABLE(FontCache);
   USING_FAST_MALLOC(FontCache);
 
  public:
@@ -151,7 +149,7 @@ class PLATFORM_EXPORT FontCache {
 
   void AddClient(FontCacheClient*);
 
-  unsigned short Generation();
+  uint16_t Generation();
   void Invalidate();
 
   sk_sp<SkFontMgr> FontManager() { return font_manager_; }
@@ -248,6 +246,11 @@ class PLATFORM_EXPORT FontCache {
   ~FontCache() = default;
 
  private:
+  // BCP47 list used when requesting fallback font for a character.
+  // inlineCapacity is set to 4: the array vector not need to hold more than 4
+  // elements.
+  using Bcp47Vector = WTF::Vector<const char*, 4>;
+
   scoped_refptr<SimpleFontData> PlatformFallbackFontForCharacter(
       const FontDescription&,
       UChar32,
@@ -256,6 +259,10 @@ class PLATFORM_EXPORT FontCache {
   sk_sp<SkTypeface> CreateTypefaceFromUniqueName(
       const FontFaceCreationParams& creation_params,
       CString& name);
+
+  static Bcp47Vector GetBcp47LocaleForRequest(
+      const FontDescription& font_description,
+      FontFallbackPriority fallback_priority);
 
   friend class FontGlobalContext;
   FontCache();
@@ -294,15 +301,16 @@ class PLATFORM_EXPORT FontCache {
                                    const FontFaceCreationParams&,
                                    CString& name);
 
-#if defined(OS_ANDROID) || defined(OS_LINUX) || defined(OS_FUCHSIA)
+#if defined(OS_ANDROID) || defined(OS_LINUX)
   static AtomicString GetFamilyNameForCharacter(SkFontMgr*,
                                                 UChar32,
                                                 const FontDescription&,
                                                 FontFallbackPriority);
-#endif  // defined(OS_ANDROID) || defined(OS_LINUX) || defined(OS_FUCHSIA)
+#endif  // defined(OS_ANDROID) || defined(OS_LINUX)
 
-  scoped_refptr<SimpleFontData> FallbackOnStandardFontStyle(const FontDescription&,
-                                                     UChar32);
+  scoped_refptr<SimpleFontData> FallbackOnStandardFontStyle(
+      const FontDescription&,
+      UChar32);
 
   // Don't purge if this count is > 0;
   int purge_prevent_count_;
@@ -334,7 +342,7 @@ class PLATFORM_EXPORT FontCache {
   static float device_scale_factor_;
 #endif
 
-  unsigned short generation_ = 0;
+  uint16_t generation_ = 0;
   bool platform_init_ = false;
   Persistent<HeapHashSet<WeakMember<FontCacheClient>>> font_cache_clients_;
   FontPlatformDataCache font_platform_data_cache_;
@@ -346,15 +354,19 @@ class PLATFORM_EXPORT FontCache {
 
   friend class SimpleFontData;  // For fontDataFromFontPlatformData
   friend class FontFallbackList;
+
+  DISALLOW_COPY_AND_ASSIGN(FontCache);
 };
 
 class PLATFORM_EXPORT FontCachePurgePreventer {
   USING_FAST_MALLOC(FontCachePurgePreventer);
-  WTF_MAKE_NONCOPYABLE(FontCachePurgePreventer);
 
  public:
   FontCachePurgePreventer() { FontCache::GetFontCache()->DisablePurging(); }
   ~FontCachePurgePreventer() { FontCache::GetFontCache()->EnablePurging(); }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(FontCachePurgePreventer);
 };
 
 AtomicString ToAtomicString(const SkString&);

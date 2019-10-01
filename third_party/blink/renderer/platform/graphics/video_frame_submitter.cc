@@ -6,6 +6,7 @@
 
 #include <vector>
 
+#include "base/bind.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "components/viz/common/features.h"
@@ -14,9 +15,10 @@
 #include "media/base/video_frame.h"
 #include "media/base/video_types.h"
 #include "services/viz/public/interfaces/compositing/compositor_frame_sink.mojom-blink.h"
+#include "services/viz/public/interfaces/hit_test/hit_test_region_list.mojom-blink.h"
 #include "services/ws/public/cpp/gpu/context_provider_command_buffer.h"
+#include "third_party/blink/public/mojom/frame_sinks/embedded_frame_sink.mojom-blink.h"
 #include "third_party/blink/public/platform/interface_provider.h"
-#include "third_party/blink/public/platform/modules/frame_sinks/embedded_frame_sink.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_resource.h"
 
@@ -31,6 +33,7 @@ VideoFrameSubmitter::VideoFrameSubmitter(
       rotation_(media::VIDEO_ROTATION_0),
       enable_surface_synchronization_(
           ::features::IsSurfaceSynchronizationEnabled()),
+      empty_frame_weak_ptr_factory_(this),
       weak_ptr_factory_(this) {
   DETACH_FROM_THREAD(thread_checker_);
 }
@@ -169,12 +172,22 @@ void VideoFrameSubmitter::DidReceiveCompositorFrameAck(
 
 void VideoFrameSubmitter::OnBeginFrame(
     const viz::BeginFrameArgs& args,
-    WTF::HashMap<uint32_t, ::gfx::mojom::blink::PresentationFeedbackPtr>) {
+    WTF::HashMap<uint32_t, ::gfx::mojom::blink::PresentationFeedbackPtr>
+        feedbacks) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   TRACE_EVENT0("media", "VideoFrameSubmitter::OnBeginFrame");
 
+  for (const auto& pair : feedbacks) {
+    if (viz::FrameTokenGT(pair.key, *next_frame_token_))
+      continue;
+    TRACE_EVENT_ASYNC_END_WITH_TIMESTAMP0("media", "VideoFrameSubmitter",
+                                          pair.key, pair.value->timestamp);
+  }
+
+  // Don't call UpdateCurrentFrame() for MISSED BeginFrames. Also don't call it
+  // after StopRendering() has been called (forbidden by API contract).
   viz::BeginFrameAck current_begin_frame_ack(args, false);
-  if (args.type == viz::BeginFrameArgs::MISSED) {
+  if (args.type == viz::BeginFrameArgs::MISSED || !is_rendering_) {
     compositor_frame_sink_->DidNotProduceFrame(current_begin_frame_ack);
     return;
   }
@@ -198,10 +211,7 @@ void VideoFrameSubmitter::OnBeginFrame(
   //
   // Not submitting a frame when waiting for a previous ack saves memory by
   // not building up unused remote side resources. See https://crbug.com/830828.
-  //
-  // TODO(dalecurtis): Can |is_rendering_| ever be false here? Presumably if
-  // StopRendering() is called above we will not have gotten a BeginFrame.
-  if (!is_rendering_ || waiting_for_compositor_ack_ ||
+  if (waiting_for_compositor_ack_ ||
       !SubmitFrame(current_begin_frame_ack, std::move(video_frame))) {
     compositor_frame_sink_->DidNotProduceFrame(current_begin_frame_ack);
     return;
@@ -241,7 +251,7 @@ void VideoFrameSubmitter::DidDeleteSharedBitmap(const viz::SharedBitmapId& id) {
 
 void VideoFrameSubmitter::OnReceivedContextProvider(
     bool use_gpu_compositing,
-    scoped_refptr<viz::ContextProvider> context_provider) {
+    scoped_refptr<viz::RasterContextProvider> context_provider) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   if (!use_gpu_compositing) {
     resource_provider_->Initialize(nullptr, this);
@@ -332,9 +342,46 @@ void VideoFrameSubmitter::UpdateSubmissionState() {
     // in the other branch for memory savings.
     if (!is_rendering_)
       SubmitSingleFrame();
-  } else if (!frame_size_.IsEmpty()) {
-    SubmitEmptyFrame();
+  } else {
+    // Post a delayed task to submit an empty frame. We don't do this here,
+    // since there is a race between when we're notified that the player is not
+    // visible, and when auto-PiP starts. In PiP, we'll be set to force submit,
+    // but we're notified after we find out that the page is hidden.  If we
+    // submit an empty frame now, then there will be a flicker in the video
+    // when the empty frame is displayed. By delaying the empty frame, we give
+    // the auto-PiP a chance to start. Note that the empty frame isn't required
+    // for visual correctness; it's just for resource cleanup. We can delay
+    // resource cleanup a little.
+
+    // If there are any in-flight empty frame requests, then cancel them. We
+    // want to wait until any group of state changes stabilizes.
+    empty_frame_weak_ptr_factory_.InvalidateWeakPtrs();
+    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+        FROM_HERE,
+        base::BindOnce(&VideoFrameSubmitter::SubmitEmptyFrameIfNeeded,
+                       empty_frame_weak_ptr_factory_.GetWeakPtr()),
+        base::TimeDelta::FromMilliseconds(500));
   }
+}
+
+void VideoFrameSubmitter::SubmitEmptyFrameIfNeeded() {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  if (!compositor_frame_sink_)
+    return;
+
+  // If we are allowed to submit real frames, then don't send a blank frame
+  // since the last real frame might actually be visible.
+  //
+  // We do not actually submit a real frame here, though; that should be done
+  // (if desired) by whatever switched us to ShouldSubmit() mode.
+  if (ShouldSubmit())
+    return;
+
+  // If we don't have a frame size, then we can't send a blank frame.
+  if (frame_size_.IsEmpty())
+    return;
+
+  SubmitEmptyFrame();
 }
 
 bool VideoFrameSubmitter::SubmitFrame(
@@ -342,7 +389,8 @@ bool VideoFrameSubmitter::SubmitFrame(
     scoped_refptr<media::VideoFrame> video_frame) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(video_frame);
-  TRACE_EVENT0("media", "VideoFrameSubmitter::SubmitFrame");
+  TRACE_EVENT1("media", "VideoFrameSubmitter::SubmitFrame", "frame",
+               video_frame->AsHumanReadableString());
 
   if (!compositor_frame_sink_ || !ShouldSubmit())
     return false;
@@ -371,7 +419,8 @@ bool VideoFrameSubmitter::SubmitFrame(
   resource_provider_->PrepareSendToParent(resources,
                                           &compositor_frame.resource_list);
 
-  // TODO(lethalantidote): Address third/fourth arg in SubmitCompositorFrame.
+  // We can pass nullptr for the HitTestData as the CompositorFram will not
+  // contain any SurfaceDrawQuads.
   compositor_frame_sink_->SubmitCompositorFrame(
       child_local_surface_id_allocator_.GetCurrentLocalSurfaceIdAllocation()
           .local_surface_id(),
@@ -387,6 +436,9 @@ void VideoFrameSubmitter::SubmitEmptyFrame() {
   DCHECK(compositor_frame_sink_ && !ShouldSubmit());
   DCHECK(!frame_size_.IsEmpty());
   TRACE_EVENT0("media", "VideoFrameSubmitter::SubmitEmptyFrame");
+
+  if (!compositor_frame_sink_)
+    return;
 
   compositor_frame_sink_->SubmitCompositorFrame(
       child_local_surface_id_allocator_.GetCurrentLocalSurfaceIdAllocation()
@@ -438,6 +490,23 @@ viz::CompositorFrame VideoFrameSubmitter::CreateCompositorFrame(
   viz::CompositorFrame compositor_frame;
   compositor_frame.metadata.begin_frame_ack = begin_frame_ack;
   compositor_frame.metadata.frame_token = ++next_frame_token_;
+  compositor_frame.metadata.preferred_frame_interval =
+      video_frame_provider_
+          ? video_frame_provider_->GetPreferredRenderInterval()
+          : viz::BeginFrameArgs::MinInterval();
+
+  base::TimeTicks value;
+  if (video_frame && video_frame->metadata()->GetTimeTicks(
+                         media::VideoFrameMetadata::DECODE_TIME, &value)) {
+    TRACE_EVENT_ASYNC_BEGIN_WITH_TIMESTAMP0("media", "VideoFrameSubmitter",
+                                            *next_frame_token_, value);
+    TRACE_EVENT_ASYNC_STEP_PAST0("media", "VideoFrameSubmitter",
+                                 *next_frame_token_, "Pre-submit buffering");
+  } else {
+    TRACE_EVENT_ASYNC_BEGIN_WITH_TIMESTAMP1(
+        "media", "VideoFrameSubmitter", *next_frame_token_,
+        base::TimeTicks::Now(), "empty video frame?", !video_frame);
+  }
 
   // We don't assume that the ack is marked as having damage.  However, we're
   // definitely emitting a CompositorFrame that damages the entire surface.

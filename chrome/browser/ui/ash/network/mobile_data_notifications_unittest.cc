@@ -20,8 +20,8 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile_manager.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/shill_device_client.h"
-#include "chromeos/dbus/shill_service_client.h"
+#include "chromeos/dbus/shill/shill_device_client.h"
+#include "chromeos/dbus/shill/shill_service_client.h"
 #include "chromeos/network/network_connect.h"
 #include "chromeos/network/network_state_handler.h"
 #include "components/prefs/pref_service.h"
@@ -133,7 +133,7 @@ class MobileDataNotificationsTest : public testing::Test {
     service_test->ClearServices();
     service_test->AddService(kCellularServicePath, kCellularGuid,
                              "cellular1" /* name */, shill::kTypeCellular,
-                             "activated", true /* visible */);
+                             shill::kStateIdle, true /* visible */);
     service_test->SetServiceProperty(
         kCellularServicePath, shill::kActivationStateProperty,
         base::Value(shill::kActivationStateActivated));

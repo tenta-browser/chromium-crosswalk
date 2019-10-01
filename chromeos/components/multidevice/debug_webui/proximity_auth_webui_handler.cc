@@ -79,6 +79,7 @@ std::unique_ptr<base::DictionaryValue> LogMessageToDictionary(
 const char kExternalDevicePublicKey[] = "publicKey";
 const char kExternalDevicePublicKeyTruncated[] = "publicKeyTruncated";
 const char kExternalDeviceFriendlyName[] = "friendlyDeviceName";
+const char kExternalDeviceNoPiiName[] = "noPiiName";
 const char kExternalDeviceUnlockKey[] = "unlockKey";
 const char kExternalDeviceMobileHotspot[] = "hasMobileHotspot";
 const char kExternalDeviceConnectionStatus[] = "connectionStatus";
@@ -376,6 +377,8 @@ ProximityAuthWebUIHandler::RemoteDeviceToDictionary(
   dictionary->SetString(kExternalDevicePublicKeyTruncated,
                         remote_device.GetTruncatedDeviceIdForLogs());
   dictionary->SetString(kExternalDeviceFriendlyName, remote_device.name());
+  dictionary->SetString(kExternalDeviceNoPiiName,
+                        remote_device.pii_free_name());
   dictionary->SetBoolean(kExternalDeviceUnlockKey,
                          remote_device.GetSoftwareFeatureState(
                              multidevice::SoftwareFeature::kSmartLockHost) ==
@@ -485,8 +488,7 @@ void ProximityAuthWebUIHandler::OnForceSyncNow(bool success) {
 void ProximityAuthWebUIHandler::OnSetSoftwareFeatureState(
     const std::string public_key,
     device_sync::mojom::NetworkRequestResult result_code) {
-  std::string device_id =
-      multidevice::RemoteDeviceRef::GenerateDeviceId(public_key);
+  std::string device_id = RemoteDevice::GenerateDeviceId(public_key);
 
   if (result_code == device_sync::mojom::NetworkRequestResult::kSuccess) {
     PA_LOG(VERBOSE) << "Successfully set SoftwareFeature state for device: "
@@ -527,6 +529,10 @@ void ProximityAuthWebUIHandler::OnFindEligibleDevices(
 
 void ProximityAuthWebUIHandler::OnGetDebugInfo(
     device_sync::mojom::DebugInfoPtr debug_info_ptr) {
+  // If enrollment is not yet complete, no debug information is available.
+  if (!debug_info_ptr)
+    return;
+
   if (enrollment_update_waiting_for_debug_info_) {
     enrollment_update_waiting_for_debug_info_ = false;
     NotifyOnEnrollmentFinished(

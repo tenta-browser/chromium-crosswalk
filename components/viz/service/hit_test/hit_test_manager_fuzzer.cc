@@ -22,8 +22,6 @@ namespace {
 
 constexpr uint32_t kMaxDepthAllowed = 255;
 
-// TODO(riajiang): Move into common functions that can be used by the fuzzer
-// for HitTestQuery.
 uint32_t GetNextUInt32NonZero(base::FuzzedDataProvider* fuzz) {
   return fuzz->ConsumeIntegralInRange<uint32_t>(
       1, std::numeric_limits<uint32_t>::max());
@@ -176,7 +174,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t num_bytes) {
   viz::Surface* surface = frame_sink_manager.surface_manager()->GetSurfaceForId(
       aggregate_surface_id);
   if (surface)
-    frame_sink_manager.surface_manager()->SurfaceDiscarded(surface);
+    frame_sink_manager.surface_manager()->SurfaceDestroyed(surface);
 
   return 0;
 }

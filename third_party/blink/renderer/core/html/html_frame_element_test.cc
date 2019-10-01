@@ -6,6 +6,7 @@
 
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/core/dom/document.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 
@@ -15,24 +16,24 @@ class HTMLFrameElementTest : public testing::Test {};
 // Frame elements do not have any container-policy related attributes, but the
 // fullscreen feature should be unconditionally disabled.
 TEST_F(HTMLFrameElementTest, DefaultContainerPolicy) {
-  Document* document = Document::CreateForTest();
+  auto* document = MakeGarbageCollected<Document>();
   const KURL document_url("http://example.com");
   document->SetURL(document_url);
   document->UpdateSecurityOrigin(SecurityOrigin::Create(document_url));
 
-  HTMLFrameElement* frame_element = HTMLFrameElement::Create(*document);
+  auto* frame_element = MakeGarbageCollected<HTMLFrameElement>(*document);
 
   frame_element->setAttribute(html_names::kSrcAttr, "http://example.net/");
   frame_element->UpdateContainerPolicyForTests();
 
   const ParsedFeaturePolicy& container_policy =
-      frame_element->ContainerPolicy();
+      frame_element->GetFramePolicy().container_policy;
   EXPECT_EQ(1UL, container_policy.size());
   // Fullscreen should be disabled in this frame
   EXPECT_EQ(mojom::FeaturePolicyFeature::kFullscreen,
             container_policy[0].feature);
-  EXPECT_FALSE(container_policy[0].matches_all_origins);
-  EXPECT_EQ(0UL, container_policy[0].origins.size());
+  EXPECT_EQ(0UL, container_policy[0].values.size());
+  EXPECT_GE(PolicyValue(false), container_policy[0].fallback_value);
 }
 
 }  // namespace blink

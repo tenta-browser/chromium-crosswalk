@@ -13,6 +13,7 @@
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
+#include "base/bind.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
@@ -60,9 +61,7 @@ class JavaHomepageClient : public MostVisitedSites::HomepageClient {
 
  private:
   void OnTitleEntryFound(TitleCallback title_callback,
-                         bool success,
-                         const history::URLRow& row,
-                         const history::VisitVector& visits);
+                         history::QueryURLResult result);
 
   ScopedJavaGlobalRef<jobject> client_;
   Profile* profile_;
@@ -105,14 +104,12 @@ void JavaHomepageClient::QueryHomepageTitle(TitleCallback title_callback) {
 }
 
 void JavaHomepageClient::OnTitleEntryFound(TitleCallback title_callback,
-                                           bool success,
-                                           const history::URLRow& row,
-                                           const history::VisitVector& visits) {
-  if (!success) {
+                                           history::QueryURLResult result) {
+  if (!result.success) {
     std::move(title_callback).Run(base::nullopt);
     return;
   }
-  std::move(title_callback).Run(row.title());
+  std::move(title_callback).Run(result.row.title());
 }
 
 bool JavaHomepageClient::IsHomepageTileEnabled() const {

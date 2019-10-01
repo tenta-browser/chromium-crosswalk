@@ -32,7 +32,6 @@ import org.chromium.base.VisibleForTesting;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ActivityTabProvider;
-import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.WindowDelegate;
 import org.chromium.chrome.browser.locale.LocaleManager;
@@ -46,12 +45,14 @@ import org.chromium.chrome.browser.omnibox.UrlBarCoordinator.SelectionState;
 import org.chromium.chrome.browser.omnibox.geo.GeolocationHeader;
 import org.chromium.chrome.browser.omnibox.status.StatusViewCoordinator;
 import org.chromium.chrome.browser.omnibox.suggestions.AutocompleteCoordinator;
-import org.chromium.chrome.browser.omnibox.suggestions.AutocompleteCoordinator.AutocompleteDelegate;
-import org.chromium.chrome.browser.omnibox.suggestions.OmniboxSuggestionsList;
+import org.chromium.chrome.browser.omnibox.suggestions.AutocompleteCoordinatorFactory;
+import org.chromium.chrome.browser.omnibox.suggestions.AutocompleteDelegate;
+import org.chromium.chrome.browser.omnibox.suggestions.OmniboxSuggestionListEmbedder;
 import org.chromium.chrome.browser.preferences.privacy.PrivacyPreferencesManager;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.search_engines.TemplateUrlService;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tasks.ReturnToChromeExperimentsUtil;
 import org.chromium.chrome.browser.toolbar.ToolbarDataProvider;
 import org.chromium.chrome.browser.toolbar.ToolbarManager;
 import org.chromium.chrome.browser.toolbar.top.ToolbarActionModeCallback;
@@ -104,8 +105,6 @@ public class LocationBarLayout extends FrameLayout
     private boolean mVoiceSearchEnabled;
 
     private OmniboxPrerender mOmniboxPrerender;
-
-    private boolean mUseDarkColors;
 
     private boolean mOmniboxVoiceSearchAlwaysVisible;
     protected float mUrlFocusChangePercent;
@@ -161,8 +160,8 @@ public class LocationBarLayout extends FrameLayout
         mUrlCoordinator = new UrlBarCoordinator((UrlBar) mUrlBar);
         mUrlCoordinator.setDelegate(this);
 
-        OmniboxSuggestionsList.OmniboxSuggestionListEmbedder embedder =
-                new OmniboxSuggestionsList.OmniboxSuggestionListEmbedder() {
+        OmniboxSuggestionListEmbedder embedder =
+                new OmniboxSuggestionListEmbedder() {
                     @Override
                     public boolean isTablet() {
                         return mIsTablet;
@@ -183,8 +182,8 @@ public class LocationBarLayout extends FrameLayout
                         return mIsTablet ? LocationBarLayout.this : null;
                     }
                 };
-        mAutocompleteCoordinator =
-                new AutocompleteCoordinator(this, this, embedder, mUrlCoordinator);
+        mAutocompleteCoordinator = AutocompleteCoordinatorFactory.createAutocompleteCoordinator(
+                this, this, embedder, mUrlCoordinator);
         addUrlFocusChangeListener(mAutocompleteCoordinator);
         mUrlCoordinator.setUrlTextChangeListener(mAutocompleteCoordinator);
 
@@ -193,6 +192,13 @@ public class LocationBarLayout extends FrameLayout
         mUrlActionContainer = (LinearLayout) findViewById(R.id.url_action_container);
 
         mVoiceRecognitionHandler = new LocationBarVoiceRecognitionHandler(this);
+    }
+
+    @Override
+    public void destroy() {
+        removeUrlFocusChangeListener(mAutocompleteCoordinator);
+        mAutocompleteCoordinator.destroy();
+        mAutocompleteCoordinator = null;
     }
 
     @Override
@@ -301,8 +307,6 @@ public class LocationBarLayout extends FrameLayout
 
         updateVisualsForState();
 
-        mOmniboxVoiceSearchAlwaysVisible =
-                ChromeFeatureList.isEnabled(ChromeFeatureList.OMNIBOX_VOICE_SEARCH_ALWAYS_VISIBLE);
         updateMicButtonVisibility(mUrlFocusChangePercent);
     }
 
@@ -605,6 +609,13 @@ public class LocationBarLayout extends FrameLayout
             urlContainerMarginEnd += childLayoutParams.width
                     + MarginLayoutParamsCompat.getMarginStart(childLayoutParams)
                     + MarginLayoutParamsCompat.getMarginEnd(childLayoutParams);
+        }
+        if (mUrlActionContainer != null && mUrlActionContainer.getVisibility() == View.VISIBLE) {
+            ViewGroup.MarginLayoutParams urlActionContainerLayoutParams =
+                    (ViewGroup.MarginLayoutParams) mUrlActionContainer.getLayoutParams();
+            urlContainerMarginEnd +=
+                    MarginLayoutParamsCompat.getMarginStart(urlActionContainerLayoutParams)
+                    + MarginLayoutParamsCompat.getMarginEnd(urlActionContainerLayoutParams);
         }
         return urlContainerMarginEnd;
     }
@@ -911,6 +922,8 @@ public class LocationBarLayout extends FrameLayout
         // side is initialized
         assert mNativeInitialized : "Loading URL before native side initialized";
 
+        if (ReturnToChromeExperimentsUtil.willHandleLoadUrlFromLocationBar(url, transition)) return;
+
         if (currentTab != null
                 && (currentTab.isNativePage() || NewTabPage.isNTPUrl(currentTab.getUrl()))) {
             NewTabPageUma.recordOmniboxNavigation(url, transition);
@@ -1002,7 +1015,7 @@ public class LocationBarLayout extends FrameLayout
      * @param urlFocusChangePercent The completion percentage of the URL focus change animation.
      */
     protected void updateMicButtonVisibility(float urlFocusChangePercent) {
-        boolean visible = mOmniboxVoiceSearchAlwaysVisible || !shouldShowDeleteButton();
+        boolean visible = !shouldShowDeleteButton();
         boolean showMicButton = mVoiceSearchEnabled && visible
                 && (mUrlBar.hasFocus() || mUrlFocusChangeInProgress || urlFocusChangePercent > 0f);
         mMicButton.setVisibility(showMicButton ? VISIBLE : GONE);
@@ -1014,41 +1027,30 @@ public class LocationBarLayout extends FrameLayout
      */
     @Override
     public void updateVisualsForState() {
-        updateUseDarkColors();
+        // If the location bar is focused, the toolbar background color would be the default color
+        // regardless of whether it is branded or not.
+        final int defaultPrimaryColor =
+                ColorUtils.getDefaultThemeColor(getResources(), mToolbarDataProvider.isIncognito());
+        final int primaryColor =
+                mUrlHasFocus ? defaultPrimaryColor : mToolbarDataProvider.getPrimaryColor();
+        final boolean useDarkColors = !ColorUtils.shouldUseLightForegroundOnBackground(primaryColor);
 
-        int id = mUseDarkColors ? R.color.dark_mode_tint : R.color.light_mode_tint;
+        int id = ColorUtils.getIconTintRes(!useDarkColors);
         ColorStateList colorStateList = AppCompatResources.getColorStateList(getContext(), id);
         ApiCompatibilityUtils.setImageTintList(mMicButton, colorStateList);
         ApiCompatibilityUtils.setImageTintList(mDeleteButton, colorStateList);
 
         // If the URL changed colors and is not focused, update the URL to account for the new
         // color scheme.
-        if (mUrlCoordinator.setUseDarkTextColors(mUseDarkColors) && !mUrlBar.hasFocus()) {
+        if (mUrlCoordinator.setUseDarkTextColors(useDarkColors) && !mUrlBar.hasFocus()) {
             setUrlToPageUrl();
         }
 
-        mStatusViewCoordinator.setUseDarkColors(mUseDarkColors);
-        mAutocompleteCoordinator.updateVisualsForState(mUseDarkColors);
-    }
-
-    /**
-     * Checks the current specs and updates {@link LocationBarLayout#mUseDarkColors} if necessary.
-     * @return Whether {@link LocationBarLayout#mUseDarkColors} has been updated.
-     */
-    private boolean updateUseDarkColors() {
-        boolean brandColorNeedsLightText = false;
-        if (mToolbarDataProvider.isUsingBrandColor() && !mUrlHasFocus) {
-            int currentPrimaryColor = mToolbarDataProvider.getPrimaryColor();
-            brandColorNeedsLightText =
-                    ColorUtils.shouldUseLightForegroundOnBackground(currentPrimaryColor);
-        }
-
-        boolean useDarkColors = !mToolbarDataProvider.isIncognito()
-                && (!mToolbarDataProvider.hasTab() || !brandColorNeedsLightText);
-        boolean hasChanged = useDarkColors != mUseDarkColors;
-        mUseDarkColors = useDarkColors;
-
-        return hasChanged;
+        mStatusViewCoordinator.setUseDarkColors(useDarkColors);
+        mStatusViewCoordinator.setIncognitoBadgeVisibility(
+                mToolbarDataProvider.isIncognito() && !mIsTablet);
+        mAutocompleteCoordinator.updateVisualsForState(
+                useDarkColors, mToolbarDataProvider.isIncognito());
     }
 
     @Override

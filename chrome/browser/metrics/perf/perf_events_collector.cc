@@ -4,11 +4,14 @@
 
 #include "chrome/browser/metrics/perf/perf_events_collector.h"
 
+#include "base/bind.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/metrics/perf/cpu_identity.h"
 #include "chrome/browser/metrics/perf/perf_output.h"
+#include "chrome/browser/metrics/perf/process_type_collector.h"
 #include "chrome/browser/metrics/perf/windowed_incognito_observer.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "components/variations/variations_associated_data.h"
@@ -100,6 +103,17 @@ const char kPerfRecordLBRCmd[] = "perf record -a -e r20c4 -b -c 200011";
 // we sample on the branches retired event.
 const char kPerfRecordLBRCmdAtom[] = "perf record -a -e rc4 -b -c 300001";
 
+// The following events count misses in the level 1 caches and TLBs.
+
+// Perf doesn't support the generic dTLB-misses event for Goldmont. We define it
+// in terms of raw event number and umask value. Event codes taken from
+// "Intel 64 and IA-32 Architectures Software Developer's Manual, Vol 3".
+const char kPerfRecordInstructionTLBMissesCmdGLM[] =
+    "perf record -a -e r0481 -c 2003";
+
+const char kPerfRecordDataTLBMissesCmdGLM[] = "perf record -a -e r13d0 -c 2003";
+
+// Use the generic event names for the other microarchitectures.
 const char kPerfRecordInstructionTLBMissesCmd[] =
     "perf record -a -e iTLB-misses -c 2003";
 
@@ -153,13 +167,22 @@ const std::vector<RandomSelector::WeightAndValue> GetDefaultCommands_x86_64(
     cmds.push_back(WeightAndValue(5.0, kPerfRecordCacheMissesCmd));
     return cmds;
   }
-  if (cpu_uarch == "Silvermont" || cpu_uarch == "Airmont" ||
-      cpu_uarch == "Goldmont") {
+  if (cpu_uarch == "Silvermont" || cpu_uarch == "Airmont") {
     cmds.push_back(WeightAndValue(50.0, kPerfRecordCyclesCmd));
     cmds.push_back(WeightAndValue(20.0, callgraph_cmd));
     cmds.push_back(WeightAndValue(15.0, kPerfRecordLBRCmdAtom));
     cmds.push_back(WeightAndValue(5.0, kPerfRecordInstructionTLBMissesCmd));
     cmds.push_back(WeightAndValue(5.0, kPerfRecordDataTLBMissesCmd));
+    cmds.push_back(WeightAndValue(5.0, kPerfRecordCacheMissesCmd));
+    return cmds;
+  }
+  if (cpu_uarch == "Goldmont" || cpu_uarch == "GoldmontPlus") {
+    cmds.push_back(WeightAndValue(50.0, kPerfRecordCyclesCmd));
+    cmds.push_back(WeightAndValue(20.0, callgraph_cmd));
+    cmds.push_back(WeightAndValue(15.0, kPerfRecordLBRCmdAtom));
+    // Use the Goldmont variants of iTLB and dTLB misses.
+    cmds.push_back(WeightAndValue(5.0, kPerfRecordInstructionTLBMissesCmdGLM));
+    cmds.push_back(WeightAndValue(5.0, kPerfRecordDataTLBMissesCmdGLM));
     cmds.push_back(WeightAndValue(5.0, kPerfRecordCacheMissesCmd));
     return cmds;
   }
@@ -170,6 +193,19 @@ const std::vector<RandomSelector::WeightAndValue> GetDefaultCommands_x86_64(
   cmds.push_back(WeightAndValue(5.0, kPerfRecordDataTLBMissesCmd));
   cmds.push_back(WeightAndValue(5.0, kPerfRecordCacheMissesCmd));
   return cmds;
+}
+
+void OnCollectProcessTypes(SampledProfile* sampled_profile) {
+  std::map<uint32_t, Process> process_types =
+      ProcessTypeCollector::ChromeProcessTypes();
+  std::map<uint32_t, Thread> thread_types =
+      ProcessTypeCollector::ChromeThreadTypes();
+  if (!process_types.empty() && !thread_types.empty()) {
+    sampled_profile->mutable_process_types()->insert(process_types.begin(),
+                                                     process_types.end());
+    sampled_profile->mutable_thread_types()->insert(thread_types.begin(),
+                                                    thread_types.end());
+  }
 }
 
 }  // namespace
@@ -349,7 +385,14 @@ void PerfCollector::ParseOutputProtoIfValid(
     AddToUmaHistogram(CollectionAttemptStatus::INCOGNITO_LAUNCHED);
     return;
   }
-  SaveSerializedPerfProto(std::move(sampled_profile), type, perf_stdout);
+
+  bool posted = base::PostTaskWithTraitsAndReply(
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
+      base::BindOnce(&OnCollectProcessTypes, sampled_profile.get()),
+      base::BindOnce(&PerfCollector::SaveSerializedPerfProto,
+                     base::AsWeakPtr<PerfCollector>(this),
+                     base::Passed(&sampled_profile), type, perf_stdout));
+  DCHECK(posted);
 }
 
 bool PerfCollector::ShouldCollect() const {

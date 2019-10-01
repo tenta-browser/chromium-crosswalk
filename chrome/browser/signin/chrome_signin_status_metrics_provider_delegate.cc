@@ -12,13 +12,13 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
-#include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_list.h"
 #include "components/signin/core/browser/signin_status_metrics_provider.h"
 #include "services/identity/public/cpp/identity_manager.h"
 
 #if !defined(OS_ANDROID)
+#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
+#include "chrome/browser/ui/browser_list.h"
 #endif
 
 ChromeSigninStatusMetricsProviderDelegate::
@@ -30,7 +30,7 @@ ChromeSigninStatusMetricsProviderDelegate::
   BrowserList::RemoveObserver(this);
 #endif
 
-  SigninManagerFactory* factory = SigninManagerFactory::GetInstance();
+  auto* factory = IdentityManagerFactory::GetInstance();
   if (factory)
     factory->RemoveObserver(this);
 }
@@ -43,7 +43,7 @@ void ChromeSigninStatusMetricsProviderDelegate::Initialize() {
   BrowserList::AddObserver(this);
 #endif
 
-  SigninManagerFactory* factory = SigninManagerFactory::GetInstance();
+  auto* factory = IdentityManagerFactory::GetInstance();
   if (factory)
     factory->AddObserver(this);
 }
@@ -73,22 +73,23 @@ ChromeSigninStatusMetricsProviderDelegate::GetStatusOfAllAccounts() {
   return accounts_status;
 }
 
-std::vector<SigninManager*>
-ChromeSigninStatusMetricsProviderDelegate::GetSigninManagersForAllAccounts() {
+std::vector<identity::IdentityManager*>
+ChromeSigninStatusMetricsProviderDelegate::GetIdentityManagersForAllAccounts() {
   ProfileManager* profile_manager = g_browser_process->profile_manager();
   std::vector<Profile*> profiles = profile_manager->GetLoadedProfiles();
 
-  std::vector<SigninManager*> managers;
+  std::vector<identity::IdentityManager*> managers;
   for (Profile* profile : profiles) {
-    SigninManager* manager =
-        SigninManagerFactory::GetForProfileIfExists(profile);
-    if (manager)
-      managers.push_back(manager);
+    auto* identity_manager =
+        IdentityManagerFactory::GetForProfileIfExists(profile);
+    if (identity_manager)
+      managers.push_back(identity_manager);
   }
 
   return managers;
 }
 
+#if !defined(OS_ANDROID)
 void ChromeSigninStatusMetricsProviderDelegate::OnBrowserAdded(
     Browser* browser) {
   identity::IdentityManager* identity_manager =
@@ -101,15 +102,16 @@ void ChromeSigninStatusMetricsProviderDelegate::OnBrowserAdded(
   const bool signed_in = identity_manager->HasPrimaryAccount();
   UpdateStatusWhenBrowserAdded(signed_in);
 }
+#endif
 
-void ChromeSigninStatusMetricsProviderDelegate::SigninManagerCreated(
-    SigninManagerBase* manager) {
-  owner()->OnSigninManagerCreated(manager);
+void ChromeSigninStatusMetricsProviderDelegate::IdentityManagerCreated(
+    identity::IdentityManager* identity_manager) {
+  owner()->OnIdentityManagerCreated(identity_manager);
 }
 
-void ChromeSigninStatusMetricsProviderDelegate::SigninManagerShutdown(
-    SigninManagerBase* manager) {
-  owner()->OnSigninManagerShutdown(manager);
+void ChromeSigninStatusMetricsProviderDelegate::IdentityManagerShutdown(
+    identity::IdentityManager* identity_manager) {
+  owner()->OnIdentityManagerShutdown(identity_manager);
 }
 
 void ChromeSigninStatusMetricsProviderDelegate::UpdateStatusWhenBrowserAdded(

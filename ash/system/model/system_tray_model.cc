@@ -4,6 +4,7 @@
 
 #include "ash/system/model/system_tray_model.h"
 
+#include "ash/public/interfaces/locale.mojom.h"
 #include "ash/root_window_controller.h"
 #include "ash/shell.h"
 #include "ash/system/model/clock_model.h"
@@ -13,29 +14,31 @@
 #include "ash/system/model/tracing_model.h"
 #include "ash/system/model/update_model.h"
 #include "ash/system/model/virtual_keyboard_model.h"
+#include "ash/system/network/active_network_icon.h"
+#include "ash/system/network/tray_network_state_model.h"
 #include "ash/system/status_area_widget.h"
 #include "ash/system/unified/unified_system_tray.h"
 #include "base/logging.h"
 
 namespace ash {
 
-SystemTrayModel::SystemTrayModel()
+SystemTrayModel::SystemTrayModel(service_manager::Connector* connector)
     : clock_(std::make_unique<ClockModel>()),
       enterprise_domain_(std::make_unique<EnterpriseDomainModel>()),
       locale_(std::make_unique<LocaleModel>()),
       session_length_limit_(std::make_unique<SessionLengthLimitModel>()),
       tracing_(std::make_unique<TracingModel>()),
       update_model_(std::make_unique<UpdateModel>()),
-      virtual_keyboard_(std::make_unique<VirtualKeyboardModel>()) {}
+      virtual_keyboard_(std::make_unique<VirtualKeyboardModel>()),
+      network_state_model_(std::make_unique<TrayNetworkStateModel>(connector)),
+      active_network_icon_(
+          std::make_unique<ActiveNetworkIcon>(connector,
+                                              network_state_model_.get())) {}
 
 SystemTrayModel::~SystemTrayModel() = default;
 
-void SystemTrayModel::BindRequest(mojom::SystemTrayRequest request) {
-  bindings_.AddBinding(this, std::move(request));
-}
-
-void SystemTrayModel::SetClient(mojom::SystemTrayClientPtr client_ptr) {
-  client_ptr_ = std::move(client_ptr);
+void SystemTrayModel::SetClient(SystemTrayClient* client) {
+  client_ = client;
 }
 
 void SystemTrayModel::SetPrimaryTrayEnabled(bool enabled) {

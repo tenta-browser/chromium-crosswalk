@@ -78,14 +78,14 @@ id<GREYMatcher> PageSecurityInfoIndicator();
 
 // Returns matcher for omnibox containing |text|. Performs an exact match of the
 // omnibox contents.
-id<GREYMatcher> OmniboxText(std::string text);
+id<GREYMatcher> OmniboxText(const std::string& text);
 
 // Returns matcher for |text| being a substring of the text in the omnibox.
-id<GREYMatcher> OmniboxContainingText(std::string text);
+id<GREYMatcher> OmniboxContainingText(const std::string& text);
 
 // Returns matcher for |text| being a substring of the text in the location
 // view.
-id<GREYMatcher> LocationViewContainingText(std::string text);
+id<GREYMatcher> LocationViewContainingText(const std::string& text);
 
 // Matcher for Tools menu button.
 id<GREYMatcher> ToolsMenuButton();
@@ -109,8 +109,8 @@ id<GREYMatcher> SettingsSwitchCell(NSString* accessibility_identifier,
                                    BOOL is_enabled);
 
 // Matcher for LegacySyncSwitchCell.
-id<GREYMatcher> LegacySyncSwitchCell(NSString* accessibilityLabel,
-                                     BOOL isToggledOn);
+id<GREYMatcher> SyncSwitchCell(NSString* accessibility_label,
+                               BOOL is_toggled_on);
 
 // Matcher for the Open in New Tab option in the context menu when long pressing
 // a link.
@@ -141,8 +141,8 @@ id<GREYMatcher> ClearBrowsingDataCell();
 // panel.
 id<GREYMatcher> ClearBrowsingDataButton();
 
-// Returns matcher for the clear browsing data collection view.
-id<GREYMatcher> ClearBrowsingDataCollectionView();
+// Returns matcher for the clear browsing data view.
+id<GREYMatcher> ClearBrowsingDataView();
 
 // Matcher for the clear browsing data action sheet item.
 id<GREYMatcher> ConfirmClearBrowsingDataButton();
@@ -152,6 +152,10 @@ id<GREYMatcher> SettingsMenuButton();
 
 // Returns matcher for the "Done" button in the settings' navigation bar.
 id<GREYMatcher> SettingsDoneButton();
+
+// Returns matcher for the "Confirm" button in the Sync and Google Services
+// settings' navigation bar.
+id<GREYMatcher> SyncSettingsConfirmButton();
 
 // Returns matcher for the tools menu table view.
 id<GREYMatcher> ToolsMenuView();
@@ -180,6 +184,12 @@ id<GREYMatcher> SettingsImportDataImportButton();
 
 // Returns matcher for the Keep Data Separate cell in switch sync account view.
 id<GREYMatcher> SettingsImportDataKeepSeparateButton();
+
+// Returns matcher for the Keep Data Separate cell in switch sync account view.
+id<GREYMatcher> SettingsImportDataContinueButton();
+
+// Returns matcher for the privacy settings table view.
+id<GREYMatcher> SettingsPrivacyTableView();
 
 // Returns matcher for the Manage Synced Data button in sync setting view.
 id<GREYMatcher> SettingsSyncManageSyncedDataButton();
@@ -259,9 +269,17 @@ id<GREYMatcher> ContextMenuCopyButton();
 // Returns matcher for defoucesed omnibox on a new tab.
 id<GREYMatcher> NewTabPageOmnibox();
 
+// Returns matcher for a fake omnibox on a new tab page.
+id<GREYMatcher> FakeOmnibox();
+
 // Returns a matcher for the current WebView.
 id<GREYMatcher> WebViewMatcher();
 
-}  // namespace chrome_test_util
+// Returns a matcher for the current WebState's scroll view.
+id<GREYMatcher> WebStateScrollViewMatcher();
+
+// Returns a matcher for the Clear Browsing Data button in the History UI.
+id<GREYMatcher> HistoryClearBrowsingDataButton();
+}
 
 #endif  // IOS_CHROME_TEST_EARL_GREY_CHROME_MATCHERS_H_

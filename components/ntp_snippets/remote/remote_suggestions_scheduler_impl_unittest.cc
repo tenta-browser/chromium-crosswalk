@@ -21,7 +21,6 @@
 #include "base/time/default_clock.h"
 #include "base/time/time.h"
 #include "components/ntp_snippets/features.h"
-#include "components/ntp_snippets/logger.h"
 #include "components/ntp_snippets/ntp_snippets_constants.h"
 #include "components/ntp_snippets/pref_names.h"
 #include "components/ntp_snippets/remote/persistent_scheduler.h"
@@ -204,7 +203,7 @@ class RemoteSuggestionsSchedulerImplTest : public ::testing::Test {
 
     scheduler_ = std::make_unique<RemoteSuggestionsSchedulerImpl>(
         &persistent_scheduler_, &user_classifier_, utils_.pref_service(),
-        &local_state_, &test_clock_, &debug_logger_);
+        &local_state_, &test_clock_);
     scheduler_->SetProvider(provider_.get());
   }
 
@@ -287,7 +286,6 @@ class RemoteSuggestionsSchedulerImplTest : public ::testing::Test {
   base::SimpleTestClock test_clock_;
   std::unique_ptr<MockRemoteSuggestionsProvider> provider_;
   std::unique_ptr<RemoteSuggestionsSchedulerImpl> scheduler_;
-  Logger debug_logger_;
 
   DISALLOW_COPY_AND_ASSIGN(RemoteSuggestionsSchedulerImplTest);
 };
@@ -1201,7 +1199,7 @@ TEST_F(RemoteSuggestionsSchedulerImplTest,
        ShouldNotRefetchWhileDisplayingBeforeConfigurableDelay) {
   constexpr int kStaleHours = 18;
   SetVariationParameter("min_age_for_stale_fetch_hours",
-                        base::IntToString(kStaleHours));
+                        base::NumberToString(kStaleHours));
   // Activating the provider should schedule the persistent background fetches.
   EXPECT_CALL(*persistent_scheduler(), Schedule(_, _)).Times(2);
   // First enable the scheduler -- this will trigger the persistent scheduling.
@@ -1230,7 +1228,7 @@ TEST_F(RemoteSuggestionsSchedulerImplTest,
        ShouldRefetchWhileDisplayingAfterConfigurableDelay) {
   constexpr int kStaleHours = 18;
   SetVariationParameter("min_age_for_stale_fetch_hours",
-                        base::IntToString(kStaleHours));
+                        base::NumberToString(kStaleHours));
   // Activating the provider should schedule the persistent background fetches.
   EXPECT_CALL(*persistent_scheduler(), Schedule(_, _)).Times(2);
   // First enable the scheduler -- this will trigger the persistent scheduling.
@@ -1258,7 +1256,7 @@ TEST_F(RemoteSuggestionsSchedulerImplTest,
        ShouldNotRefetchWhileDisplayingBeforeFallbackConfigurableDelay) {
   constexpr int kStartupHours = 12;
   SetVariationParameter("startup_fetching_interval_hours-wifi-active_ntp_user",
-                        base::IntToString(kStartupHours));
+                        base::NumberToString(kStartupHours));
   // Activating the provider should schedule the persistent background fetches.
   EXPECT_CALL(*persistent_scheduler(), Schedule(_, _)).Times(2);
   // First enable the scheduler -- this will trigger the persistent scheduling.
@@ -1287,7 +1285,7 @@ TEST_F(RemoteSuggestionsSchedulerImplTest,
        ShouldRefetchWhileDisplayingAfterFallbackConfigurableDelay) {
   constexpr int kStartupHours = 12;
   SetVariationParameter("startup_fetching_interval_hours-wifi-active_ntp_user",
-                        base::IntToString(kStartupHours));
+                        base::NumberToString(kStartupHours));
   // Activating the provider should schedule the persistent background fetches.
   EXPECT_CALL(*persistent_scheduler(), Schedule(_, _)).Times(2);
   // First enable the scheduler -- this will trigger the persistent scheduling.

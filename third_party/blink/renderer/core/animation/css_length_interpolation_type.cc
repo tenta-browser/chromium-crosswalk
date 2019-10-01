@@ -8,7 +8,6 @@
 #include <utility>
 
 #include "base/memory/ptr_util.h"
-#include "third_party/blink/renderer/core/animation/css/css_animatable_value_factory.h"
 #include "third_party/blink/renderer/core/animation/length_interpolation_functions.h"
 #include "third_party/blink/renderer/core/animation/length_property_functions.h"
 #include "third_party/blink/renderer/core/css/css_calculation_value.h"
@@ -36,16 +35,10 @@ float CSSLengthInterpolationType::EffectiveZoom(
 class InheritedLengthChecker
     : public CSSInterpolationType::CSSConversionChecker {
  public:
-  static std::unique_ptr<InheritedLengthChecker> Create(
-      const CSSProperty& property,
-      const Length& length) {
-    return base::WrapUnique(new InheritedLengthChecker(property, length));
-  }
-
- private:
   InheritedLengthChecker(const CSSProperty& property, const Length& length)
       : property_(property), length_(length) {}
 
+ private:
   bool IsValid(const StyleResolverState& state,
                const InterpolationValue& underlying) const final {
     Length parent_length;
@@ -82,8 +75,8 @@ InterpolationValue CSSLengthInterpolationType::MaybeConvertInherit(
   Length inherited_length;
   LengthPropertyFunctions::GetLength(CssProperty(), *state.ParentStyle(),
                                      inherited_length);
-  conversion_checkers.push_back(
-      InheritedLengthChecker::Create(CssProperty(), inherited_length));
+  conversion_checkers.push_back(std::make_unique<InheritedLengthChecker>(
+      CssProperty(), inherited_length));
   if (inherited_length.IsAuto()) {
     // If the inherited value changes to a length, the InheritedLengthChecker
     // will invalidate the interpolation's cache.
@@ -97,8 +90,8 @@ InterpolationValue CSSLengthInterpolationType::MaybeConvertValue(
     const CSSValue& value,
     const StyleResolverState*,
     ConversionCheckers& conversion_checkers) const {
-  if (value.IsIdentifierValue()) {
-    CSSValueID value_id = ToCSSIdentifierValue(value).GetValueID();
+  if (auto* identifier_value = DynamicTo<CSSIdentifierValue>(value)) {
+    CSSValueID value_id = identifier_value->GetValueID();
     double pixels;
     if (!LengthPropertyFunctions::GetPixelsForKeyword(CssProperty(), value_id,
                                                       pixels))

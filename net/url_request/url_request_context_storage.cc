@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/logging.h"
+#include "net/base/http_user_agent_settings.h"
 #include "net/base/network_delegate.h"
 #include "net/base/proxy_delegate.h"
 #include "net/cert/cert_verifier.h"
@@ -19,8 +20,6 @@
 #include "net/http/http_transaction_factory.h"
 #include "net/log/net_log.h"
 #include "net/proxy_resolution/proxy_resolution_service.h"
-#include "net/ssl/channel_id_service.h"
-#include "net/url_request/http_user_agent_settings.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_job_factory.h"
 #include "net/url_request/url_request_throttler_manager.h"
@@ -54,12 +53,6 @@ void URLRequestContextStorage::set_cert_verifier(
     std::unique_ptr<CertVerifier> cert_verifier) {
   context_->set_cert_verifier(cert_verifier.get());
   cert_verifier_ = std::move(cert_verifier);
-}
-
-void URLRequestContextStorage::set_channel_id_service(
-    std::unique_ptr<ChannelIDService> channel_id_service) {
-  context_->set_channel_id_service(channel_id_service.get());
-  channel_id_service_ = std::move(channel_id_service);
 }
 
 void URLRequestContextStorage::set_http_auth_handler_factory(

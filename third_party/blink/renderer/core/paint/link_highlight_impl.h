@@ -44,7 +44,7 @@
 namespace cc {
 class Layer;
 class PictureLayer;
-}
+}  // namespace cc
 
 namespace blink {
 
@@ -57,7 +57,7 @@ class CORE_EXPORT LinkHighlightImpl final : public LinkHighlight,
                                             public CompositorAnimationDelegate,
                                             public CompositorAnimationClient {
  public:
-  static std::unique_ptr<LinkHighlightImpl> Create(Node*);
+  explicit LinkHighlightImpl(Node*);
   ~LinkHighlightImpl() override;
 
   void StartHighlightAnimationIfNeeded();
@@ -77,6 +77,9 @@ class CORE_EXPORT LinkHighlightImpl final : public LinkHighlight,
   void Invalidate() override;
   cc::Layer* Layer() override;
   void ClearCurrentGraphicsLayer() override;
+  FloatPoint GetOffsetFromTransformNode() const override {
+    return offset_from_transform_node_;
+  }
 
   // CompositorAnimationClient implementation.
   CompositorAnimation* GetCompositorAnimation() const override;
@@ -87,9 +90,9 @@ class CORE_EXPORT LinkHighlightImpl final : public LinkHighlight,
 
   Node* GetNode() const { return node_; }
 
-  CompositorElementId element_id() const;
+  CompositorElementId ElementIdForTesting() const { return element_id_; }
 
-  const EffectPaintPropertyNode* effect() const override;
+  const EffectPaintPropertyNode& Effect() const override;
 
   void Paint(GraphicsContext&);
 
@@ -99,8 +102,6 @@ class CORE_EXPORT LinkHighlightImpl final : public LinkHighlight,
   }
 
  private:
-  LinkHighlightImpl(Node*);
-
   void ReleaseResources();
   void ComputeQuads(const Node&, Vector<FloatQuad>&) const;
 
@@ -115,7 +116,7 @@ class CORE_EXPORT LinkHighlightImpl final : public LinkHighlight,
 
   class LinkHighlightFragment : private cc::ContentLayerClient {
    public:
-    LinkHighlightFragment(CompositorElementId);
+    LinkHighlightFragment();
     ~LinkHighlightFragment() override;
 
     cc::PictureLayer* Layer() const { return layer_.get(); }
@@ -141,11 +142,13 @@ class CORE_EXPORT LinkHighlightImpl final : public LinkHighlight,
   GraphicsLayer* current_graphics_layer_;
   bool is_scrolling_graphics_layer_;
   std::unique_ptr<CompositorAnimation> compositor_animation_;
+  scoped_refptr<EffectPaintPropertyNode> effect_;
+  FloatPoint offset_from_transform_node_;
 
   bool geometry_needs_update_;
   bool is_animating_;
   TimeTicks start_time_;
-  UniqueObjectId unique_id_;
+  CompositorElementId element_id_;
 };
 
 }  // namespace blink

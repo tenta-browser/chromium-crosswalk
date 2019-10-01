@@ -103,8 +103,7 @@ class ResourceRequestDetectorTest : public testing::Test {
         /*render_process_id=*/0,
         /*render_view_id=*/0,
         /*render_frame_id=*/MSG_ROUTING_NONE,
-        /*is_main_frame=*/true,
-        /*allow_download=*/true,
+        /*is_main_frame=*/true, content::ResourceInterceptPolicy::kAllowAll,
         /*is_async=*/false, content::PREVIEWS_OFF,
         /*navigation_ui_data*/ nullptr);
 
@@ -187,28 +186,28 @@ class ResourceRequestDetectorTest : public testing::Test {
 
 TEST_F(ResourceRequestDetectorTest, NoDbCheckForIgnoredResourceTypes) {
   ExpectNoDatabaseCheck();
-  ExpectNoIncident(
-      "http://www.example.com/index.html", content::RESOURCE_TYPE_MAIN_FRAME);
+  ExpectNoIncident("http://www.example.com/index.html",
+                   content::ResourceType::kMainFrame);
 }
 
 TEST_F(ResourceRequestDetectorTest, NoDbCheckForUnsupportedSchemes) {
   ExpectNoDatabaseCheck();
-  ExpectNoIncident(
-      "file:///usr/local/script.js", content::RESOURCE_TYPE_SCRIPT);
-  ExpectNoIncident(
-      "chrome-extension://abcdefghi/script.js", content::RESOURCE_TYPE_SCRIPT);
+  ExpectNoIncident("file:///usr/local/script.js",
+                   content::ResourceType::kScript);
+  ExpectNoIncident("chrome-extension://abcdefghi/script.js",
+                   content::ResourceType::kScript);
 }
 
 TEST_F(ResourceRequestDetectorTest, NoEventForNegativeSynchronousDbCheck) {
   const std::string url = "http://www.example.com/script.js";
   ExpectNegativeSyncDatabaseCheck(url);
-  ExpectNoIncident(url, content::RESOURCE_TYPE_SCRIPT);
+  ExpectNoIncident(url, content::ResourceType::kScript);
 }
 
 TEST_F(ResourceRequestDetectorTest, NoEventForNegativeAsynchronousDbCheck) {
   const std::string url = "http://www.example.com/script.js";
   ExpectAsyncDatabaseCheck(url, false, "");
-  ExpectNoIncident(url, content::RESOURCE_TYPE_SCRIPT);
+  ExpectNoIncident(url, content::ResourceType::kScript);
 }
 
 TEST_F(ResourceRequestDetectorTest, EventAddedForSupportedSchemes) {
@@ -219,17 +218,16 @@ TEST_F(ResourceRequestDetectorTest, EventAddedForSupportedSchemes) {
   for (const auto& scheme : schemes) {
     const std::string url = scheme + "://" + domain_path;
     ExpectAsyncDatabaseCheck(url, true, digest);
-    ExpectIncidentAdded(
-        url, content::RESOURCE_TYPE_SCRIPT,
-        ResourceRequestIncidentMessage::TYPE_PATTERN, digest);
+    ExpectIncidentAdded(url, content::ResourceType::kScript,
+                        ResourceRequestIncidentMessage::TYPE_PATTERN, digest);
   }
 }
 
 TEST_F(ResourceRequestDetectorTest, EventAddedForSupportedResourceTypes) {
   content::ResourceType supported_types[] = {
-    content::RESOURCE_TYPE_SCRIPT,
-    content::RESOURCE_TYPE_SUB_FRAME,
-    content::RESOURCE_TYPE_OBJECT,
+      content::ResourceType::kScript,
+      content::ResourceType::kSubFrame,
+      content::ResourceType::kObject,
   };
   const std::string url = "http://www.example.com/";
   const std::string digest = "dummydigest";

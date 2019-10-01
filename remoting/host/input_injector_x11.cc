@@ -17,6 +17,7 @@
 #include "base/optional.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversion_utils.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "remoting/base/logging.h"
 #include "remoting/host/clipboard.h"
@@ -44,6 +45,17 @@ using protocol::TextEvent;
 using protocol::MouseEvent;
 using protocol::TouchEvent;
 
+enum class ScrollDirection {
+  DOWN = -1,
+  UP = 1,
+  NONE = 0,
+};
+
+ScrollDirection WheelDeltaToScrollDirection(float num) {
+  return (num > 0) ? ScrollDirection::UP
+                   : (num < 0) ? ScrollDirection::DOWN : ScrollDirection::NONE;
+}
+
 bool IsDomModifierKey(ui::DomCode dom_code) {
   return dom_code == ui::DomCode::CONTROL_LEFT ||
          dom_code == ui::DomCode::SHIFT_LEFT ||
@@ -58,6 +70,10 @@ bool IsDomModifierKey(ui::DomCode dom_code) {
 // Pixel-to-wheel-ticks conversion ratio used by GTK.
 // From third_party/WebKit/Source/web/gtk/WebInputEventFactory.cpp .
 const float kWheelTicksPerPixel = 3.0f / 160.0f;
+
+// When the user is scrolling, generate at least one tick per time period.
+const base::TimeDelta kContinuousScrollTimeout =
+    base::TimeDelta::FromMilliseconds(500);
 
 // A class to generate events on X11.
 class InputInjectorX11 : public InputInjector {
@@ -135,13 +151,18 @@ class InputInjectorX11 : public InputInjector {
     scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 
     std::set<int> pressed_keys_;
-    webrtc::DesktopVector latest_mouse_position_;
-    float wheel_ticks_x_;
-    float wheel_ticks_y_;
+    webrtc::DesktopVector latest_mouse_position_ =
+        webrtc::DesktopVector(-1, -1);
+    float wheel_ticks_x_ = 0;
+    float wheel_ticks_y_ = 0;
+    base::Time latest_tick_y_event_;
+    // The direction of the last scroll event that resulted in at least one
+    // "tick" being injected.
+    ScrollDirection latest_tick_y_direction_ = ScrollDirection::NONE;
 
     // X11 graphics context.
-    Display* display_;
-    Window root_window_;
+    Display* display_ = XOpenDisplay(nullptr);
+    Window root_window_ = BadValue;
 
     // Number of buttons we support.
     // Left, Right, Middle, VScroll Up/Down, HScroll Left/Right, back, forward.
@@ -157,7 +178,7 @@ class InputInjectorX11 : public InputInjector {
 
     std::unique_ptr<X11CharacterInjector> character_injector_;
 
-    bool saved_auto_repeat_enabled_;
+    bool saved_auto_repeat_enabled_ = false;
 
     DISALLOW_COPY_AND_ASSIGN(Core);
   };
@@ -207,20 +228,14 @@ void InputInjectorX11::Start(
 
 InputInjectorX11::Core::Core(
     scoped_refptr<base::SingleThreadTaskRunner> task_runner)
-    : task_runner_(task_runner),
-      latest_mouse_position_(-1, -1),
-      wheel_ticks_x_(0.0f),
-      wheel_ticks_y_(0.0f),
-      display_(XOpenDisplay(nullptr)),
-      root_window_(BadValue),
-      saved_auto_repeat_enabled_(false) {
-}
+    : task_runner_(task_runner) {}
 
 bool InputInjectorX11::Core::Init() {
   CHECK(display_);
 
   if (!task_runner_->BelongsToCurrentThread())
-    task_runner_->PostTask(FROM_HERE, base::Bind(&Core::InitClipboard, this));
+    task_runner_->PostTask(FROM_HERE,
+                           base::BindOnce(&Core::InitClipboard, this));
 
   root_window_ = XRootWindow(display_, DefaultScreen(display_));
   if (root_window_ == BadValue) {
@@ -240,7 +255,7 @@ void InputInjectorX11::Core::InjectClipboardEvent(
     const ClipboardEvent& event) {
   if (!task_runner_->BelongsToCurrentThread()) {
     task_runner_->PostTask(
-        FROM_HERE, base::Bind(&Core::InjectClipboardEvent, this, event));
+        FROM_HERE, base::BindOnce(&Core::InjectClipboardEvent, this, event));
     return;
   }
 
@@ -255,7 +270,7 @@ void InputInjectorX11::Core::InjectKeyEvent(const KeyEvent& event) {
 
   if (!task_runner_->BelongsToCurrentThread()) {
     task_runner_->PostTask(FROM_HERE,
-                           base::Bind(&Core::InjectKeyEvent, this, event));
+                           base::BindOnce(&Core::InjectKeyEvent, this, event));
     return;
   }
 
@@ -314,7 +329,7 @@ void InputInjectorX11::Core::InjectKeyEvent(const KeyEvent& event) {
 void InputInjectorX11::Core::InjectTextEvent(const TextEvent& event) {
   if (!task_runner_->BelongsToCurrentThread()) {
     task_runner_->PostTask(FROM_HERE,
-                           base::Bind(&Core::InjectTextEvent, this, event));
+                           base::BindOnce(&Core::InjectTextEvent, this, event));
     return;
   }
 
@@ -416,8 +431,8 @@ void InputInjectorX11::Core::InjectScrollWheelClicks(int button, int count) {
 
 void InputInjectorX11::Core::InjectMouseEvent(const MouseEvent& event) {
   if (!task_runner_->BelongsToCurrentThread()) {
-    task_runner_->PostTask(FROM_HERE,
-                           base::Bind(&Core::InjectMouseEvent, this, event));
+    task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&Core::InjectMouseEvent, this, event));
     return;
   }
 
@@ -476,11 +491,8 @@ void InputInjectorX11::Core::InjectMouseEvent(const MouseEvent& event) {
                          x11::CurrentTime);
   }
 
-  // Older client plugins always send scroll events in pixels, which
-  // must be accumulated host-side. Recent client plugins send both
-  // pixels and ticks with every scroll event, allowing the host to
-  // choose the best model on a per-platform basis. Since we can only
-  // inject ticks on Linux, use them if available.
+  // remotedesktop.google.com currently sends scroll events in pixels, which
+  // are accumulated host-side.
   int ticks_y = 0;
   if (event.has_wheel_ticks_y()) {
     ticks_y = event.wheel_ticks_y();
@@ -489,7 +501,45 @@ void InputInjectorX11::Core::InjectMouseEvent(const MouseEvent& event) {
     ticks_y = static_cast<int>(wheel_ticks_y_);
     wheel_ticks_y_ -= ticks_y;
   }
+  if (ticks_y == 0 && event.has_wheel_delta_y()) {
+    // For the y-direction only (the common case), try to ensure that a tick is
+    // injected when the user would expect one, regardless of how many pixels
+    // the client sends per tick (even if it accelerates wheel events). To do
+    // this, generate a tick if one has not occurred recently in the current
+    // scroll direction. The accumulated pixels are not reset in this case.
+    //
+    // The effect when a physical mouse is used is as follows:
+    //
+    // Client sends slightly too few pixels per tick (e.g. Linux):
+    // * First scroll in either direction synthesizes a tick.
+    // * Subsequent scrolls in the same direction are unaffected (their
+    //   accumulated pixel deltas mostly meet the threshold for a regular
+    //   tick; occasionally a tick will be dropped if the user is scrolling
+    //   quickly).
+    //
+    // Client sends far too few pixels per tick, but applies acceleration
+    // (e.g. macOs, ChromeOS):
+    // * First scroll in either direction synthesizes a tick.
+    // * Slow scrolling will synthesize a tick a few times per second.
+    // * Fast scrolling is unaffected (acceleration means that enough pixels
+    //   are accumulated naturally).
+    //
+    // Client sends too many pixels per tick (e.g. Windows):
+    // * Scrolling is unaffected (most scroll events generate one tick; every
+    //   so often one generates two ticks).
+    //
+    // The effect when a trackpad is used is that the first tick in either
+    // direction occurs sooner; subsequent ticks are mostly unaffected.
+    const ScrollDirection current_tick_y_direction =
+        WheelDeltaToScrollDirection(event.wheel_delta_y());
+    if ((base::Time::Now() - latest_tick_y_event_ > kContinuousScrollTimeout) ||
+        latest_tick_y_direction_ != current_tick_y_direction) {
+      ticks_y = static_cast<int>(current_tick_y_direction);
+    }
+  }
   if (ticks_y != 0) {
+    latest_tick_y_direction_ = WheelDeltaToScrollDirection(ticks_y);
+    latest_tick_y_event_ = base::Time::Now();
     InjectScrollWheelClicks(VerticalScrollWheelToX11ButtonNumber(ticks_y),
                             abs(ticks_y));
   }
@@ -623,7 +673,7 @@ void InputInjectorX11::Core::Start(
   if (!task_runner_->BelongsToCurrentThread()) {
     task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&Core::Start, this, base::Passed(&client_clipboard)));
+        base::BindOnce(&Core::Start, this, std::move(client_clipboard)));
     return;
   }
 
@@ -645,7 +695,7 @@ void InputInjectorX11::Core::Start(
 
 void InputInjectorX11::Core::Stop() {
   if (!task_runner_->BelongsToCurrentThread()) {
-    task_runner_->PostTask(FROM_HERE, base::Bind(&Core::Stop, this));
+    task_runner_->PostTask(FROM_HERE, base::BindOnce(&Core::Stop, this));
     return;
   }
 

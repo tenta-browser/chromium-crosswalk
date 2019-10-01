@@ -7,7 +7,6 @@
 
 #include <memory>
 
-#include "base/macros.h"
 #include "base/time/time.h"
 #include "cc/cc_export.h"
 #include "cc/input/event_listener_properties.h"
@@ -18,6 +17,7 @@
 #include "cc/input/touch_action.h"
 #include "cc/trees/element_id.h"
 #include "cc/trees/swap_promise_monitor.h"
+#include "ui/events/types/scroll_types.h"
 
 namespace gfx {
 class Point;
@@ -33,6 +33,26 @@ class LatencyInfo;
 namespace cc {
 
 class ScrollElasticityHelper;
+
+enum PointerResultType { kUnhandled = 0, kScrollbarScroll };
+
+struct CC_EXPORT InputHandlerPointerResult {
+  InputHandlerPointerResult();
+  // Tells what type of processing occurred in the input handler as a result of
+  // the pointer event.
+  PointerResultType type;
+
+  // Tells what scroll_units should be used.
+  ui::input_types::ScrollGranularity scroll_units;
+
+  // If the input handler processed the event as a scrollbar scroll, it will
+  // return a gfx::ScrollOffset that produces the necessary scroll. However,
+  // it is still the client's responsibility to generate the gesture scrolls
+  // instead of the input handler performing it as a part of handling the
+  // pointer event (due to the latency attribution that happens at the
+  // InputHandlerProxy level).
+  gfx::ScrollOffset scroll_offset;
+};
 
 struct CC_EXPORT InputHandlerScrollResult {
   InputHandlerScrollResult();
@@ -59,7 +79,10 @@ struct CC_EXPORT InputHandlerScrollResult {
 
 class CC_EXPORT InputHandlerClient {
  public:
-  virtual ~InputHandlerClient() {}
+  InputHandlerClient(const InputHandlerClient&) = delete;
+  virtual ~InputHandlerClient() = default;
+
+  InputHandlerClient& operator=(const InputHandlerClient&) = delete;
 
   virtual void WillShutdown() = 0;
   virtual void Animate(base::TimeTicks time) = 0;
@@ -74,10 +97,7 @@ class CC_EXPORT InputHandlerClient {
   virtual void DeliverInputForBeginFrame() = 0;
 
  protected:
-  InputHandlerClient() {}
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(InputHandlerClient);
+  InputHandlerClient() = default;
 };
 
 // The InputHandler is a way for the embedders to interact with the impl thread
@@ -96,6 +116,9 @@ class CC_EXPORT InputHandler {
     LAST_SCROLL_STATUS = SCROLL_UNKNOWN
   };
 
+  InputHandler(const InputHandler&) = delete;
+  InputHandler& operator=(const InputHandler&) = delete;
+
   struct ScrollStatus {
     ScrollStatus()
         : thread(SCROLL_ON_IMPL_THREAD),
@@ -113,6 +136,9 @@ class CC_EXPORT InputHandler {
   enum ScrollInputType {
     TOUCHSCREEN,
     WHEEL,
+    AUTOSCROLL,
+    SCROLLBAR,
+    SCROLL_INPUT_UNKNOWN
   };
 
   enum class TouchStartOrMoveEventListenerType {
@@ -163,9 +189,12 @@ class CC_EXPORT InputHandler {
   // ScrollBegin() returned SCROLL_STARTED.
   virtual InputHandlerScrollResult ScrollBy(ScrollState* scroll_state) = 0;
 
-  virtual void MouseMoveAt(const gfx::Point& mouse_position) = 0;
-  virtual void MouseDown() = 0;
-  virtual void MouseUp() = 0;
+  virtual InputHandlerPointerResult MouseMoveAt(
+      const gfx::Point& mouse_position) = 0;
+  virtual InputHandlerPointerResult MouseDown(
+      const gfx::PointF& mouse_position) = 0;
+  virtual InputHandlerPointerResult MouseUp(
+      const gfx::PointF& mouse_position) = 0;
   virtual void MouseLeave() = 0;
 
   // Stop scrolling the selected layer. Should only be called if ScrollBegin()
@@ -177,9 +206,10 @@ class CC_EXPORT InputHandler {
   virtual void RequestUpdateForSynchronousInputHandler() = 0;
 
   // Called when the root scroll offset has been changed in the synchronous
-  // input handler by the application (outside of input event handling).
+  // input handler by the application (outside of input event handling). Offset
+  // is expected in "content/page coordinates".
   virtual void SetSynchronousInputHandlerRootScrollOffset(
-      const gfx::ScrollOffset& root_offset) = 0;
+      const gfx::ScrollOffset& root_content_offset) = 0;
 
   virtual void PinchGestureBegin() = 0;
   virtual void PinchGestureUpdate(float magnify_delta,
@@ -247,11 +277,8 @@ class CC_EXPORT InputHandler {
       gfx::Vector2dF* target_offset) const = 0;
 
  protected:
-  InputHandler() {}
-  virtual ~InputHandler() {}
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(InputHandler);
+  InputHandler() = default;
+  virtual ~InputHandler() = default;
 };
 
 }  // namespace cc

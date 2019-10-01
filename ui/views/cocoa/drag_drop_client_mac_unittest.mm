@@ -6,11 +6,13 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include "base/bind.h"
 #include "base/mac/availability.h"
 #import "base/mac/scoped_objc_class_swizzler.h"
 #include "base/mac/sdk_forward_declarations.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
+#import "components/remote_cocoa/app_shim/bridged_native_widget_impl.h"
 #import "ui/base/clipboard/clipboard_util_mac.h"
 #include "ui/gfx/image/image_unittest_util.h"
 #import "ui/views/cocoa/bridged_native_widget_host_impl.h"
@@ -18,7 +20,6 @@
 #include "ui/views/view.h"
 #include "ui/views/widget/native_widget_mac.h"
 #include "ui/views/widget/widget.h"
-#import "ui/views_bridge_mac/bridged_native_widget_impl.h"
 
 using base::ASCIIToUTF16;
 
@@ -123,7 +124,7 @@ namespace test {
 // View object that will receive and process dropped data from the test.
 class DragDropView : public View {
  public:
-  DragDropView() {}
+  DragDropView() = default;
 
   void set_formats(int formats) { formats_ = formats; }
 
@@ -176,8 +177,8 @@ class DragDropClientMacTest : public WidgetTest {
   }
 
   void SetData(OSExchangeData& data) {
-    drag_drop_client()->data_source_.reset(
-        [[CocoaDragDropDataProvider alloc] initWithData:data]);
+    drag_drop_client()->exchange_data_ =
+        std::make_unique<ui::OSExchangeData>(data.provider().Clone());
   }
 
   // testing::Test:
@@ -197,7 +198,7 @@ class DragDropClientMacTest : public WidgetTest {
     widget_->GetContentsView()->AddChildView(target_);
     target_->SetBoundsRect(bounds);
 
-    drag_drop_client()->operation_ = ui::DragDropTypes::DRAG_COPY;
+    drag_drop_client()->source_operation_ = ui::DragDropTypes::DRAG_COPY;
   }
 
   void TearDown() override {
@@ -259,8 +260,8 @@ TEST_F(DragDropClientMacTest, ReleaseCapture) {
 
   // Immediately quit drag'n'drop, or we'll hang.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&DragDropClientMac::EndDrag,
-                            base::Unretained(drag_drop_client())));
+      FROM_HERE, base::BindOnce(&DragDropClientMac::EndDrag,
+                                base::Unretained(drag_drop_client())));
 
   // It will call ReleaseCapture().
   drag_drop_client()->StartDragAndDrop(

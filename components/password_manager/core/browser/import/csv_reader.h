@@ -17,6 +17,10 @@ namespace password_manager {
 // Parsed representation of tabular CSV data.
 class CSVTable {
  public:
+  // Maximum number of columns accepted. If any row has more than |kMaxColumns|
+  // cells, the parsing fails.
+  constexpr static size_t kMaxColumns = 100;
+
   CSVTable();
   ~CSVTable();
 
@@ -25,11 +29,11 @@ class CSVTable {
   // defined in RFC 4180, with the following limitations/relaxations:
   //   * The input should be UTF-8 encoded. No code points should be escaped.
   //   * The first line must be a header that contains the column names.
-  //   * Records may be separated by either LF or CRLF sequences. Each CRLF will
-  //     be converted to LF characters inside quotes.
+  //   * Records may be separated by either LF or CRLF sequences.
   //   * Inconsistent number of fields within records is handled gracefully.
   //     Extra fields are ignored. Missing fields will have no corresponding
   //     key-value pair in the record.
+  //   * Seeing a row with more than |kMaxColumns| cells is a syntax error.
   //   * Repeated columns of the same name are not supported (the last value
   //     will be preserved).
   // Returns false if parsing failed due to a syntax error.

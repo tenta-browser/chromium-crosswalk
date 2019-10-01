@@ -31,9 +31,11 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/optional.h"
 #include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "chrome/browser/download/download_crx_util.h"
@@ -251,12 +253,10 @@ DownloadHistory::DownloadHistory(content::DownloadManager* manager,
       initial_history_query_complete_(false),
       weak_ptr_factory_(this) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  content::DownloadManager::DownloadVector items;
+  download::SimpleDownloadManager::DownloadVector items;
   notifier_.GetManager()->GetAllDownloads(&items);
-  for (content::DownloadManager::DownloadVector::const_iterator
-       it = items.begin(); it != items.end(); ++it) {
-    OnDownloadCreated(notifier_.GetManager(), *it);
-  }
+  for (auto* item : items)
+    OnDownloadCreated(notifier_.GetManager(), item);
   history_->QueryDownloads(base::Bind(
       &DownloadHistory::QueryCallback, weak_ptr_factory_.GetWeakPtr()));
 }
@@ -306,8 +306,9 @@ void DownloadHistory::LoadHistoryDownloads(std::unique_ptr<InfoVector> infos) {
     download::DownloadItem* item = notifier_.GetManager()->CreateDownloadItem(
         it->guid, loading_id_, it->current_path, it->target_path, it->url_chain,
         it->referrer_url, it->site_url, it->tab_url, it->tab_referrer_url,
-        it->mime_type, it->original_mime_type, it->start_time, it->end_time,
-        it->etag, it->last_modified, it->received_bytes, it->total_bytes,
+        base::nullopt, it->mime_type, it->original_mime_type, it->start_time,
+        it->end_time, it->etag, it->last_modified, it->received_bytes,
+        it->total_bytes,
         std::string(),  // TODO(asanka): Need to persist and restore hash of
                         // partial file for an interrupted download. No need to
                         // store hash for a completed file.
@@ -375,13 +376,17 @@ void DownloadHistory::MaybeAddToHistory(download::DownloadItem* item) {
   history::DownloadRow download_row = GetDownloadRow(item);
   if (item->GetState() == download::DownloadItem::IN_PROGRESS)
     data->set_info(download_row);
-  history_->CreateDownload(
-      download_row,
-      base::BindRepeating(&DownloadHistory::ItemAdded,
-                          weak_ptr_factory_.GetWeakPtr(), download_id));
+  else
+    data->clear_info();
+  history_->CreateDownload(download_row,
+                           base::BindRepeating(&DownloadHistory::ItemAdded,
+                                               weak_ptr_factory_.GetWeakPtr(),
+                                               download_id, download_row));
 }
 
-void DownloadHistory::ItemAdded(uint32_t download_id, bool success) {
+void DownloadHistory::ItemAdded(uint32_t download_id,
+                                const history::DownloadRow& download_row,
+                                bool success) {
   if (removed_while_adding_.find(download_id) !=
       removed_while_adding_.end()) {
     removed_while_adding_.erase(download_id);
@@ -426,7 +431,7 @@ void DownloadHistory::ItemAdded(uint32_t download_id, bool success) {
   // Notify the observer about the change in the persistence state.
   if (was_persisted != IsPersisted(item)) {
     for (Observer& observer : observers_)
-      observer.OnDownloadStored(item, *data->info());
+      observer.OnDownloadStored(item, download_row);
   }
 }
 
@@ -439,8 +444,10 @@ void DownloadHistory::OnDownloadCreated(content::DownloadManager* manager,
   DownloadHistoryData* data = new DownloadHistoryData(item);
   if (item->GetId() == loading_id_)
     OnDownloadRestoredFromHistory(item);
-  if (item->GetState() == download::DownloadItem::IN_PROGRESS)
+  if (item->GetState() == download::DownloadItem::IN_PROGRESS &&
+      NeedToUpdateDownloadHistory(item)) {
     data->set_info(GetDownloadRow(item));
+  }
   MaybeAddToHistory(item);
 }
 
@@ -550,10 +557,13 @@ bool DownloadHistory::NeedToUpdateDownloadHistory(
   }
 #endif
 
+  if (!base::FeatureList::IsEnabled(
+          download::features::kDownloadDBForNewDownloads)) {
+    return true;
+  }
   // When download DB is enabled, only downloads that are in terminal state
-  // are added to or updated in history DB. In-progress and interrupted download
-  // will be stored in the in-progress DB.
-  return !base::FeatureList::IsEnabled(
-             download::features::kDownloadDBForNewDownloads) ||
-         item->IsSavePackageDownload() || item->IsDone();
+  // are added to or updated in history DB. Non-transient in-progress and
+  // interrupted download will be stored in the in-progress DB.
+  return !item->IsTransient() &&
+         (item->IsSavePackageDownload() || item->IsDone());
 }

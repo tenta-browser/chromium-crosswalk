@@ -51,14 +51,15 @@
 
 namespace base {
 class SingleThreadTaskRunner;
-};
+}
 
 namespace network {
 class SharedURLLoaderFactory;
-};
+}
 
 namespace blink {
 
+class SharedWorkerThread;
 class WebApplicationCacheHost;
 class WebApplicationCacheHostClient;
 class WebSharedWorkerClient;
@@ -109,21 +110,27 @@ class CORE_EXPORT WebSharedWorkerImpl final : public WebSharedWorker,
 
   // Callback methods for SharedWorkerReportingProxy.
   void CountFeature(WebFeature);
+  void DidFetchScript(int64_t app_cache_id);
+  void DidFailToFetchClassicScript();
+  void DidEvaluateClassicScript(bool success);
   void DidCloseWorkerGlobalScope();
   void DidTerminateWorkerThread();
 
  private:
-  WorkerThread* GetWorkerThread() { return worker_thread_.get(); }
+  SharedWorkerThread* GetWorkerThread() { return worker_thread_.get(); }
 
   // Shuts down the worker thread.
   void TerminateWorkerThread();
 
   void DidReceiveScriptLoaderResponse();
   void OnScriptLoaderFinished();
-  void ContinueOnScriptLoaderFinished();
-  void StartWorkerThread(std::unique_ptr<GlobalScopeCreationParams>,
-                         const KURL& script_response_url,
-                         const String& source_code);
+  void OnAppCacheSelected();
+  void ContinueStartWorkerContext();
+  void StartWorkerThread(
+      std::unique_ptr<GlobalScopeCreationParams>,
+      const KURL& script_response_url,
+      const String& source_code,
+      const FetchClientSettingsObjectSnapshot& outside_settings_object);
   WorkerClients* CreateWorkerClients();
 
   void ConnectTaskOnWorkerThread(MessagePortChannel);
@@ -134,7 +141,7 @@ class CORE_EXPORT WebSharedWorkerImpl final : public WebSharedWorker,
   base::UnguessableToken devtools_worker_token_;
 
   Persistent<SharedWorkerReportingProxy> reporting_proxy_;
-  std::unique_ptr<WorkerThread> worker_thread_;
+  std::unique_ptr<SharedWorkerThread> worker_thread_;
   mojom::blink::WorkerContentSettingsProxyPtrInfo content_settings_info_;
 
   // |client_| owns |this|.

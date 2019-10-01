@@ -52,6 +52,7 @@ class ConnectivityCheckerImpl
   void OnResponseStarted(net::URLRequest* request, int net_error) override;
   void OnReadCompleted(net::URLRequest* request, int bytes_read) override;
   void OnSSLCertificateError(net::URLRequest* request,
+                             int net_error,
                              const net::SSLInfo& ssl_info,
                              bool fatal) override;
 
@@ -85,6 +86,7 @@ class ConnectivityCheckerImpl
   void CheckInternal();
 
   std::unique_ptr<GURL> connectivity_check_url_;
+  scoped_refptr<net::URLRequestContextGetter> url_request_context_getter_;
   net::URLRequestContext* url_request_context_;
   std::unique_ptr<net::URLRequest> url_request_;
   const scoped_refptr<base::SingleThreadTaskRunner> task_runner_;

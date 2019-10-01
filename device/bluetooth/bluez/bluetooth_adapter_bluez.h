@@ -248,10 +248,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterBlueZ
   // typedef for callback parameters that are passed to AddDiscoverySession
   // and RemoveDiscoverySession. This is used to queue incoming requests while
   // a call to BlueZ is pending.
-  using DiscoveryParamTuple = std::tuple<device::BluetoothDiscoveryFilter*,
-                                         base::Closure,
-                                         DiscoverySessionErrorCallback>;
-  using DiscoveryCallbackQueue = base::queue<DiscoveryParamTuple>;
+  using DiscoveryCallbackQueue = base::queue<DiscoverySessionResultCallback>;
 
   // Callback pair for the profile registration queue.
   using RegisterProfileCompletionPair =
@@ -287,22 +284,22 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterBlueZ
   // bluez::BluetoothAgentServiceProvider::Delegate override.
   void Released() override;
   void RequestPinCode(const dbus::ObjectPath& device_path,
-                      const PinCodeCallback& callback) override;
+                      PinCodeCallback callback) override;
   void DisplayPinCode(const dbus::ObjectPath& device_path,
                       const std::string& pincode) override;
   void RequestPasskey(const dbus::ObjectPath& device_path,
-                      const PasskeyCallback& callback) override;
+                      PasskeyCallback callback) override;
   void DisplayPasskey(const dbus::ObjectPath& device_path,
                       uint32_t passkey,
                       uint16_t entered) override;
   void RequestConfirmation(const dbus::ObjectPath& device_path,
                            uint32_t passkey,
-                           const ConfirmationCallback& callback) override;
+                           ConfirmationCallback callback) override;
   void RequestAuthorization(const dbus::ObjectPath& device_path,
-                            const ConfirmationCallback& callback) override;
+                            ConfirmationCallback callback) override;
   void AuthorizeService(const dbus::ObjectPath& device_path,
                         const std::string& uuid,
-                        const ConfirmationCallback& callback) override;
+                        ConfirmationCallback callback) override;
   void Cancel() override;
 
   // Called by dbus:: on completion of the D-Bus method call to register the
@@ -354,10 +351,12 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterBlueZ
 
   // BluetoothAdapter:
   bool SetPoweredImpl(bool powered) override;
-  void AddDiscoverySession(
-      device::BluetoothDiscoveryFilter* discovery_filter,
-      const base::Closure& callback,
-      DiscoverySessionErrorCallback error_callback) override;
+  void StartScanWithFilter(
+      std::unique_ptr<device::BluetoothDiscoveryFilter> discovery_filter,
+      DiscoverySessionResultCallback callback) override;
+  void UpdateFilter(
+      std::unique_ptr<device::BluetoothDiscoveryFilter> discovery_filter,
+      DiscoverySessionResultCallback callback) override;
   void RemoveDiscoverySession(
       device::BluetoothDiscoveryFilter* discovery_filter,
       const base::Closure& callback,
@@ -448,15 +447,16 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterBlueZ
       const std::string& error_name,
       const std::string& error_message);
 
+  // Called by dbus:: on an error while trying to set long term keys.
+  void SetLongTermKeysError(const std::string& error_name,
+                            const std::string& error_message);
+
   InitCallback init_callback_;
 
   bool initialized_;
 
   // Set in |Shutdown()|, makes IsPresent()| return false.
   bool dbus_is_shutdown_;
-
-  // Number of discovery sessions that have been added.
-  int num_discovery_sessions_;
 
   // True, if there is a pending request to start or stop discovery.
   bool discovery_request_pending_;

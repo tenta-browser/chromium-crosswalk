@@ -24,6 +24,7 @@ class NullExecutionContext
 
  public:
   NullExecutionContext();
+  ~NullExecutionContext() override;
 
   void SetURL(const KURL& url) { url_ = url; }
 
@@ -44,13 +45,15 @@ class NullExecutionContext
   void SetTasksNeedPause(bool flag) { tasks_need_pause_ = flag; }
 
   void DidUpdateSecurityOrigin() override {}
-  SecurityContext& GetSecurityContext() override { return *this; }
+  SecurityContext& GetSecurityContext() final { return *this; }
+  const SecurityContext& GetSecurityContext() const final { return *this; }
   DOMTimerCoordinator* Timers() override { return nullptr; }
   const base::UnguessableToken& GetAgentClusterID() const final {
     return base::UnguessableToken::Null();
   }
 
-  void AddConsoleMessage(ConsoleMessage*) override {}
+  void AddConsoleMessageImpl(ConsoleMessage*,
+                             bool discard_duplicates) override {}
   void ExceptionThrown(ErrorEvent*) override {}
 
   void SetIsSecureContext(bool);
@@ -62,6 +65,9 @@ class NullExecutionContext
 
   FrameOrWorkerScheduler* GetScheduler() override;
   scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner(TaskType) override;
+
+  void CountUse(mojom::WebFeature) override {}
+  void CountDeprecation(mojom::WebFeature) override {}
 
   using SecurityContext::GetSecurityOrigin;
   using SecurityContext::GetContentSecurityPolicy;
@@ -76,6 +82,11 @@ class NullExecutionContext
   bool is_secure_context_;
 
   KURL url_;
+
+  // A dummy scheduler to ensure that the callers of
+  // ExecutionContext::GetScheduler don't have to check for whether it's null or
+  // not.
+  std::unique_ptr<FrameOrWorkerScheduler> scheduler_;
 };
 
 }  // namespace blink

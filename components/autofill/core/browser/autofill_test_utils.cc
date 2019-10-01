@@ -13,8 +13,8 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/autofill/core/browser/autofill_external_delegate.h"
-#include "components/autofill/core/browser/autofill_profile.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/webdata/autofill_table.h"
 #include "components/autofill/core/common/autofill_constants.h"
@@ -115,7 +115,7 @@ void CreateTestAddressFormData(FormData* form,
       ASCIIToUTF16("MyForm") + ASCIIToUTF16(unique_id ? unique_id : "");
   form->button_titles = {std::make_pair(
       ASCIIToUTF16("Submit"), ButtonTitleType::BUTTON_ELEMENT_SUBMIT_TYPE)};
-  form->origin = GURL("http://myform.com/form.html");
+  form->url = GURL("http://myform.com/form.html");
   form->action = GURL("http://myform.com/submit.html");
   form->main_frame_origin =
       url::Origin::Create(GURL("https://myform_root.com/form.html"));
@@ -185,7 +185,7 @@ void CreateTestPersonalInformationFormData(FormData* form,
                                            const char* unique_id) {
   form->name =
       ASCIIToUTF16("MyForm") + ASCIIToUTF16(unique_id ? unique_id : "");
-  form->origin = GURL("http://myform.com/form.html");
+  form->url = GURL("http://myform.com/form.html");
   form->action = GURL("http://myform.com/submit.html");
   form->main_frame_origin =
       url::Origin::Create(GURL("https://myform_root.com/form.html"));
@@ -210,12 +210,12 @@ void CreateTestCreditCardFormData(FormData* form,
   form->name =
       ASCIIToUTF16("MyForm") + ASCIIToUTF16(unique_id ? unique_id : "");
   if (is_https) {
-    form->origin = GURL("https://myform.com/form.html");
+    form->url = GURL("https://myform.com/form.html");
     form->action = GURL("https://myform.com/submit.html");
     form->main_frame_origin =
         url::Origin::Create(GURL("https://myform_root.com/form.html"));
   } else {
-    form->origin = GURL("http://myform.com/form.html");
+    form->url = GURL("http://myform.com/form.html");
     form->action = GURL("http://myform.com/submit.html");
     form->main_frame_origin =
         url::Origin::Create(GURL("http://myform_root.com/form.html"));
@@ -333,12 +333,6 @@ AutofillProfile GetIncompleteProfile2() {
 
 AutofillProfile GetVerifiedProfile() {
   AutofillProfile profile(GetFullProfile());
-  profile.set_origin(kSettingsOrigin);
-  return profile;
-}
-
-AutofillProfile GetVerifiedProfile2() {
-  AutofillProfile profile(GetFullProfile2());
   profile.set_origin(kSettingsOrigin);
   return profile;
 }
@@ -587,7 +581,7 @@ void InitializePossibleTypesAndValidities(
     std::vector<ServerFieldTypeValidityStatesMap>&
         possible_field_types_validities,
     const std::vector<ServerFieldType>& possible_types,
-    const std::vector<AutofillProfile::ValidityState>& validity_states) {
+    const std::vector<AutofillDataModel::ValidityState>& validity_states) {
   possible_field_types.push_back(ServerFieldTypeSet());
   possible_field_types_validities.push_back(ServerFieldTypeValidityStatesMap());
 

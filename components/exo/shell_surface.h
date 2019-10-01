@@ -5,8 +5,8 @@
 #ifndef COMPONENTS_EXO_SHELL_SURFACE_H_
 #define COMPONENTS_EXO_SHELL_SURFACE_H_
 
+#include "ash/wm/toplevel_window_event_handler.h"
 #include "ash/wm/window_state_observer.h"
-#include "ash/wm/wm_toplevel_window_event_handler.h"
 #include "base/containers/circular_deque.h"
 #include "base/macros.h"
 #include "components/exo/shell_surface_base.h"
@@ -39,7 +39,7 @@ class ShellSurface : public ShellSurfaceBase,
   // in steps of NxM pixels).
   using ConfigureCallback =
       base::RepeatingCallback<uint32_t(const gfx::Size& size,
-                                       ash::mojom::WindowStateType state_type,
+                                       ash::WindowStateType state_type,
                                        bool resizing,
                                        bool activated,
                                        const gfx::Vector2d& origin_offset)>;
@@ -97,12 +97,10 @@ class ShellSurface : public ShellSurfaceBase,
                              ui::PropertyChangeReason reason) override;
 
   // Overridden from ash::wm::WindowStateObserver:
-  void OnPreWindowStateTypeChange(
-      ash::wm::WindowState* window_state,
-      ash::mojom::WindowStateType old_type) override;
-  void OnPostWindowStateTypeChange(
-      ash::wm::WindowState* window_state,
-      ash::mojom::WindowStateType old_type) override;
+  void OnPreWindowStateTypeChange(ash::wm::WindowState* window_state,
+                                  ash::WindowStateType old_type) override;
+  void OnPostWindowStateTypeChange(ash::wm::WindowState* window_state,
+                                   ash::WindowStateType old_type) override;
 
   // Overridden from wm::ActivationChangeObserver:
   void OnWindowActivated(ActivationReason reason,
@@ -139,8 +137,16 @@ class ShellSurface : public ShellSurfaceBase,
   bool OnPreWidgetCommit() override;
   void OnPostWidgetCommit() override;
 
-  // Asks the client to configure its surface.
-  void Configure();
+  // Set the parent window of this surface.
+  void SetParentWindow(aura::Window* parent);
+
+  // Sets up a transient window manager for this window if it can (i.e. if the
+  // surface has a widget with a parent).
+  void MaybeMakeTransient();
+
+  // Asks the client to configure its surface. Optionally, the user can override
+  // the behaviour to check for window dragging by setting ends_drag to true.
+  void Configure(bool ends_drag = false);
 
   void AttemptToStartDrag(int component);
 

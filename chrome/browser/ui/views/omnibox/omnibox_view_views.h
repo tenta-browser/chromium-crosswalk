@@ -15,9 +15,9 @@
 #include "base/macros.h"
 #include "base/scoped_observer.h"
 #include "build/build_config.h"
+#include "chrome/browser/ui/send_tab_to_self/send_tab_to_self_sub_menu_model.h"
 #include "components/omnibox/browser/omnibox_view.h"
 #include "components/search_engines/template_url_service_observer.h"
-#include "components/security_state/core/security_state.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/compositor_observer.h"
@@ -59,6 +59,12 @@ class OmniboxViewViews : public OmniboxView,
   // The internal view class name.
   static const char kViewClassName[];
 
+  // Range of command IDs to use for the items in the send tab to self submenu.
+  static const int kMinSendTabToSelfSubMenuCommandId =
+      send_tab_to_self::SendTabToSelfSubMenuModel::kMinCommandId;
+  static const int kMaxSendTabToSelfSubMenuCommandId =
+      send_tab_to_self::SendTabToSelfSubMenuModel::kMaxCommandId;
+
   OmniboxViewViews(OmniboxEditController* controller,
                    std::unique_ptr<OmniboxClient> client,
                    bool popup_window_mode,
@@ -96,6 +102,13 @@ class OmniboxViewViews : public OmniboxView,
   bool SelectionAtBeginning() const;
   bool SelectionAtEnd() const;
 
+  // Returns the width in pixels needed to display the current text. The
+  // returned value includes margins.
+  int GetTextWidth() const;
+
+  // Returns the omnibox's width in pixels.
+  int GetWidth() const;
+
   // OmniboxView:
   void EmphasizeURLComponents() override;
   void Update() override;
@@ -114,8 +127,9 @@ class OmniboxViewViews : public OmniboxView,
   void SelectAll(bool reversed) override;
   void RevertAll() override;
   void SetFocus() override;
-  int GetTextWidth() const override;
   bool IsImeComposing() const override;
+  gfx::NativeView GetRelativeWindowForPopup() const override;
+  bool IsImeShowingPopup() const override;
 
   // views::Textfield:
   gfx::Size GetMinimumSize() const override;
@@ -125,6 +139,8 @@ class OmniboxViewViews : public OmniboxView,
   void AddedToWidget() override;
   void RemovedFromWidget() override;
   bool ShouldDoLearning() override;
+  base::string16 GetLabelForCommandId(int command_id) const override;
+  bool IsCommandIdEnabled(int command_id) const override;
 
   // For testing only.
   OmniboxPopupContentsView* GetPopupContentsViewForTesting() const {
@@ -167,10 +183,10 @@ class OmniboxViewViews : public OmniboxView,
   // Handle keyword hint tab-to-search and tabbing through dropdown results.
   bool HandleEarlyTabActions(const ui::KeyEvent& event);
 
-  // Updates |security_level_| based on the location bar model's current value.
-  void UpdateSecurityLevel();
-
   void ClearAccessibilityLabel();
+
+  void SetAccessibilityLabel(const base::string16& display_text,
+                             const AutocompleteMatch& match);
 
   // Selects the whole omnibox contents as a result of the user gesture. This
   // may also unapply steady state elisions depending on user preferences.
@@ -184,10 +200,11 @@ class OmniboxViewViews : public OmniboxView,
   // flip.)
   bool TextAndUIDirectionMatch() const;
 
-  // Returns true if the caret is completely at the end of the input, and if
-  // there's a tab match present. Helper function for MaybeFocusTabButton()
-  // and MaybeUnfocusTabButton().
-  bool AtEndWithTabMatch() const;
+  // Helper function for MaybeFocusTabButton() and MaybeUnfocusTabButton().
+  bool SelectedSuggestionHasTabMatch() const;
+
+  // Like SelectionAtEnd(), but accounts for RTL.
+  bool DirectionAwareSelectionAtEnd() const;
 
   // Attempts to either focus or unfocus the tab switch button (tests if all
   // conditions are met and makes necessary subroutine call) and returns
@@ -206,13 +223,11 @@ class OmniboxViewViews : public OmniboxView,
   bool OnInlineAutocompleteTextMaybeChanged(const base::string16& display_text,
                                             size_t user_text_length) override;
   void OnInlineAutocompleteTextCleared() override;
-  void OnRevertTemporaryText() override;
+  void OnRevertTemporaryText(const base::string16& display_text,
+                             const AutocompleteMatch& match) override;
   void OnBeforePossibleChange() override;
   bool OnAfterPossibleChange(bool allow_keyword_ui_change) override;
   gfx::NativeView GetNativeView() const override;
-  gfx::NativeView GetRelativeWindowForPopup() const override;
-  int GetWidth() const override;
-  bool IsImeShowingPopup() const override;
   void ShowVirtualKeyboardIfEnabled() override;
   void HideImeIfNeeded() override;
   int GetOmniboxTextLength() const override;
@@ -225,7 +240,6 @@ class OmniboxViewViews : public OmniboxView,
 
   // views::Textfield:
   bool IsItemForCommandIdDynamic(int command_id) const override;
-  base::string16 GetLabelForCommandId(int command_id) const override;
   const char* GetClassName() const override;
   bool OnMousePressed(const ui::MouseEvent& event) override;
   bool OnMouseDragged(const ui::MouseEvent& event) override;
@@ -237,7 +251,6 @@ class OmniboxViewViews : public OmniboxView,
   bool HandleAccessibleAction(const ui::AXActionData& action_data) override;
   void OnFocus() override;
   void OnBlur() override;
-  bool IsCommandIdEnabled(int command_id) const override;
   base::string16 GetSelectionClipboardText() const override;
   void DoInsertChar(base::char16 ch) override;
   bool IsTextEditCommandEnabled(ui::TextEditCommand command) const override;
@@ -287,8 +300,6 @@ class OmniboxViewViews : public OmniboxView,
   // Animation used to fade out the path under some elision settings.
   std::unique_ptr<PathFadeAnimation> path_fade_animation_;
 
-  security_state::SecurityLevel security_level_;
-
   // Selection persisted across temporary text changes, like popup suggestions.
   gfx::Range saved_temporary_selection_;
 
@@ -298,7 +309,7 @@ class OmniboxViewViews : public OmniboxView,
 
   // Tracking state before and after a possible change.
   State state_before_change_;
-  bool ime_composing_before_change_;
+  bool ime_composing_before_change_ = false;
 
   // |location_bar_view_| can be NULL in tests.
   LocationBarView* location_bar_view_;
@@ -311,18 +322,23 @@ class OmniboxViewViews : public OmniboxView,
 #endif
 
   // True if any mouse button is currently depressed.
-  bool is_mouse_pressed_;
+  bool is_mouse_pressed_ = false;
+
+  // Applies a minimum threshold to drag events after unelision. Because the
+  // text shifts after unelision, we don't want unintentional mouse drags to
+  // change the selection.
+  bool filter_drag_events_for_unelision_ = false;
 
   // Should we select all the text when we see the mouse button get released?
   // We select in response to a click that focuses the omnibox, but we defer
   // until release, setting this variable back to false if we saw a drag, to
   // allow the user to select just a portion of the text.
-  bool select_all_on_mouse_release_;
+  bool select_all_on_mouse_release_ = false;
 
   // Indicates if we want to select all text in the omnibox when we get a
   // GESTURE_TAP. We want to select all only when the textfield is not in focus
   // and gets a tap. So we use this variable to remember focus state before tap.
-  bool select_all_on_gesture_tap_;
+  bool select_all_on_gesture_tap_ = false;
 
   // The time of the first character insert operation that has not yet been
   // painted. Used to measure omnibox responsiveness with a histogram.
@@ -353,6 +369,10 @@ class OmniboxViewViews : public OmniboxView,
       scoped_compositor_observer_;
   ScopedObserver<TemplateURLService, TemplateURLServiceObserver>
       scoped_template_url_service_observer_;
+
+  // Send tab to self submenu.
+  std::unique_ptr<send_tab_to_self::SendTabToSelfSubMenuModel>
+      send_tab_to_self_sub_menu_model_;
 
   DISALLOW_COPY_AND_ASSIGN(OmniboxViewViews);
 };

@@ -17,6 +17,7 @@
 
 class ChromeMetricsServiceClient;
 class ChromePasswordManagerClient;
+class NavigationMetricsRecorder;
 class PrefService;
 class Profile;
 
@@ -85,7 +86,7 @@ class ChromeMetricsServiceAccessor : public metrics::MetricsServiceAccessor {
   friend class ::CrashesDOMHandler;
   friend class ::FlashDOMHandler;
   friend void chrome::AttemptRestart();
-  friend void chrome::SetupMobileFieldTrials();
+  friend class ChromeBrowserFieldTrials;
   // For ChromeWinClang.
   friend class ChromeBrowserMainExtraPartsMetrics;
   // For StackSamplingConfiguration.
@@ -114,14 +115,17 @@ class ChromeMetricsServiceAccessor : public metrics::MetricsServiceAccessor {
   friend class safe_browsing::SafeBrowsingUIManager;
   friend class ChromeMetricsServiceClient;
   friend class ChromePasswordManagerClient;
-  friend class ChromeUnifiedConsentServiceClient;
   friend bool nux::IsNuxOnboardingEnabled(Profile* profile);
+  friend class NavigationMetricsRecorder;
 
   // Testing related friends.
+  friend class ForceFieldTrialsBrowserTest;
   friend class MetricsReportingStateTest;
   friend class metrics::UkmConsentParamBrowserTest;
   FRIEND_TEST_ALL_PREFIXES(ChromeMetricsServiceAccessorTest,
                            MetricsReportingEnabled);
+  FRIEND_TEST_ALL_PREFIXES(ChromeMetricsServicesManagerClientTest,
+                           ForceTrialsDisablesReporting);
 
   // Returns true if metrics reporting is enabled. This does NOT necessary mean
   // that it is active as configuration may prevent it on some devices (i.e.

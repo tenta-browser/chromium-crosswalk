@@ -10,6 +10,7 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/containers/circular_deque.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
@@ -389,9 +390,10 @@ class NetworkServiceAsyncSocketTest : public testing::Test,
     }
 
     std::string ToString() const {
-      return base::StrCat(
-          {"(", base::IntToString(signal), ",", base::IntToString(state), ",",
-           base::IntToString(error), ",", base::IntToString(net_error), ")"});
+      return base::StrCat({"(", base::NumberToString(signal), ",",
+                           base::NumberToString(state), ",",
+                           base::NumberToString(error), ",",
+                           base::NumberToString(net_error), ")"});
     }
 
     Signal signal;

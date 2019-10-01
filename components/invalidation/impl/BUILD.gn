@@ -19,6 +19,8 @@ static_library("feature_list") {
 
 static_library("impl") {
   sources = [
+    "channels_states.cc",
+    "channels_states.h",
     "deprecated_invalidator_registrar.cc",
     "deprecated_invalidator_registrar.h",
     "fcm_invalidation_listener.cc",
@@ -52,8 +54,6 @@ static_library("impl") {
     "logger.h",
     "mock_ack_handler.cc",
     "mock_ack_handler.h",
-    "per_user_topic_invalidation_client.cc",
-    "per_user_topic_invalidation_client.h",
     "per_user_topic_registration_manager.cc",
     "per_user_topic_registration_manager.h",
     "per_user_topic_registration_request.cc",
@@ -75,7 +75,6 @@ static_library("impl") {
   deps = [
     "//base",
     "//base:i18n",
-    "//components/data_use_measurement/core",
     "//components/gcm_driver",
     "//components/gcm_driver/common",
     "//components/keyed_service/core",
@@ -106,8 +105,6 @@ static_library("impl") {
       "non_blocking_invalidator.h",
       "notifier_reason_util.cc",
       "notifier_reason_util.h",
-      "p2p_invalidator.cc",
-      "p2p_invalidator.h",
       "push_client_channel.cc",
       "push_client_channel.h",
       "registration_manager.cc",
@@ -119,10 +116,6 @@ static_library("impl") {
       "sync_system_resources.h",
       "ticl_invalidation_service.cc",
       "ticl_invalidation_service.h",
-      "ticl_profile_settings_provider.cc",
-      "ticl_profile_settings_provider.h",
-      "ticl_settings_provider.cc",
-      "ticl_settings_provider.h",
     ]
   }
 
@@ -135,19 +128,6 @@ static_library("impl") {
   }
 }
 
-source_set("json_unsafe_parser") {
-  testonly = !is_ios
-
-  sources = [
-    "json_unsafe_parser.cc",
-    "json_unsafe_parser.h",
-  ]
-
-  public_deps = [
-    "//base",
-  ]
-}
-
 source_set("unit_tests") {
   testonly = true
   sources = [
@@ -157,13 +137,11 @@ source_set("unit_tests") {
     "fcm_network_handler_unittests.cc",
     "invalidation_logger_unittest.cc",
     "invalidator_registrar_unittest.cc",
-    "per_user_topic_invalidation_client_unittest.cc",
     "per_user_topic_registration_manager_unittest.cc",
     "per_user_topic_registration_request_unittest.cc",
   ]
   deps = [
     ":impl",
-    ":json_unsafe_parser",
     ":test_support",
     "//base",
     "//base/test:test_support",
@@ -177,6 +155,7 @@ source_set("unit_tests") {
     "//google_apis/gcm:gcm",
     "//net",
     "//net:test_support",
+    "//services/data_decoder/public/cpp:test_support",
     "//services/identity/public/cpp:test_support",
     "//services/network:test_support",
     "//testing/gmock",
@@ -197,14 +176,12 @@ source_set("unit_tests") {
       "invalidator_storage_unittest.cc",
       "non_blocking_invalidator_unittest.cc",
       "object_id_invalidation_map_unittest.cc",
-      "p2p_invalidator_unittest.cc",
       "push_client_channel_unittest.cc",
       "registration_manager_unittest.cc",
       "single_object_invalidation_set_unittest.cc",
       "sync_invalidation_listener_unittest.cc",
       "sync_system_resources_unittest.cc",
       "ticl_invalidation_service_unittest.cc",
-      "ticl_profile_settings_provider_unittest.cc",
       "unacked_invalidation_set_unittest.cc",
     ]
   }
@@ -259,11 +236,6 @@ static_library("test_support") {
 
   if (is_android) {
     deps += [ ":jni_headers" ]
-  } else {
-    sources += [
-      "p2p_invalidation_service.cc",
-      "p2p_invalidation_service.h",
-    ]
   }
 }
 
@@ -305,9 +277,9 @@ if (is_android) {
       "//base:base_java_test_support",
       "//components/signin/core/browser/android:java",
       "//components/sync/android:sync_java",
+      "//third_party/android_sdk:android_test_base_java",
+      "//third_party/android_sdk:android_test_runner_java",
       "//third_party/android_support_test_runner:runner_java",
-      "//third_party/android_tools:android_test_base_java",
-      "//third_party/android_tools:android_test_runner_java",
       "//third_party/cacheinvalidation:cacheinvalidation_javalib",
       "//third_party/cacheinvalidation:cacheinvalidation_proto_java",
       "//third_party/junit",

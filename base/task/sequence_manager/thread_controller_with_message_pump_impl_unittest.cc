@@ -4,6 +4,7 @@
 
 #include "base/task/sequence_manager/thread_controller_with_message_pump_impl.h"
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/single_thread_task_runner.h"
@@ -13,8 +14,6 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-#include "base/debug/stack_trace.h"
 
 #include <queue>
 
@@ -31,14 +30,15 @@ class ThreadControllerForTest
     : public internal::ThreadControllerWithMessagePumpImpl {
  public:
   ThreadControllerForTest(std::unique_ptr<MessagePump> pump,
-                          const TickClock* clock)
-      : ThreadControllerWithMessagePumpImpl(std::move(pump), clock) {}
+                          SequenceManager::Settings& settings)
+      : ThreadControllerWithMessagePumpImpl(std::move(pump), settings) {}
 
   using ThreadControllerWithMessagePumpImpl::DoDelayedWork;
   using ThreadControllerWithMessagePumpImpl::DoIdleWork;
   using ThreadControllerWithMessagePumpImpl::DoWork;
   using ThreadControllerWithMessagePumpImpl::EnsureWorkScheduled;
   using ThreadControllerWithMessagePumpImpl::Quit;
+  using ThreadControllerWithMessagePumpImpl::Run;
 };
 
 class MockMessagePump : public MessagePump {
@@ -130,8 +130,10 @@ class ThreadControllerWithMessagePumpTest : public testing::Test {
  public:
   ThreadControllerWithMessagePumpTest()
       : message_pump_(new testing::StrictMock<MockMessagePump>()),
+        settings_(
+            SequenceManager::Settings::Builder().SetTickClock(&clock_).Build()),
         thread_controller_(std::unique_ptr<MessagePump>(message_pump_),
-                           &clock_),
+                           settings_),
         task_source_(&clock_) {
     thread_controller_.SetWorkBatchSize(1);
     thread_controller_.SetSequencedTaskSource(&task_source_);
@@ -139,6 +141,7 @@ class ThreadControllerWithMessagePumpTest : public testing::Test {
 
  protected:
   MockMessagePump* message_pump_;
+  SequenceManager::Settings settings_;
   SimpleTestTickClock clock_;
   ThreadControllerForTest thread_controller_;
   FakeSequencedTaskSource task_source_;
@@ -301,7 +304,7 @@ TEST_F(ThreadControllerWithMessagePumpTest, NestedExecution) {
 
 TEST_F(ThreadControllerWithMessagePumpTest,
        NestedExecutionWithApplicationTasks) {
-  // THis test is similar to the previous one, but execution is explicitly
+  // This test is similar to the previous one, but execution is explicitly
   // allowed (by specifying appropriate RunLoop type), and tasks are run inside
   // nested runloop.
   std::vector<std::string> log;
@@ -325,8 +328,6 @@ TEST_F(ThreadControllerWithMessagePumpTest,
         EXPECT_FALSE(delegate->DoWork());
         log.push_back("exiting nested runloop");
       }));
-  // An extra schedule work will be called when entering a nested runloop.
-  EXPECT_CALL(*message_pump_, ScheduleWork());
 
   task_source_.AddTask(
       PendingTask(FROM_HERE,
@@ -381,7 +382,9 @@ TEST_F(ThreadControllerWithMessagePumpTest, ScheduleWorkFromDelayedTask) {
   EXPECT_CALL(*message_pump_, ScheduleWork());
 
   task_source_.AddTask(PendingTask(FROM_HERE, base::BindLambdaForTesting([&]() {
-                                     thread_controller_.ScheduleWork();
+                                     // Triggers a ScheduleWork call.
+                                     task_source_.AddTask(PendingTask(
+                                         FROM_HERE, base::BindOnce([]() {})));
                                    }),
                                    TimeTicks()));
   RunLoop().Run();
@@ -414,8 +417,17 @@ TEST_F(ThreadControllerWithMessagePumpTest, EnsureWorkScheduled) {
   thread_controller_.ScheduleWork();
   testing::Mock::VerifyAndClearExpectations(message_pump_);
 
-  // Ensure that EnsureWorkScheduled() forces a call to a pump.
-  EXPECT_CALL(*message_pump_, ScheduleWork());
+  // EnsureWorkScheduled() doesn't need to do anything because there's a pending
+  // DoWork.
+  EXPECT_CALL(*message_pump_, ScheduleWork()).Times(0);
+  thread_controller_.EnsureWorkScheduled();
+  testing::Mock::VerifyAndClearExpectations(message_pump_);
+
+  EXPECT_TRUE(thread_controller_.DoWork());
+
+  // EnsureWorkScheduled() doesn't need to call the pump because there's no
+  // DoWork pending.
+  EXPECT_CALL(*message_pump_, ScheduleWork()).Times(0);
   thread_controller_.EnsureWorkScheduled();
   testing::Mock::VerifyAndClearExpectations(message_pump_);
 }
@@ -520,6 +532,85 @@ TEST_F(ThreadControllerWithMessagePumpTest, EarlyQuit) {
 
   EXPECT_THAT(log, ElementsAre("task1", "task2"));
   testing::Mock::VerifyAndClearExpectations(message_pump_);
+}
+
+TEST_F(ThreadControllerWithMessagePumpTest, NativeNestedMessageLoop) {
+  bool did_run = false;
+  task_source_.AddTask(PendingTask(
+      FROM_HERE, BindLambdaForTesting([&] {
+        // Clear expectation set for the non-nested PostTask.
+        testing::Mock::VerifyAndClearExpectations(message_pump_);
+
+        EXPECT_FALSE(thread_controller_.IsTaskExecutionAllowed());
+        // SetTaskExecutionAllowed(true) should ScheduleWork.
+        EXPECT_CALL(*message_pump_, ScheduleWork());
+        thread_controller_.SetTaskExecutionAllowed(true);
+        testing::Mock::VerifyAndClearExpectations(message_pump_);
+
+        // There's no pending work so the native loop should go
+        // idle.
+        EXPECT_CALL(*message_pump_, ScheduleWork()).Times(0);
+        EXPECT_FALSE(thread_controller_.DoWork());
+        testing::Mock::VerifyAndClearExpectations(message_pump_);
+
+        // Simulate a native callback which posts a task, this
+        // should now ask the pump to ScheduleWork();
+        task_source_.AddTask(PendingTask(FROM_HERE, DoNothing(), TimeTicks()));
+        EXPECT_CALL(*message_pump_, ScheduleWork());
+        thread_controller_.ScheduleWork();
+        testing::Mock::VerifyAndClearExpectations(message_pump_);
+
+        thread_controller_.SetTaskExecutionAllowed(false);
+
+        // Simulate a subsequent PostTask by the chromium task after
+        // we've left the native loop. This should not ScheduleWork
+        // on the pump because the ThreadController will do that
+        // after this task finishes.
+        task_source_.AddTask(PendingTask(FROM_HERE, DoNothing(), TimeTicks()));
+        EXPECT_CALL(*message_pump_, ScheduleWork()).Times(0);
+        thread_controller_.ScheduleWork();
+
+        did_run = true;
+      }),
+      TimeTicks()));
+
+  // Simulate a PostTask that enters a native nested message loop.
+  EXPECT_CALL(*message_pump_, ScheduleWork());
+  thread_controller_.ScheduleWork();
+  EXPECT_TRUE(thread_controller_.DoWork());
+  EXPECT_TRUE(did_run);
+}
+
+TEST_F(ThreadControllerWithMessagePumpTest, RunWithTimeout) {
+  MockCallback<OnceClosure> task1;
+  task_source_.AddTask(PendingTask(FROM_HERE, task1.Get(), Seconds(5)));
+  MockCallback<OnceClosure> task2;
+  task_source_.AddTask(PendingTask(FROM_HERE, task2.Get(), Seconds(10)));
+  MockCallback<OnceClosure> task3;
+  task_source_.AddTask(PendingTask(FROM_HERE, task3.Get(), Seconds(20)));
+
+  EXPECT_CALL(*message_pump_, Run(_))
+      .WillOnce(Invoke([&](MessagePump::Delegate*) {
+        TimeTicks next_run_time;
+        clock_.SetNowTicks(Seconds(5));
+        EXPECT_CALL(task1, Run()).Times(1);
+        EXPECT_TRUE(thread_controller_.DoDelayedWork(&next_run_time));
+        EXPECT_EQ(next_run_time, Seconds(10));
+
+        clock_.SetNowTicks(Seconds(10));
+        EXPECT_CALL(task2, Run()).Times(1);
+        EXPECT_TRUE(thread_controller_.DoDelayedWork(&next_run_time));
+        EXPECT_EQ(next_run_time, Seconds(15));
+
+        clock_.SetNowTicks(Seconds(15));
+        EXPECT_CALL(task3, Run()).Times(0);
+        EXPECT_FALSE(thread_controller_.DoDelayedWork(&next_run_time));
+        EXPECT_EQ(next_run_time, TimeTicks());
+
+        EXPECT_CALL(*message_pump_, Quit());
+        EXPECT_FALSE(thread_controller_.DoIdleWork());
+      }));
+  thread_controller_.Run(true, TimeDelta::FromSeconds(15));
 }
 
 }  // namespace sequence_manager

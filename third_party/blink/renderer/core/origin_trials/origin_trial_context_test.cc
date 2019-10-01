@@ -9,10 +9,12 @@
 #include "third_party/blink/public/common/origin_trials/trial_token.h"
 #include "third_party/blink/public/common/origin_trials/trial_token_validator.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
+#include "third_party/blink/renderer/core/feature_policy/feature_policy_parser.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/html/html_head_element.h"
 #include "third_party/blink/renderer/core/html/html_meta_element.h"
 #include "third_party/blink/renderer/core/html_names.h"
+#include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
 #include "third_party/blink/renderer/core/testing/null_execution_context.h"
 #include "third_party/blink/renderer/platform/testing/histogram_tester.h"
@@ -24,8 +26,8 @@
 namespace blink {
 namespace {
 
-const char kNonExistingTrialName[] = "This trial does not exist";
 const char kFrobulateTrialName[] = "Frobulate";
+const char kFrobulateNavigationTrialName[] = "FrobulateNavigation";
 const char kFrobulateEnabledOrigin[] = "https://www.example.com";
 const char kFrobulateEnabledOriginUnsecure[] = "http://www.example.com";
 
@@ -91,11 +93,20 @@ class OriginTrialContextTest : public testing::Test,
     execution_context_->SetIsSecureContext(SecurityOrigin::IsSecure(page_url));
   }
 
-  bool IsTrialEnabled(const String& origin, const String& feature_name) {
+  bool IsFeatureEnabled(const String& origin, OriginTrialFeature feature) {
     UpdateSecurityOrigin(origin);
     // Need at least one token to ensure the token validator is called.
     origin_trial_context_->AddToken(kTokenPlaceholder);
-    return origin_trial_context_->IsTrialEnabled(feature_name);
+    return origin_trial_context_->IsFeatureEnabled(feature);
+  }
+
+  std::unique_ptr<Vector<OriginTrialFeature>> GetEnabledNavigationFeatures() {
+    return origin_trial_context_->GetEnabledNavigationFeatures();
+  }
+
+  bool ActivateNavigationFeature(OriginTrialFeature feature) {
+    origin_trial_context_->ActivateNavigationFeaturesFromInitiator({feature});
+    return origin_trial_context_->IsNavigationFeatureActivated(feature);
   }
 
   void ExpectStatusUniqueMetric(OriginTrialTokenStatus status, int count) {
@@ -117,9 +128,9 @@ class OriginTrialContextTest : public testing::Test,
 TEST_F(OriginTrialContextTest, EnabledNonExistingTrial) {
   TokenValidator()->SetResponse(OriginTrialTokenStatus::kSuccess,
                                 kFrobulateTrialName);
-  bool is_non_existing_trial_enabled =
-      IsTrialEnabled(kFrobulateEnabledOrigin, kNonExistingTrialName);
-  EXPECT_FALSE(is_non_existing_trial_enabled);
+  bool is_non_existing_feature_enabled = IsFeatureEnabled(
+      kFrobulateEnabledOrigin, OriginTrialFeature::kNonExisting);
+  EXPECT_FALSE(is_non_existing_feature_enabled);
 
   // Status metric should be updated.
   ExpectStatusUniqueMetric(OriginTrialTokenStatus::kSuccess, 1);
@@ -129,13 +140,17 @@ TEST_F(OriginTrialContextTest, EnabledNonExistingTrial) {
 TEST_F(OriginTrialContextTest, EnabledSecureRegisteredOrigin) {
   TokenValidator()->SetResponse(OriginTrialTokenStatus::kSuccess,
                                 kFrobulateTrialName);
-  bool is_origin_enabled =
-      IsTrialEnabled(kFrobulateEnabledOrigin, kFrobulateTrialName);
+  bool is_origin_enabled = IsFeatureEnabled(
+      kFrobulateEnabledOrigin, OriginTrialFeature::kOriginTrialsSampleAPI);
   EXPECT_TRUE(is_origin_enabled);
   EXPECT_EQ(1, TokenValidator()->CallCount());
 
   // Status metric should be updated.
   ExpectStatusUniqueMetric(OriginTrialTokenStatus::kSuccess, 1);
+
+  // kOriginTrialsSampleAPI is not a navigation feature, so shouldn't be
+  // included in GetEnabledNavigationFeatures().
+  EXPECT_EQ(nullptr, GetEnabledNavigationFeatures());
 }
 
 // ... but if the browser says it's invalid for any reason, that's enough to
@@ -143,8 +158,8 @@ TEST_F(OriginTrialContextTest, EnabledSecureRegisteredOrigin) {
 TEST_F(OriginTrialContextTest, InvalidTokenResponseFromPlatform) {
   TokenValidator()->SetResponse(OriginTrialTokenStatus::kMalformed,
                                 kFrobulateTrialName);
-  bool is_origin_enabled =
-      IsTrialEnabled(kFrobulateEnabledOrigin, kFrobulateTrialName);
+  bool is_origin_enabled = IsFeatureEnabled(
+      kFrobulateEnabledOrigin, OriginTrialFeature::kOriginTrialsSampleAPI);
   EXPECT_FALSE(is_origin_enabled);
   EXPECT_EQ(1, TokenValidator()->CallCount());
 
@@ -158,7 +173,8 @@ TEST_F(OriginTrialContextTest, EnabledNonSecureRegisteredOrigin) {
   TokenValidator()->SetResponse(OriginTrialTokenStatus::kSuccess,
                                 kFrobulateTrialName);
   bool is_origin_enabled =
-      IsTrialEnabled(kFrobulateEnabledOriginUnsecure, kFrobulateTrialName);
+      IsFeatureEnabled(kFrobulateEnabledOriginUnsecure,
+                       OriginTrialFeature::kOriginTrialsSampleAPI);
   EXPECT_FALSE(is_origin_enabled);
   EXPECT_EQ(0, TokenValidator()->CallCount());
   ExpectStatusUniqueMetric(OriginTrialTokenStatus::kInsecure, 1);
@@ -220,6 +236,55 @@ TEST_F(OriginTrialContextTest, ParseHeaderValue_NotCommaSeparated) {
   EXPECT_FALSE(OriginTrialContext::ParseHeaderValue("\"foo\" 'bar'"));
   EXPECT_FALSE(OriginTrialContext::ParseHeaderValue("foo 'bar'"));
   EXPECT_FALSE(OriginTrialContext::ParseHeaderValue("\"foo\" bar"));
+}
+
+TEST_F(OriginTrialContextTest, FeaturePolicy) {
+  // Create a dummy document with an OriginTrialContext.
+  auto dummy = std::make_unique<DummyPageHolder>();
+  Document* document = &dummy->GetDocument();
+  OriginTrialContext* context = OriginTrialContext::FromOrCreate(document);
+
+  // Enable the sample origin trial API ("Frobulate").
+  context->AddFeature(OriginTrialFeature::kOriginTrialsSampleAPI);
+  EXPECT_TRUE(
+      context->IsFeatureEnabled(OriginTrialFeature::kOriginTrialsSampleAPI));
+
+  // Make a mock feature name map with "frobulate".
+  FeatureNameMap feature_map;
+  feature_map.Set("frobulate", mojom::FeaturePolicyFeature::kFrobulate);
+
+  // Attempt to parse the "frobulate" feature policy. This will only work if the
+  // feature policy is successfully enabled via the origin trial.
+  scoped_refptr<const SecurityOrigin> security_origin =
+      SecurityOrigin::CreateFromString(kFrobulateEnabledOrigin);
+  Vector<String> messages;
+  ParsedFeaturePolicy result;
+  result = FeaturePolicyParser::Parse("frobulate", security_origin, nullptr,
+                                      &messages, feature_map, document);
+  EXPECT_TRUE(messages.IsEmpty());
+  ASSERT_EQ(1u, result.size());
+  EXPECT_EQ(mojom::FeaturePolicyFeature::kFrobulate, result[0].feature);
+}
+
+TEST_F(OriginTrialContextTest, GetEnabledNavigationFeatures) {
+  TokenValidator()->SetResponse(OriginTrialTokenStatus::kSuccess,
+                                kFrobulateNavigationTrialName);
+  EXPECT_TRUE(
+      IsFeatureEnabled(kFrobulateEnabledOrigin,
+                       OriginTrialFeature::kOriginTrialsSampleAPINavigation));
+
+  auto enabled_navigation_features = GetEnabledNavigationFeatures();
+  ASSERT_NE(nullptr, enabled_navigation_features.get());
+  EXPECT_EQ(WTF::Vector<OriginTrialFeature>(
+                {OriginTrialFeature::kOriginTrialsSampleAPINavigation}),
+            *enabled_navigation_features.get());
+}
+
+TEST_F(OriginTrialContextTest, ActivateNavigationFeature) {
+  EXPECT_TRUE(ActivateNavigationFeature(
+      OriginTrialFeature::kOriginTrialsSampleAPINavigation));
+  EXPECT_FALSE(
+      ActivateNavigationFeature(OriginTrialFeature::kOriginTrialsSampleAPI));
 }
 
 }  // namespace blink

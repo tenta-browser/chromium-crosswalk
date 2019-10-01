@@ -67,7 +67,7 @@ GURL GetMockUrl(const std::string& scheme,
   url.append("?data=");
   url.append(data);
   url.append("&repeat=");
-  url.append(base::IntToString(data_repeat_count));
+  url.append(base::NumberToString(data_repeat_count));
   if (request_client_certificate)
     url += "&requestcert=1";
   return GURL(url);
@@ -118,8 +118,8 @@ void URLRequestMockDataJob::Start() {
   // Start reading asynchronously so that all error reporting and data
   // callbacks happen as they would for network requests.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&URLRequestMockDataJob::StartAsync,
-                            weak_factory_.GetWeakPtr()));
+      FROM_HERE, base::BindOnce(&URLRequestMockDataJob::StartAsync,
+                                weak_factory_.GetWeakPtr()));
 }
 
 URLRequestMockDataJob::~URLRequestMockDataJob() = default;
@@ -158,8 +158,8 @@ void URLRequestMockDataJob::GetResponseInfoConst(HttpResponseInfo* info) const {
     raw_headers.append(base::StringPrintf("Content-Length: %1d\n",
                                           static_cast<int>(data_.length())));
   }
-  info->headers = new HttpResponseHeaders(HttpUtil::AssembleRawHeaders(
-      raw_headers.c_str(), static_cast<int>(raw_headers.length())));
+  info->headers = base::MakeRefCounted<HttpResponseHeaders>(
+      HttpUtil::AssembleRawHeaders(raw_headers));
 }
 
 void URLRequestMockDataJob::StartAsync() {

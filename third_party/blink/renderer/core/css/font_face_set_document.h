@@ -36,7 +36,6 @@
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/events/event_listener.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
-#include "third_party/blink/renderer/platform/async_method_runner.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/allocator.h"
 
@@ -82,10 +81,6 @@ class CORE_EXPORT FontFaceSetDocument final : public FontFaceSet,
   bool ResolveFontStyle(const String&, Font&) override;
 
  private:
-  static FontFaceSetDocument* Create(Document& document) {
-    return MakeGarbageCollected<FontFaceSetDocument>(document);
-  }
-
   void FireDoneEventIfPossible() override;
   const HeapLinkedHashSet<Member<FontFace>>& CSSConnectedFontFaceList()
       const override;

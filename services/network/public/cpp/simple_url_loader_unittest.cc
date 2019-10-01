@@ -577,7 +577,6 @@ class SimpleURLLoaderTestBase {
                                         /*netlog=*/nullptr);
     network::mojom::NetworkContextParamsPtr context_params =
         network::mojom::NetworkContextParams::New();
-    context_params->enable_data_url_support = true;
     network_service_ptr->CreateNetworkContext(
         mojo::MakeRequest(&network_context_), std::move(context_params));
 
@@ -687,23 +686,6 @@ TEST_P(SimpleURLLoaderTest, BasicRequest) {
     EXPECT_EQ(kExpectedResponse, *test_helper->response_body());
     EXPECT_EQ(kExpectedResponseSize,
               test_helper->simple_url_loader()->GetContentSize());
-  }
-}
-
-// Test that SimpleURLLoader handles data URLs, which don't have headers.
-TEST_P(SimpleURLLoaderTest, DataURL) {
-  std::unique_ptr<SimpleLoaderTestHelper> test_helper =
-      CreateHelperForURL(GURL("data:text/plain,foo"));
-  test_helper->StartSimpleLoaderAndWait(url_loader_factory_.get());
-
-  EXPECT_EQ(net::OK, test_helper->simple_url_loader()->NetError());
-  ASSERT_TRUE(test_helper->simple_url_loader()->ResponseInfo());
-  EXPECT_FALSE(test_helper->simple_url_loader()->ResponseInfo()->headers);
-
-  if (GetParam() != SimpleLoaderTestHelper::DownloadType::HEADERS_ONLY) {
-    ASSERT_TRUE(test_helper->response_body());
-    EXPECT_EQ("foo", *test_helper->response_body());
-    EXPECT_EQ(3, test_helper->simple_url_loader()->GetContentSize());
   }
 }
 
@@ -1008,7 +990,7 @@ TEST_P(SimpleURLLoaderTest, DeleteInOnResponseStartedCallback) {
             EXPECT_TRUE(final_url.is_valid());
             std::move(quit_closure).Run();
           },
-          base::Passed(std::move(test_helper)), run_loop.QuitClosure()));
+          std::move(test_helper), run_loop.QuitClosure()));
 
   unowned_test_helper->StartSimpleLoader(url_loader_factory_.get());
 
@@ -1815,8 +1797,8 @@ class MockURLLoader : public network::mojom::URLLoader {
               "HTTP/1.0 301 The Response Has Moved to Another Server\n"
               "Location: bar://foo/");
           response_info.headers =
-              new net::HttpResponseHeaders(net::HttpUtil::AssembleRawHeaders(
-                  headers.c_str(), headers.size()));
+              base::MakeRefCounted<net::HttpResponseHeaders>(
+                  net::HttpUtil::AssembleRawHeaders(headers));
           client_->OnReceiveRedirect(redirect_info, response_info);
           break;
         }
@@ -1824,8 +1806,8 @@ class MockURLLoader : public network::mojom::URLLoader {
           network::ResourceResponseHead response_info;
           std::string headers("HTTP/1.0 200 OK");
           response_info.headers =
-              new net::HttpResponseHeaders(net::HttpUtil::AssembleRawHeaders(
-                  headers.c_str(), headers.size()));
+              base::MakeRefCounted<net::HttpResponseHeaders>(
+                  net::HttpUtil::AssembleRawHeaders(headers));
           client_->OnReceiveResponse(response_info);
           break;
         }
@@ -1833,8 +1815,8 @@ class MockURLLoader : public network::mojom::URLLoader {
           network::ResourceResponseHead response_info;
           std::string headers("HTTP/1.0 401 Client Borkage");
           response_info.headers =
-              new net::HttpResponseHeaders(net::HttpUtil::AssembleRawHeaders(
-                  headers.c_str(), headers.size()));
+              base::MakeRefCounted<net::HttpResponseHeaders>(
+                  net::HttpUtil::AssembleRawHeaders(headers));
           client_->OnReceiveResponse(response_info);
           break;
         }
@@ -1842,8 +1824,8 @@ class MockURLLoader : public network::mojom::URLLoader {
           network::ResourceResponseHead response_info;
           std::string headers("HTTP/1.0 501 Server Borkage");
           response_info.headers =
-              new net::HttpResponseHeaders(net::HttpUtil::AssembleRawHeaders(
-                  headers.c_str(), headers.size()));
+              base::MakeRefCounted<net::HttpResponseHeaders>(
+                  net::HttpUtil::AssembleRawHeaders(headers));
           client_->OnReceiveResponse(response_info);
           break;
         }
@@ -2787,7 +2769,7 @@ TEST_P(SimpleURLLoaderTest, GetFinalURLAfterRedirect) {
   EXPECT_EQ(url, test_helper->simple_url_loader()->GetFinalURL());
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     /* No prefix */,
     SimpleURLLoaderTest,
     testing::Values(SimpleLoaderTestHelper::DownloadType::TO_STRING,
@@ -2816,7 +2798,7 @@ class SimpleURLLoaderFileTest : public SimpleURLLoaderTestBase,
 TEST_F(SimpleURLLoaderFileTest, OverwriteFile) {
   std::string junk_data(100, '!');
   std::unique_ptr<SimpleLoaderTestHelper> test_helper =
-      CreateHelperForURL(GURL("data:text/plain,foo"));
+      CreateHelperForURL(test_server_.GetURL("/echo"));
   {
     base::ScopedAllowBlockingForTesting allow_blocking;
     ASSERT_EQ(static_cast<int>(junk_data.size()),
@@ -2830,13 +2812,13 @@ TEST_F(SimpleURLLoaderFileTest, OverwriteFile) {
   EXPECT_EQ(net::OK, test_helper->simple_url_loader()->NetError());
   ASSERT_TRUE(test_helper->simple_url_loader()->ResponseInfo());
   ASSERT_TRUE(test_helper->response_body());
-  EXPECT_EQ("foo", *test_helper->response_body());
+  EXPECT_EQ("Echo", *test_helper->response_body());
 }
 
 // Make sure that file creation errors are handled correctly.
 TEST_F(SimpleURLLoaderFileTest, FileCreateError) {
   std::unique_ptr<SimpleLoaderTestHelper> test_helper =
-      CreateHelperForURL(GURL("data:text/plain,foo"));
+      CreateHelperForURL(test_server_.GetURL("/echo"));
   {
     base::ScopedAllowBlockingForTesting allow_blocking;
     ASSERT_TRUE(base::CreateDirectory(test_helper->dest_path()));

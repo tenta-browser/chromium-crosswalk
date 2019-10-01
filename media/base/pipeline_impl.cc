@@ -137,7 +137,6 @@ class PipelineImpl::RendererWrapper : public DemuxerHost,
   void OnVideoConfigChange(const VideoDecoderConfig& config) final;
   void OnVideoNaturalSizeChange(const gfx::Size& size) final;
   void OnVideoOpacityChange(bool opaque) final;
-  void OnDurationChange(base::TimeDelta duration) final;
   void OnRemotePlayStateChange(MediaStatus::State state) final;
 
   // Common handlers for notifications from renderers and demuxer.
@@ -763,11 +762,6 @@ void PipelineImpl::RendererWrapper::OnVideoConfigChange(
                                              weak_pipeline_, config));
 }
 
-void PipelineImpl::RendererWrapper::OnDurationChange(base::TimeDelta duration) {
-  DCHECK(media_task_runner_->BelongsToCurrentThread());
-  SetDuration(duration);
-}
-
 void PipelineImpl::RendererWrapper::OnRemotePlayStateChange(
     MediaStatus::State state) {
   DCHECK(media_task_runner_->BelongsToCurrentThread());
@@ -959,7 +953,7 @@ void PipelineImpl::RendererWrapper::ReportMetadata(StartType start_type) {
         if (stream->type() == DemuxerStream::VIDEO && !metadata.has_video) {
           metadata.has_video = true;
           metadata.natural_size = GetRotatedVideoSize(
-              stream->video_decoder_config().video_rotation(),
+              stream->video_decoder_config().video_transformation().rotation,
               stream->video_decoder_config().natural_size());
           metadata.video_decoder_config = stream->video_decoder_config();
         }
@@ -1307,7 +1301,7 @@ void PipelineImpl::OnEnded() {
   client_->OnEnded();
 }
 
-void PipelineImpl::OnMetadata(PipelineMetadata metadata) {
+void PipelineImpl::OnMetadata(const PipelineMetadata& metadata) {
   DVLOG(2) << __func__;
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(IsRunning());

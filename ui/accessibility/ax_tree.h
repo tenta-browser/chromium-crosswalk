@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <set>
 #include <unordered_map>
 
@@ -23,6 +24,7 @@ class AXTableInfo;
 class AXTree;
 class AXTreeObserver;
 struct AXTreeUpdateState;
+class AXLanguageInfoStats;
 
 // AXTree is a live, managed tree of AXNode objects that can receive
 // updates from another AXTreeSource via AXTreeUpdates, and it can be
@@ -145,6 +147,12 @@ class AX_EXPORT AXTree : public AXNode::OwnerTree {
   // set_size values, minimizing the size of the cache.
   int32_t GetSetSize(const AXNode& node, const AXNode* ordered_set) override;
 
+  bool GetTreeUpdateInProgressState() const override;
+  void SetTreeUpdateInProgressState(bool set_tree_update_value);
+
+  // Language detection statistics
+  std::unique_ptr<AXLanguageInfoStats> language_info_stats;
+
  private:
   friend class AXTableInfoTest;
 
@@ -162,7 +170,7 @@ class AX_EXPORT AXTree : public AXNode::OwnerTree {
 
   AXNode* CreateNode(AXNode* parent,
                      int32_t id,
-                     int32_t index_in_parent,
+                     size_t index_in_parent,
                      AXTreeUpdateState* update_state);
 
   // This is called from within Unserialize(), it returns true on success.
@@ -235,6 +243,7 @@ class AX_EXPORT AXTree : public AXNode::OwnerTree {
   struct OrderedSetInfo {
     int32_t pos_in_set;
     int32_t set_size;
+    int32_t lowest_hierarchical_level;
     OrderedSetInfo() : pos_in_set(0), set_size(0) {}
     ~OrderedSetInfo() {}
   };
@@ -245,7 +254,7 @@ class AX_EXPORT AXTree : public AXNode::OwnerTree {
   void PopulateOrderedSetItems(const AXNode* ordered_set,
                                const AXNode* local_parent,
                                std::vector<const AXNode*>& items,
-                               bool node_is_radio_button) const;
+                               const AXNode& original_node) const;
 
   // Helper for GetPosInSet and GetSetSize. Computes the pos_in_set and set_size
   // values of all items in ordered_set and caches those values.
@@ -261,6 +270,9 @@ class AX_EXPORT AXTree : public AXNode::OwnerTree {
 
   // AXTree owns pointers so copying is non-trivial.
   DISALLOW_COPY_AND_ASSIGN(AXTree);
+
+  // Indicates if the tree is updating.
+  bool tree_update_in_progress_ = false;
 };
 
 }  // namespace ui

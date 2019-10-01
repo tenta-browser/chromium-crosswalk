@@ -13,13 +13,13 @@ namespace blink {
 void PreciselyCollectGarbage() {
   ThreadState::Current()->CollectGarbage(
       BlinkGC::kNoHeapPointersOnStack, BlinkGC::kAtomicMarking,
-      BlinkGC::kEagerSweeping, BlinkGC::GCReason::kForcedGC);
+      BlinkGC::kEagerSweeping, BlinkGC::GCReason::kForcedGCForTesting);
 }
 
 void ConservativelyCollectGarbage(BlinkGC::SweepingType sweeping_type) {
-  ThreadState::Current()->CollectGarbage(BlinkGC::kHeapPointersOnStack,
-                                         BlinkGC::kAtomicMarking, sweeping_type,
-                                         BlinkGC::GCReason::kForcedGC);
+  ThreadState::Current()->CollectGarbage(
+      BlinkGC::kHeapPointersOnStack, BlinkGC::kAtomicMarking, sweeping_type,
+      BlinkGC::GCReason::kForcedGCForTesting);
 }
 
 // Do several GCs to make sure that later GCs don't free up old memory from
@@ -33,6 +33,11 @@ void ClearOutOldGarbage() {
     if (heap.ObjectPayloadSizeForTesting() >= used)
       break;
   }
+}
+
+void CompleteSweepingIfNeeded() {
+  if (ThreadState::Current()->IsSweepingInProgress())
+    ThreadState::Current()->CompleteSweep();
 }
 
 }  // namespace blink

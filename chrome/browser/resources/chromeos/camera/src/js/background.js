@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium OS Authors. All rights reserved.
+// Copyright (c) 2013 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -26,7 +26,7 @@ cca.bg.MIN_WIDTH = 768;
  * @type {number}
  * @const
  */
-cca.bg.INITIAL_ASPECT_RATIO = 1.3333333333;
+cca.bg.INITIAL_ASPECT_RATIO = 1.7777777777;
 
 /**
  * Top bar color of the window.
@@ -34,6 +34,14 @@ cca.bg.INITIAL_ASPECT_RATIO = 1.3333333333;
  * @const
  */
 cca.bg.TOPBAR_COLOR = '#000000';
+
+/**
+ * Whether the main AppWindow is created. It's used in test to ensure that we
+ * won't connect to the main.html target before the window is created, otherwise
+ * the window might disappear.
+ * @type {boolean}
+ */
+cca.bg.appWindowCreated = false;
 
 /**
  * Creates the window. Note, that only one window at once is supported.
@@ -73,6 +81,7 @@ cca.bg.create = function() {
         chrome.storage.local.set({maximized: inAppWindow.isMaximized()});
         chrome.storage.local.set({fullscreen: inAppWindow.isFullscreen()});
       });
+      cca.bg.appWindowCreated = true;
     });
   });
 };

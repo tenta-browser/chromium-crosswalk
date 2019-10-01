@@ -46,7 +46,6 @@
 #include "third_party/blink/renderer/core/input/event_handler.h"
 #include "third_party/blink/renderer/core/layout/layout_embedded_content.h"
 #include "third_party/blink/renderer/core/loader/empty_clients.h"
-#include "third_party/blink/renderer/core/loader/navigation_scheduler.h"
 #include "third_party/blink/renderer/core/page/focus_controller.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
@@ -129,14 +128,20 @@ bool Frame::IsMainFrame() const {
   return !Tree().Parent();
 }
 
+bool Frame::IsCrossOriginSubframe() const {
+  const SecurityOrigin* security_origin =
+      GetSecurityContext()->GetSecurityOrigin();
+  return !security_origin->CanAccess(
+      Tree().Top().GetSecurityContext()->GetSecurityOrigin());
+}
+
 HTMLFrameOwnerElement* Frame::DeprecatedLocalOwner() const {
-  return owner_ && owner_->IsLocal() ? ToHTMLFrameOwnerElement(owner_)
-                                     : nullptr;
+  return DynamicTo<HTMLFrameOwnerElement>(owner_.Get());
 }
 
 static ChromeClient& GetEmptyChromeClient() {
   DEFINE_STATIC_LOCAL(Persistent<EmptyChromeClient>, client,
-                      (EmptyChromeClient::Create()));
+                      (MakeGarbageCollected<EmptyChromeClient>()));
   return *client;
 }
 
@@ -189,17 +194,20 @@ void Frame::NotifyUserActivationInLocalTree() {
   for (Frame* node = this; node; node = node->Tree().Parent())
     node->user_activation_state_.Activate();
 
-  // See FrameTreeNode::NotifyUserActivation() for details about this block.
-  if (IsLocalFrame() && RuntimeEnabledFeatures::UserActivationV2Enabled() &&
+  // See the "Same-origin Visibility" section in |UserActivationState| class
+  // doc.
+  auto* local_frame = DynamicTo<LocalFrame>(this);
+  if (local_frame && RuntimeEnabledFeatures::UserActivationV2Enabled() &&
       RuntimeEnabledFeatures::UserActivationSameOriginVisibilityEnabled()) {
     const SecurityOrigin* security_origin =
-        ToLocalFrame(this)->GetSecurityContext()->GetSecurityOrigin();
+        local_frame->GetSecurityContext()->GetSecurityOrigin();
 
     Frame& root = Tree().Top();
     for (Frame* node = &root; node; node = node->Tree().TraverseNext(&root)) {
-      if (node->IsLocalFrame() &&
+      auto* local_frame_node = DynamicTo<LocalFrame>(node);
+      if (local_frame_node &&
           security_origin->CanAccess(
-              ToLocalFrame(node)->GetSecurityContext()->GetSecurityOrigin())) {
+              local_frame_node->GetSecurityContext()->GetSecurityOrigin())) {
         node->user_activation_state_.Activate();
       }
     }
@@ -209,9 +217,6 @@ void Frame::NotifyUserActivationInLocalTree() {
 bool Frame::ConsumeTransientUserActivationInLocalTree() {
   bool was_active = user_activation_state_.IsActive();
 
-  // Note that consumption "touches" the whole frame tree, to guarantee that a
-  // malicious subframe can't embed sub-subframes in a way that could allow
-  // multiple consumptions per user activation.
   Frame& root = Tree().Top();
   for (Frame* node = &root; node; node = node->Tree().TraverseNext(&root))
     node->user_activation_state_.ConsumeIfActive();
@@ -224,6 +229,11 @@ void Frame::ClearUserActivationInLocalTree() {
     node->user_activation_state_.Clear();
 }
 
+void Frame::TransferUserActivationFrom(Frame* other) {
+  if (other)
+    user_activation_state_.TransferFrom(other->user_activation_state_);
+}
+
 void Frame::SetOwner(FrameOwner* owner) {
   owner_ = owner;
   UpdateInertIfPossible();
@@ -231,9 +241,10 @@ void Frame::SetOwner(FrameOwner* owner) {
 }
 
 void Frame::UpdateInertIfPossible() {
-  if (owner_ && owner_->IsLocal()) {
-    ToHTMLFrameOwnerElement(owner_)->UpdateDistributionForFlatTreeTraversal();
-    if (ToHTMLFrameOwnerElement(owner_)->IsInert())
+  if (auto* frame_owner_element =
+          DynamicTo<HTMLFrameOwnerElement>(owner_.Get())) {
+    frame_owner_element->UpdateDistributionForFlatTreeTraversal();
+    if (frame_owner_element->IsInert())
       SetIsInert(true);
   }
 }
@@ -269,6 +280,11 @@ Frame::Frame(FrameClient* client,
       devtools_frame_token_(client->GetDevToolsFrameToken()),
       create_stack_(base::debug::StackTrace()) {
   InstanceCounters::IncrementCounter(InstanceCounters::kFrameCounter);
+}
+
+void Frame::Initialize() {
+  // This frame must either be local or remote.
+  DCHECK_NE(IsLocalFrame(), IsRemoteFrame());
 
   if (owner_)
     owner_->SetContentFrame(*this);

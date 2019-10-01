@@ -7,11 +7,12 @@
 #include <memory>
 
 #include "base/auto_reset.h"
+#include "base/command_line.h"
 #include "base/logging.h"
 #include "base/trace_event/trace_event.h"
 #include "components/sync/base/cancelation_signal.h"
+#include "components/sync/engine/sync_engine_switches.h"
 #include "components/sync/engine_impl/apply_control_data_updates.h"
-#include "components/sync/engine_impl/clear_server_data.h"
 #include "components/sync/engine_impl/commit.h"
 #include "components/sync/engine_impl/commit_processor.h"
 #include "components/sync/engine_impl/cycle/nudge_tracker.h"
@@ -46,8 +47,13 @@ bool Syncer::NormalSyncShare(ModelTypeSet request_types,
                              SyncCycle* cycle) {
   base::AutoReset<bool> is_syncing(&is_syncing_, true);
   HandleCycleBegin(cycle);
-  if (nudge_tracker->IsGetUpdatesRequired() ||
-      cycle->context()->ShouldFetchUpdatesBeforeCommit()) {
+  // TODO(crbug.com/657130): Sync integration tests depend on the precommit get
+  // updates because invalidations aren't working for them. Therefore, they pass
+  // the command line switch to enable this feature. Once sync integrations test
+  // support invalidation, this should be removed.
+  base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
+  if (nudge_tracker->IsGetUpdatesRequired(request_types) ||
+      cl->HasSwitch(switches::kSyncEnableGetUpdatesBeforeCommit)) {
     VLOG(1) << "Downloading types " << ModelTypeSetToString(request_types);
     if (!DownloadAndApplyUpdates(&request_types, cycle,
                                  NormalGetUpdatesDelegate(*nudge_tracker))) {
@@ -92,12 +98,6 @@ bool Syncer::PollSyncShare(ModelTypeSet request_types, SyncCycle* cycle) {
   return HandleCycleEnd(cycle, sync_pb::SyncEnums::PERIODIC);
 }
 
-bool Syncer::PostClearServerData(SyncCycle* cycle) {
-  DCHECK(cycle);
-  ClearServerData clear_server_data(cycle->context()->account_name());
-  return clear_server_data.SendRequest(cycle).value() == SyncerError::SYNCER_OK;
-}
-
 bool Syncer::DownloadAndApplyUpdates(ModelTypeSet* request_types,
                                      SyncCycle* cycle,
                                      const GetUpdatesDelegate& delegate) {
@@ -128,8 +128,8 @@ bool Syncer::DownloadAndApplyUpdates(ModelTypeSet* request_types,
   {
     TRACE_EVENT0("sync", "ApplyUpdates");
 
-    // Control type updates always get applied first.
-    ApplyControlDataUpdates(cycle->context()->directory());
+    // Nigori updates always get applied first.
+    ApplyNigoriUpdate(cycle->context()->directory());
 
     // Apply updates to the other types. May or may not involve cross-thread
     // traffic, depending on the underlying update handlers and the GU type's

@@ -7,10 +7,14 @@
 #include <string>
 
 #include "ash/public/cpp/ash_pref_names.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/gtest_prod_util.h"
 #include "base/json/json_writer.h"
 #include "base/memory/singleton.h"
+#include "base/strings/string_piece.h"
+#include "base/strings/string_split.h"
+#include "base/strings/string_util.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
@@ -22,6 +26,7 @@
 #include "chrome/browser/ui/app_list/arc/arc_app_utils.h"
 #include "chrome/browser/ui/zoom/chrome_zoom_level_prefs.h"
 #include "chrome/common/pref_names.h"
+#include "chromeos/constants/chromeos_features.h"
 #include "chromeos/constants/chromeos_switches.h"
 #include "chromeos/network/network_handler.h"
 #include "chromeos/network/network_state.h"
@@ -30,13 +35,13 @@
 #include "chromeos/network/onc/onc_utils.h"
 #include "chromeos/network/proxy/proxy_config_service_impl.h"
 #include "chromeos/settings/timezone_settings.h"
-#include "components/arc/arc_bridge_service.h"
 #include "components/arc/arc_browser_context_keyed_service_factory_base.h"
 #include "components/arc/arc_prefs.h"
 #include "components/arc/arc_util.h"
 #include "components/arc/common/backup_settings.mojom.h"
 #include "components/arc/intent_helper/arc_intent_helper_bridge.h"
 #include "components/arc/intent_helper/font_size_util.h"
+#include "components/arc/session/arc_bridge_service.h"
 #include "components/language/core/browser/pref_names.h"
 #include "components/onc/onc_pref_names.h"
 #include "components/prefs/pref_change_registrar.h"
@@ -45,11 +50,19 @@
 #include "components/proxy_config/proxy_config_dictionary.h"
 #include "components/proxy_config/proxy_config_pref_names.h"
 #include "content/public/common/page_zoom.h"
+#include "net/proxy_resolution/proxy_bypass_rules.h"
 #include "net/proxy_resolution/proxy_config.h"
 
 using ::chromeos::system::TimezoneSettings;
 
 namespace {
+
+constexpr char kSetFontScaleAction[] =
+    "org.chromium.arc.intent_helper.SET_FONT_SCALE";
+constexpr char kSetPageZoomAction[] =
+    "org.chromium.arc.intent_helper.SET_PAGE_ZOOM";
+
+constexpr char kArcProxyBypassListDelimeter[] = ",";
 
 bool GetHttpProxyServer(const ProxyConfigDictionary* proxy_config_dict,
                         std::string* host,
@@ -165,6 +178,12 @@ class ArcSettingsServiceImpl
   void SyncTimeZoneByGeolocation() const;
   void SyncUse24HourClock() const;
 
+  // Resets Android's font scale to the default value.
+  void ResetFontScaleToDefault() const;
+
+  // Resets Android's display density to the default value.
+  void ResetPageZoomToDefault() const;
+
   // Registers to listen to a particular perf.
   void AddPrefToObserve(const std::string& pref_name);
 
@@ -203,6 +222,10 @@ class ArcSettingsServiceImpl
   // automatically unregisters a callback when it's destructed.
   std::unique_ptr<ChromeZoomLevelPrefs::DefaultZoomLevelSubscription>
       default_zoom_level_subscription_;
+
+  // Name of the default network. Used to keep track of whether the default
+  // network has changed.
+  std::string default_network_name_;
 
   DISALLOW_COPY_AND_ASSIGN(ArcSettingsServiceImpl);
 };
@@ -250,7 +273,7 @@ void ArcSettingsServiceImpl::OnPrefChanged(const std::string& pref_name) const {
   } else if (pref_name == ash::prefs::kAccessibilityVirtualKeyboardEnabled) {
     SyncAccessibilityVirtualKeyboardEnabled();
   } else if (pref_name == ::language::prefs::kApplicationLocale ||
-             pref_name == ::prefs::kLanguagePreferredLanguages) {
+             pref_name == ::language::prefs::kPreferredLanguages) {
     SyncLocale();
   } else if (pref_name == ::prefs::kUse24HourClock) {
     SyncUse24HourClock();
@@ -276,8 +299,17 @@ void ArcSettingsServiceImpl::DefaultNetworkChanged(
   // kProxy pref has more priority than the default network update.
   // If a default network is changed to the network with ONC policy with proxy
   // settings, it should be translated here.
-  if (network && !IsPrefProxyConfigApplied())
-    SyncProxySettings();
+  if (!network || IsPrefProxyConfigApplied())
+    return;
+
+  // This function is called when the default network changes or when any of its
+  // properties change. Only trigger a proxy settings sync to ARC when the
+  // default network changes.
+  if (default_network_name_ == network->name())
+    return;
+  default_network_name_ = network->name();
+
+  SyncProxySettings();
 }
 
 bool ArcSettingsServiceImpl::IsPrefProxyConfigApplied() const {
@@ -349,8 +381,6 @@ void ArcSettingsServiceImpl::SyncBootTimeSettings() const {
   SyncAccessibilityLargeMouseCursorEnabled();
   SyncAccessibilityVirtualKeyboardEnabled();
   SyncFocusHighlightEnabled();
-  SyncFontSize();
-  SyncPageZoom();
   SyncProxySettings();
   SyncReportingConsent(/*initial_sync=*/false);
   SyncSelectToSpeakEnabled();
@@ -359,6 +389,17 @@ void ArcSettingsServiceImpl::SyncBootTimeSettings() const {
   SyncTimeZone();
   SyncTimeZoneByGeolocation();
   SyncUse24HourClock();
+
+  // SplitSettings decouples browser font size and page zoom from Android's
+  // font size and display scale. Reset the values to default in case the user
+  // had a custom value. https://crbug.com/955071
+  if (base::FeatureList::IsEnabled(chromeos::features::kSplitSettings)) {
+    ResetFontScaleToDefault();
+    ResetPageZoomToDefault();
+  } else {
+    SyncFontSize();
+    SyncPageZoom();
+  }
 }
 
 void ArcSettingsServiceImpl::SyncAppTimeSettings() {
@@ -376,7 +417,7 @@ void ArcSettingsServiceImpl::SyncAppTimeSettings() {
   // implementation.
   SyncLocale();
   AddPrefToObserve(::language::prefs::kApplicationLocale);
-  AddPrefToObserve(::prefs::kLanguagePreferredLanguages);
+  AddPrefToObserve(::language::prefs::kPreferredLanguages);
 }
 
 void ArcSettingsServiceImpl::SyncAccessibilityLargeMouseCursorEnabled() const {
@@ -412,6 +453,11 @@ void ArcSettingsServiceImpl::SyncFocusHighlightEnabled() const {
 }
 
 void ArcSettingsServiceImpl::SyncFontSize() const {
+  // When OS settings are split from browser, don't use the browser's font size
+  // to change ARC++ font scale.
+  if (base::FeatureList::IsEnabled(chromeos::features::kSplitSettings))
+    return;
+
   int default_size = GetIntegerPref(::prefs::kWebKitDefaultFontSize);
   int default_fixed_size = GetIntegerPref(::prefs::kWebKitDefaultFixedFontSize);
   int minimum_size = GetIntegerPref(::prefs::kWebKitMinimumFontSize);
@@ -421,17 +467,21 @@ void ArcSettingsServiceImpl::SyncFontSize() const {
 
   base::DictionaryValue extras;
   extras.SetDouble("scale", android_scale);
-  SendSettingsBroadcast("org.chromium.arc.intent_helper.SET_FONT_SCALE",
-                        extras);
+  SendSettingsBroadcast(kSetFontScaleAction, extras);
 }
 
 void ArcSettingsServiceImpl::SyncPageZoom() const {
+  // When OS settings are split from browser, don't use the browser's page zoom
+  // to set ARC++ application density.
+  if (base::FeatureList::IsEnabled(chromeos::features::kSplitSettings))
+    return;
+
   double zoom_level = profile_->GetZoomLevelPrefs()->GetDefaultZoomLevelPref();
   double zoom_factor = content::ZoomLevelToZoomFactor(zoom_level);
 
   base::DictionaryValue extras;
   extras.SetDouble("zoomFactor", zoom_factor);
-  SendSettingsBroadcast("org.chromium.arc.intent_helper.SET_PAGE_ZOOM", extras);
+  SendSettingsBroadcast(kSetPageZoomAction, extras);
 }
 
 void ArcSettingsServiceImpl::SyncLocale() const {
@@ -503,6 +553,14 @@ void ArcSettingsServiceImpl::SyncProxySettings() const {
       std::string bypass_list;
       if (proxy_config_dict->GetBypassList(&bypass_list) &&
           !bypass_list.empty()) {
+        // Chrome uses semicolon [;] as delimiter for the proxy bypass list
+        // while ARC expects comma [,] delimiter.  Using the wrong delimiter
+        // causes loss of network connectivity for many apps in ARC.
+        auto bypassed_hosts = base::SplitStringPiece(
+            bypass_list, net::ProxyBypassRules::kBypassListDelimeter,
+            base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+        bypass_list =
+            base::JoinString(bypassed_hosts, kArcProxyBypassListDelimeter);
         extras.SetString("bypassList", bypass_list);
       }
       break;
@@ -594,6 +652,18 @@ void ArcSettingsServiceImpl::SyncUse24HourClock() const {
   extras.SetBoolean("use24HourClock", use24HourClock);
   SendSettingsBroadcast("org.chromium.arc.intent_helper.SET_USE_24_HOUR_CLOCK",
                         extras);
+}
+
+void ArcSettingsServiceImpl::ResetFontScaleToDefault() const {
+  base::DictionaryValue extras;
+  extras.SetDouble("scale", kAndroidFontScaleNormal);
+  SendSettingsBroadcast(kSetFontScaleAction, extras);
+}
+
+void ArcSettingsServiceImpl::ResetPageZoomToDefault() const {
+  base::DictionaryValue extras;
+  extras.SetDouble("zoomFactor", 1.0);
+  SendSettingsBroadcast(kSetPageZoomAction, extras);
 }
 
 void ArcSettingsServiceImpl::AddPrefToObserve(const std::string& pref_name) {

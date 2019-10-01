@@ -69,12 +69,34 @@ TEST_F(AutoscrollControllerTest,
   DCHECK(controller.IsAutoscrolling());
 
   // Hide scrollable here will cause UpdateSelectionForMouseDrag stop animation.
-  scrollable->SetInlineStyleProperty(CSSPropertyDisplay, CSSValueNone);
+  scrollable->SetInlineStyleProperty(CSSPropertyID::kDisplay,
+                                     CSSValueID::kNone);
 
   // BeginFrame will call AutoscrollController::Animate.
   Compositor().BeginFrame();
 
   EXPECT_FALSE(controller.IsAutoscrolling());
+}
+
+// Ensure that autoscrolling continues when the MouseLeave event is fired.
+TEST_F(AutoscrollControllerTest, ContinueAutoscrollAfterMouseLeaveEvent) {
+  AutoscrollController& controller = GetAutoscrollController();
+  LocalFrame* frame = GetDocument().GetFrame();
+
+  EXPECT_FALSE(controller.IsAutoscrolling());
+
+  controller.StartMiddleClickAutoscroll(frame, FloatPoint(), FloatPoint());
+
+  EXPECT_TRUE(controller.IsAutoscrolling());
+
+  WebMouseEvent mouse_leave_event(WebInputEvent::kMouseLeave,
+                                  WebInputEvent::kNoModifiers,
+                                  CurrentTimeTicks());
+  mouse_leave_event.SetFrameScale(1);
+
+  frame->GetEventHandler().HandleMouseLeaveEvent(mouse_leave_event);
+
+  EXPECT_TRUE(controller.IsAutoscrolling());
 }
 
 }  // namespace blink

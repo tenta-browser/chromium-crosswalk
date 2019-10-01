@@ -12,6 +12,7 @@
 #include "content/public/browser/site_instance.h"
 #include "content/public/browser/web_contents.h"
 #include "third_party/blink/public/mojom/loader/pause_subresource_loading_handle.mojom.h"
+#include "third_party/blink/public/platform/web_input_event.h"
 #include "ui/base/page_transition_types.h"
 
 class GURL;
@@ -80,7 +81,11 @@ class WebContentsTester {
   // Creates a pending navigation to the given URL with the default parameters
   // and then commits the load with a page ID one larger than any seen. This
   // emulates what happens on a new navigation.
-  virtual void NavigateAndCommit(const GURL& url) = 0;
+  // Default parameter transition allows the transition type to be controlled
+  // if needed.
+  virtual void NavigateAndCommit(
+      const GURL& url,
+      ui::PageTransition transition = ui::PAGE_TRANSITION_LINK) = 0;
 
   // Creates a pending navigation to the given URL with the default parameters
   // and then aborts it with the given |error_code| and |response_headers|.

@@ -10,11 +10,12 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
+#include "base/hash/md5.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/md5.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/system/sys_info.h"
@@ -38,7 +39,6 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/common/pref_names.h"
-#include "chrome/grit/generated_resources.h"
 #include "chromeos/components/drivefs/drivefs_bootstrap.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "chromeos/network/portal_detector/network_portal_detector.h"
@@ -54,6 +54,7 @@
 #include "components/drive/resource_metadata_storage.h"
 #include "components/drive/service/drive_api_service.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
+#include "components/metrics/metrics_pref_names.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_service.h"
 #include "components/version_info/version_info.h"
@@ -74,6 +75,7 @@
 #include "services/service_manager/public/cpp/connector.h"
 #include "storage/browser/fileapi/external_mount_points.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/chromeos/strings/grit/ui_chromeos_strings.h"
 
 using content::BrowserContext;
 using content::BrowserThread;
@@ -307,7 +309,7 @@ void CleanupGCacheV1(
   DeleteDirectoryContents(cache_directory);
 }
 
-std::vector<base::FilePath> GetPinnedFiles(
+std::vector<base::FilePath> GetPinnedAndDirtyFiles(
     std::unique_ptr<internal::ResourceMetadataStorage, util::DestroyHelper>
         metadata_storage,
     base::FilePath cache_directory,
@@ -332,6 +334,7 @@ std::vector<base::FilePath> GetPinnedFiles(
           GetFullPath(metadata_storage.get(), value), value.local_id()));
     }
   }
+  UMA_HISTOGRAM_COUNTS("Drive.MigrateDirtyFilesCount", dirty_files.size());
   // Destructing |metadata_storage| requires a posted task to run, so defer
   // deleting its data until after it's been destructed. This also returns the
   // list of files to pin to the UI thread without waiting for the remaining
@@ -517,6 +520,7 @@ class DriveIntegrationService::DriveFsHolder
         drivefs_host_(profile_->GetPath(),
                       this,
                       this,
+                      content::GetNetworkConnectionTracker(),
                       base::DefaultClock::GetInstance(),
                       chromeos::disks::DiskMountManager::GetInstance(),
                       std::make_unique<base::OneShotTimer>()) {}
@@ -543,6 +547,11 @@ class DriveIntegrationService::DriveFsHolder
   std::string GetObfuscatedAccountId() override {
     return base::MD5String(GetProfileSalt() + "-" +
                            GetAccountId().GetAccountIdKey());
+  }
+
+  bool IsMetricsCollectionEnabled() override {
+    return g_browser_process->local_state()->GetBoolean(
+        metrics::prefs::kMetricsReportingEnabled);
   }
 
   DriveNotificationManager& GetDriveNotificationManager() override {
@@ -580,6 +589,15 @@ class DriveIntegrationService::DriveFsHolder
     if (test_drivefs_mojo_listener_factory_)
       return test_drivefs_mojo_listener_factory_.Run();
     return Delegate::CreateMojoListener();
+  }
+
+  base::FilePath GetMyFilesPath() override {
+    return file_manager::util::GetMyFilesFolderForProfile(profile_);
+  }
+
+  std::string GetLostAndFoundDirectoryName() override {
+    return l10n_util::GetStringUTF8(
+        IDS_FILE_BROWSER_RECOVERED_FILES_FROM_GOOGLE_DRIVE_DIRECTORY_NAME);
   }
 
   Profile* const profile_;
@@ -641,6 +659,7 @@ DriveIntegrationService::DriveIntegrationService(
                                 std::move(test_drivefs_mojo_listener_factory))
                           : nullptr),
       preference_watcher_(preference_watcher),
+      power_manager_observer_(this),
       weak_ptr_factory_(this) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(profile && !profile->IsOffTheRecord());
@@ -665,6 +684,10 @@ DriveIntegrationService::DriveIntegrationService(
     delete test_file_system;
     if (migrated_to_drivefs) {
       state_ = INITIALIZED;
+    }
+    // PowerManagerClient is unset in unit tests.
+    if (chromeos::PowerManagerClient::Get()) {
+      power_manager_observer_.Add(chromeos::PowerManagerClient::Get());
     }
     SetEnabled(drive::util::IsDriveEnabledForProfile(profile));
     return;
@@ -1233,7 +1256,8 @@ void DriveIntegrationService::MigratePinnedFiles() {
   base::PostTaskAndReplyWithResult(
       blocking_task_runner_.get(), FROM_HERE,
       base::BindOnce(
-          &GetPinnedFiles, std::move(metadata_storage_), cache_root_directory_,
+          &GetPinnedAndDirtyFiles, std::move(metadata_storage_),
+          cache_root_directory_,
           file_manager::util::GetDownloadsFolderForProfile(profile_)),
       base::BindOnce(&DriveIntegrationService::PinFiles,
                      weak_ptr_factory_.GetWeakPtr()));
@@ -1248,6 +1272,21 @@ void DriveIntegrationService::PinFiles(
     GetDriveFsInterface()->SetPinned(path, true, base::DoNothing());
   }
   profile_->GetPrefs()->SetBoolean(prefs::kDriveFsPinnedMigrated, true);
+}
+
+void DriveIntegrationService::SuspendImminent(
+    power_manager::SuspendImminent::Reason reason) {
+  // This may a bit racy since it doesn't prevent suspend until the unmount is
+  // completed, instead relying on something else to defer suspending long
+  // enough.
+  RemoveDriveMountPoint();
+}
+
+void DriveIntegrationService::SuspendDone(
+    const base::TimeDelta& sleep_duration) {
+  if (is_enabled()) {
+    AddDriveMountPoint();
+  }
 }
 
 //===================== DriveIntegrationServiceFactory =======================

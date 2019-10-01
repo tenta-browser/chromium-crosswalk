@@ -56,11 +56,14 @@ class DiscardableImageMapTest : public testing::Test {
       const DiscardableImageMap& image_map,
       const gfx::Rect& rect) {
     std::vector<const DrawImage*> draw_image_ptrs;
+    // Choose a not-SRGB-and-not-invalid target color space to verify that it
+    // is passed correctly to the resulting DrawImages.
+    gfx::ColorSpace target_color_space = gfx::ColorSpace::CreateXYZD50();
     image_map.GetDiscardableImagesInRect(rect, &draw_image_ptrs);
     std::vector<DrawImage> draw_images;
     for (const auto* image : draw_image_ptrs)
-      draw_images.push_back(
-          DrawImage(*image, 1.f, PaintImage::kDefaultFrameIndex));
+      draw_images.push_back(DrawImage(
+          *image, 1.f, PaintImage::kDefaultFrameIndex, target_color_space));
 
     std::vector<PositionScaleDrawImage> position_draw_images;
     std::vector<DrawImage> results;
@@ -77,6 +80,7 @@ class DiscardableImageMapTest : public testing::Test {
     for (size_t i = 0; i < draw_images.size(); ++i) {
       EXPECT_TRUE(draw_images[i].paint_image() ==
                   position_draw_images[i].image);
+      EXPECT_EQ(draw_images[i].target_color_space(), target_color_space);
     }
     return position_draw_images;
   }
@@ -565,9 +569,9 @@ TEST_F(DiscardableImageMapTest, GetDiscardableImagesInShader) {
         SkMatrix scale = SkMatrix::MakeScale(std::max(x * 0.5f, kMinScale),
                                              std::max(y * 0.5f, kMinScale));
         PaintFlags flags;
-        flags.setShader(PaintShader::MakeImage(
-            discardable_image[y][x], SkShader::kClamp_TileMode,
-            SkShader::kClamp_TileMode, &scale));
+        flags.setShader(PaintShader::MakeImage(discardable_image[y][x],
+                                               SkTileMode::kClamp,
+                                               SkTileMode::kClamp, &scale));
         content_layer_client.add_draw_rect(
             gfx::Rect(x * 512 + 6, y * 512 + 6, 500, 500), flags);
       }
@@ -749,8 +753,7 @@ TEST_F(DiscardableImageMapTest, CapturesImagesInPaintRecordShaders) {
   PaintFlags flags;
   SkRect tile = SkRect::MakeWH(100, 100);
   flags.setShader(PaintShader::MakePaintRecord(
-      shader_record, tile, SkShader::TileMode::kClamp_TileMode,
-      SkShader::TileMode::kClamp_TileMode, nullptr));
+      shader_record, tile, SkTileMode::kClamp, SkTileMode::kClamp, nullptr));
   display_list->push<DrawRectOp>(SkRect::MakeWH(200, 200), flags);
   display_list->EndPaintOfUnpaired(visible_rect);
   display_list->Finalize();
@@ -824,8 +827,8 @@ TEST_F(DiscardableImageMapTest, CapturesImagesInPaintFilters) {
 TEST_F(DiscardableImageMapTest, CapturesImagesInSaveLayers) {
   PaintFlags flags;
   PaintImage image = CreateDiscardablePaintImage(gfx::Size(100, 100));
-  flags.setShader(PaintShader::MakeImage(image, SkShader::kClamp_TileMode,
-                                         SkShader::kClamp_TileMode, nullptr));
+  flags.setShader(PaintShader::MakeImage(image, SkTileMode::kClamp,
+                                         SkTileMode::kClamp, nullptr));
 
   gfx::Rect visible_rect(500, 500);
   scoped_refptr<DisplayItemList> display_list = new DisplayItemList();
@@ -856,8 +859,7 @@ TEST_F(DiscardableImageMapTest, EmbeddedShaderWithAnimatedImages) {
   PaintImage animated_image = CreateAnimatedImage(gfx::Size(100, 100), frames);
   shader_record->push<DrawImageOp>(animated_image, 0.f, 0.f, nullptr);
   auto shader_with_image = PaintShader::MakePaintRecord(
-      shader_record, tile, SkShader::TileMode::kClamp_TileMode,
-      SkShader::TileMode::kClamp_TileMode, nullptr);
+      shader_record, tile, SkTileMode::kClamp, SkTileMode::kClamp, nullptr);
 
   // Create a second shader which uses the shader above.
   auto second_shader_record = sk_make_sp<PaintOpBuffer>();
@@ -865,8 +867,8 @@ TEST_F(DiscardableImageMapTest, EmbeddedShaderWithAnimatedImages) {
   flags.setShader(shader_with_image);
   second_shader_record->push<DrawRectOp>(SkRect::MakeWH(200, 200), flags);
   auto shader_with_shader_with_image = PaintShader::MakePaintRecord(
-      second_shader_record, tile, SkShader::TileMode::kClamp_TileMode,
-      SkShader::TileMode::kClamp_TileMode, nullptr);
+      second_shader_record, tile, SkTileMode::kClamp, SkTileMode::kClamp,
+      nullptr);
 
   gfx::Rect visible_rect(500, 500);
   scoped_refptr<DisplayItemList> display_list = new DisplayItemList();
@@ -1082,8 +1084,8 @@ gfx::ColorSpace test_color_spaces[] = {
     gfx::ColorSpace::CreateDisplayP3D65(),
 };
 
-INSTANTIATE_TEST_CASE_P(ColorSpace,
-                        DiscardableImageMapColorSpaceTest,
-                        testing::ValuesIn(test_color_spaces));
+INSTANTIATE_TEST_SUITE_P(ColorSpace,
+                         DiscardableImageMapColorSpaceTest,
+                         testing::ValuesIn(test_color_spaces));
 
 }  // namespace cc

@@ -7,6 +7,7 @@
 
 #include <memory>
 
+#include "components/viz/common/display/update_vsync_parameters_callback.h"
 #include "components/viz/service/display/output_surface.h"
 #include "components/viz/service/display_embedder/viz_process_context_provider.h"
 #include "gpu/command_buffer/client/context_support.h"
@@ -14,14 +15,12 @@
 
 namespace viz {
 
-class SyntheticBeginFrameSource;
-
 // An OutputSurface implementation that directly draws and
 // swaps to an actual GL surface.
 class GLOutputSurface : public OutputSurface {
  public:
-  GLOutputSurface(scoped_refptr<VizProcessContextProvider> context_provider,
-                  SyntheticBeginFrameSource* synthetic_begin_frame_source);
+  explicit GLOutputSurface(
+      scoped_refptr<VizProcessContextProvider> context_provider);
   ~GLOutputSurface() override;
 
   // OutputSurface implementation
@@ -37,18 +36,23 @@ class GLOutputSurface : public OutputSurface {
                bool use_stencil) override;
   void SwapBuffers(OutputSurfaceFrame frame) override;
   uint32_t GetFramebufferCopyTextureFormat() override;
-  OverlayCandidateValidator* GetOverlayCandidateValidator() const override;
+  std::unique_ptr<OverlayCandidateValidator> TakeOverlayCandidateValidator()
+      override;
   bool IsDisplayedAsOverlayPlane() const override;
   unsigned GetOverlayTextureId() const override;
   gfx::BufferFormat GetOverlayBufferFormat() const override;
   bool HasExternalStencilTest() const override;
   void ApplyExternalStencil() override;
-#if BUILDFLAG(ENABLE_VULKAN)
-  gpu::VulkanSurface* GetVulkanSurface() override;
-#endif
   unsigned UpdateGpuFence() override;
   void SetNeedsSwapSizeNotifications(
       bool needs_swap_size_notifications) override;
+  void SetUpdateVSyncParametersCallback(
+      UpdateVSyncParametersCallback callback) override;
+  void SetGpuVSyncCallback(GpuVSyncCallback callback) override;
+  void SetGpuVSyncEnabled(bool enabled) override;
+  void SetDisplayTransformHint(gfx::OverlayTransform transform) override {}
+  gfx::OverlayTransform GetDisplayTransform() override;
+  base::ScopedClosureRunner GetCacheBackBufferCb() override;
 
  protected:
   OutputSurfaceClient* client() const { return client_; }
@@ -71,12 +75,13 @@ class GLOutputSurface : public OutputSurface {
   void OnGpuSwapBuffersCompleted(std::vector<ui::LatencyInfo> latency_info,
                                  const gfx::Size& pixel_size,
                                  const gpu::SwapBuffersCompleteParams& params);
-  void OnVSyncParametersUpdated(base::TimeTicks timebase,
-                                base::TimeDelta interval);
   void OnPresentation(const gfx::PresentationFeedback& feedback);
+  void OnGpuVSync(base::TimeTicks vsync_time, base::TimeDelta vsync_interval);
+  gfx::Rect ApplyDisplayInverse(const gfx::Rect& input);
 
+  scoped_refptr<VizProcessContextProvider> viz_context_provider_;
   OutputSurfaceClient* client_ = nullptr;
-  SyntheticBeginFrameSource* const synthetic_begin_frame_source_;
+  bool wants_vsync_parameter_updates_ = false;
   ui::LatencyTracker latency_tracker_;
 
   bool set_draw_rectangle_for_frame_ = false;

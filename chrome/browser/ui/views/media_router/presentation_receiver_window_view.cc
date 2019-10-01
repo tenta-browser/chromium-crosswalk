@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/views/media_router/presentation_receiver_window_view.h"
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "chrome/app/chrome_command_ids.h"
@@ -42,7 +43,6 @@
 
 #if defined(OS_CHROMEOS)
 #include "ash/public/cpp/window_properties.h"
-#include "ash/public/interfaces/window_state_type.mojom.h"
 #include "base/callback.h"
 #include "base/scoped_observer.h"
 #include "ui/aura/client/aura_constants.h"
@@ -169,7 +169,7 @@ void PresentationReceiverWindowView::Init() {
   auto box_owner =
       std::make_unique<views::BoxLayout>(views::BoxLayout::kVertical);
   box_owner->set_cross_axis_alignment(
-      views::BoxLayout::CROSS_AXIS_ALIGNMENT_STRETCH);
+      views::BoxLayout::CrossAxisAlignment::kStretch);
   auto* box = SetLayoutManager(std::move(box_owner));
   AddChildView(location_bar_view_);
   box->SetFlexForView(location_bar_view_, 0);

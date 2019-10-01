@@ -24,7 +24,6 @@
 
 // <include src="../../../webui/resources/js/cr/ui.js">
 // <include src="../../../webui/resources/js/cr/event_target.js">
-// <include src="../../../webui/resources/js/cr/ui/touch_handler.js">
 // <include src="../../../webui/resources/js/cr/ui/array_data_model.js">
 // <include src="../../../webui/resources/js/cr/ui/dialogs.js">
 // <include src="../../../webui/resources/js/cr/ui/list_item.js">
@@ -44,7 +43,11 @@
 
 // <include src="../../file_manager/common/js/async_util.js">
 // <include src="../../file_manager/common/js/file_type.js">
+// <include src="../../base/js/app_util.js">
+
+/* TODO(tapted): Remove the util.js dependency */
 // <include src="../../file_manager/common/js/util.js">
+
 // <include src="../../base/js/volume_manager_types.js">
 // <include
 // src="../../file_manager/foreground/js/metadata/content_metadata_provider.js">

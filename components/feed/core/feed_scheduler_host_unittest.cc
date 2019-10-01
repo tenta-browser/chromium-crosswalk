@@ -88,6 +88,9 @@ class FeedSchedulerHostTest : public ::testing::Test {
     // By moving time forward from initial seed events, the user will be moved
     // into kRareNtpUser classification.
     test_clock()->Advance(TimeDelta::FromDays(7));
+
+    ASSERT_EQ(UserClassifier::UserClass::kRareSuggestionsViewer,
+              scheduler()->GetUserClassifierForDebugging()->GetUserClass());
   }
 
   // Note: Time will be advanced.
@@ -97,6 +100,12 @@ class FeedSchedulerHostTest : public ::testing::Test {
     scheduler()->OnSuggestionConsumed();
     test_clock()->Advance(TimeDelta::FromMinutes(31));
     scheduler()->OnSuggestionConsumed();
+
+    // Depending on which events occurred over which period of time in the test
+    // before this function was called, it may not necessarily be sufficient to
+    // push the user into the active consumer class.
+    ASSERT_EQ(UserClassifier::UserClass::kActiveSuggestionsConsumer,
+              scheduler()->GetUserClassifierForDebugging()->GetUserClass());
   }
 
   // Many test cases want to ask the scheduler multiple times in a row to see
@@ -175,12 +184,12 @@ TEST_F(FeedSchedulerHostTest, GetTriggerThreshold) {
     EXPECT_FALSE(scheduler()->GetTriggerThreshold(trigger).is_zero());
   }
 
-  ClassifyAsRareNtpUser();
+  ClassifyAsActiveSuggestionsConsumer();
   for (FeedSchedulerHost::TriggerType trigger : triggers) {
     EXPECT_FALSE(scheduler()->GetTriggerThreshold(trigger).is_zero());
   }
 
-  ClassifyAsActiveSuggestionsConsumer();
+  ClassifyAsRareNtpUser();
   for (FeedSchedulerHost::TriggerType trigger : triggers) {
     EXPECT_FALSE(scheduler()->GetTriggerThreshold(trigger).is_zero());
   }
@@ -918,6 +927,28 @@ TEST_F(FeedSchedulerHostTest, IncorporatesExternalOustandingRequest) {
   // prevent the OnForegrounded() from requesting a refresh.
   scheduler()->OnForegrounded();
   EXPECT_EQ(0, refresh_call_count());
+
+  EXPECT_EQ(kRequestWithWait,
+            scheduler()->ShouldSessionRequestData(
+                /*has_content*/ false, /*content_creation_date_time*/ Time(),
+                /*has_outstanding_request*/ false));
+}
+
+TEST_F(FeedSchedulerHostTest, IncorporatesExternalHasContent) {
+  Time now = test_clock()->Now();
+  EXPECT_EQ(Time(), profile_prefs()->GetTime(prefs::kLastFetchAttemptTime));
+
+  EXPECT_EQ(kNoRequestWithContent,
+            scheduler()->ShouldSessionRequestData(
+                /*has_content*/ true, now, /*has_outstanding_request*/ false));
+  EXPECT_EQ(now, profile_prefs()->GetTime(prefs::kLastFetchAttemptTime));
+
+  // Use has_outstanding_request of true to keep the scheduler from actually
+  // triggering the refresh. We want to track the change to its internal state.
+  EXPECT_EQ(kNoRequestWithWait, scheduler()->ShouldSessionRequestData(
+                                    /*has_content*/ false, base::Time(),
+                                    /*has_outstanding_request*/ true));
+  EXPECT_EQ(Time(), profile_prefs()->GetTime(prefs::kLastFetchAttemptTime));
 }
 
 TEST_F(FeedSchedulerHostTest, TimeUntilFirstMetrics) {
@@ -933,7 +964,7 @@ TEST_F(FeedSchedulerHostTest, TimeUntilFirstMetrics) {
   EXPECT_EQ(0U, histogram_tester.GetAllSamples(forgroundedHistogram).size());
 
   scheduler()->ShouldSessionRequestData(
-      /*has_content*/ false, now, /*has_outstanding_request*/ false);
+      /*has_content*/ true, now, /*has_outstanding_request*/ false);
   EXPECT_EQ(1, histogram_tester.GetBucketCount(ntpOpenedHistogram, 0));
   EXPECT_EQ(0U, histogram_tester.GetAllSamples(forgroundedHistogram).size());
 
@@ -942,7 +973,7 @@ TEST_F(FeedSchedulerHostTest, TimeUntilFirstMetrics) {
   EXPECT_EQ(1, histogram_tester.GetBucketCount(forgroundedHistogram, 0));
 
   scheduler()->ShouldSessionRequestData(
-      /*has_content*/ false, now, /*has_outstanding_request*/ false);
+      /*has_content*/ true, now, /*has_outstanding_request*/ false);
   scheduler()->OnForegrounded();
   EXPECT_EQ(1, histogram_tester.GetBucketCount(ntpOpenedHistogram, 0));
   EXPECT_EQ(1, histogram_tester.GetBucketCount(forgroundedHistogram, 0));
@@ -952,7 +983,7 @@ TEST_F(FeedSchedulerHostTest, TimeUntilFirstMetrics) {
   scheduler()->OnRequestError(0);
 
   scheduler()->ShouldSessionRequestData(
-      /*has_content*/ false, now, /*has_outstanding_request*/ false);
+      /*has_content*/ true, now, /*has_outstanding_request*/ false);
   scheduler()->OnForegrounded();
   EXPECT_EQ(2, histogram_tester.GetBucketCount(ntpOpenedHistogram, 0));
   EXPECT_EQ(2, histogram_tester.GetBucketCount(forgroundedHistogram, 0));
@@ -970,6 +1001,60 @@ TEST_F(FeedSchedulerHostTest, RefreshThrottler) {
     ResetRefreshState(Time());
     EXPECT_EQ(std::min(i + 1, 3), refresh_call_count());
   }
+}
+
+TEST_F(FeedSchedulerHostTest, GetUserClassifierForDebuggingRareUser) {
+  ClassifyAsRareNtpUser();
+
+  EXPECT_EQ(UserClassifier::UserClass::kRareSuggestionsViewer,
+            scheduler()->GetUserClassifierForDebugging()->GetUserClass());
+}
+
+TEST_F(FeedSchedulerHostTest, GetUserClassifierForDebuggingActiveConsumer) {
+  ClassifyAsActiveSuggestionsConsumer();
+
+  EXPECT_EQ(UserClassifier::UserClass::kActiveSuggestionsConsumer,
+            scheduler()->GetUserClassifierForDebugging()->GetUserClass());
+}
+
+TEST_F(FeedSchedulerHostTest, GetSuppressRefreshesUntilForDebugging) {
+  EXPECT_TRUE(scheduler()->GetSuppressRefreshesUntilForDebugging().is_null());
+
+  scheduler()->OnArticlesCleared(/*suppress_refreshes*/ true);
+
+  EXPECT_EQ(test_clock()->Now() + TimeDelta::FromMinutes(30),
+            scheduler()->GetSuppressRefreshesUntilForDebugging());
+}
+
+TEST_F(FeedSchedulerHostTest, GetLastFetchStatusForDebugging) {
+  EXPECT_EQ(0, scheduler()->GetLastFetchStatusForDebugging());
+
+  scheduler()->OnReceiveNewContent(Time());
+
+  EXPECT_EQ(200, scheduler()->GetLastFetchStatusForDebugging());
+
+  scheduler()->OnRequestError(-100);
+
+  EXPECT_EQ(-100, scheduler()->GetLastFetchStatusForDebugging());
+}
+
+TEST_F(FeedSchedulerHostTest, GetLastFetchTriggerTypeForDebugging) {
+  scheduler()->OnForegrounded();
+
+  EXPECT_EQ(FeedSchedulerHost::TriggerType::kForegrounded,
+            scheduler()->GetLastFetchTriggerTypeForDebugging());
+
+  scheduler()->OnArticlesCleared(/*suppress_refreshes*/ false);
+
+  EXPECT_EQ(FeedSchedulerHost::TriggerType::kNtpShown,
+            scheduler()->GetLastFetchTriggerTypeForDebugging());
+
+  ClassifyAsActiveSuggestionsConsumer();  // Fixed timer at 48 hours.
+  test_clock()->Advance(TimeDelta::FromHours(49));
+  scheduler()->OnFixedTimer(base::OnceClosure());
+
+  EXPECT_EQ(FeedSchedulerHost::TriggerType::kFixedTimer,
+            scheduler()->GetLastFetchTriggerTypeForDebugging());
 }
 
 }  // namespace feed

@@ -58,8 +58,9 @@ class MockCastNetworkRequestInterceptor : public CastNetworkRequestInterceptor {
 class CastNetworkDelegateTest : public testing::Test {
  public:
   CastNetworkDelegateTest()
-      : task_env_(base::test::ScopedTaskEnvironment::MainThreadType::DEFAULT,
-                  base::test::ScopedTaskEnvironment::ExecutionMode::QUEUED),
+      : task_env_(
+            base::test::ScopedTaskEnvironment::MainThreadType::DEFAULT,
+            base::test::ScopedTaskEnvironment::ThreadPoolExecutionMode::QUEUED),
         context_(true) {
     context_.Init();
     std::unique_ptr<MockCastNetworkRequestInterceptor>
@@ -70,7 +71,7 @@ class CastNetworkDelegateTest : public testing::Test {
     cast_network_delegate_ = std::make_unique<CastNetworkDelegate>(
         std::move(cast_network_request_interceptor_));
   }
-  ~CastNetworkDelegateTest() override{};
+  ~CastNetworkDelegateTest() override {}
 
  protected:
   base::test::ScopedTaskEnvironment task_env_;

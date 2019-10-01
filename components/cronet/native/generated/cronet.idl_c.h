@@ -99,6 +99,7 @@ typedef enum Cronet_RESULT {
   Cronet_RESULT_NULL_POINTER_HEADER_NAME = -309,
   Cronet_RESULT_NULL_POINTER_HEADER_VALUE = -310,
   Cronet_RESULT_NULL_POINTER_PARAMS = -311,
+  Cronet_RESULT_NULL_POINTER_REQUEST_FINISHED_INFO_LISTENER_EXECUTOR = -312,
 } Cronet_RESULT;
 
 typedef enum Cronet_Error_ERROR_CODE {
@@ -668,12 +669,16 @@ Cronet_RequestFinishedInfoListener_GetClientContext(
 CRONET_EXPORT
 void Cronet_RequestFinishedInfoListener_OnRequestFinished(
     Cronet_RequestFinishedInfoListenerPtr self,
-    Cronet_RequestFinishedInfoPtr request_info);
+    Cronet_RequestFinishedInfoPtr request_info,
+    Cronet_UrlResponseInfoPtr response_info,
+    Cronet_ErrorPtr error);
 // The app implements abstract interface Cronet_RequestFinishedInfoListener by
 // defining custom functions for each method.
 typedef void (*Cronet_RequestFinishedInfoListener_OnRequestFinishedFunc)(
     Cronet_RequestFinishedInfoListenerPtr self,
-    Cronet_RequestFinishedInfoPtr request_info);
+    Cronet_RequestFinishedInfoPtr request_info,
+    Cronet_UrlResponseInfoPtr response_info,
+    Cronet_ErrorPtr error);
 // The app creates an instance of Cronet_RequestFinishedInfoListener by
 // providing custom functions for each method.
 CRONET_EXPORT Cronet_RequestFinishedInfoListenerPtr
@@ -1239,22 +1244,6 @@ CRONET_EXPORT
 void Cronet_RequestFinishedInfo_finished_reason_set(
     Cronet_RequestFinishedInfoPtr self,
     const Cronet_RequestFinishedInfo_FINISHED_REASON finished_reason);
-CRONET_EXPORT
-void Cronet_RequestFinishedInfo_response_info_set(
-    Cronet_RequestFinishedInfoPtr self,
-    const Cronet_UrlResponseInfoPtr response_info);
-// Move data from |response_info|. The caller retains ownership of
-// |response_info| and must destroy it.
-void Cronet_RequestFinishedInfo_response_info_move(
-    Cronet_RequestFinishedInfoPtr self,
-    Cronet_UrlResponseInfoPtr response_info);
-CRONET_EXPORT
-void Cronet_RequestFinishedInfo_error_set(Cronet_RequestFinishedInfoPtr self,
-                                          const Cronet_ErrorPtr error);
-// Move data from |error|. The caller retains ownership of |error| and must
-// destroy it.
-void Cronet_RequestFinishedInfo_error_move(Cronet_RequestFinishedInfoPtr self,
-                                           Cronet_ErrorPtr error);
 // Cronet_RequestFinishedInfo getters.
 CRONET_EXPORT
 Cronet_MetricsPtr Cronet_RequestFinishedInfo_metrics_get(
@@ -1272,12 +1261,6 @@ void Cronet_RequestFinishedInfo_annotations_clear(
 CRONET_EXPORT
 Cronet_RequestFinishedInfo_FINISHED_REASON
 Cronet_RequestFinishedInfo_finished_reason_get(
-    const Cronet_RequestFinishedInfoPtr self);
-CRONET_EXPORT
-Cronet_UrlResponseInfoPtr Cronet_RequestFinishedInfo_response_info_get(
-    const Cronet_RequestFinishedInfoPtr self);
-CRONET_EXPORT
-Cronet_ErrorPtr Cronet_RequestFinishedInfo_error_get(
     const Cronet_RequestFinishedInfoPtr self);
 
 #ifdef __cplusplus

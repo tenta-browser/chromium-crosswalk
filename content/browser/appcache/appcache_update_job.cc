@@ -12,18 +12,18 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "content/browser/appcache/appcache_frontend.h"
 #include "content/browser/appcache/appcache_group.h"
 #include "content/browser/appcache/appcache_histograms.h"
-#include "content/browser/appcache/appcache_update_request_base.h"
 #include "content/browser/appcache/appcache_update_url_fetcher.h"
-#include "content/common/appcache_interfaces.h"
+#include "content/browser/appcache/appcache_update_url_loader_request.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/base/io_buffer.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/base/request_priority.h"
+#include "storage/browser/quota/padding_key.h"
 #include "third_party/blink/public/mojom/appcache/appcache.mojom.h"
+#include "third_party/blink/public/mojom/devtools/console_message.mojom.h"
 #include "url/origin.h"
 
 namespace content {
@@ -70,10 +70,72 @@ bool IsEvictableError(AppCacheUpdateJob::ResultType result,
 }
 
 bool CanUseExistingResource(const net::HttpResponseInfo* http_info) {
+  if (!http_info->headers)
+    return false;
+
+  base::Time request_time = http_info->request_time;
+  base::Time response_time = http_info->response_time;
+
+  // The logic below works around the following confluence of problems.
+  //
+  // 1) If a cached response contains a Last-Modified header,
+  // AppCacheUpdateJob::URLFetcher::AddConditionalHeaders() adds an
+  // If-Modified-Since header, so the server may return an HTTP 304 Not Modified
+  // response. AppCacheUpdateJob::HandleUrlFetchCompleted() reuses the existing
+  // cache entry when a 304 is received, even though the HTTP specification
+  // mandates updating the cached headers with the headers in the 304 response.
+  //
+  // This deviation from the HTTP specification is Web-observable when AppCache
+  // resources are served with Last-Modified and Cache-Control: max-age headers.
+  // Specifically, if a server returns a 304 with a Cache-Control: max-age
+  // header, the response stored in AppCache should be updated to reflect the
+  // new cache expiration time. Instead, Chrome ignores all the headers in the
+  // 304 response, so the Cache-Control: max-age directive is discarded.
+  //
+  // In other words, once a cached resource's lifetime expires, 304 responses
+  // won't refresh its lifetime. Chrome gets stuck in a cycle where it sends
+  // If-Modified-Since requests, the server responds with 304, and the response
+  // headers are discarded.
+  //
+  // 2) The implementation of
+  // AppCacheUpdateJob::UpdateURLLoaderRequest::OnReceiveResponse() introduced
+  // in https://crrev.com/c/599359 did not populate |request_time| and
+  // |response_time|. When the Network Service was enabled, caches got populated
+  // with the default value of base::Time, which is the Windows epoch. So,
+  // cached entries with max-age values below ~40 years will require
+  // re-validation. https://crrev.com/c/1636266 fixed the cache population bug,
+  // but did not address the incorrect times that have already been written to
+  // users' disks.
+  //
+  // The 1st problem, on its own, hasn't had a large impact. This is likely
+  // because we have been advising sites to set max-age=31536000 (~1 year) for
+  // immutable resources, and most AppCache caches have been getting evicted
+  // before the entries' max-age expired. However, the 2nd problem caused us to
+  // create a large number of expired cache entries, and the unnecessary
+  // If-Modified-Since requests are causing noticeable levels of traffic.
+  //
+  // The logic below is a workaround while a longer-term fix gets developed and
+  // deployed. We'll consider all cache entries with invalid times to have been
+  // created on Tue, Jan 29 2019. This is the day when M72 was released to
+  // Chrome's Stable channel, and was chosen because M72 had the first large
+  // Network Service deployment.
+  static constexpr base::Time::Exploded kInvalidTimePlaceholderExploded = {
+      2019, 1, 2, 29, 0, 0, 0, 0};
+  constexpr base::Time default_initialized_time;
+  if (request_time == default_initialized_time) {
+    bool conversion_succeeded = base::Time::FromUTCExploded(
+        kInvalidTimePlaceholderExploded, &request_time);
+    DCHECK(conversion_succeeded);
+  }
+  if (response_time == default_initialized_time) {
+    bool conversion_succeeded = base::Time::FromUTCExploded(
+        kInvalidTimePlaceholderExploded, &response_time);
+    DCHECK(conversion_succeeded);
+  }
+
   // Check HTTP caching semantics based on max-age and expiration headers.
-  if (!http_info->headers || http_info->headers->RequiresValidation(
-                                 http_info->request_time,
-                                 http_info->response_time, base::Time::Now())) {
+  if (http_info->headers->RequiresValidation(request_time, response_time,
+                                             base::Time::Now())) {
     return false;
   }
 
@@ -95,20 +157,27 @@ bool CanUseExistingResource(const net::HttpResponseInfo* http_info) {
 
 void EmptyCompletionCallback(int result) {}
 
+int64_t ComputeAppCacheResponsePadding(const GURL& response_url,
+                                       const GURL& manifest_url) {
+  // All cross-origin resources should have their size padded in response to
+  // queries regarding quota usage.
+  if (response_url.GetOrigin() == manifest_url.GetOrigin())
+    return 0;
+
+  return storage::ComputeResponsePadding(response_url.spec(),
+                                         storage::GetDefaultPaddingKey(),
+                                         /*has_metadata=*/false);
+}
+
 }  // namespace
 
 // Helper class for collecting hosts per frontend when sending notifications
 // so that only one notification is sent for all hosts using the same frontend.
 class HostNotifier {
  public:
-  using HostIds = std::vector<int>;
-  using NotifyHostMap = std::map<AppCacheFrontend*, HostIds>;
-
   // Caller is responsible for ensuring there will be no duplicate hosts.
   void AddHost(AppCacheHost* host) {
-    std::pair<NotifyHostMap::iterator, bool> ret = hosts_to_notify_.insert(
-        NotifyHostMap::value_type(host->frontend(), HostIds()));
-    ret.first->second.push_back(host->host_id());
+    hosts_to_notify_.insert(host->frontend());
   }
 
   void AddHosts(const std::set<AppCacheHost*>& hosts) {
@@ -117,41 +186,32 @@ class HostNotifier {
   }
 
   void SendNotifications(blink::mojom::AppCacheEventID event_id) {
-    for (auto& pair : hosts_to_notify_) {
-      AppCacheFrontend* frontend = pair.first;
-      frontend->OnEventRaised(pair.second, event_id);
-    }
+    for (auto* frontend : hosts_to_notify_)
+      frontend->EventRaised(event_id);
   }
 
   void SendProgressNotifications(const GURL& url,
                                  int num_total,
                                  int num_complete) {
-    for (const auto& pair : hosts_to_notify_) {
-      AppCacheFrontend* frontend = pair.first;
-      frontend->OnProgressEventRaised(pair.second, url, num_total,
-                                      num_complete);
-    }
+    for (auto* frontend : hosts_to_notify_)
+      frontend->ProgressEventRaised(url, num_total, num_complete);
   }
 
   void SendErrorNotifications(
       const blink::mojom::AppCacheErrorDetails& details) {
     DCHECK(!details.message.empty());
-    for (const auto& pair : hosts_to_notify_) {
-      AppCacheFrontend* frontend = pair.first;
-      frontend->OnErrorEventRaised(pair.second, details);
-    }
+    for (auto* frontend : hosts_to_notify_)
+      frontend->ErrorEventRaised(details.Clone());
   }
 
   void SendLogMessage(const std::string& message) {
-    for (const auto& pair : hosts_to_notify_) {
-      AppCacheFrontend* frontend = pair.first;
-      for (const auto& id : pair.second)
-        frontend->OnLogMessage(id, APPCACHE_LOG_WARNING, message);
-    }
+    for (auto* frontend : hosts_to_notify_)
+      frontend->LogMessage(blink::mojom::ConsoleMessageLevel::kWarning,
+                           message);
   }
 
  private:
-  NotifyHostMap hosts_to_notify_;
+  std::set<blink::mojom::AppCacheFrontend*> hosts_to_notify_;
 };
 AppCacheUpdateJob::UrlToFetch::UrlToFetch(const GURL& url,
                                           bool checked,
@@ -274,7 +334,7 @@ void AppCacheUpdateJob::StartUpdate(AppCacheHost* host,
                               is_new_pending_master_entry);
   }
 
-  BrowserThread::PostAfterStartupTask(
+  BrowserThread::PostBestEffortTask(
       FROM_HERE, base::ThreadTaskRunnerHandle::Get(),
       base::BindOnce(&AppCacheUpdateJob::FetchManifest,
                      weak_factory_.GetWeakPtr(), true));
@@ -371,7 +431,7 @@ void AppCacheUpdateJob::HandleManifestFetchCompleted(URLFetcher* fetcher,
 
   manifest_fetcher_ = nullptr;
 
-  UpdateRequestBase* request = fetcher->request();
+  UpdateURLLoaderRequest* request = fetcher->request();
   int response_code = -1;
   bool is_valid_response_code = false;
   if (net_error == net::OK) {
@@ -507,7 +567,7 @@ void AppCacheUpdateJob::HandleUrlFetchCompleted(URLFetcher* fetcher,
                                                 int net_error) {
   DCHECK(internal_state_ == DOWNLOADING);
 
-  UpdateRequestBase* request = fetcher->request();
+  UpdateURLLoaderRequest* request = fetcher->request();
   const GURL& url = request->GetURL();
   pending_url_fetches_.erase(url);
   NotifyAllProgress(url);
@@ -522,7 +582,9 @@ void AppCacheUpdateJob::HandleUrlFetchCompleted(URLFetcher* fetcher,
     // Associate storage with the new entry.
     DCHECK(fetcher->response_writer());
     entry.set_response_id(fetcher->response_writer()->response_id());
-    entry.set_response_size(fetcher->response_writer()->amount_written());
+    entry.SetResponseAndPaddingSizes(
+        fetcher->response_writer()->amount_written(),
+        ComputeAppCacheResponsePadding(url, manifest_url_));
     if (!inprogress_cache_->AddOrModifyEntry(url, entry))
       duplicate_response_ids_.push_back(entry.response_id());
 
@@ -543,7 +605,9 @@ void AppCacheUpdateJob::HandleUrlFetchCompleted(URLFetcher* fetcher,
       if (response_code == 304 && fetcher->existing_entry().has_response_id()) {
         // Keep the existing response.
         entry.set_response_id(fetcher->existing_entry().response_id());
-        entry.set_response_size(fetcher->existing_entry().response_size());
+        entry.SetResponseAndPaddingSizes(
+            fetcher->existing_entry().response_size(),
+            fetcher->existing_entry().padding_size());
         inprogress_cache_->AddOrModifyEntry(url, entry);
       } else {
         const char kFormatString[] = "Resource fetch failed (%d) %s";
@@ -588,7 +652,9 @@ void AppCacheUpdateJob::HandleUrlFetchCompleted(URLFetcher* fetcher,
       // but the old resource may or may not be compatible with the new contents
       // of the cache. Impossible to know one way or the other.
       entry.set_response_id(fetcher->existing_entry().response_id());
-      entry.set_response_size(fetcher->existing_entry().response_size());
+      entry.SetResponseAndPaddingSizes(
+          fetcher->existing_entry().response_size(),
+          fetcher->existing_entry().padding_size());
       inprogress_cache_->AddOrModifyEntry(url, entry);
     }
   }
@@ -608,7 +674,7 @@ void AppCacheUpdateJob::HandleMasterEntryFetchCompleted(URLFetcher* fetcher,
   // master entry fetches when entering cache failure state so this will never
   // be called in CACHE_FAILURE state.
 
-  UpdateRequestBase* request = fetcher->request();
+  UpdateURLLoaderRequest* request = fetcher->request();
   const GURL& url = request->GetURL();
   master_entry_fetches_.erase(url);
   ++master_entries_completed_;
@@ -625,9 +691,11 @@ void AppCacheUpdateJob::HandleMasterEntryFetchCompleted(URLFetcher* fetcher,
     AppCache* cache = inprogress_cache_.get() ? inprogress_cache_.get()
                                               : group_->newest_complete_cache();
     DCHECK(fetcher->response_writer());
-    AppCacheEntry master_entry(AppCacheEntry::MASTER,
-                               fetcher->response_writer()->response_id(),
-                               fetcher->response_writer()->amount_written());
+    // Master entries cannot be cross-origin by definition, so they do not
+    // require padding.
+    AppCacheEntry master_entry(
+        AppCacheEntry::MASTER, fetcher->response_writer()->response_id(),
+        fetcher->response_writer()->amount_written(), /*padding_size=*/0);
     if (cache->AddOrModifyEntry(url, master_entry))
       added_master_entries_.push_back(url);
     else
@@ -729,12 +797,18 @@ void AppCacheUpdateJob::HandleManifestRefetchCompleted(URLFetcher* fetcher,
       const char kFormatString[] = "Manifest re-fetch failed (%d) %s";
       std::string message = FormatUrlErrorMessage(
           kFormatString, manifest_url_, fetcher->result(), response_code);
+      ResultType result = fetcher->result();
+      if (result == UPDATE_OK) {
+        // URLFetcher considers any 2xx response a success, however in this
+        // particular case we want to treat any non 200 responses as failures.
+        result = SERVER_ERROR;
+      }
       HandleCacheFailure(
           blink::mojom::AppCacheErrorDetails(
               message,
               blink::mojom::AppCacheErrorReason::APPCACHE_MANIFEST_ERROR,
               GURL(), response_code, false /*is_cross_origin*/),
-          fetcher->result(), GURL());
+          result, GURL());
     }
   }
 }
@@ -759,9 +833,12 @@ void AppCacheUpdateJob::OnManifestInfoWriteComplete(int result) {
 
 void AppCacheUpdateJob::OnManifestDataWriteComplete(int result) {
   if (result > 0) {
+    // The manifest determines the cache's origin, so the manifest entry is
+    // always same-origin, and thus does not require padding.
     AppCacheEntry entry(AppCacheEntry::MANIFEST,
-        manifest_response_writer_->response_id(),
-        manifest_response_writer_->amount_written());
+                        manifest_response_writer_->response_id(),
+                        manifest_response_writer_->amount_written(),
+                        /*padding_size=*/0);
     if (!inprogress_cache_->AddOrModifyEntry(manifest_url_, entry))
       duplicate_response_ids_.push_back(entry.response_id());
     StoreGroupAndCache();
@@ -828,8 +905,7 @@ void AppCacheUpdateJob::OnGroupAndNewestCacheStored(AppCacheGroup* group,
 void AppCacheUpdateJob::NotifySingleHost(
     AppCacheHost* host,
     blink::mojom::AppCacheEventID event_id) {
-  std::vector<int> ids(1, host->host_id());
-  host->frontend()->OnEventRaised(ids, event_id);
+  host->frontend()->EventRaised(event_id);
 }
 
 void AppCacheUpdateJob::NotifyAllAssociatedHosts(
@@ -1222,7 +1298,8 @@ void AppCacheUpdateJob::OnResponseInfoLoaded(
     DCHECK(it != url_file_list_.end());
     AppCacheEntry& entry = it->second;
     entry.set_response_id(response_id);
-    entry.set_response_size(copy_me->response_size());
+    entry.SetResponseAndPaddingSizes(copy_me->response_size(),
+                                     copy_me->padding_size());
     inprogress_cache_->AddOrModifyEntry(url, entry);
     NotifyAllProgress(url);
     ++url_fetches_completed_;

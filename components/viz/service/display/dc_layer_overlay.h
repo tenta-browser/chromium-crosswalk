@@ -16,7 +16,7 @@
 
 namespace viz {
 class DisplayResourceProvider;
-class OutputSurface;
+class ContextProvider;
 
 // Holds all information necessary to construct a DCLayer from a DrawQuad.
 class VIZ_SERVICE_EXPORT DCLayerOverlay {
@@ -69,20 +69,21 @@ typedef std::vector<DCLayerOverlay> DCLayerOverlayList;
 
 class DCLayerOverlayProcessor {
  public:
-  explicit DCLayerOverlayProcessor(OutputSurface* surface);
+  explicit DCLayerOverlayProcessor(const ContextProvider* context_provider);
   ~DCLayerOverlayProcessor();
 
   void Process(DisplayResourceProvider* resource_provider,
                const gfx::RectF& display_rect,
                RenderPassList* render_passes,
-               gfx::Rect* overlay_damage_rect,
                gfx::Rect* damage_rect,
                DCLayerOverlayList* dc_layer_overlays);
-  void ClearOverlayState() {
-    previous_frame_underlay_rect_ = gfx::Rect();
-    previous_frame_underlay_occlusion_ = gfx::Rect();
-  }
+  void ClearOverlayState();
   void SetHasHwOverlaySupport() { has_hw_overlay_support_ = true; }
+  // This is the damage contribution due to previous frame's overlays which can
+  // be empty.
+  gfx::Rect previous_frame_overlay_damage_contribution() {
+    return previous_frame_overlay_rect_union_;
+  }
 
  private:
   // Returns an iterator to the element after |it|.
@@ -94,30 +95,29 @@ class DCLayerOverlayProcessor {
                          const gfx::RectF& display_rect,
                          RenderPass* render_pass,
                          bool is_root,
-                         gfx::Rect* overlay_damage_rect,
                          gfx::Rect* damage_rect,
                          DCLayerOverlayList* dc_layer_overlays);
-  bool ProcessForOverlay(const gfx::RectF& display_rect,
+  void ProcessForOverlay(const gfx::RectF& display_rect,
                          QuadList* quad_list,
                          const gfx::Rect& quad_rectangle,
-                         const gfx::RectF& occlusion_bounding_box,
                          QuadList::Iterator* it,
                          gfx::Rect* damage_rect);
-  bool ProcessForUnderlay(const gfx::RectF& display_rect,
+  void ProcessForUnderlay(const gfx::RectF& display_rect,
                           RenderPass* render_pass,
                           const gfx::Rect& quad_rectangle,
-                          const gfx::RectF& occlusion_bounding_box,
                           const QuadList::Iterator& it,
                           bool is_root,
                           gfx::Rect* damage_rect,
                           gfx::Rect* this_frame_underlay_rect,
-                          gfx::Rect* this_frame_underlay_occlusion,
                           DCLayerOverlay* dc_layer);
 
   gfx::Rect previous_frame_underlay_rect_;
-  gfx::Rect previous_frame_underlay_occlusion_;
   gfx::RectF previous_display_rect_;
-  bool processed_overlay_in_frame_ = false;
+  // previous and current overlay_rect_union_ include both overlay and underlay
+  gfx::Rect previous_frame_overlay_rect_union_;
+  gfx::Rect current_frame_overlay_rect_union_;
+  int previous_frame_processed_overlay_count_ = 0;
+  int current_frame_processed_overlay_count_ = 0;
   bool has_hw_overlay_support_ = true;
 
   // Store information about clipped punch-through rects in target space for

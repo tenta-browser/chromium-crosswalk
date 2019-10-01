@@ -13,10 +13,10 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "components/autofill/core/browser/autofill_data_util.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/geo/phone_number_i18n.h"
+#include "components/autofill/core/browser/geo/state_names.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
-#include "components/autofill/core/browser/phone_number_i18n.h"
-#include "components/autofill/core/browser/state_names.h"
 #include "components/autofill/core/common/autofill_clock.h"
 #include "components/autofill/core/common/autofill_regex_constants.h"
 #include "components/autofill/core/common/autofill_regexes.h"
@@ -51,7 +51,7 @@ bool IsValidCreditCardExpirationYear(int year, const base::Time& now) {
 }
 
 bool IsValidCreditCardNumber(const base::string16& text) {
-  base::string16 number = CreditCard::StripSeparators(text);
+  const base::string16 number = CreditCard::StripSeparators(text);
 
   if (!HasCorrectLength(number))
     return false;
@@ -92,12 +92,13 @@ bool HasCorrectLength(const base::string16& number) {
   return true;
 }
 
-bool PassesLuhnCheck(base::string16& number) {
+// TODO (crbug.com/927767): Add unit tests for this function.
+bool PassesLuhnCheck(const base::string16& number) {
   // Use the Luhn formula [3] to validate the number.
   // [3] http://en.wikipedia.org/wiki/Luhn_algorithm
   int sum = 0;
   bool odd = false;
-  for (base::string16::reverse_iterator iter = number.rbegin();
+  for (base::string16::const_reverse_iterator iter = number.rbegin();
        iter != number.rend(); ++iter) {
     if (!base::IsAsciiDigit(*iter))
       return false;

@@ -9,6 +9,7 @@
 
 #include "ash/assistant/model/assistant_interaction_model_observer.h"
 #include "ash/assistant/model/assistant_ui_model_observer.h"
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "ui/views/view.h"
 #include "ui/views/view_observer.h"
@@ -33,10 +34,11 @@ class UiElementContainerView;
 // AssistantMainStage is the child of AssistantMainView responsible for
 // displaying the Assistant interaction to the user. This includes visual
 // affordances for the query, response, as well as suggestions.
-class AssistantMainStage : public views::View,
-                           public views::ViewObserver,
-                           public AssistantInteractionModelObserver,
-                           public AssistantUiModelObserver {
+class COMPONENT_EXPORT(ASSISTANT_UI) AssistantMainStage
+    : public views::View,
+      public views::ViewObserver,
+      public AssistantInteractionModelObserver,
+      public AssistantUiModelObserver {
  public:
   explicit AssistantMainStage(AssistantViewDelegate* delegate);
   ~AssistantMainStage() override;
@@ -48,7 +50,8 @@ class AssistantMainStage : public views::View,
   // views::ViewObserver:
   void OnViewBoundsChanged(views::View* view) override;
   void OnViewPreferredSizeChanged(views::View* view) override;
-  void OnViewVisibilityChanged(views::View* view) override;
+  void OnViewVisibilityChanged(views::View* view,
+                               views::View* starting_view) override;
 
   // AssistantInteractionModelObserver:
   void OnCommittedQueryChanged(const AssistantQuery& query) override;

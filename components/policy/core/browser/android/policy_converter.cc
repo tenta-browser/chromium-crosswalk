@@ -90,13 +90,12 @@ PolicyConverter::ConvertJavaStringArrayToListValue(
     JNIEnv* env,
     const JavaRef<jobjectArray>& array) {
   DCHECK(!array.is_null());
-  int length = static_cast<int>(env->GetArrayLength(array.obj()));
-  DCHECK_GE(length, 0) << "Invalid array length: " << length;
+  base::android::JavaObjectArrayReader<jstring> array_reader(array);
+  DCHECK_GE(array_reader.size(), 0)
+      << "Invalid array length: " << array_reader.size();
 
   std::unique_ptr<base::ListValue> list_value(new base::ListValue());
-  for (int i = 0; i < length; ++i) {
-    base::android::ScopedJavaLocalRef<jstring> j_str(
-        env, static_cast<jstring>(env->GetObjectArrayElement(array.obj(), i)));
+  for (auto j_str : array_reader) {
     list_value->AppendString(ConvertJavaStringToUTF8(env, j_str));
   }
 
@@ -169,16 +168,23 @@ std::unique_ptr<base::Value> PolicyConverter::ConvertValueToSchema(
       std::string string_value;
       if (value->GetAsString(&string_value)) {
         std::unique_ptr<base::Value> decoded_value =
-            base::JSONReader::Read(string_value);
+            base::JSONReader::ReadDeprecated(string_value);
         if (decoded_value)
           return decoded_value;
       }
       return value;
     }
+
+    // TODO(crbug.com/859477): Remove after root cause is found.
+    case base::Value::Type::DEAD: {
+      CHECK(false);
+      return nullptr;
+    }
   }
 
-  NOTREACHED();
-  return std::unique_ptr<base::Value>();
+  // TODO(crbug.com/859477): Revert to NOTREACHED() after root cause is found.
+  CHECK(false);
+  return nullptr;
 }
 
 void PolicyConverter::SetPolicyValue(const std::string& key,

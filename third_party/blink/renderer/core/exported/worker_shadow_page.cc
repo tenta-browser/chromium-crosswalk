@@ -40,7 +40,8 @@ WorkerShadowPage::WorkerShadowPage(
           CreateStubDocumentInterfaceBrokerHandle(),
           nullptr /* opener */,
           g_empty_atom,
-          WebSandboxFlags::kNone)),
+          WebSandboxFlags::kNone,
+          FeaturePolicy::FeatureState())),
       loader_factory_(std::move(loader_factory)),
       preferences_(std::move(preferences)) {
   DCHECK(IsMainThread());
@@ -78,6 +79,7 @@ void WorkerShadowPage::DidFinishDocumentLoad() {
 
 std::unique_ptr<WebApplicationCacheHost>
 WorkerShadowPage::CreateApplicationCacheHost(
+    WebDocumentLoader*,
     WebApplicationCacheHostClient* appcache_host_client) {
   DCHECK(IsMainThread());
   return client_->CreateApplicationCacheHost(appcache_host_client);
@@ -100,10 +102,10 @@ base::UnguessableToken WorkerShadowPage::GetDevToolsFrameToken() {
 
 void WorkerShadowPage::WillSendRequest(WebURLRequest& request) {
   if (preferences_.enable_do_not_track) {
-    request.SetHTTPHeaderField(WebString::FromUTF8(kDoNotTrackHeader), "1");
+    request.SetHttpHeaderField(WebString::FromUTF8(kDoNotTrackHeader), "1");
   }
   if (!preferences_.enable_referrers) {
-    request.SetHTTPReferrer(WebString(),
+    request.SetHttpReferrer(WebString(),
                             network::mojom::ReferrerPolicy::kDefault);
   }
 }

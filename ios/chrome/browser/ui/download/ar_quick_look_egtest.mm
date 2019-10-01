@@ -7,15 +7,17 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #import "base/test/ios/wait_util.h"
 #import "ios/chrome/app/main_controller.h"
 #include "ios/chrome/browser/download/download_test_util.h"
 #include "ios/chrome/browser/download/features.h"
 #include "ios/chrome/browser/download/usdz_mime_type.h"
-#import "ios/chrome/browser/ui/browser_view_controller.h"
+#import "ios/chrome/browser/ui/browser_view/browser_view_controller.h"
 #include "ios/chrome/browser/ui/util/ui_util.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
+#import "ios/chrome/test/earl_grey/chrome_error_util.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
 #include "net/http/http_status_code.h"
 #include "net/test/embedded_test_server/http_request.h"
@@ -87,9 +89,11 @@ std::unique_ptr<net::test_server::HttpResponse> GetResponse(
          "below 12 because QLPreviewController is not available.");
   }
 
-  [ChromeEarlGrey loadURL:self.testServer->GetURL("/")];
-  [ChromeEarlGrey waitForWebViewContainingText:"Good"];
-  [ChromeEarlGrey tapWebViewElementWithID:@"good"];
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey loadURL:self.testServer->GetURL("/")]);
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey waitForWebStateContainingText:"Good"]);
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey tapWebStateElementWithID:@"good"]);
 
   // QLPreviewController UI is rendered out of host process so EarlGrey matcher
   // can not find QLPreviewController UI. Instead this test relies on view
@@ -112,9 +116,12 @@ std::unique_ptr<net::test_server::HttpResponse> GetResponse(
          "below 12 because QLPreviewController is not available.");
   }
 
-  [ChromeEarlGrey loadURL:self.testServer->GetURL("/")];
-  [ChromeEarlGrey waitForWebViewContainingText:"Unauthorized"];
-  [ChromeEarlGrey tapWebViewElementWithID:@"unauthorized"];
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey loadURL:self.testServer->GetURL("/")]);
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey waitForWebStateContainingText:"Unauthorized"]);
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey tapWebStateElementWithID:@"unauthorized"]);
 
   // QLPreviewController UI is rendered out of host process so EarlGrey matcher
   // can not find QLPreviewController UI. Instead this test relies on view
@@ -137,9 +144,12 @@ std::unique_ptr<net::test_server::HttpResponse> GetResponse(
          "below 12 because QLPreviewController is not available.");
   }
 
-  [ChromeEarlGrey loadURL:self.testServer->GetURL("/")];
-  [ChromeEarlGrey waitForWebViewContainingText:"Forbidden"];
-  [ChromeEarlGrey tapWebViewElementWithID:@"forbidden"];
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey loadURL:self.testServer->GetURL("/")]);
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey waitForWebStateContainingText:"Forbidden"]);
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey tapWebStateElementWithID:@"forbidden"]);
 
   // QLPreviewController UI is rendered out of host process so EarlGrey matcher
   // can not find QLPreviewController UI. Instead this test relies on view
@@ -162,9 +172,12 @@ std::unique_ptr<net::test_server::HttpResponse> GetResponse(
          "below 12 because QLPreviewController is not available.");
   }
 
-  [ChromeEarlGrey loadURL:self.testServer->GetURL("/")];
-  [ChromeEarlGrey waitForWebViewContainingText:"Changing Mime Type"];
-  [ChromeEarlGrey tapWebViewElementWithID:@"changing-mime-type"];
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey loadURL:self.testServer->GetURL("/")]);
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey waitForWebStateContainingText:"Changing Mime Type"]);
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey tapWebStateElementWithID:@"changing-mime-type"]);
 
   // QLPreviewController UI is rendered out of host process so EarlGrey matcher
   // can not find QLPreviewController UI. Instead this test relies on view

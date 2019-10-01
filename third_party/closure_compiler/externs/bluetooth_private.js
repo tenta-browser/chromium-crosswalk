@@ -9,7 +9,7 @@
 // Please run the closure compiler before committing changes.
 // See https://chromium.googlesource.com/chromium/src/+/master/docs/closure_compilation.md
 
-// IMPORTANT:
+// IMPORTANT NOTE: Work-around for crbug.com/543822
 // s/chrome.bluetoothPrivate.bluetooth.Device/chrome.bluetooth.Device/
 
 /** @fileoverview Externs generated from namespace: bluetoothPrivate */
@@ -156,6 +156,20 @@ chrome.bluetoothPrivate.connect = function(deviceAddress, callback) {};
  * @param {function():void=} callback
  */
 chrome.bluetoothPrivate.pair = function(deviceAddress, callback) {};
+
+/**
+ * Record that a pairing attempt finished. Do not record cancellations.
+ * @param {boolean} success
+ * @param {!chrome.bluetooth.Transport} transport
+ */
+chrome.bluetoothPrivate.recordPairing = function(success, transport) {};
+
+/**
+ * Record that a user-initiated reconnection attempt to an already paired device
+ * finished. Do not record cancellations.
+ * @param {boolean} success
+ */
+chrome.bluetoothPrivate.recordReconnection = function(success) {};
 
 /**
  * Fired when a pairing event occurs.

@@ -6,7 +6,6 @@ package org.chromium.chrome.browser.tab;
 
 import android.annotation.TargetApi;
 import android.app.Activity;
-import android.app.ActivityManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.Resources;
@@ -15,7 +14,7 @@ import android.graphics.RectF;
 import android.media.AudioManager;
 import android.os.Build;
 import android.os.Handler;
-import android.util.Pair;
+import android.support.v4.util.ArrayMap;
 import android.view.KeyEvent;
 import android.view.View;
 
@@ -25,29 +24,33 @@ import org.chromium.base.BuildInfo;
 import org.chromium.base.Log;
 import org.chromium.base.ObserverList.RewindableIterator;
 import org.chromium.base.annotations.CalledByNative;
+import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.blink_public.platform.WebDisplayMode;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.AppHooks;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.SwipeRefreshHandler;
-import org.chromium.chrome.browser.document.DocumentUtils;
 import org.chromium.chrome.browser.document.DocumentWebContentsDelegate;
 import org.chromium.chrome.browser.findinpage.FindMatchRectsDetails;
 import org.chromium.chrome.browser.findinpage.FindNotificationDetails;
+import org.chromium.chrome.browser.fullscreen.ChromeFullscreenManager;
+import org.chromium.chrome.browser.fullscreen.FullscreenManager;
 import org.chromium.chrome.browser.fullscreen.FullscreenOptions;
 import org.chromium.chrome.browser.media.MediaCaptureNotificationService;
+import org.chromium.chrome.browser.media.PictureInPicture;
 import org.chromium.chrome.browser.policy.PolicyAuditor;
 import org.chromium.chrome.browser.policy.PolicyAuditor.AuditEvent;
 import org.chromium.chrome.browser.tabmodel.TabCreatorManager.TabCreator;
 import org.chromium.chrome.browser.tabmodel.TabLaunchType;
 import org.chromium.chrome.browser.tabmodel.TabModel;
+import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
 import org.chromium.chrome.browser.tabmodel.TabWindowManager;
+import org.chromium.chrome.browser.util.IntentUtils;
 import org.chromium.components.embedder_support.delegate.WebContentsDelegateAndroid;
 import org.chromium.content_public.browser.GestureListenerManager;
 import org.chromium.content_public.browser.InvalidateTypes;
 import org.chromium.content_public.browser.WebContents;
-import org.chromium.content_public.common.ResourceRequestBody;
 import org.chromium.ui.modaldialog.DialogDismissalCause;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 import org.chromium.ui.modaldialog.ModalDialogProperties;
@@ -59,83 +62,34 @@ import org.chromium.ui.mojom.WindowOpenDisposition;
  * {@link TabObserver}s.
  */
 public class TabWebContentsDelegateAndroid extends WebContentsDelegateAndroid {
-    /**
-     * Listener to be notified when a find result is received.
-     */
-    public interface FindResultListener {
-        public void onFindResult(FindNotificationDetails result);
-    }
-
-    /**
-     * Listener to be notified when the rects corresponding to find matches are received.
-     */
-    public interface FindMatchRectsListener {
-        public void onFindMatchRects(FindMatchRectsDetails result);
-    }
-
     /** Used for logging. */
     private static final String TAG = "WebContentsDelegate";
 
+    private final Runnable mCloseContentsRunnable;
     protected final Tab mTab;
 
-    private FindResultListener mFindResultListener;
-
-    private FindMatchRectsListener mFindMatchRectsListener;
-
-    private @WebDisplayMode int mDisplayMode = WebDisplayMode.BROWSER;
+    private final ArrayMap<WebContents, String> mWebContentsUrlMapping = new ArrayMap<>();
 
     protected Handler mHandler;
-
-    private final Runnable mCloseContentsRunnable = new Runnable() {
-        @Override
-        public void run() {
-            boolean isSelected = mTab.getTabModelSelector().getCurrentTab() == mTab;
-            mTab.getTabModelSelector().closeTab(mTab);
-
-            // If the parent Tab belongs to another Activity, fire the Intent to bring it back.
-            if (isSelected && mTab.getParentIntent() != null
-                    && mTab.getActivity().getIntent() != mTab.getParentIntent()) {
-                mTab.getActivity().startActivity(mTab.getParentIntent());
-            }
-        }
-
-        /** If the API allows it, returns whether a Task still exists for the parent Activity. */
-        @TargetApi(Build.VERSION_CODES.LOLLIPOP)
-        private boolean isParentInAndroidOverview() {
-            ActivityManager activityManager = (ActivityManager) mTab.getApplicationContext()
-                    .getSystemService(Context.ACTIVITY_SERVICE);
-            for (ActivityManager.AppTask task : activityManager.getAppTasks()) {
-                Intent taskIntent = DocumentUtils.getBaseIntentFromTask(task);
-                if (taskIntent != null && taskIntent.filterEquals(mTab.getParentIntent())) {
-                    return true;
-                }
-            }
-            return false;
-        }
-    };
 
     public TabWebContentsDelegateAndroid(Tab tab) {
         mTab = tab;
         mHandler = new Handler();
-    }
-
-    /**
-     * Sets the current display mode which can be queried using media queries.
-     */
-    public void setDisplayMode(@WebDisplayMode int displayMode) {
-        mDisplayMode = displayMode;
+        mCloseContentsRunnable = () -> {
+            RewindableIterator<TabObserver> observers = mTab.getTabObservers();
+            while (observers.hasNext()) observers.next().onCloseContents(mTab);
+        };
     }
 
     @CalledByNative
-    private @WebDisplayMode int getDisplayMode() {
-        return mDisplayMode;
+    protected @WebDisplayMode int getDisplayMode() {
+        return WebDisplayMode.BROWSER;
     }
 
     @CalledByNative
     private void onFindResultAvailable(FindNotificationDetails result) {
-        if (mFindResultListener != null) {
-            mFindResultListener.onFindResult(result);
-        }
+        RewindableIterator<TabObserver> observers = mTab.getTabObservers();
+        while (observers.hasNext()) observers.next().onFindResultAvailable(result);
     }
 
     @Override
@@ -146,19 +100,8 @@ public class TabWebContentsDelegateAndroid extends WebContentsDelegateAndroid {
 
     @CalledByNative
     private void onFindMatchRectsAvailable(FindMatchRectsDetails result) {
-        if (mFindMatchRectsListener != null) {
-            mFindMatchRectsListener.onFindMatchRects(result);
-        }
-    }
-
-    /** Register to receive the results of startFinding calls. */
-    public void setFindResultListener(FindResultListener listener) {
-        mFindResultListener = listener;
-    }
-
-    /** Register to receive the results of requestFindMatchRects calls. */
-    public void setFindMatchRectsListener(FindMatchRectsListener listener) {
-        mFindMatchRectsListener = listener;
+        RewindableIterator<TabObserver> observers = mTab.getTabObservers();
+        while (observers.hasNext()) observers.next().onFindMatchRectsAvailable(result);
     }
 
     // Helper functions used to create types that are part of the public interface
@@ -194,8 +137,9 @@ public class TabWebContentsDelegateAndroid extends WebContentsDelegateAndroid {
 
     @Override
     public void onLoadProgressChanged(int progress) {
+        // TODO(jinsukkim): Move this interface to WebContentsObserver.
         if (!mTab.isLoading()) return;
-        mTab.notifyLoadProgress(mTab.getProgress());
+        mTab.notifyLoadProgress(progress);
     }
 
     @Override
@@ -259,6 +203,10 @@ public class TabWebContentsDelegateAndroid extends WebContentsDelegateAndroid {
 
     @Override
     public void visibleSSLStateChanged() {
+        PolicyAuditor auditor = AppHooks.get().getPolicyAuditor();
+        auditor.notifyCertificateFailure(
+                PolicyAuditor.nativeGetCertificateFailure(mTab.getWebContents()),
+                mTab.getApplicationContext());
         RewindableIterator<TabObserver> observers = mTab.getTabObservers();
         while (observers.hasNext()) {
             observers.next().onSSLStateUpdated(mTab);
@@ -275,8 +223,8 @@ public class TabWebContentsDelegateAndroid extends WebContentsDelegateAndroid {
                     openerRenderFrameId, frameName, targetUrl, newWebContents);
         }
         // The URL can't be taken from the WebContents if it's paused.  Save it for later.
-        assert mWebContentsUrlMapping == null;
-        mWebContentsUrlMapping = Pair.create(newWebContents, targetUrl);
+        assert !mWebContentsUrlMapping.containsKey(newWebContents);
+        mWebContentsUrlMapping.put(newWebContents, targetUrl);
 
         // TODO(dfalcantara): Re-remove this once crbug.com/508366 is fixed.
         TabCreator tabCreator = mTab.getActivity().getTabCreator(mTab.isIncognito());
@@ -302,22 +250,14 @@ public class TabWebContentsDelegateAndroid extends WebContentsDelegateAndroid {
 
     @Override
     public boolean isFullscreenForTabOrPending() {
-        return mTab.getFullscreenManager() == null
-                ? false : mTab.getFullscreenManager().getPersistentFullscreenMode();
+        FullscreenManager manager = FullscreenManager.from(mTab);
+        return manager != null ? manager.getPersistentFullscreenMode() : false;
     }
-
-    @Override
-    public void openNewTab(String url, String extraHeaders, ResourceRequestBody postData,
-            int disposition, boolean isRendererInitiated) {
-        mTab.openNewTab(url, null, extraHeaders, postData, disposition, true, isRendererInitiated);
-    }
-
-    private Pair<WebContents, String> mWebContentsUrlMapping;
 
     protected TabModel getTabModel() {
         // TODO(dfalcantara): Remove this when DocumentActivity.getTabModelSelector()
         //                    can return a TabModelSelector that activateContents() can use.
-        return mTab.getTabModelSelector().getModel(mTab.isIncognito());
+        return TabModelSelector.from(mTab).getModel(mTab.isIncognito());
     }
 
     @CalledByNative
@@ -331,14 +271,13 @@ public class TabWebContentsDelegateAndroid extends WebContentsDelegateAndroid {
     @CalledByNative
     public boolean addNewContents(WebContents sourceWebContents, WebContents webContents,
             int disposition, Rect initialPosition, boolean userGesture) {
-        assert mWebContentsUrlMapping.first == webContents;
+        assert mWebContentsUrlMapping.containsKey(webContents);
 
         TabCreator tabCreator = mTab.getActivity().getTabCreator(mTab.isIncognito());
         assert tabCreator != null;
 
         // Grab the URL, which might not be available via the Tab.
-        String url = mWebContentsUrlMapping.second;
-        mWebContentsUrlMapping = null;
+        String url = mWebContentsUrlMapping.remove(webContents);
 
         // Skip opening a new Tab if it doesn't make sense.
         if (mTab.isClosing()) return false;
@@ -346,13 +285,25 @@ public class TabWebContentsDelegateAndroid extends WebContentsDelegateAndroid {
         // Creating new Tabs asynchronously requires starting a new Activity to create the Tab,
         // so the Tab returned will always be null.  There's no way to know synchronously
         // whether the Tab is created, so assume it's always successful.
-        boolean createdSuccessfully = tabCreator.createTabWithWebContents(mTab,
-                webContents, mTab.getId(), TabLaunchType.FROM_LONGPRESS_FOREGROUND, url);
+        boolean createdSuccessfully = tabCreator.createTabWithWebContents(
+                mTab, webContents, TabLaunchType.FROM_LONGPRESS_FOREGROUND, url);
         boolean success = tabCreator.createsTabsAsynchronously() || createdSuccessfully;
-        if (success && disposition == WindowOpenDisposition.NEW_POPUP) {
-            PolicyAuditor auditor = AppHooks.get().getPolicyAuditor();
-            auditor.notifyAuditEvent(mTab.getApplicationContext(),
-                    AuditEvent.OPEN_POPUP_URL_SUCCESS, url, "");
+
+        if (success) {
+            if (disposition == WindowOpenDisposition.NEW_FOREGROUND_TAB) {
+                if (TabModelSelector.from(mTab)
+                                .getTabModelFilterProvider()
+                                .getCurrentTabModelFilter()
+                                .getRelatedTabList(mTab.getId())
+                                .size()
+                        == 2) {
+                    RecordUserAction.record("TabGroup.Created.DeveloperRequestedNewTab");
+                }
+            } else if (disposition == WindowOpenDisposition.NEW_POPUP) {
+                PolicyAuditor auditor = AppHooks.get().getPolicyAuditor();
+                auditor.notifyAuditEvent(
+                        mTab.getApplicationContext(), AuditEvent.OPEN_POPUP_URL_SUCCESS, url, "");
+            }
         }
 
         return success;
@@ -365,7 +316,7 @@ public class TabWebContentsDelegateAndroid extends WebContentsDelegateAndroid {
             Log.e(TAG, "Activity not set activateContents().  Bailing out.");
             return;
         }
-        if (activity.isActivityDestroyed()) {
+        if (activity.isActivityFinishingOrDestroyed()) {
             Log.e(TAG, "Activity destroyed before calling activateContents().  Bailing out.");
             return;
         }
@@ -403,7 +354,7 @@ public class TabWebContentsDelegateAndroid extends WebContentsDelegateAndroid {
         // Note that calling only the intent in order to activate the tab is slightly slower
         // because it will change the tab when the intent is handled, which happens after
         // Chrome gets back to the foreground.
-        Intent newIntent = Tab.createBringTabToFrontIntent(mTab.getId());
+        Intent newIntent = IntentUtils.createBringTabToFrontIntent(mTab.getId());
         if (newIntent != null) {
             newIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             mTab.getApplicationContext().startActivity(newIntent);
@@ -521,19 +472,29 @@ public class TabWebContentsDelegateAndroid extends WebContentsDelegateAndroid {
         mTab.getActivity().setOverlayMode(useOverlayMode);
     }
 
+    private ChromeFullscreenManager getFullscreenManager() {
+        // Following get* methods use this method instead of |FullscreenManager.from()|
+        // because the latter can return null if invoked while the tab is in detached state.
+        ChromeActivity activity = mTab.getActivity();
+        return activity != null ? activity.getFullscreenManager() : null;
+    }
+
     @Override
     public int getTopControlsHeight() {
-        return mTab.getTopControlsHeight();
+        FullscreenManager manager = getFullscreenManager();
+        return manager != null ? manager.getTopControlsHeight() : 0;
     }
 
     @Override
     public int getBottomControlsHeight() {
-        return mTab.getBottomControlsHeight();
+        FullscreenManager manager = getFullscreenManager();
+        return manager != null ? manager.getBottomControlsHeight() : 0;
     }
 
     @Override
     public boolean controlsResizeView() {
-        return mTab.controlsResizeView();
+        FullscreenManager manager = getFullscreenManager();
+        return manager != null ? ((ChromeFullscreenManager) manager).controlsResizeView() : false;
     }
 
     /**
@@ -624,6 +585,44 @@ public class TabWebContentsDelegateAndroid extends WebContentsDelegateAndroid {
             super.onDestroyed(tab);
             mModalDialogManager.dismissDialog(mDialogModel, DialogDismissalCause.TAB_DESTROYED);
         }
+    }
+
+    /**
+     * Provides info on web preferences for viewing downloaded media.
+     * @return enabled Whether embedded media experience should be enabled.
+     */
+    @CalledByNative
+    protected boolean shouldEnableEmbeddedMediaExperience() {
+        return false;
+    }
+
+    /**
+     * @return web preferences for enabling Picture-in-Picture.
+     */
+    @CalledByNative
+    protected boolean isPictureInPictureEnabled() {
+        ChromeActivity activity = mTab.getActivity();
+        return activity != null ? PictureInPicture.isEnabled(activity.getApplicationContext())
+                                : false;
+    }
+
+    /**
+     * @return Night mode enabled/disabled for this Tab. To be used to propagate
+     *         the preferred color scheme to the renderer.
+     */
+    @CalledByNative
+    protected boolean isNightModeEnabled() {
+        ChromeActivity activity = mTab.getActivity();
+        return activity != null ? activity.getNightModeStateProvider().isInNightMode() : false;
+    }
+
+    /**
+     * @return the Webapp manifest scope, which is used to allow frames within the scope to
+     *         autoplay media unmuted.
+     */
+    @CalledByNative
+    protected String getManifestScope() {
+        return null;
     }
 
     private static native void nativeOnRendererUnresponsive(WebContents webContents);

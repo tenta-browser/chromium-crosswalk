@@ -16,6 +16,8 @@
 #include "base/strings/stringprintf.h"
 #include "base/task/post_task.h"
 #include "chrome/browser/media/cast_mirroring_service_host.h"
+#include "chrome/browser/media/router/event_page_request_manager.h"
+#include "chrome/browser/media/router/event_page_request_manager_factory.h"
 #include "chrome/browser/media/router/issues_observer.h"
 #include "chrome/browser/media/router/media_router_factory.h"
 #include "chrome/browser/media/router/media_router_feature.h"
@@ -32,7 +34,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/common/media_router/media_source_helper.h"
+#include "chrome/common/media_router/media_source.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
@@ -261,7 +263,7 @@ void MediaRouterMojoImpl::CreateRoute(const MediaSource::Id& source_id,
     return;
   }
 
-  if (IsTabMirroringMediaSource(MediaSource(source_id))) {
+  if (MediaSource(source_id).IsTabMirroringSource()) {
     // Ensure the CastRemotingConnector is created before mirroring starts.
     CastRemotingConnector* const connector =
         CastRemotingConnector::Get(web_contents);
@@ -666,7 +668,8 @@ bool MediaRouterMojoImpl::RegisterMediaSinksObserver(
 
   // Create an observer list for the media source and add |observer|
   // to it. Fail if |observer| is already registered.
-  const std::string& source_id = observer->source().id();
+  const std::string& source_id =
+      observer->source() ? observer->source()->id() : "";
   std::unique_ptr<MediaSinksQuery>& sinks_query = sinks_queries_[source_id];
   bool is_new_query = false;
   if (!sinks_query) {
@@ -693,7 +696,8 @@ void MediaRouterMojoImpl::UnregisterMediaSinksObserver(
     MediaSinksObserver* observer) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  const MediaSource::Id& source_id = observer->source().id();
+  const std::string& source_id =
+      observer->source() ? observer->source()->id() : "";
   auto it = sinks_queries_.find(source_id);
   if (it == sinks_queries_.end() || !it->second->HasObserver(observer))
     return;
@@ -1005,9 +1009,11 @@ void MediaRouterMojoImpl::GetMirroringServiceHostForDesktop(
     const std::string& desktop_stream_id,
     mirroring::mojom::MirroringServiceHostRequest request) {
   if (ShouldUseMirroringService()) {
+    // TODO(crbug.com/974335): Remove this code once we fully launch the native
+    // Cast Media Route Provider.
     mirroring::CastMirroringServiceHost::GetForDesktop(
-        GetWebContentsFromId(initiator_tab_id, context_,
-                             true /* include_incognito */),
+        EventPageRequestManagerFactory::GetApiForBrowserContext(context_)
+            ->GetEventPageWebContents(),
         desktop_stream_id, std::move(request));
   }
 }

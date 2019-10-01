@@ -5,6 +5,7 @@
 #include "ash/wm/wm_shadow_controller_delegate.h"
 
 #include "ash/shell.h"
+#include "ash/wm/desks/desks_util.h"
 #include "ash/wm/overview/overview_controller.h"
 #include "ash/wm/overview/overview_session.h"
 #include "ash/wm/splitview/split_view_controller.h"
@@ -25,19 +26,24 @@ bool WmShadowControllerDelegate::ShouldShowShadowForWindow(
   SplitViewController* split_view_controller =
       Shell::Get()->split_view_controller();
   if (split_view_controller &&
-      (window == split_view_controller->left_window() ||
-       window == split_view_controller->right_window())) {
+      split_view_controller->IsWindowInSplitView(window)) {
     return false;
   }
 
   // Hide the shadow while we are in overview mode.
   OverviewController* overview_controller = Shell::Get()->overview_controller();
-  if (overview_controller && overview_controller->IsSelecting()) {
+  if (overview_controller && overview_controller->InOverviewSession()) {
     OverviewSession* overview_session = overview_controller->overview_session();
-    // IsSelecting() being true implies |overview_session| exists.
+    // InOverviewSession() being true implies |overview_session| exists.
     DCHECK(overview_session);
-    if (overview_session->IsWindowInOverview(window))
+    // The window may be still in overview mode, but it belongs to a non-active
+    // desk, as it has just been dragged and dropped onto a non-active desk's
+    // mini_view. In this case, we shouldn't disable its shadow, so that it may
+    // restored properly.
+    if (desks_util::BelongsToActiveDesk(const_cast<aura::Window*>(window)) &&
+        overview_session->IsWindowInOverview(window)) {
       return false;
+    }
   }
 
   // The shadow state will be updated when the window is added to a parent.

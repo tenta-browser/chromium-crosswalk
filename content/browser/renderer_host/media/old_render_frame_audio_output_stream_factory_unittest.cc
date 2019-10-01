@@ -18,6 +18,7 @@
 #include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "media/base/audio_parameters.h"
+#include "media/mojo/interfaces/audio_data_pipe.mojom.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "mojo/public/cpp/system/platform_handle.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -77,6 +78,7 @@ class MockAudioOutputDelegate : public media::AudioOutputDelegate {
   MOCK_METHOD0(GetStreamId, int());
   MOCK_METHOD0(OnPlayStream, void());
   MOCK_METHOD0(OnPauseStream, void());
+  MOCK_METHOD0(OnFlushStream, void());
   MOCK_METHOD1(OnSetVolume, void(double));
 
  private:

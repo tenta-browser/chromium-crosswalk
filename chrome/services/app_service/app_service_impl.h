@@ -36,6 +36,7 @@ class AppServiceImpl : public apps::mojom::AppService {
                 apps::mojom::IconKeyPtr icon_key,
                 apps::mojom::IconCompression icon_compression,
                 int32_t size_hint_in_dip,
+                bool allow_placeholder_icon,
                 LoadIconCallback callback) override;
   void Launch(apps::mojom::AppType app_type,
               const std::string& app_id,
@@ -53,11 +54,14 @@ class AppServiceImpl : public apps::mojom::AppService {
  private:
   void OnPublisherDisconnected(apps::mojom::AppType app_type);
 
-  mojo::BindingSet<apps::mojom::AppService> bindings_;
   // publishers_ is a std::map, not a mojo::InterfacePtrSet, since we want to
   // be able to find *the* publisher for a given apps::mojom::AppType.
   std::map<apps::mojom::AppType, apps::mojom::PublisherPtr> publishers_;
   mojo::InterfacePtrSet<apps::mojom::Subscriber> subscribers_;
+
+  // Must come after the publisher and subscriber maps to ensure it is
+  // destroyed first, closing the connection to avoid dangling callbacks.
+  mojo::BindingSet<apps::mojom::AppService> bindings_;
 
   DISALLOW_COPY_AND_ASSIGN(AppServiceImpl);
 };

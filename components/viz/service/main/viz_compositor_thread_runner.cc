@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread.h"
@@ -13,8 +14,8 @@
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "components/viz/common/switches.h"
-#include "components/viz/service/display_embedder/gpu_display_provider.h"
 #include "components/viz/service/display_embedder/in_process_gpu_memory_buffer_manager.h"
+#include "components/viz/service/display_embedder/output_surface_provider_impl.h"
 #include "components/viz/service/display_embedder/server_shared_bitmap_manager.h"
 #include "components/viz/service/frame_sinks/frame_sink_manager_impl.h"
 #include "components/viz/service/gl/gpu_service_impl.h"
@@ -48,15 +49,12 @@ std::unique_ptr<VizCompositorThreadType> CreateAndStartCompositorThread() {
   auto thread = std::make_unique<base::Thread>(kThreadName);
 
   base::Thread::Options thread_options;
-#if defined(OS_WIN)
-  // Windows needs a UI message loop for child HWND.
-  thread_options.message_loop_type = base::MessageLoop::TYPE_UI;
-#elif defined(USE_OZONE)
+#if defined(USE_OZONE)
   // We may need a non-default message loop type for the platform surface.
   thread_options.message_loop_type =
       ui::OzonePlatform::GetInstance()->GetMessageLoopTypeForGpu();
 #endif
-#if defined(OS_CHROMEOS)
+#if defined(OS_CHROMEOS) || defined(USE_OZONE)
   thread_options.priority = base::ThreadPriority::DISPLAY;
 #endif
 
@@ -90,7 +88,7 @@ void VizCompositorThreadRunner::CreateFrameSinkManager(
 
 void VizCompositorThreadRunner::CreateFrameSinkManager(
     mojom::FrameSinkManagerParamsPtr params,
-    scoped_refptr<gpu::CommandBufferTaskExecutor> task_executor,
+    gpu::CommandBufferTaskExecutor* task_executor,
     GpuServiceImpl* gpu_service) {
   // All of the unretained objects are owned on the GPU thread and destroyed
   // after VizCompositorThread has been shutdown.
@@ -98,8 +96,8 @@ void VizCompositorThreadRunner::CreateFrameSinkManager(
       FROM_HERE,
       base::BindOnce(
           &VizCompositorThreadRunner::CreateFrameSinkManagerOnCompositorThread,
-          base::Unretained(this), std::move(params), std::move(task_executor),
-          base::Unretained(gpu_service)));
+          base::Unretained(this), std::move(params),
+          base::Unretained(task_executor), base::Unretained(gpu_service)));
 }
 
 #if defined(USE_VIZ_DEVTOOLS)
@@ -127,7 +125,7 @@ void VizCompositorThreadRunner::CleanupForShutdown(
 
 void VizCompositorThreadRunner::CreateFrameSinkManagerOnCompositorThread(
     mojom::FrameSinkManagerParamsPtr params,
-    scoped_refptr<gpu::CommandBufferTaskExecutor> task_executor,
+    gpu::CommandBufferTaskExecutor* task_executor,
     GpuServiceImpl* gpu_service) {
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK(!frame_sink_manager_);
@@ -144,31 +142,36 @@ void VizCompositorThreadRunner::CreateFrameSinkManagerOnCompositorThread(
 
   if (task_executor) {
     DCHECK(gpu_service);
-    // Create DisplayProvider usable for GPU + software compositing.
+    // Create OutputSurfaceProvider usable for GPU + software compositing.
     auto gpu_memory_buffer_manager =
         std::make_unique<InProcessGpuMemoryBufferManager>(
             gpu_service->gpu_memory_buffer_factory(),
             gpu_service->sync_point_manager());
     auto* image_factory = gpu_service->gpu_image_factory();
-    display_provider_ = std::make_unique<GpuDisplayProvider>(
-        params->restart_id, gpu_service, std::move(task_executor), gpu_service,
-        std::move(gpu_memory_buffer_manager), image_factory,
-        server_shared_bitmap_manager_.get(), headless,
-        run_all_compositor_stages_before_draw);
+    output_surface_provider_ = std::make_unique<OutputSurfaceProviderImpl>(
+        gpu_service, task_executor, gpu_service,
+        std::move(gpu_memory_buffer_manager), image_factory, headless);
   } else {
-    // Create DisplayProvider usable for software compositing only.
-    display_provider_ = std::make_unique<GpuDisplayProvider>(
-        params->restart_id, server_shared_bitmap_manager_.get(), headless,
-        run_all_compositor_stages_before_draw);
+    // Create OutputSurfaceProvider usable for software compositing only.
+    output_surface_provider_ =
+        std::make_unique<OutputSurfaceProviderImpl>(headless);
   }
 
   // Create FrameSinkManagerImpl.
-  base::Optional<uint32_t> activation_deadline_in_frames;
-  if (params->use_activation_deadline)
-    activation_deadline_in_frames = params->activation_deadline_in_frames;
-  frame_sink_manager_ = std::make_unique<FrameSinkManagerImpl>(
-      server_shared_bitmap_manager_.get(), activation_deadline_in_frames,
-      display_provider_.get());
+  FrameSinkManagerImpl::InitParams init_params;
+  init_params.shared_bitmap_manager = server_shared_bitmap_manager_.get();
+  // Set default activation deadline to infinite if client doesn't provide one.
+  init_params.activation_deadline_in_frames = base::nullopt;
+  if (params->use_activation_deadline) {
+    init_params.activation_deadline_in_frames =
+        params->activation_deadline_in_frames;
+  }
+  init_params.output_surface_provider = output_surface_provider_.get();
+  init_params.restart_id = params->restart_id;
+  init_params.run_all_compositor_stages_before_draw =
+      run_all_compositor_stages_before_draw;
+
+  frame_sink_manager_ = std::make_unique<FrameSinkManagerImpl>(init_params);
   frame_sink_manager_->BindAndSetClient(
       std::move(params->frame_sink_manager), nullptr,
       mojom::FrameSinkManagerClientPtr(
@@ -230,7 +233,7 @@ void VizCompositorThreadRunner::TearDownOnCompositorThread() {
   devtools_server_.reset();
 #endif
   frame_sink_manager_.reset();
-  display_provider_.reset();
+  output_surface_provider_.reset();
   server_shared_bitmap_manager_.reset();
 }
 

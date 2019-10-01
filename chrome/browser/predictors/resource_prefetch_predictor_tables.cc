@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/trace_event.h"
@@ -85,10 +86,11 @@ void ResourcePrefetchPredictorTables::SortOrigins(
 ResourcePrefetchPredictorTables::ResourcePrefetchPredictorTables(
     scoped_refptr<base::SequencedTaskRunner> db_task_runner)
     : PredictorTableBase(db_task_runner) {
-  host_redirect_table_ = std::make_unique<GlowplugKeyValueTable<RedirectData>>(
-      kHostRedirectTableName);
-  origin_table_ =
-      std::make_unique<GlowplugKeyValueTable<OriginData>>(kOriginTableName);
+  host_redirect_table_ =
+      std::make_unique<LoadingPredictorKeyValueTable<RedirectData>>(
+          kHostRedirectTableName);
+  origin_table_ = std::make_unique<LoadingPredictorKeyValueTable<OriginData>>(
+      kOriginTableName);
 }
 
 ResourcePrefetchPredictorTables::~ResourcePrefetchPredictorTables() = default;
@@ -133,11 +135,11 @@ void ResourcePrefetchPredictorTables::ExecuteDBTaskOnDBSequence(DBTask task) {
   std::move(task).Run(DB());
 }
 
-GlowplugKeyValueTable<RedirectData>*
+LoadingPredictorKeyValueTable<RedirectData>*
 ResourcePrefetchPredictorTables::host_redirect_table() {
   return host_redirect_table_.get();
 }
-GlowplugKeyValueTable<OriginData>*
+LoadingPredictorKeyValueTable<OriginData>*
 ResourcePrefetchPredictorTables::origin_table() {
   return origin_table_.get();
 }

@@ -21,12 +21,12 @@
 
 using aura::Window;
 
-DEFINE_UI_CLASS_PROPERTY_TYPE(::wm::TransientWindowManager*);
+DEFINE_UI_CLASS_PROPERTY_TYPE(::wm::TransientWindowManager*)
 
 namespace wm {
 namespace {
 
-DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(TransientWindowManager, kPropertyKey, NULL);
+DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(TransientWindowManager, kPropertyKey, NULL)
 
 }  // namespace
 
@@ -124,7 +124,7 @@ TransientWindowManager::TransientWindowManager(Window* window)
 
 void TransientWindowManager::RestackTransientDescendants() {
   Window* parent = window_->parent();
-  if (!parent || !parent->ShouldRestackTransientChildren())
+  if (!parent)
     return;
 
   // Stack any transient children that share the same parent to be in front of

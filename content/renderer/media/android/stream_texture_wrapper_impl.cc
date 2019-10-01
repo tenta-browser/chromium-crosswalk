@@ -4,6 +4,7 @@
 
 #include "content/renderer/media/android/stream_texture_wrapper_impl.h"
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "cc/layers/video_frame_provider.h"
 #include "gpu/GLES2/gl2extchromium.h"
@@ -92,7 +93,7 @@ void StreamTextureWrapperImpl::ReallocateVideoFrame(
       media::VideoFrame::WrapNativeTextures(
           media::PIXEL_FORMAT_ARGB, holders,
           media::BindToCurrentLoop(
-              base::Bind(&OnReleaseTexture, factory_, texture_id_ref)),
+              base::BindOnce(&OnReleaseTexture, factory_, texture_id_ref)),
           natural_size, gfx::Rect(natural_size), natural_size,
           base::TimeDelta());
 
@@ -116,9 +117,9 @@ void StreamTextureWrapperImpl::ClearReceivedFrameCBOnAnyThread() {
 }
 
 void StreamTextureWrapperImpl::SetCurrentFrameInternal(
-    const scoped_refptr<media::VideoFrame>& video_frame) {
+    scoped_refptr<media::VideoFrame> video_frame) {
   base::AutoLock auto_lock(current_frame_lock_);
-  current_frame_ = video_frame;
+  current_frame_ = std::move(video_frame);
 }
 
 void StreamTextureWrapperImpl::UpdateTextureSize(const gfx::Size& new_size) {
@@ -126,8 +127,8 @@ void StreamTextureWrapperImpl::UpdateTextureSize(const gfx::Size& new_size) {
 
   if (!main_task_runner_->BelongsToCurrentThread()) {
     main_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&StreamTextureWrapperImpl::UpdateTextureSize,
-                              weak_factory_.GetWeakPtr(), new_size));
+        FROM_HERE, base::BindOnce(&StreamTextureWrapperImpl::UpdateTextureSize,
+                                  weak_factory_.GetWeakPtr(), new_size));
     return;
   }
 
@@ -145,7 +146,7 @@ void StreamTextureWrapperImpl::UpdateTextureSize(const gfx::Size& new_size) {
 }
 
 void StreamTextureWrapperImpl::Initialize(
-    const base::Closure& received_frame_cb,
+    const base::RepeatingClosure& received_frame_cb,
     const gfx::Size& natural_size,
     scoped_refptr<base::SingleThreadTaskRunner> compositor_task_runner,
     const StreamTextureWrapperInitCB& init_cb) {
@@ -155,13 +156,14 @@ void StreamTextureWrapperImpl::Initialize(
   natural_size_ = natural_size;
 
   main_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&StreamTextureWrapperImpl::InitializeOnMainThread,
-                            weak_factory_.GetWeakPtr(), received_frame_cb,
-                            media::BindToCurrentLoop(init_cb)));
+      FROM_HERE,
+      base::BindOnce(&StreamTextureWrapperImpl::InitializeOnMainThread,
+                     weak_factory_.GetWeakPtr(), received_frame_cb,
+                     media::BindToCurrentLoop(init_cb)));
 }
 
 void StreamTextureWrapperImpl::InitializeOnMainThread(
-    const base::Closure& received_frame_cb,
+    const base::RepeatingClosure& received_frame_cb,
     const StreamTextureWrapperInitCB& init_cb) {
   DCHECK(main_task_runner_->BelongsToCurrentThread());
   DVLOG(2) << __func__;
@@ -186,8 +188,8 @@ void StreamTextureWrapperImpl::Destroy() {
     // base::Unretained is safe here because this function is the only one that
     // can call delete.
     main_task_runner_->PostTask(
-        FROM_HERE,
-        base::Bind(&StreamTextureWrapperImpl::Destroy, base::Unretained(this)));
+        FROM_HERE, base::BindOnce(&StreamTextureWrapperImpl::Destroy,
+                                  base::Unretained(this)));
     return;
   }
 

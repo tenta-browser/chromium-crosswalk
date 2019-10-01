@@ -15,14 +15,19 @@
 #include "chrome/grit/theme_resources.h"
 
 #if defined(OS_CHROMEOS)
+#include "ash/keyboard/ui/resources/keyboard_resource_util.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/file_manager/file_manager_string_util.h"
+#include "chrome/grit/component_extension_resources.h"
 #include "extensions/common/constants.h"
 #include "third_party/ink/grit/ink_resources.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/file_manager/file_manager_resource_util.h"
 #include "ui/file_manager/grit/file_manager_resources.h"
-#include "ui/keyboard/resources/keyboard_resource_util.h"
+#endif
+
+#if defined(KIOSK_NEXT) && defined(GOOGLE_CHROME_BUILD)
+#include "chrome/grit/kiosk_next_internal_resources_map.h"
 #endif
 
 namespace extensions {
@@ -38,10 +43,17 @@ ChromeComponentExtensionResourceManager() {
     {"web_store/webstore_icon_16.png", IDR_WEBSTORE_ICON_16},
 #endif
 
+#if defined(KIOSK_NEXT)
+    {"chromeos/kiosk_next_home/kiosk_next_home.mojom.js",
+     IDR_KIOSK_NEXT_HOME_MOJOM_JS},
+#endif
+
 #if defined(OS_CHROMEOS)
     {"chrome_app/chrome_app_icon_32.png", IDR_CHROME_APP_ICON_32},
     {"chrome_app/chrome_app_icon_192.png", IDR_CHROME_APP_ICON_192},
     {"pdf/ink/ink_lib_binary.js", IDR_INK_LIB_BINARY_JS},
+    {"pdf/ink/pthread-main.js", IDR_INK_PTHREAD_MAIN_JS},
+    {"pdf/ink/glcore_base.js.mem", IDR_INK_GLCORE_BASE_JS_MEM},
     {"pdf/ink/glcore_base.wasm", IDR_INK_GLCORE_BASE_WASM},
     {"pdf/ink/glcore_wasm_bootstrap_compiled.js",
      IDR_INK_GLCORE_WASM_BOOTSTRAP_COMPILED_JS},
@@ -78,6 +90,11 @@ ChromeComponentExtensionResourceManager() {
       keyboard_resources,
       keyboard_resource_size);
 #endif
+
+#if defined(KIOSK_NEXT) && defined(GOOGLE_CHROME_BUILD)
+  AddComponentResourceEntries(kKioskNextInternalResources,
+                              kKioskNextInternalResourcesSize);
+#endif
 }
 
 ChromeComponentExtensionResourceManager::
@@ -98,10 +115,12 @@ bool ChromeComponentExtensionResourceManager::IsComponentExtensionResource(
   relative_path = relative_path.NormalizePathSeparators();
 
   auto entry = path_to_resource_id_.find(relative_path);
-  if (entry != path_to_resource_id_.end())
+  if (entry != path_to_resource_id_.end()) {
     *resource_id = entry->second;
+    return true;
+  }
 
-  return entry != path_to_resource_id_.end();
+  return false;
 }
 
 const ui::TemplateReplacements*
@@ -122,8 +141,7 @@ void ChromeComponentExtensionResourceManager::AddComponentResourceEntries(
         entries[i].name);
     resource_path = resource_path.NormalizePathSeparators();
 
-    DCHECK(path_to_resource_id_.find(resource_path) ==
-        path_to_resource_id_.end());
+    DCHECK(!base::ContainsKey(path_to_resource_id_, resource_path));
     path_to_resource_id_[resource_path] = entries[i].value;
   }
 }

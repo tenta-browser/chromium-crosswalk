@@ -17,16 +17,15 @@
 namespace extensions {
 
 BookmarkAppTabHelper::BookmarkAppTabHelper(content::WebContents* web_contents)
-    : WebAppTabHelperBase(web_contents) {}
+    : WebAppTabHelperBase(web_contents) {
+}
 
 BookmarkAppTabHelper::~BookmarkAppTabHelper() = default;
 
 // static
 BookmarkAppTabHelper* BookmarkAppTabHelper::CreateForWebContents(
     content::WebContents* web_contents) {
-  // Do nothing if already exists.
-  if (FromWebContents(web_contents))
-    return nullptr;
+  DCHECK(!FromWebContents(web_contents));
 
   auto tab_helper = std::make_unique<BookmarkAppTabHelper>(web_contents);
   BookmarkAppTabHelper* result = tab_helper.get();
@@ -41,14 +40,12 @@ web_app::WebAppTabHelperBase* BookmarkAppTabHelper::CloneForWebContents(
   return new_tab_helper;
 }
 
-web_app::AppId BookmarkAppTabHelper::GetAppId(const GURL& url) {
+web_app::AppId BookmarkAppTabHelper::FindAppIdInScopeOfUrl(const GURL& url) {
   content::BrowserContext* browser_context =
       web_contents()->GetBrowserContext();
 
-  const Extension* extension = nullptr;
-
-  if (base::FeatureList::IsEnabled(::features::kDesktopPWAWindowing))
-    extension = util::GetInstalledPwaForUrl(browser_context, url);
+  const Extension* extension =
+      util::GetInstalledPwaForUrl(browser_context, url);
 
   if (!extension) {
     // Check if there is a shortcut app for this |url|.
@@ -68,13 +65,10 @@ bool BookmarkAppTabHelper::IsUserInstalled() const {
 }
 
 bool BookmarkAppTabHelper::IsFromInstallButton() const {
-  const bool pwa_windowing =
-      base::FeatureList::IsEnabled(::features::kDesktopPWAWindowing);
   const Extension* app = GetExtension();
   // TODO(loyso): Use something better to record apps installed from promoted
   // UIs. crbug.com/774918.
-  return app && app->is_hosted_app() && pwa_windowing &&
-         UrlHandlers::GetUrlHandlers(app);
+  return app && app->is_hosted_app() && UrlHandlers::GetUrlHandlers(app);
 }
 
 const Extension* BookmarkAppTabHelper::GetExtension() const {

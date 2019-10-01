@@ -54,15 +54,30 @@ class ASH_EXPORT UnifiedMessageListView
   // return an empty rect.
   gfx::Rect GetLastNotificationBounds() const;
 
+  // Return the bounds of the first notification whose bottom is below
+  // |y_offset|.
+  gfx::Rect GetNotificationBoundsBelowY(int y_offset) const;
+
   // Count the number of notifications whose bottom position is above
   // |y_offset|. O(n) where n is number of notifications.
   int CountNotificationsAboveY(int y_offset) const;
+
+  // Returns the total number of notifications in the list.
+  int GetTotalNotificationCount() const;
+
+  // Returns true if an animation is currently in progress.
+  bool IsAnimating() const;
+
+  // Called when a notification is slid out so we can run the MOVE_DOWN
+  // animation.
+  void OnNotificationSlidOut();
 
   // views::View:
   void ChildPreferredSizeChanged(views::View* child) override;
   void PreferredSizeChanged() override;
   void Layout() override;
   gfx::Size CalculatePreferredSize() const override;
+  const char* GetClassName() const override;
 
   // message_center::MessageCenterObserver:
   void OnNotificationAdded(const std::string& id) override;
@@ -77,6 +92,10 @@ class ASH_EXPORT UnifiedMessageListView
   void AnimationProgressed(const gfx::Animation* animation) override;
   void AnimationCanceled(const gfx::Animation* animation) override;
 
+  bool is_deleting_removed_notifications() const {
+    return is_deleting_removed_notifications_;
+  }
+
  protected:
   // Virtual for testing.
   virtual message_center::MessageView* CreateMessageView(
@@ -88,6 +107,7 @@ class ASH_EXPORT UnifiedMessageListView
  private:
   friend class UnifiedMessageCenterViewTest;
   friend class UnifiedMessageListViewTest;
+  class Background;
   class MessageViewContainer;
 
   // UnifiedMessageListView always runs single animation at one time. When
@@ -96,9 +116,6 @@ class ASH_EXPORT UnifiedMessageListView
   enum class State {
     // No animation is running.
     IDLE,
-
-    // Sliding out a removed notification. It will transition to MOVE_DOWN.
-    SLIDE_OUT,
 
     // Moving down notifications.
     MOVE_DOWN,
@@ -111,8 +128,17 @@ class ASH_EXPORT UnifiedMessageListView
     CLEAR_ALL_VISIBLE
   };
 
-  MessageViewContainer* GetContainer(int index);
-  const MessageViewContainer* GetContainer(int index) const;
+  // Syntactic sugar to downcast.
+  static const MessageViewContainer* AsMVC(const views::View* v);
+  static MessageViewContainer* AsMVC(views::View* v);
+
+  // Returns the notification with the provided |id|.
+  const MessageViewContainer* GetNotificationById(const std::string& id) const;
+  MessageViewContainer* GetNotificationById(const std::string& id) {
+    return const_cast<MessageViewContainer*>(
+        static_cast<const UnifiedMessageListView*>(this)->GetNotificationById(
+            id));
+  }
 
   // Returns the first removable notification from the top.
   MessageViewContainer* GetNextRemovableNotification();
@@ -175,6 +201,11 @@ class ASH_EXPORT UnifiedMessageListView
   // The final height of the UnifiedMessageListView. If not animating, it's same
   // as height().
   int ideal_height_ = 0;
+
+  // True if the UnifiedMessageListView is currently deleting notifications
+  // marked for removal. This check is needed to prevent re-entrancing issues
+  // (e.g. crbug.com/933327) caused by the View destructor.
+  bool is_deleting_removed_notifications_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(UnifiedMessageListView);
 };

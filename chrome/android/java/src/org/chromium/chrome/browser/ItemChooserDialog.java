@@ -97,10 +97,10 @@ public class ItemChooserDialog {
 
             if (icon == null ^ mIcon == null) return false;
 
-            // On Android O and above, Drawable#getConstantState() always returns a different value,
-            // so it does not make sense to compare it.
+            // On Android NMR1 and above, Drawable#getConstantState() always returns a different
+            // value, so it does not make sense to compare it.
             // TODO(crbug.com/773043): Find a way to compare the icons.
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O && mIcon != null
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N_MR1 && mIcon != null
                     && !mIcon.getConstantState().equals(icon.getConstantState())) {
                 return false;
             }
@@ -501,17 +501,22 @@ public class ItemChooserDialog {
         mListView.setDivider(null);
         setState(State.STARTING);
 
-        // The list is the main element in the dialog and it should grow and
-        // shrink according to the size of the screen available.
-        View listViewContainer = dialogContainer.findViewById(R.id.container);
-        listViewContainer.setLayoutParams(new LinearLayout.LayoutParams(
-                LayoutParams.MATCH_PARENT,
-                getListHeight(mActivity.getWindow().getDecorView().getHeight(),
-                        mActivity.getResources().getDisplayMetrics().density)));
-
         mIgnorePendingWindowFocusChangeForClose = false;
 
         showDialogForView(dialogContainer);
+
+        dialogContainer.addOnLayoutChangeListener(
+                (View v, int l, int t, int r, int b, int ol, int ot, int or, int ob) -> {
+                    if (l != ol || t != ot || r != or || b != ob) {
+                        // The list is the main element in the dialog and it should grow and
+                        // shrink according to the size of the screen available.
+                        View listViewContainer = dialogContainer.findViewById(R.id.container);
+                        listViewContainer.setLayoutParams(new LinearLayout.LayoutParams(
+                                LayoutParams.MATCH_PARENT,
+                                getListHeight(mActivity.getWindow().getDecorView().getHeight(),
+                                        mActivity.getResources().getDisplayMetrics().density)));
+                    }
+                });
     }
 
     /**

@@ -24,6 +24,7 @@ import org.chromium.base.test.util.FlakyTest;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
+import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.EmptyTabModelObserver;
 import org.chromium.chrome.browser.tabmodel.TabLaunchType;
@@ -72,14 +73,15 @@ public class BottomSheetControllerTest {
             ScrimView scrim = new ScrimView(mActivityTestRule.getActivity(), null, coordinator);
 
             mSheetController = new BottomSheetController(activity,
-                    activity.getActivityTabProvider(), scrim, mBottomSheet,
+                    activity.getLifecycleDispatcher(), activity.getActivityTabProvider(), scrim,
+                    mBottomSheet,
                     activity.getCompositorViewHolder().getLayoutManager().getOverlayPanelManager(),
                     true);
 
             mLowPriorityContent = new TestBottomSheetContent(
-                    mActivityTestRule.getActivity(), ContentPriority.LOW);
+                    mActivityTestRule.getActivity(), ContentPriority.LOW, false);
             mHighPriorityContent = new TestBottomSheetContent(
-                    mActivityTestRule.getActivity(), ContentPriority.HIGH);
+                    mActivityTestRule.getActivity(), ContentPriority.HIGH, false);
         });
     }
 
@@ -223,6 +225,57 @@ public class BottomSheetControllerTest {
                 mBottomSheet.getSheetState());
         assertEquals("The bottom sheet is showing incorrect content.", mLowPriorityContent,
                 mBottomSheet.getCurrentSheetContent());
+    }
+
+    @Test
+    @MediumTest
+    public void testCustomLifecycleContent() throws TimeoutException, InterruptedException {
+        requestContentInSheet(mHighPriorityContent, true);
+        requestContentInSheet(mLowPriorityContent, false);
+
+        TestBottomSheetContent customLifecycleContent = new TestBottomSheetContent(
+                mActivityTestRule.getActivity(), ContentPriority.LOW, true);
+        requestContentInSheet(customLifecycleContent, false);
+        assertEquals(mHighPriorityContent, mBottomSheet.getCurrentSheetContent());
+
+        // Change URL and wait for PageLoadStarted event.
+        CallbackHelper pageLoadStartedHelper = new CallbackHelper();
+        Tab tab = mActivityTestRule.getActivity().getActivityTab();
+        tab.addObserver(new EmptyTabObserver() {
+            @Override
+            public void onPageLoadStarted(Tab tab, String url) {
+                pageLoadStartedHelper.notifyCalled();
+            }
+        });
+        int currentCallCount = pageLoadStartedHelper.getCallCount();
+        ChromeTabUtils.loadUrlOnUiThread(tab, "about:blank");
+        pageLoadStartedHelper.waitForCallback(currentCallCount, 1);
+
+        ThreadUtils.runOnUiThreadBlocking(mBottomSheet::endAnimations);
+        assertEquals(customLifecycleContent, mBottomSheet.getCurrentSheetContent());
+    }
+
+    @Test
+    @MediumTest
+    public void testCloseEvent() throws TimeoutException, InterruptedException {
+        requestContentInSheet(mHighPriorityContent, true);
+        expandSheet();
+
+        CallbackHelper contentChangedHelper = new CallbackHelper();
+        mBottomSheet.addObserver(new EmptyBottomSheetObserver() {
+            @Override
+            public void onSheetContentChanged(BottomSheetContent content) {
+                contentChangedHelper.notifyCalled();
+            }
+        });
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> mBottomSheet.setSheetState(BottomSheet.SheetState.HIDDEN, false));
+
+        contentChangedHelper.waitForCallback(0, 1);
+
+        assertEquals("The sheet's content should be null!", null,
+                mSheetController.getBottomSheet().getCurrentSheetContent());
     }
 
     /**

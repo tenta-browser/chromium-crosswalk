@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/views/payments/payment_request_item_list.h"
 
+#include <algorithm>
 #include <utility>
 
 #include "chrome/browser/ui/views/payments/payment_request_dialog_view.h"
@@ -97,14 +98,13 @@ void PaymentRequestItemList::Item::Init() {
   content->set_can_process_events_within_subtree(false);
   layout->AddView(content.release());
 
-  checkmark_ = CreateCheckmark(selected() && clickable());
-  layout->AddView(checkmark_.get());
+  layout->AddView(CreateCheckmark(selected() && clickable()).release());
 
   if (extra_view)
     layout->AddView(extra_view.release());
 
   if (show_edit_button_) {
-    views::ImageButton* edit_button = views::CreateVectorImageButton(this);
+    auto edit_button = views::CreateVectorImageButton(this);
     const SkColor icon_color =
         color_utils::DeriveDefaultIconColor(SK_ColorBLACK);
     edit_button->SetImage(views::Button::STATE_NORMAL,
@@ -112,10 +112,10 @@ void PaymentRequestItemList::Item::Init() {
                                                 kEditIconSize, icon_color));
     edit_button->set_ink_drop_base_color(icon_color);
     edit_button->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);
-    edit_button->set_id(static_cast<int>(DialogViewID::EDIT_ITEM_BUTTON));
+    edit_button->SetID(static_cast<int>(DialogViewID::EDIT_ITEM_BUTTON));
     edit_button->SetAccessibleName(
         l10n_util::GetStringUTF16(IDS_PAYMENTS_EDIT));
-    layout->AddView(edit_button);
+    layout->AddView(edit_button.release());
   }
 
   UpdateAccessibleName();
@@ -124,10 +124,11 @@ void PaymentRequestItemList::Item::Init() {
 void PaymentRequestItemList::Item::SetSelected(bool selected, bool notify) {
   selected_ = selected;
 
-  // This could be called before CreateItemView, so before |checkmark_| is
-  // instantiated.
-  if (checkmark_)
-    checkmark_->SetVisible(selected_);
+  for (views::View* child : children())
+    if (child->GetID() == static_cast<int>(DialogViewID::CHECKMARK_VIEW)) {
+      child->SetVisible(selected);
+      break;
+    }
 
   UpdateAccessibleName();
 
@@ -139,9 +140,8 @@ std::unique_ptr<views::ImageView> PaymentRequestItemList::Item::CreateCheckmark(
     bool selected) {
   std::unique_ptr<views::ImageView> checkmark =
       std::make_unique<views::ImageView>();
-  checkmark->set_id(static_cast<int>(DialogViewID::CHECKMARK_VIEW));
+  checkmark->SetID(static_cast<int>(DialogViewID::CHECKMARK_VIEW));
   checkmark->set_can_process_events_within_subtree(false);
-  checkmark->set_owned_by_client();
   checkmark->SetImage(
       gfx::CreateVectorIcon(views::kMenuCheckIcon, kCheckmarkColor));
   checkmark->SetVisible(selected);
@@ -155,7 +155,7 @@ std::unique_ptr<views::View> PaymentRequestItemList::Item::CreateExtraView() {
 
 void PaymentRequestItemList::Item::ButtonPressed(views::Button* sender,
                                                  const ui::Event& event) {
-  if (sender->id() == static_cast<int>(DialogViewID::EDIT_ITEM_BUTTON)) {
+  if (sender->GetID() == static_cast<int>(DialogViewID::EDIT_ITEM_BUTTON)) {
     EditButtonPressed();
   } else if (selected_) {
     // |dialog()| may be null in tests

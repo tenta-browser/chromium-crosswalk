@@ -54,10 +54,7 @@ class CryptAuthController {
         this.showExistingUserNewChromebookNotification_.bind(this);
 
     this.multiDeviceSetup =
-        new chromeos.multideviceSetup.mojom.MultiDeviceSetupPtr();
-    Mojo.bindInterface(
-        chromeos.multideviceSetup.mojom.MultiDeviceSetup.name,
-        mojo.makeRequest(this.multiDeviceSetup).handle);
+        chromeos.multideviceSetup.mojom.MultiDeviceSetup.getProxy();
   }
 
   /**
@@ -245,6 +242,8 @@ class DeviceListController {
         'state', remoteDevice['connectionStatus']);
     t.querySelector('.device-name').textContent =
         remoteDevice['friendlyDeviceName'];
+    t.querySelector('.no-pii-name').textContent =
+        remoteDevice['noPiiName'];
     t.querySelector('.device-id').textContent =
         remoteDevice['publicKeyTruncated'];
     t.querySelector('.software-features').textContent =

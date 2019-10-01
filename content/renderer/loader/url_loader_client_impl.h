@@ -77,7 +77,7 @@ class CONTENT_EXPORT URLLoaderClientImpl final
   void OnUploadProgress(int64_t current_position,
                         int64_t total_size,
                         OnUploadProgressCallback ack_callback) override;
-  void OnReceiveCachedMetadata(const std::vector<uint8_t>& data) override;
+  void OnReceiveCachedMetadata(mojo_base::BigBuffer data) override;
   void OnTransferSizeUpdated(int32_t transfer_size_diff) override;
   void OnStartLoadingResponseBody(
       mojo::ScopedDataPipeConsumerHandle body) override;
@@ -95,12 +95,6 @@ class CONTENT_EXPORT URLLoaderClientImpl final
   bool NeedsStoringMessage() const;
   void StoreAndDispatch(std::unique_ptr<DeferredMessage> message);
   void OnConnectionClosed();
-
-  // Non-ResourceLoadViaDataPipe:
-  // Used for reading the response body from the data pipe passed on
-  // OnStartLoadingResponseBody() and passing the data to corresponding
-  // RequestPeer.
-  scoped_refptr<URLResponseBodyConsumer> body_consumer_;
 
   std::vector<std::unique_ptr<DeferredMessage>> deferred_messages_;
   const int request_id_;

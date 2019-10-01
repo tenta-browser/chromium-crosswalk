@@ -222,7 +222,7 @@ bool ShouldRunUserExperiment(const InstallerState& installer_state) {
     return false;
 
   // The current experiment only applies to Windows 10 and newer.
-  if (base::win::GetVersion() < base::win::VERSION_WIN10)
+  if (base::win::GetVersion() < base::win::Version::WIN10)
     return false;
 
   // Installs originating from the MSI and domain joined machines are excluded.
@@ -531,7 +531,7 @@ void LaunchChrome(const InstallerState& installer_state,
   base::CommandLine command_line(chrome_exe);
 #if defined(OS_WIN)
   command_line.AppendSwitchNative(::switches::kTryChromeAgain,
-                                  base::IntToString16(experiment.group()));
+                                  base::NumberToString16(experiment.group()));
 #endif  // defined(OS_WIN)
 
   STARTUPINFOW startup_info = {sizeof(startup_info)};

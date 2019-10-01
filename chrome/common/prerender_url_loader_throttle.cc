@@ -4,6 +4,7 @@
 
 #include "chrome/common/prerender_url_loader_throttle.h"
 
+#include "base/bind.h"
 #include "build/build_config.h"
 #include "chrome/common/prerender_util.h"
 #include "content/public/common/content_constants.h"
@@ -77,6 +78,11 @@ void PrerenderURLLoaderThrottle::DetachFromCurrentSequence() {
 void PrerenderURLLoaderThrottle::WillStartRequest(
     network::ResourceRequest* request,
     bool* defer) {
+  if (mode_ == PREFETCH_ONLY) {
+    request->load_flags |= net::LOAD_PREFETCH;
+    request->headers.SetHeader(kPurposeHeaderName, kPurposeHeaderValue);
+  }
+
   resource_type_ = static_cast<content::ResourceType>(request->resource_type);
   // Abort any prerenders that spawn requests that use unsupported HTTP
   // methods or schemes.
@@ -85,7 +91,7 @@ void PrerenderURLLoaderThrottle::WillStartRequest(
     // invalid requests.  For prefetches, cancel invalid requests but keep the
     // prefetch going.
     delegate_->CancelWithError(net::ERR_ABORTED);
-    if (mode_ == FULL_PRERENDER) {
+    if (mode_ == DEPRECATED_FULL_PRERENDER) {
       canceler_getter_task_runner_->PostTask(
           FROM_HERE, base::BindOnce(CancelPrerenderForUnsupportedMethod,
                                     std::move(canceler_getter_)));
@@ -93,7 +99,8 @@ void PrerenderURLLoaderThrottle::WillStartRequest(
     }
   }
 
-  if (request->resource_type != content::RESOURCE_TYPE_MAIN_FRAME &&
+  if (request->resource_type !=
+          static_cast<int>(content::ResourceType::kMainFrame) &&
       !DoesSubresourceURLHaveValidScheme(request->url)) {
     // Destroying the prerender for unsupported scheme only for non-main
     // resource to allow chrome://crash to actually crash in the
@@ -109,7 +116,8 @@ void PrerenderURLLoaderThrottle::WillStartRequest(
   }
 
 #if defined(OS_ANDROID)
-  if (request->resource_type == content::RESOURCE_TYPE_FAVICON) {
+  if (request->resource_type ==
+      static_cast<int>(content::ResourceType::kFavicon)) {
     // Delay icon fetching until the contents are getting swapped in
     // to conserve network usage in mobile devices.
     *defer = true;
@@ -131,7 +139,6 @@ void PrerenderURLLoaderThrottle::WillStartRequest(
 #endif  // OS_ANDROID
 
   if (mode_ == PREFETCH_ONLY) {
-    request->headers.SetHeader(kPurposeHeaderName, kPurposeHeaderValue);
     detached_timer_.Start(FROM_HERE,
                           base::TimeDelta::FromMilliseconds(
                               content::kDefaultDetachableCancelDelayMs),
@@ -153,8 +160,11 @@ void PrerenderURLLoaderThrottle::WillRedirectRequest(
   }
 
   std::string follow_only_when_prerender_shown_header;
-  response_head.headers->GetNormalizedHeader(
-      kFollowOnlyWhenPrerenderShown, &follow_only_when_prerender_shown_header);
+  if (response_head.headers) {
+    response_head.headers->GetNormalizedHeader(
+        kFollowOnlyWhenPrerenderShown,
+        &follow_only_when_prerender_shown_header);
+  }
   // Abort any prerenders with requests which redirect to invalid schemes.
   if (!DoesURLHaveValidScheme(redirect_info->new_url)) {
     delegate_->CancelWithError(net::ERR_ABORTED);
@@ -163,7 +173,7 @@ void PrerenderURLLoaderThrottle::WillRedirectRequest(
         base::BindOnce(CancelPrerenderForUnsupportedScheme,
                        std::move(canceler_getter_), redirect_info->new_url));
   } else if (follow_only_when_prerender_shown_header == "1" &&
-             resource_type_ != content::RESOURCE_TYPE_MAIN_FRAME) {
+             resource_type_ != content::ResourceType::kMainFrame) {
     // Only defer redirects with the Follow-Only-When-Prerender-Shown
     // header. Do not defer redirects on main frame loads.
     if (sync_xhr_) {

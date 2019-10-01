@@ -15,6 +15,7 @@
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/unguessable_token.h"
+#include "base/util/type_safety/id_type.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "ipc/ipc_message.h"
@@ -748,8 +749,7 @@ struct FuzzTraits<content::PageState> {
 template <>
 struct FuzzTraits<content::WebCursor> {
   static bool Fuzz(content::WebCursor* p, Fuzzer* fuzzer) {
-    content::CursorInfo info;
-    p->GetCursorInfo(&info);
+    content::CursorInfo info = p->info();
 
     // |type| enum is not validated on de-serialization, so pick random value.
     if (!FuzzParam(reinterpret_cast<int*>(&info.type), fuzzer))
@@ -768,8 +768,7 @@ struct FuzzTraits<content::WebCursor> {
     if (!(info.image_scale_factor > 0.0))
       info.image_scale_factor = 1;
 
-    *p = content::WebCursor();
-    p->InitFromCursorInfo(info);
+    *p = content::WebCursor(info);
     return true;
   }
 };
@@ -949,8 +948,8 @@ struct FuzzTraits<gfx::Vector2dF> {
 };
 
 template <typename TypeMarker, typename WrappedType, WrappedType kInvalidValue>
-struct FuzzTraits<gpu::IdType<TypeMarker, WrappedType, kInvalidValue>> {
-  using param_type = gpu::IdType<TypeMarker, WrappedType, kInvalidValue>;
+struct FuzzTraits<util::IdType<TypeMarker, WrappedType, kInvalidValue>> {
+  using param_type = util::IdType<TypeMarker, WrappedType, kInvalidValue>;
   static bool Fuzz(param_type* id, Fuzzer* fuzzer) {
     WrappedType raw_value = id->GetUnsafeValue();
     if (!FuzzParam(&raw_value, fuzzer))

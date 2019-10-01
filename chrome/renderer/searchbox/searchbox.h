@@ -47,17 +47,15 @@ class SearchBox : public content::RenderFrameObserver,
   // Sends LogEvent to the browser.
   void LogEvent(NTPLoggingEventType event);
 
+  // Sends LogSuggestionEventWithValue to the browser.
+  void LogSuggestionEventWithValue(NTPSuggestionsLoggingEventType event,
+                                   int data);
+
   // Sends LogMostVisitedImpression to the browser.
   void LogMostVisitedImpression(const ntp_tiles::NTPTileImpression& impression);
 
   // Sends LogMostVisitedNavigation to the browser.
   void LogMostVisitedNavigation(const ntp_tiles::NTPTileImpression& impression);
-
-  // Sends ChromeIdentityCheck to the browser.
-  void CheckIsUserSignedInToChromeAs(const base::string16& identity);
-
-  // Sends HistorySyncCheck to the browser.
-  void CheckIsUserSyncingHistory();
 
   // Sends DeleteMostVisitedItem to the browser.
   void DeleteMostVisitedItem(InstantRestrictedID most_visited_item_id);
@@ -112,6 +110,9 @@ class SearchBox : public content::RenderFrameObserver,
   // Returns true if the most visited items are custom links.
   bool IsCustomLinks() const;
 
+  // Sends ToggleMostVisitedOrCustomLinks to the browser.
+  void ToggleMostVisitedOrCustomLinks();
+
   // Sends AddCustomLink to the browser.
   void AddCustomLink(const GURL& url, const std::string& title);
 
@@ -139,7 +140,6 @@ class SearchBox : public content::RenderFrameObserver,
 
   // Updates the NTP custom background preferences, sometimes this includes
   // image attributions.
-  void SetCustomBackgroundURL(const GURL& background_url);
   void SetCustomBackgroundURLWithAttributions(
       const GURL& background_url,
       const std::string& attribution_line_1,
@@ -185,9 +185,6 @@ class SearchBox : public content::RenderFrameObserver,
   void SetInputInProgress(bool input_in_progress) override;
   void ThemeChanged(const ThemeBackgroundInfo& theme_info) override;
 
-  void HistorySyncCheckResult(bool sync_history);
-  void ChromeIdentityCheckResult(const base::string16& identity,
-                                 bool identity_match);
   void AddCustomLinkResult(bool success);
   void UpdateCustomLinkResult(bool success);
   void DeleteCustomLinkResult(bool success);

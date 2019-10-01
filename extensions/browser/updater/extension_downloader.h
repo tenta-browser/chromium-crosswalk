@@ -99,6 +99,14 @@ class ExtensionDownloader {
                     int request_id,
                     ManifestFetchData::FetchPriority fetch_priority);
 
+  // Check AddPendingExtensionWithVersion with the version set as "0.0.0.0".
+  bool AddPendingExtension(const std::string& id,
+                           const GURL& update_url,
+                           Manifest::Location install_source,
+                           bool is_corrupt_reinstall,
+                           int request_id,
+                           ManifestFetchData::FetchPriority fetch_priority);
+
   // Adds extension |id| to the list of extensions to check for updates.
   // Returns false if the |id| can't be updated due to invalid details.
   // In that case, no callbacks will be performed on the |delegate_|.
@@ -108,13 +116,17 @@ class ExtensionDownloader {
   // parameter is used to indicate in the request that we detected corruption in
   // the local copy of the extension and we want to perform a reinstall of it.
   // |fetch_priority| parameter notifies the downloader the priority of this
-  // extension update (either foreground or background).
-  bool AddPendingExtension(const std::string& id,
-                           const GURL& update_url,
-                           Manifest::Location install_source,
-                           bool is_corrupt_reinstall,
-                           int request_id,
-                           ManifestFetchData::FetchPriority fetch_priority);
+  // extension update (either foreground or background). The |version|
+  // parameter specifies the version of the downloaded crx file,
+  // equals to 0.0.0.0 if there is no crx file.
+  bool AddPendingExtensionWithVersion(
+      const std::string& id,
+      const GURL& update_url,
+      Manifest::Location install_source,
+      bool is_corrupt_reinstall,
+      int request_id,
+      ManifestFetchData::FetchPriority fetch_priority,
+      base::Version version);
 
   // Schedules a fetch of the manifest of all the extensions added with
   // AddExtension() and AddPendingExtension().
@@ -159,6 +171,7 @@ class ExtensionDownloader {
   static const char kUpdateInteractivityBackground[];
 
  private:
+  friend class ExtensionDownloaderTest;
   friend class ExtensionUpdaterTest;
 
   // These counters are bumped as extensions are added to be fetched. They
@@ -283,10 +296,20 @@ class ExtensionDownloader {
   // Handles the result of a crx fetch.
   void OnExtensionLoadComplete(base::FilePath crx_path);
 
+  // Invokes OnExtensionDownloadStageChanged() on the |delegate_| for each
+  // extension in the set, with |stage| as the current stage. Make a copy of
+  // arguments because there is no guarantee that callback won't indirectly
+  // change source of IDs.
+  void NotifyExtensionsDownloadStageChanged(
+      std::set<std::string> extension_ids,
+      ExtensionDownloaderDelegate::Stage stage);
+
   // Invokes OnExtensionDownloadFailed() on the |delegate_| for each extension
-  // in the set, with |error| as the reason for failure.
-  void NotifyExtensionsDownloadFailed(const std::set<std::string>& id_set,
-                                      const std::set<int>& request_ids,
+  // in the set, with |error| as the reason for failure. Make a copy of
+  // arguments because there is no guarantee that callback won't indirectly
+  // change source of IDs.
+  void NotifyExtensionsDownloadFailed(std::set<std::string> id_set,
+                                      std::set<int> request_ids,
                                       ExtensionDownloaderDelegate::Error error);
 
   // Send a notification that an update was found for |id| that we'll

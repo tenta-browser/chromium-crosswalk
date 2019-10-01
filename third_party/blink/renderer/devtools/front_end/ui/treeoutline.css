@@ -35,6 +35,10 @@
     margin-left: -10000px;
 }
 
+.tree-outline:not(.hide-selection-when-blurred) li.selected {
+    color: var(--selection-inactive-fg-color);
+}
+
 .tree-outline:not(.hide-selection-when-blurred) li.selected .selection {
     display: block;
     background-color: var(--selection-inactive-bg-color);
@@ -62,10 +66,6 @@ ol.tree-outline:not(.hide-selection-when-blurred) li.parent.selected:focus::befo
 ol.tree-outline,
 .tree-outline ol {
     list-style-type: none;
-}
-
-.tree-outline-no-padding {
-    padding: 0;
 }
 
 .tree-outline ol {

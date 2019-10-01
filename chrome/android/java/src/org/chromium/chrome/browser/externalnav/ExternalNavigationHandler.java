@@ -44,7 +44,6 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.HashSet;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Logic related to the URL overriding/intercepting functionality.
@@ -72,6 +71,21 @@ public class ExternalNavigationHandler {
     // referrer field passed to the market:// URL in the case where the app is not present.
     @VisibleForTesting
     static final String EXTRA_MARKET_REFERRER = "market_referrer";
+
+    @IntDef({WebApkLaunchDecision.LAUNCHED, WebApkLaunchDecision.LAUNCH_FAILED,
+            WebApkLaunchDecision.ALREADY_IN_WEBAPK,
+            WebApkLaunchDecision.WEBAPK_NOT_SOLE_INTENT_HANDLER})
+    public @interface WebApkLaunchDecision {
+        int LAUNCHED = 0;
+        int LAUNCH_FAILED = 1;
+
+        // User is either in target WebAPK or in CCT launched by the target WebAPK.
+        int ALREADY_IN_WEBAPK = 2;
+
+        // The WebAPK either cannot handle intent or there are multiple non-browser apps which
+        // can handle the intent.
+        int WEBAPK_NOT_SOLE_INTENT_HANDLER = 3;
+    }
 
     // These values are persisted in histograms. Please do not renumber. Append only.
     @IntDef({AiaIntent.FALLBACK_USED, AiaIntent.SERP, AiaIntent.OTHER})
@@ -158,8 +172,8 @@ public class ExternalNavigationHandler {
         @OverrideUrlLoadingResult
         int result = shouldOverrideUrlLoadingInternal(
                 params, intent, hasBrowserFallbackUrl, browserFallbackUrl);
-        RecordHistogram.recordTimesHistogram("Android.StrictMode.OverrideUrlLoadingTime",
-                SystemClock.elapsedRealtime() - time, TimeUnit.MILLISECONDS);
+        RecordHistogram.recordTimesHistogram(
+                "Android.StrictMode.OverrideUrlLoadingTime", SystemClock.elapsedRealtime() - time);
 
         if (result != OverrideUrlLoadingResult.NO_OVERRIDE) {
             int pageTransitionCore = params.getPageTransition() & PageTransition.CORE_MASK;
@@ -361,11 +375,13 @@ public class ExternalNavigationHandler {
             return OverrideUrlLoadingResult.NO_OVERRIDE;
         }
 
-        // The "about:", "chrome:", and "chrome-native:" schemes are internal to the browser;
-        // don't want these to be dispatched to other apps.
+        // The "about:", "chrome:", "chrome-native:", "chrome-devtools:", and "devtools:" schemes
+        // are internal to the browser; don't want these to be dispatched to other apps.
         if (params.getUrl().startsWith(ContentUrlConstants.ABOUT_URL_SHORT_PREFIX)
                 || params.getUrl().startsWith(UrlConstants.CHROME_URL_SHORT_PREFIX)
-                || params.getUrl().startsWith(UrlConstants.CHROME_NATIVE_URL_SHORT_PREFIX)) {
+                || params.getUrl().startsWith(UrlConstants.CHROME_NATIVE_URL_SHORT_PREFIX)
+                || params.getUrl().startsWith(UrlConstants.DEVTOOLS_URL_SHORT_PREFIX)
+                || params.getUrl().startsWith(UrlConstants.DEVTOOLS_FALLBACK_URL_SHORT_PREFIX)) {
             if (DEBUG) Log.i(TAG, "NO_OVERRIDE: Navigating to a chrome-internal page");
             return OverrideUrlLoadingResult.NO_OVERRIDE;
         }
@@ -401,15 +417,7 @@ public class ExternalNavigationHandler {
             return OverrideUrlLoadingResult.NO_OVERRIDE;
         }
 
-        // Sanitize the Intent, ensuring web pages can not bypass browser
-        // security (only access to BROWSABLE activities).
-        intent.addCategory(Intent.CATEGORY_BROWSABLE);
-        intent.setComponent(null);
-        Intent selector = intent.getSelector();
-        if (selector != null) {
-            selector.addCategory(Intent.CATEGORY_BROWSABLE);
-            selector.setComponent(null);
-        }
+        sanitizeQueryIntentActivitiesIntent(intent);
 
         List<ResolveInfo> resolvingInfos = mDelegate.queryIntentActivities(intent);
         if (resolvingInfos == null) return OverrideUrlLoadingResult.NO_OVERRIDE;
@@ -420,6 +428,32 @@ public class ExternalNavigationHandler {
         // from the Market.
         if (!canResolveActivity) {
             if (hasBrowserFallbackUrl) {
+                // Launch WebAPK if it can handle the URL.
+                if (!TextUtils.isEmpty(intent.getPackage())
+                        || (intent.getSelector() != null
+                                && !TextUtils.isEmpty(intent.getSelector().getPackage()))) {
+                    try {
+                        intent = Intent.parseUri(browserFallbackUrl, Intent.URI_INTENT_SCHEME);
+                    } catch (Exception e) {
+                        if (DEBUG) Log.i(TAG, "NO_OVERRIDE: Could not parse fallback url");
+                        return OverrideUrlLoadingResult.NO_OVERRIDE;
+                    }
+                    sanitizeQueryIntentActivitiesIntent(intent);
+                    resolvingInfos = mDelegate.queryIntentActivities(intent);
+                    switch (launchWebApkIfSoleIntentHandler(params, resolvingInfos, intent)) {
+                        case WebApkLaunchDecision.ALREADY_IN_WEBAPK:
+                            if (DEBUG) Log.i(TAG, "NO_OVERRIDE: Already in WebAPK");
+                            return OverrideUrlLoadingResult.NO_OVERRIDE;
+                        case WebApkLaunchDecision.LAUNCH_FAILED:
+                            if (DEBUG) Log.i(TAG, "NO_OVERRIDE: WebAPK launch failed");
+                            return OverrideUrlLoadingResult.NO_OVERRIDE;
+                        case WebApkLaunchDecision.LAUNCHED:
+                            if (DEBUG) Log.i(TAG, "OVERRIDE_WITH_EXTERNAL_INTENT: Launched WebAPK");
+                            return OverrideUrlLoadingResult.OVERRIDE_WITH_EXTERNAL_INTENT;
+                        case WebApkLaunchDecision.WEBAPK_NOT_SOLE_INTENT_HANDLER:
+                            break;
+                    }
+                }
                 return clobberCurrentTabWithFallbackUrl(browserFallbackUrl, params);
             }
 
@@ -603,31 +637,18 @@ public class ExternalNavigationHandler {
             IntentWithGesturesHandler.getInstance().onNewIntentWithGesture(intent);
         }
 
-        // If the only specialized intent handler is a WebAPK, set the intent's package to
-        // launch the WebAPK without showing the intent picker.
-        String targetWebApkPackageName = mDelegate.findFirstWebApkPackageName(resolvingInfos);
-
-        // We can't rely on this falling through to startActivityIfNeeded and behaving
-        // correctly for WebAPKs. This is because the target of the intent is the WebApk's main
-        // activity but that's just a bouncer which will redirect to WebApkActivity in chrome.
-        // To avoid bouncing indefinitely, don't override the navigation if we are currently
-        // showing the WebApk |params.webApkPackageName()| that we will redirect to.
-        if (targetWebApkPackageName != null
-                && targetWebApkPackageName.equals(params.nativeClientPackageName())) {
-            if (DEBUG) Log.i(TAG, "NO_OVERRIDE: Navigation in WebApk");
-            return OverrideUrlLoadingResult.NO_OVERRIDE;
-        }
-
-        if (targetWebApkPackageName != null
-                && mDelegate.countSpecializedHandlers(resolvingInfos) == 1) {
-            intent.setPackage(targetWebApkPackageName);
-        }
-
-        // http://crbug.com/831806 : Stay in the CCT if the CCT is opened by WebAPK and the url
-        // is within the WebAPK scope.
-        if (shouldStayInWebappCCT(params, resolvingInfos)) {
-            if (DEBUG) Log.i(TAG, "NO_OVERRIDE: Navigation in CCT within scope of parent webapp.");
-            return OverrideUrlLoadingResult.NO_OVERRIDE;
+        switch (launchWebApkIfSoleIntentHandler(params, resolvingInfos, intent)) {
+            case WebApkLaunchDecision.ALREADY_IN_WEBAPK:
+                if (DEBUG) Log.i(TAG, "NO_OVERRIDE: Already in WebAPK");
+                return OverrideUrlLoadingResult.NO_OVERRIDE;
+            case WebApkLaunchDecision.LAUNCH_FAILED:
+                if (DEBUG) Log.i(TAG, "NO_OVERRIDE: WebAPK launch failed");
+                return OverrideUrlLoadingResult.NO_OVERRIDE;
+            case WebApkLaunchDecision.LAUNCHED:
+                if (DEBUG) Log.i(TAG, "OVERRIDE_WITH_EXTERNAL_INTENT: Launched WebAPK");
+                return OverrideUrlLoadingResult.OVERRIDE_WITH_EXTERNAL_INTENT;
+            case WebApkLaunchDecision.WEBAPK_NOT_SOLE_INTENT_HANDLER:
+                break;
         }
 
         try {
@@ -643,6 +664,20 @@ public class ExternalNavigationHandler {
         }
 
         return OverrideUrlLoadingResult.NO_OVERRIDE;
+    }
+
+    /**
+     * Sanitize intent to be passed to {@link ExternalNavigationDelegate#queryIntentActivities()}
+     * ensuring that web pages cannot bypass browser security.
+     */
+    private void sanitizeQueryIntentActivitiesIntent(Intent intent) {
+        intent.addCategory(Intent.CATEGORY_BROWSABLE);
+        intent.setComponent(null);
+        Intent selector = intent.getSelector();
+        if (selector != null) {
+            selector.addCategory(Intent.CATEGORY_BROWSABLE);
+            selector.setComponent(null);
+        }
     }
 
     /**
@@ -776,10 +811,10 @@ public class ExternalNavigationHandler {
         return null;
     }
 
-    // Returns whether a navigation in a CustomTabActivity opened from a WebAPK/TWA should stay
+    // Returns whether a navigation in a CustomTabActivity opened from a WebAPK should stay
     // within the CustomTabActivity. Returns false if the navigation does not occur within a
     // CustomTabActivity or the CustomTabActivity was not opened from a WebAPK/TWA.
-    private boolean shouldStayInWebappCCT(
+    private boolean shouldStayInWebApkCCT(
             ExternalNavigationParams params, List<ResolveInfo> handlers) {
         Tab tab = params.getTab();
         if (tab == null || !tab.isCurrentlyACustomTab() || tab.getActivity() == null) {
@@ -804,6 +839,43 @@ public class ExternalNavigationHandler {
         return ExternalNavigationDelegateImpl.getSpecializedHandlersWithFilter(handlers, appId)
                        .size()
                 > 0;
+    }
+
+    /**
+     * Launches WebAPK if the WebAPK is the sole non-browser handler for the given intent.
+     * Returns whether a WebAPK was launched and if it was not launched returns why.
+     */
+    private @WebApkLaunchDecision int launchWebApkIfSoleIntentHandler(
+            ExternalNavigationParams params, List<ResolveInfo> resolvingInfos, Intent intent) {
+        if (shouldStayInWebApkCCT(params, resolvingInfos)) {
+            return WebApkLaunchDecision.ALREADY_IN_WEBAPK;
+        }
+
+        String targetWebApkPackageName = mDelegate.findFirstWebApkPackageName(resolvingInfos);
+
+        // We can't rely on this falling through to startActivityIfNeeded and behaving
+        // correctly for WebAPKs. This is because the target of the intent is the WebApk's main
+        // activity but that's just a bouncer which will redirect to WebApkActivity in chrome.
+        // To avoid bouncing indefinitely, don't override the navigation if we are currently
+        // showing the WebApk |params.webApkPackageName()| that we will redirect to.
+        if (targetWebApkPackageName != null
+                && targetWebApkPackageName.equals(params.nativeClientPackageName())) {
+            return WebApkLaunchDecision.ALREADY_IN_WEBAPK;
+        }
+
+        if (targetWebApkPackageName == null
+                || mDelegate.countSpecializedHandlers(resolvingInfos) != 1) {
+            return WebApkLaunchDecision.WEBAPK_NOT_SOLE_INTENT_HANDLER;
+        }
+
+        intent.setPackage(targetWebApkPackageName);
+        try {
+            if (mDelegate.startActivityIfNeeded(intent, false)) {
+                return WebApkLaunchDecision.LAUNCHED;
+            }
+        } catch (ActivityNotFoundException e) {
+        }
+        return WebApkLaunchDecision.LAUNCH_FAILED;
     }
 
     /**

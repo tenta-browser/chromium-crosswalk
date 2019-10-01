@@ -19,8 +19,8 @@
 #include "extensions/renderer/api/automation/automation_api_helper.h"
 #include "extensions/renderer/console.h"
 #include "extensions/renderer/dispatcher.h"
-#include "extensions/renderer/extension_bindings_system.h"
-#include "extensions/renderer/renderer_messaging_service.h"
+#include "extensions/renderer/native_extension_bindings_system.h"
+#include "extensions/renderer/native_renderer_messaging_service.h"
 #include "extensions/renderer/script_context.h"
 #include "extensions/renderer/script_context_set.h"
 #include "third_party/blink/public/platform/web_security_origin.h"
@@ -317,9 +317,8 @@ void ExtensionFrameHelper::ScheduleAtDocumentIdle(
   document_idle_callbacks_.push_back(callback);
 }
 
-void ExtensionFrameHelper::DidStartProvisionalLoad(
-    blink::WebDocumentLoader* document_loader,
-    bool is_content_initiated) {
+void ExtensionFrameHelper::ReadyToCommitNavigation(
+    blink::WebDocumentLoader* document_loader) {
   // New window created by chrome.app.window.create() must not start parsing the
   // document immediately. The chrome.app.window.create() callback (if any)
   // needs to be called prior to the new window's 'load' event. The parser will
@@ -341,6 +340,16 @@ void ExtensionFrameHelper::DidStartProvisionalLoad(
   v8::Local<v8::Context> context =
       render_frame()->GetWebFrame()->MainWorldScriptContext();
   v8::Context::Scope context_scope(context);
+  // Normally we would use Document's URL for all kinds of checks, e.g. whether
+  // to inject a content script. However, when committing a navigation, we
+  // should use the URL of a Document being committed instead. This URL is
+  // accessible through WebDocumentLoader::GetURL().
+  // The scope below temporary maps a frame to a document loader, so that places
+  // which retrieve URL can use the right one. Ideally, we would plumb the
+  // correct URL (or maybe WebDocumentLoader) through the callchain, but there
+  // are many callers which will have to pass nullptr.
+  ScriptContext::ScopedFrameDocumentLoader scoped_document_loader(
+      render_frame()->GetWebFrame(), document_loader);
   extension_dispatcher_->DidCreateScriptContext(render_frame()->GetWebFrame(),
                                                 context, kMainWorldId);
   // TODO(devlin): Add constants for main world id, no extension group.
@@ -395,40 +404,49 @@ bool ExtensionFrameHelper::OnMessageReceived(const IPC::Message& message) {
   return handled;
 }
 
-void ExtensionFrameHelper::OnExtensionValidateMessagePort(const PortId& id) {
+void ExtensionFrameHelper::OnExtensionValidateMessagePort(int worker_thread_id,
+                                                          const PortId& id) {
+  DCHECK_EQ(kMainThreadId, worker_thread_id);
   extension_dispatcher_->bindings_system()
-      ->GetMessagingService()
-      ->ValidateMessagePort(extension_dispatcher_->script_context_set(), id,
-                            render_frame());
+      ->messaging_service()
+      ->ValidateMessagePort(
+          extension_dispatcher_->script_context_set_iterator(), id,
+          render_frame());
 }
 
 void ExtensionFrameHelper::OnExtensionDispatchOnConnect(
+    int worker_thread_id,
     const PortId& target_port_id,
     const std::string& channel_name,
     const ExtensionMsg_TabConnectionInfo& source,
     const ExtensionMsg_ExternalConnectionInfo& info) {
+  DCHECK_EQ(kMainThreadId, worker_thread_id);
   extension_dispatcher_->bindings_system()
-      ->GetMessagingService()
-      ->DispatchOnConnect(extension_dispatcher_->script_context_set(),
+      ->messaging_service()
+      ->DispatchOnConnect(extension_dispatcher_->script_context_set_iterator(),
                           target_port_id, channel_name, source, info,
                           render_frame());
 }
 
-void ExtensionFrameHelper::OnExtensionDeliverMessage(const PortId& target_id,
+void ExtensionFrameHelper::OnExtensionDeliverMessage(int worker_thread_id,
+                                                     const PortId& target_id,
                                                      const Message& message) {
-  extension_dispatcher_->bindings_system()
-      ->GetMessagingService()
-      ->DeliverMessage(extension_dispatcher_->script_context_set(), target_id,
-                       message, render_frame());
+  DCHECK_EQ(kMainThreadId, worker_thread_id);
+  extension_dispatcher_->bindings_system()->messaging_service()->DeliverMessage(
+      extension_dispatcher_->script_context_set_iterator(), target_id, message,
+      render_frame());
 }
 
 void ExtensionFrameHelper::OnExtensionDispatchOnDisconnect(
+    int worker_thread_id,
     const PortId& id,
     const std::string& error_message) {
+  DCHECK_EQ(kMainThreadId, worker_thread_id);
   extension_dispatcher_->bindings_system()
-      ->GetMessagingService()
-      ->DispatchOnDisconnect(extension_dispatcher_->script_context_set(), id,
-                             error_message, render_frame());
+      ->messaging_service()
+      ->DispatchOnDisconnect(
+          extension_dispatcher_->script_context_set_iterator(), id,
+          error_message, render_frame());
 }
 
 void ExtensionFrameHelper::OnExtensionSetTabId(int tab_id) {

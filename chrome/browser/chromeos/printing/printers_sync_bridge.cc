@@ -4,20 +4,16 @@
 
 #include "chrome/browser/chromeos/printing/printers_sync_bridge.h"
 
-#include <memory>
 #include <set>
-#include <string>
 #include <utility>
-#include <vector>
 
 #include "base/bind.h"
-#include "base/optional.h"
 #include "base/stl_util.h"
 #include "base/task/post_task.h"
 #include "chrome/browser/chromeos/printing/specifics_translation.h"
+#include "chromeos/printing/printer_configuration.h"
 #include "components/sync/base/report_unrecoverable_error.h"
 #include "components/sync/model/model_type_change_processor.h"
-#include "components/sync/model/model_type_store.h"
 #include "components/sync/model/mutable_data_batch.h"
 #include "components/sync/model_impl/client_tag_based_model_type_processor.h"
 #include "components/sync/protocol/model_type_state.pb.h"
@@ -158,7 +154,7 @@ PrintersSyncBridge::PrintersSyncBridge(
       store_delegate_(std::make_unique<StoreProxy>(this, std::move(callback))),
       observers_(new base::ObserverListThreadSafe<Observer>()) {}
 
-PrintersSyncBridge::~PrintersSyncBridge() {}
+PrintersSyncBridge::~PrintersSyncBridge() = default;
 
 std::unique_ptr<MetadataChangeList>
 PrintersSyncBridge::CreateMetadataChangeList() {
@@ -178,9 +174,9 @@ base::Optional<syncer::ModelError> PrintersSyncBridge::MergeSyncData(
     // Store the new data locally.
     for (const auto& change : entity_data) {
       const sync_pb::PrinterSpecifics& specifics =
-          change.data().specifics.printer();
+          change->data().specifics.printer();
 
-      DCHECK_EQ(change.storage_key(), specifics.id());
+      DCHECK_EQ(change->storage_key(), specifics.id());
       sync_entity_ids.insert(specifics.id());
 
       // Write the update to local storage even if we already have it.
@@ -216,18 +212,18 @@ base::Optional<syncer::ModelError> PrintersSyncBridge::ApplySyncChanges(
   {
     base::AutoLock lock(data_lock_);
     // For all the entities from the server, apply changes.
-    for (const EntityChange& change : entity_changes) {
+    for (const std::unique_ptr<EntityChange>& change : entity_changes) {
       // We register the entity's storage key as our printer ids since they're
       // globally unique.
-      const std::string& id = change.storage_key();
-      if (change.type() == EntityChange::ACTION_DELETE) {
+      const std::string& id = change->storage_key();
+      if (change->type() == EntityChange::ACTION_DELETE) {
         // Server says delete, try to remove locally.
         DeleteSpecifics(id, batch.get());
       } else {
         // Server says update, overwrite whatever is local.  Conflict resolution
         // guarantees that this will be the newest version of the object.
         const sync_pb::PrinterSpecifics& specifics =
-            change.data().specifics.printer();
+            change->data().specifics.printer();
         DCHECK_EQ(id, specifics.id());
         StoreSpecifics(std::make_unique<sync_pb::PrinterSpecifics>(specifics),
                        batch.get());
@@ -281,21 +277,26 @@ std::string PrintersSyncBridge::GetStorageKey(const EntityData& entity_data) {
 
 // Picks the entity with the most recent updated time as the canonical version.
 ConflictResolution PrintersSyncBridge::ResolveConflict(
-    const EntityData& local_data,
+    const std::string& storage_key,
     const EntityData& remote_data) const {
-  DCHECK(local_data.specifics.has_printer());
   DCHECK(remote_data.specifics.has_printer());
 
-  const sync_pb::PrinterSpecifics& local_printer =
-      local_data.specifics.printer();
+  auto iter = all_data_.find(storage_key);
+  // If the local printer doesn't exist, it must have been deleted. In this
+  // case, use the remote one.
+  if (iter == all_data_.end()) {
+    return ConflictResolution::kUseRemote;
+  }
+  const sync_pb::PrinterSpecifics& local_printer = *iter->second;
+
   const sync_pb::PrinterSpecifics& remote_printer =
       remote_data.specifics.printer();
 
   if (local_printer.updated_timestamp() > remote_printer.updated_timestamp()) {
-    return ConflictResolution::UseLocal();
+    return ConflictResolution::kUseLocal;
   }
 
-  return ConflictResolution::UseRemote();
+  return ConflictResolution::kUseRemote;
 }
 
 void PrintersSyncBridge::AddPrinter(

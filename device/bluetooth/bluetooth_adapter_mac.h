@@ -106,8 +106,8 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterMac
   void DeviceConnected(IOBluetoothDevice* device);
 
   // We only use CoreBluetooth when OS X >= 10.10. This because the
-  // CBCentralManager destructor was found to crash on the mac_chromium_rel_ng
-  // builder running 10.9.5. May also cause blued to crash on OS X 10.9.5
+  // CBCentralManager destructor was found to crash on the mac-rel builder
+  // running 10.9.5. May also cause blued to crash on OS X 10.9.5
   // (crbug.com/506287).
   static bool IsLowEnergyAvailable();
 
@@ -198,10 +198,12 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterMac
   ~BluetoothAdapterMac() override;
 
   // BluetoothAdapter overrides:
-  void AddDiscoverySession(
-      BluetoothDiscoveryFilter* discovery_filter,
-      const base::Closure& callback,
-      DiscoverySessionErrorCallback error_callback) override;
+  void StartScanWithFilter(
+      std::unique_ptr<BluetoothDiscoveryFilter> discovery_filter,
+      DiscoverySessionResultCallback callback) override;
+  void UpdateFilter(
+      std::unique_ptr<device::BluetoothDiscoveryFilter> discovery_filter,
+      DiscoverySessionResultCallback callback) override;
   void RemoveDiscoverySession(
       BluetoothDiscoveryFilter* discovery_filter,
       const base::Closure& callback,
@@ -259,7 +261,6 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterMac
 
   std::string address_;
   bool classic_powered_;
-  int num_discovery_sessions_;
 
   // Function returning the state of the HostController. Can be overridden for
   // tests.

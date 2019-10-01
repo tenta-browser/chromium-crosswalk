@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/debug/leak_annotations.h"
 #include "base/i18n/rtl.h"
@@ -80,9 +81,14 @@ void BrowserFrame::InitBrowserFrame() {
   views::Widget::InitParams params = native_browser_frame_->GetWidgetParams();
   params.name = "BrowserFrame";
   params.delegate = browser_view_;
-  if (browser_view_->browser()->is_type_tabbed()) {
+  if (browser_view_->browser()->is_type_tabbed() ||
+      browser_view_->browser()->is_devtools()) {
     // Typed panel/popup can only return a size once the widget has been
     // created.
+    // DevTools counts as a popup, but DevToolsWindow::CreateDevToolsBrowser
+    // ensures there is always a size available. Without this, the tools
+    // launch on the wrong display and can have sizing issues when
+    // repositioned to the saved bounds in Widget::SetInitialBounds.
     chrome::GetSavedWindowBoundsAndShowState(browser_view_->browser(),
                                              &params.bounds,
                                              &params.show_state);
@@ -113,11 +119,12 @@ int BrowserFrame::GetMinimizeButtonOffset() const {
   return native_browser_frame_->GetMinimizeButtonOffset();
 }
 
-gfx::Rect BrowserFrame::GetBoundsForTabStrip(
+gfx::Rect BrowserFrame::GetBoundsForTabStripRegion(
     const views::View* tabstrip) const {
   // This can be invoked before |browser_frame_view_| has been set.
-  return browser_frame_view_ ?
-      browser_frame_view_->GetBoundsForTabStrip(tabstrip) : gfx::Rect();
+  return browser_frame_view_
+             ? browser_frame_view_->GetBoundsForTabStripRegion(tabstrip)
+             : gfx::Rect();
 }
 
 int BrowserFrame::GetTopInset() const {
@@ -163,6 +170,22 @@ void BrowserFrame::OnBrowserViewInitViewsComplete() {
   browser_frame_view_->OnBrowserViewInitViewsComplete();
 }
 
+bool BrowserFrame::ShouldUseTheme() const {
+  // Browser windows are always themed (including popups).
+  if (!web_app::AppBrowserController::IsForWebAppBrowser(
+          browser_view_->browser())) {
+    return true;
+  }
+
+  // The system GTK theme should always be respected if the user has opted to
+  // use it.
+  if (IsUsingGtkTheme(browser_view_->browser()->profile()))
+    return true;
+
+  // Hosted apps on non-GTK use default colors.
+  return false;
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // BrowserFrame, views::Widget overrides:
 
@@ -192,8 +215,7 @@ const ui::ThemeProvider* BrowserFrame::GetThemeProvider() const {
 
 const ui::NativeTheme* BrowserFrame::GetNativeTheme() const {
 #if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_CHROMEOS)
-  if (browser_view_->browser()->profile()->GetProfileType() ==
-          Profile::INCOGNITO_PROFILE &&
+  if (browser_view_->browser()->profile()->IsIncognitoProfile() &&
       ThemeServiceFactory::GetForProfile(browser_view_->browser()->profile())
           ->UsingDefaultTheme()) {
     return ui::NativeThemeDarkAura::instance();
@@ -211,14 +233,16 @@ void BrowserFrame::OnNativeWidgetWorkspaceChanged() {
   Widget::OnNativeWidgetWorkspaceChanged();
 }
 
-void BrowserFrame::OnNativeThemeUpdated(ui::NativeTheme* observed_theme) {
-  views::Widget::OnNativeThemeUpdated(observed_theme);
-  browser_view_->NativeThemeUpdated(observed_theme);
+void BrowserFrame::PropagateNativeThemeChanged() {
+  // Instead of immediately propagating the native theme change to the root
+  // view, use BrowserView's custom handling, which may regenerate the frame
+  // first, then propgate the theme change to the root view automatically.
+  browser_view_->UserChangedTheme(BrowserThemeChangeType::kNativeTheme);
 }
 
-void BrowserFrame::ShowContextMenuForView(views::View* source,
-                                          const gfx::Point& p,
-                                          ui::MenuSourceType source_type) {
+void BrowserFrame::ShowContextMenuForViewImpl(views::View* source,
+                                              const gfx::Point& p,
+                                              ui::MenuSourceType source_type) {
   if (chrome::IsRunningInForcedAppMode())
     return;
 
@@ -233,10 +257,11 @@ void BrowserFrame::ShowContextMenuForView(views::View* source,
     menu_runner_.reset(new views::MenuRunner(
         GetSystemMenuModel(),
         views::MenuRunner::HAS_MNEMONICS | views::MenuRunner::CONTEXT_MENU,
-        base::Bind(&BrowserFrame::OnMenuClosed, base::Unretained(this))));
+        base::BindRepeating(&BrowserFrame::OnMenuClosed,
+                            base::Unretained(this))));
     menu_runner_->RunMenuAt(source->GetWidget(), nullptr,
                             gfx::Rect(p, gfx::Size(0, 0)),
-                            views::MENU_ANCHOR_TOPLEFT, source_type);
+                            views::MenuAnchorPosition::kTopLeft, source_type);
   }
 }
 

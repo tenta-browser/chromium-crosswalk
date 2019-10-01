@@ -25,7 +25,7 @@ void LayoutNGTableCaption::CalculateAndSetMargins(
 
   NGBoxFragment box_fragment(containing_block_style.GetWritingMode(),
                              containing_block_style.Direction(),
-                             ToNGPhysicalBoxFragment(physical_fragment));
+                             To<NGPhysicalBoxFragment>(physical_fragment));
 
   NGPhysicalBoxStrut physical_margins =
       ComputePhysicalMargins(constraint_space, StyleRef());
@@ -37,8 +37,8 @@ void LayoutNGTableCaption::CalculateAndSetMargins(
   LayoutUnit caption_inline_size_in_cb_writing_mode = box_fragment.InlineSize();
 
   LayoutUnit available_inline_size_in_cb_writing_mode =
-      ToNGPhysicalSize(constraint_space.AvailableSize(),
-                       constraint_space.GetWritingMode())
+      ToPhysicalSize(constraint_space.AvailableSize(),
+                     constraint_space.GetWritingMode())
           .ConvertToLogical(containing_block_style.GetWritingMode())
           .inline_size;
 
@@ -59,10 +59,10 @@ void LayoutNGTableCaption::UpdateBlockLayout(bool relayout_children) {
   NGConstraintSpace constraint_space =
       NGConstraintSpace::CreateFromLayoutObject(*this);
 
-  scoped_refptr<NGLayoutResult> result =
+  scoped_refptr<const NGLayoutResult> result =
       NGBlockNode(this).Layout(constraint_space);
 
-  CalculateAndSetMargins(constraint_space, *result->PhysicalFragment());
+  CalculateAndSetMargins(constraint_space, result->PhysicalFragment());
 
   // Tell legacy layout there were abspos descendents we couldn't place. We know
   // we have to pass up to legacy here because this method is legacy's entry
@@ -70,15 +70,15 @@ void LayoutNGTableCaption::UpdateBlockLayout(bool relayout_children) {
   // UpdateBlockLayout, it would have packaged this LayoutObject into
   // NGBlockNode and called Layout on that.
   for (NGOutOfFlowPositionedDescendant descendant :
-       result->OutOfFlowPositionedDescendants())
-    descendant.node.UseOldOutOfFlowPositioning();
+       result->PhysicalFragment().OutOfFlowPositionedDescendants())
+    descendant.node.UseLegacyOutOfFlowPositioning();
 
   // The parent table sometimes changes the caption's position after laying it
   // out. So there's no point in setting the fragment's offset here;
   // NGBoxFragmentPainter::Paint will have to handle it until table layout is
   // implemented in NG, in which case that algorithm will set each child's
   // offsets. See https://crbug.com/788590 for more info.
-  DCHECK(!result->PhysicalFragment()->IsPlacedByLayoutNG())
+  DCHECK(!result->PhysicalFragment().IsPlacedByLayoutNG())
       << "Only a table should be placing table caption fragments and the ng "
          "table algorithm doesn't exist yet!";
 }

@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/views/frame/top_controls_slide_controller_chromeos.h"
 
+#include "base/bind.h"
 #include "chrome/browser/permissions/permission_request_manager.h"
 #include "chrome/browser/search/search.h"
 #include "chrome/browser/ssl/security_state_tab_helper.h"
@@ -74,14 +75,11 @@ content::BrowserControlsState GetBrowserControlsStateConstraints(
   }
 
   Profile* profile = Profile::FromBrowserContext(contents->GetBrowserContext());
-  if (profile && search::IsNTPURL(url, profile))
+  if (profile && search::IsNTPOrRelatedURL(url, profile))
     return content::BROWSER_CONTROLS_STATE_SHOWN;
 
   auto* helper = SecurityStateTabHelper::FromWebContents(contents);
-  security_state::SecurityInfo security_info;
-  helper->GetSecurityInfo(&security_info);
-
-  switch (security_info.security_level) {
+  switch (helper->GetSecurityLevel()) {
     case security_state::HTTP_SHOW_WARNING:
     case security_state::DANGEROUS:
       return content::BROWSER_CONTROLS_STATE_SHOWN;
@@ -443,25 +441,21 @@ void TopControlsSlideControllerChromeOS::OnTabStripModelChanged(
     const TabStripModelChange& change,
     const TabStripSelectionChange& selection) {
   if (change.type() == TabStripModelChange::kInserted) {
-    for (const auto& delta : change.deltas()) {
-      content::WebContents* contents = delta.insert.contents;
-      observed_tabs_.emplace(
-          contents,
-          std::make_unique<TopControlsSlideTabObserver>(contents, this));
+    for (const auto& contents : change.GetInsert()->contents) {
+      observed_tabs_.emplace(contents.contents,
+                             std::make_unique<TopControlsSlideTabObserver>(
+                                 contents.contents, this));
     }
   } else if (change.type() == TabStripModelChange::kRemoved) {
-    for (const auto& delta : change.deltas())
-      observed_tabs_.erase(delta.remove.contents);
+    for (const auto& contents : change.GetRemove()->contents)
+      observed_tabs_.erase(contents.contents);
   } else if (change.type() == TabStripModelChange::kReplaced) {
-    for (const auto& delta : change.deltas()) {
-      observed_tabs_.erase(delta.replace.old_contents);
-
-      DCHECK(!observed_tabs_.count(delta.replace.new_contents));
-
-      observed_tabs_.emplace(delta.replace.new_contents,
-                             std::make_unique<TopControlsSlideTabObserver>(
-                                 delta.replace.new_contents, this));
-    }
+    auto* replace = change.GetReplace();
+    observed_tabs_.erase(replace->old_contents);
+    DCHECK(!observed_tabs_.count(replace->new_contents));
+    observed_tabs_.emplace(replace->new_contents,
+                           std::make_unique<TopControlsSlideTabObserver>(
+                               replace->new_contents, this));
   }
 
   if (tab_strip_model->empty() || !selection.active_tab_changed())
@@ -469,7 +463,6 @@ void TopControlsSlideControllerChromeOS::OnTabStripModelChanged(
 
   content::WebContents* new_active_contents = selection.new_contents;
   DCHECK(observed_tabs_.count(new_active_contents));
-  DCHECK(!is_gesture_scrolling_in_progress_);
 
   // Restore the newly-activated tab's shown ratio. If this is a newly inserted
   // tab, its |shown_ratio_| is 1.0f.
@@ -666,6 +659,16 @@ void TopControlsSlideControllerChromeOS::OnBeginSliding() {
   const int new_height = widget_layer->bounds().height() + top_container_height;
   root_bounds.set_height(new_height);
   root_view->SetBoundsRect(root_bounds);
+  // Changing the bounds will have triggered an InvalidateLayout() on
+  // NativeViewHost. InvalidateLayout() results in Layout() being called later,
+  // after transforms are set. NativeViewHostAura calculates the bounds of the
+  // window using transforms. By calling LayoutRootViewIfNecessary() we force
+  // the layout now, before any transforms are installed. To do otherwise
+  // results in NativeViewHost positioning the WebContents at the wrong
+  // location.
+  // TODO(https://crbug.com/950981): this is rather fragile, and the code should
+  // deal with Layout() being called during the slide.
+  root_view->GetWidget()->LayoutRootViewIfNecessary();
 
   // We don't want anything to show outside the browser window's bounds.
   widget_layer->SetMasksToBounds(true);

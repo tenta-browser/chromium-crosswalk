@@ -5,8 +5,10 @@
 #include "chrome/browser/apps/platform_apps/shortcut_manager.h"
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
+#include "base/one_shot_event.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/post_task.h"
@@ -27,7 +29,10 @@
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/extension_set.h"
-#include "extensions/common/one_shot_event.h"
+
+#if defined(OS_MACOSX)
+#include "chrome/common/mac/app_mode_common.h"
+#endif
 
 using extensions::Extension;
 
@@ -37,7 +42,7 @@ namespace {
 // need to be recreated. This might happen when we change various aspects of app
 // shortcuts like command-line flags or associated icons, binaries, etc.
 #if defined(OS_MACOSX)
-const int kCurrentAppShortcutsVersion = 5;
+const int kCurrentAppShortcutsVersion = APP_SHIM_VERSION_NUMBER;
 #else
 const int kCurrentAppShortcutsVersion = 0;
 #endif
@@ -54,7 +59,7 @@ void CreateShortcutsForApp(Profile* profile, const Extension* app) {
       web_app::APP_MENU_LOCATION_SUBDIR_CHROMEAPPS;
 
   web_app::CreateShortcuts(web_app::SHORTCUT_CREATION_AUTOMATED,
-                           creation_locations, profile, app);
+                           creation_locations, profile, app, base::DoNothing());
 }
 
 }  // namespace
@@ -83,8 +88,8 @@ AppShortcutManager::AppShortcutManager(Profile* profile)
   // UpdateShortcutsForAllAppsIfNeeded.
   extensions::ExtensionSystem::Get(profile)->ready().Post(
       FROM_HERE,
-      base::Bind(&AppShortcutManager::UpdateShortcutsForAllAppsIfNeeded,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindOnce(&AppShortcutManager::UpdateShortcutsForAllAppsIfNeeded,
+                     weak_ptr_factory_.GetWeakPtr()));
 
   ProfileManager* profile_manager = g_browser_process->profile_manager();
   // profile_manager might be NULL in testing environments.

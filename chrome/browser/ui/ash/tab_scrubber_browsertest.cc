@@ -5,10 +5,10 @@
 #include "chrome/browser/ui/ash/tab_scrubber.h"
 
 #include <memory>
+#include <utility>
 
 #include "ash/display/event_transformation_handler.h"
 #include "ash/shell.h"
-#include "base/callback_helpers.h"
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
@@ -59,7 +59,7 @@ class ImmersiveRevealEndedWaiter : public ImmersiveModeController::Observer {
  private:
   void MaybeQuitRunLoop() {
     if (!quit_closure_.is_null())
-      base::ResetAndReturn(&quit_closure_).Run();
+      std::move(quit_closure_).Run();
   }
 
   // ImmersiveModeController::Observer:
@@ -353,7 +353,7 @@ IN_PROC_BROWSER_TEST_F(TabScrubberTest, FullScreenBrowser) {
   ASSERT_TRUE(ui_test_utils::SendMouseMoveSync(
       gfx::Point(0, browser()->window()->GetBounds().height())));
   AddTabs(browser(), 6);
-  browser()->tab_strip_model()->ActivateTabAt(4, false);
+  browser()->tab_strip_model()->ActivateTabAt(4);
 
   chrome::ToggleFullscreenMode(browser());
   BrowserView* browser_view = BrowserView::GetBrowserViewForNativeWindow(

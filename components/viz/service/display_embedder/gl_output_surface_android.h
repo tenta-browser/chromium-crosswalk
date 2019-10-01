@@ -16,7 +16,7 @@ class GLOutputSurfaceAndroid : public GLOutputSurface {
  public:
   GLOutputSurfaceAndroid(
       scoped_refptr<VizProcessContextProvider> context_provider,
-      SyntheticBeginFrameSource* synthetic_begin_frame_source);
+      bool allow_overlays);
   ~GLOutputSurfaceAndroid() override;
 
   // GLOutputSurface implementation:
@@ -25,7 +25,8 @@ class GLOutputSurfaceAndroid : public GLOutputSurface {
       uint32_t flags,
       gpu::ContextSupport::SwapCompletedCallback swap_callback,
       gpu::ContextSupport::PresentationCallback presentation_callback) override;
-  OverlayCandidateValidator* GetOverlayCandidateValidator() const override;
+  std::unique_ptr<OverlayCandidateValidator> TakeOverlayCandidateValidator()
+      override;
 
  private:
   std::unique_ptr<OverlayCandidateValidator> overlay_candidate_validator_;

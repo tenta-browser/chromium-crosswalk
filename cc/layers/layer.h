@@ -8,13 +8,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <array>
 #include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 #include "base/callback.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
 #include "cc/base/region.h"
@@ -34,8 +34,9 @@
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/geometry/point3_f.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/geometry/rect_f.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/gfx/geometry/scroll_offset.h"
+#include "ui/gfx/rrect_f.h"
 #include "ui/gfx/transform.h"
 
 namespace base {
@@ -82,6 +83,9 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
 
   // Factory to create a new Layer, with a unique id.
   static scoped_refptr<Layer> Create();
+
+  Layer(const Layer&) = delete;
+  Layer& operator=(const Layer&) = delete;
 
   // Sets an optional client on this layer, that will be called when relevant
   // events happen. The client is a WeakPtr so it can be destroyed without
@@ -158,6 +162,10 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   // background_color(), but if the background_color() is opaque (and this layer
   // claims to not be), then SK_ColorTRANSPARENT is returned.
   SkColor SafeOpaqueBackgroundColor() const;
+  // For testing, return the actual stored value.
+  SkColor ActualSafeOpaqueBackgroundColorForTesting() const {
+    return safe_opaque_background_color_;
+  }
 
   // Set and get the position of this layer, relative to its parent. This is
   // specified in layer space, which excludes device scale and page scale
@@ -167,6 +175,12 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   // is false), position is used to update |offset_to_transform_parent|.
   void SetPosition(const gfx::PointF& position);
   const gfx::PointF& position() const { return inputs_.position; }
+
+  // Reorder the entirety of the children() vector to follow new_children_order.
+  // All elements inside new_children_order must be inside children(), and vice
+  // versa. Will empty the |new_children_order| LayerList passed into this
+  // method.
+  void ReorderChildren(LayerList* new_children_order);
 
   // Set and get the layers bounds. This is specified in layer space, which
   // excludes device scale and page scale factors, and ignoring transforms for
@@ -218,7 +232,6 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   // for each matching pixel.
   void SetMaskLayer(PictureLayer* mask_layer);
   PictureLayer* mask_layer() { return inputs_.mask_layer.get(); }
-  const PictureLayer* mask_layer() const { return inputs_.mask_layer.get(); }
 
   // Marks the |dirty_rect| as being changed, which will cause a commit and
   // the compositor to submit a new frame with a damage rect that includes the
@@ -233,6 +246,24 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   // Returns the union of previous calls to SetNeedsDisplayRect() and
   // SetNeedsDisplay() that have not been committed to the compositor thread.
   const gfx::Rect& update_rect() const { return inputs_.update_rect; }
+
+  // Set or get the rounded corner radii which is applied to the layer and its
+  // subtree (as if they are together as a single composited entity) when
+  // blitting into their target. Setting this makes the layer masked to bounds.
+  void SetRoundedCorner(const gfx::RoundedCornersF& corner_radii);
+  const gfx::RoundedCornersF& corner_radii() const {
+    return inputs_.corner_radii;
+  }
+
+  // Returns true if any of the corner has a non-zero radius set.
+  bool HasRoundedCorner() const { return !corner_radii().IsEmpty(); }
+
+  // Set or get the flag that disables the requirement of a render surface for
+  // this layer due to it having rounded corners. This improves performance at
+  // the cost of maybe having some blending artifacts. Not having a render
+  // surface is not guaranteed however.
+  void SetIsFastRoundedCorner(bool enable);
+  bool is_fast_rounded_corner() const { return inputs_.is_fast_rounded_corner; }
 
   // Set or get the opacity which should be applied to the contents of the layer
   // and its subtree (together as a single composited entity) when blending them
@@ -284,8 +315,9 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
     return inputs_.backdrop_filters;
   }
 
-  void SetBackdropFilterBounds(const gfx::RectF& backdrop_filter_bounds);
-  const gfx::RectF& backdrop_filter_bounds() const {
+  void SetBackdropFilterBounds(const gfx::RRectF& backdrop_filter_bounds);
+  void ClearBackdropFilterBounds();
+  const base::Optional<gfx::RRectF>& backdrop_filter_bounds() const {
     return inputs_.backdrop_filter_bounds;
   }
 
@@ -302,15 +334,9 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   void SetContentsOpaque(bool opaque);
   bool contents_opaque() const { return inputs_.contents_opaque; }
 
-  // Set or get whether this layer should be a hit test target even if not
-  // visible. Normally if DrawsContent() is false, making the layer not
-  // contribute to the final composited output, the layer will not be eligable
-  // for hit testing since it is invisible. Set this to true to allow the layer
-  // to be hit tested regardless.
-  void SetHitTestableWithoutDrawsContent(bool should_hit_test);
-  bool hit_testable_without_draws_content() const {
-    return inputs_.hit_testable_without_draws_content;
-  }
+  // Set or get whether this layer should be a hit test target
+  void SetHitTestable(bool should_hit_test);
+  virtual bool HitTestable() const;
 
   // Set or gets if this layer is a container for fixed position layers in its
   // subtree. Such layers will be positioned and transformed relative to this
@@ -327,6 +353,8 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   // of the layer are fixed to the same edges of the container ancestor. When
   // fixed position, this layer's transform will be appended to the container
   // ancestor's transform instead of to this layer's direct parent's.
+  // Position constraints are only used by the cc property tree builder to build
+  // property trees and are not needed when using layer lists.
   void SetPositionConstraint(const LayerPositionConstraint& constraint);
   const LayerPositionConstraint& position_constraint() const {
     return inputs_.position_constraint;
@@ -349,6 +377,8 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   // IsContainerForFixedPositionLayers() is true for this layer, these set and
   // get whether fixed position descendants of this layer should have this
   // adjustment to their position applied during such a viewport resize.
+  // This value is only used by the cc property tree builder to build property
+  // trees and is not needed when using layer lists.
   void SetIsResizedByBrowserControls(bool resized);
   bool IsResizedByBrowserControls() const;
 
@@ -607,6 +637,11 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   // Called on the scroll layer to trigger showing the overlay scrollbars.
   void ShowScrollbars() { needs_show_scrollbars_ = true; }
 
+  // Captures text content within the given |rect| and returns the associated
+  // NodeHolder in content.
+  virtual void CaptureContent(const gfx::Rect& rect,
+                              std::vector<NodeHolder>* content);
+
   // For tracing. Gets a recorded rasterization of this layer's contents that
   // can be displayed inside representations of this layer. May return null, in
   // which case the layer won't be shown with any content in the tracing
@@ -763,6 +798,11 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
     return should_flatten_screen_space_transform_from_property_tree_;
   }
 
+#if DCHECK_IS_ON()
+  // For debugging, containing information about the associated DOM, etc.
+  std::string DebugName() const;
+#endif
+
   std::string ToString() const;
 
   // Called when a property has been modified in a way that the layer knows
@@ -842,6 +882,7 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
 
   // Interactions with attached animations.
   void OnFilterAnimated(const FilterOperations& filters);
+  void OnBackdropFilterAnimated(const FilterOperations& backdrop_filters);
   void OnOpacityAnimated(float opacity);
   void OnTransformAnimated(const gfx::Transform& transform);
 
@@ -893,10 +934,8 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
 
     bool is_root_for_isolated_group : 1;
 
-    // Hit testing depends on draws_content (see: |LayerImpl::should_hit_test|)
-    // and this bit can be set to cause the LayerImpl to be hit testable without
-    // draws_content.
-    bool hit_testable_without_draws_content : 1;
+    // Hit testing depends on this bit.
+    bool hit_testable : 1;
 
     bool contents_opaque : 1;
 
@@ -920,9 +959,17 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
 
     FilterOperations filters;
     FilterOperations backdrop_filters;
-    gfx::RectF backdrop_filter_bounds;
+    base::Optional<gfx::RRectF> backdrop_filter_bounds;
     gfx::PointF filters_origin;
     float backdrop_filter_quality;
+
+    // Corner clip radius for the 4 corners of the layer in the following order:
+    //     top left, top right, bottom right, bottom left
+    gfx::RoundedCornersF corner_radii;
+
+    // If set, disables this layer's rounded corner from triggering a render
+    // surface on itself if possible.
+    bool is_fast_rounded_corner : 1;
 
     gfx::ScrollOffset scroll_offset;
 
@@ -952,6 +999,9 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
     // layer. In the case of a non-default rootScroller, all iframes in the
     // rootScroller ancestor chain will also have it set on their scroll
     // layers.
+    // TODO(pdr): These values are only used by blink and only when blink does
+    // not generate property trees. Remove these values when
+    // BlinkGenPropertyTrees ships.
     bool is_resized_by_browser_controls : 1;
     bool is_container_for_fixed_position_layers : 1;
     LayerPositionConstraint position_constraint;
@@ -1015,8 +1065,6 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   int owner_node_id_;
 
   std::unique_ptr<std::set<Layer*>> clip_children_;
-
-  DISALLOW_COPY_AND_ASSIGN(Layer);
 };
 
 }  // namespace cc

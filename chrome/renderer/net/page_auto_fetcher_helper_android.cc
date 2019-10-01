@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "content/public/common/service_names.mojom.h"
 #include "content/public/renderer/render_frame.h"
@@ -16,6 +17,12 @@
 PageAutoFetcherHelper::PageAutoFetcherHelper(content::RenderFrame* render_frame)
     : render_frame_(render_frame) {}
 PageAutoFetcherHelper::~PageAutoFetcherHelper() = default;
+
+void PageAutoFetcherHelper::OnCommitLoad() {
+  // Make sure we don't try to re-use the same mojo interface for more than one
+  // page. Otherwise, the browser side will use the old page's URL.
+  fetcher_.reset();
+}
 
 void PageAutoFetcherHelper::TrySchedule(
     bool user_requested,

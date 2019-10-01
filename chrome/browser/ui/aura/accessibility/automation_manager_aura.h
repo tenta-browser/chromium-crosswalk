@@ -73,6 +73,11 @@ class AutomationManagerAura : public ui::AXActionHandler,
     event_bundle_sink_ = sink;
   }
 
+  void set_ax_aura_obj_cache_for_testing(
+      std::unique_ptr<views::AXAuraObjCache> cache) {
+    cache_ = std::move(cache);
+  }
+
  private:
   friend class base::NoDestructor<AutomationManagerAura>;
 
@@ -91,6 +96,10 @@ class AutomationManagerAura : public ui::AXActionHandler,
                  ax::mojom::Event event_type);
 
   void PerformHitTest(const ui::AXActionData& data);
+
+  // Logs an error with details about a serialization failure.
+  void OnSerializeFailure(ax::mojom::Event event_type,
+                          const ui::AXTreeUpdate& update);
 
   // Whether automation support for views is enabled.
   bool enabled_;
@@ -117,6 +126,8 @@ class AutomationManagerAura : public ui::AXActionHandler,
   ui::AXEventBundleSink* event_bundle_sink_ = nullptr;
 
   std::unique_ptr<views::AccessibilityAlertWindow> alert_window_;
+
+  std::unique_ptr<views::AXAuraObjCache> cache_;
 
   DISALLOW_COPY_AND_ASSIGN(AutomationManagerAura);
 };

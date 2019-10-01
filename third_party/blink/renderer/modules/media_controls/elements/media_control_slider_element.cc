@@ -79,9 +79,8 @@ class MediaControlSliderElement::MediaControlSliderElementResizeObserverDelegate
 };
 
 MediaControlSliderElement::MediaControlSliderElement(
-    MediaControlsImpl& media_controls,
-    MediaControlElementType display_type)
-    : MediaControlInputElement(media_controls, display_type),
+    MediaControlsImpl& media_controls)
+    : MediaControlInputElement(media_controls),
       before_segment_position_(0, 0),
       after_segment_position_(0, 0),
       segment_highlight_before_(nullptr),
@@ -92,7 +91,7 @@ MediaControlSliderElement::MediaControlSliderElement(
               this))) {
   setType(input_type_names::kRange);
   setAttribute(html_names::kStepAttr, "any");
-  resize_observer_->observe(this);
+  OnControlsShown();
 }
 
 Element& MediaControlSliderElement::GetTrackElement() {
@@ -171,6 +170,14 @@ void MediaControlSliderElement::Trace(blink::Visitor* visitor) {
   visitor->Trace(segment_highlight_after_);
   visitor->Trace(resize_observer_);
   MediaControlInputElement::Trace(visitor);
+}
+
+void MediaControlSliderElement::OnControlsShown() {
+  resize_observer_->observe(this);
+}
+
+void MediaControlSliderElement::OnControlsHidden() {
+  resize_observer_->disconnect();
 }
 
 }  // namespace blink

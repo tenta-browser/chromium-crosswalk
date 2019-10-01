@@ -4,12 +4,21 @@
 
 #include "cc/paint/image_transfer_cache_entry.h"
 
+#include <utility>
+
 #include "base/bind_helpers.h"
 #include "base/logging.h"
 #include "base/numerics/checked_math.h"
 #include "cc/paint/paint_op_reader.h"
 #include "cc/paint/paint_op_writer.h"
+#include "third_party/skia/include/core/SkColorSpace.h"
+#include "third_party/skia/include/core/SkImage.h"
+#include "third_party/skia/include/core/SkImageInfo.h"
+#include "third_party/skia/include/core/SkPixmap.h"
+#include "third_party/skia/include/core/SkYUVAIndex.h"
+#include "third_party/skia/include/gpu/GrBackendSurface.h"
 #include "third_party/skia/include/gpu/GrContext.h"
+#include "third_party/skia/include/gpu/GrTypes.h"
 
 namespace cc {
 namespace {
@@ -100,6 +109,8 @@ uint32_t ClientImageTransferCacheEntry::Id() const {
 
 bool ClientImageTransferCacheEntry::Serialize(base::span<uint8_t> data) const {
   DCHECK_GE(data.size(), SerializedSize());
+  DCHECK_GT(pixmap_->width(), 0);
+  DCHECK_GT(pixmap_->height(), 0);
 
   // We don't need to populate the SerializeOptions here since the writer is
   // only used for serializing primitives.
@@ -133,6 +144,69 @@ ServiceImageTransferCacheEntry::ServiceImageTransferCacheEntry(
 ServiceImageTransferCacheEntry& ServiceImageTransferCacheEntry::operator=(
     ServiceImageTransferCacheEntry&& other) = default;
 
+bool ServiceImageTransferCacheEntry::BuildFromHardwareDecodedImage(
+    GrContext* context,
+    std::vector<sk_sp<SkImage>> plane_images,
+    size_t buffer_byte_size,
+    bool needs_mips,
+    sk_sp<SkColorSpace> target_color_space) {
+  context_ = context;
+
+  // 1) Extract the planar textures from |plane_images|.
+  std::vector<GrBackendTexture> plane_backend_textures(3u);
+  DCHECK_EQ(3u, plane_images.size());
+  for (size_t plane = 0; plane < 3u; plane++) {
+    plane_backend_textures[plane] = plane_images[plane]->getBackendTexture(
+        true /* flushPendingGrContextIO */);
+    if (!plane_backend_textures[plane].isValid()) {
+      DLOG(ERROR) << "Invalid backend texture found";
+      return false;
+    }
+    if (needs_mips) {
+      // TODO(andrescj): generate mipmaps when requested. This will require some
+      // resource management: we either let Skia own the new textures or we take
+      // ownership and delete them in |destroy_callback|.
+      NOTIMPLEMENTED();
+    }
+  }
+  plane_images_ = std::move(plane_images);
+
+  // 2) Create a SkImage backed by the YUV textures extracted above. There are
+  //    two assumptions here:
+  //
+  //    - SkYUVColorSpace::kJPEG_SkYUVColorSpace is used for the YUV-to-RGB
+  //      matrix.
+  //    - The color space of the resulting image is sRGB.
+  //
+  // TODO(andrescj): support other YUV-to-RGB conversions and embedded color
+  // profiles.
+  SkYUVAIndex plane_indices[] = {
+      SkYUVAIndex{0, SkColorChannel::kR}, SkYUVAIndex{1, SkColorChannel::kR},
+      SkYUVAIndex{2, SkColorChannel::kR}, SkYUVAIndex{-1, SkColorChannel::kR}};
+  image_ = SkImage::MakeFromYUVATextures(
+      context_, SkYUVColorSpace::kJPEG_SkYUVColorSpace,
+      plane_backend_textures.data(), plane_indices,
+      plane_images_[0]->dimensions(), kTopLeft_GrSurfaceOrigin);
+  if (!image_) {
+    DLOG(ERROR) << "Could not create YUV SkImage";
+    return false;
+  }
+
+  // 3) Perform color space conversion if necessary.
+  if (target_color_space)
+    image_ = image_->makeColorSpace(target_color_space);
+  if (!image_) {
+    DLOG(ERROR) << "Could not do color space conversion";
+    return false;
+  }
+
+  // 4) Fill out the rest of the information.
+  has_mips_ = false;
+  size_ = buffer_byte_size;
+  fits_on_gpu_ = true;
+  return true;
+}
+
 size_t ServiceImageTransferCacheEntry::CachedSize() const {
   return size_;
 }
@@ -148,8 +222,14 @@ bool ServiceImageTransferCacheEntry::Deserialize(
   PaintOp::DeserializeOptions options(nullptr, nullptr, nullptr,
                                       &scratch_buffer);
   PaintOpReader reader(data.data(), data.size(), options);
-  SkColorType color_type;
+  SkColorType color_type = kUnknown_SkColorType;
   reader.Read(&color_type);
+
+  if (color_type == kUnknown_SkColorType ||
+      color_type == kRGB_101010x_SkColorType ||
+      color_type > kLastEnum_SkColorType)
+    return false;
+
   uint32_t width;
   reader.Read(&width);
   uint32_t height;
@@ -159,7 +239,6 @@ bool ServiceImageTransferCacheEntry::Deserialize(
   has_mips_ = needs_mips;
   size_t pixel_size;
   reader.ReadSize(&pixel_size);
-  size_ = data.size();
   sk_sp<SkColorSpace> pixmap_color_space;
   reader.Read(&pixmap_color_space);
   sk_sp<SkColorSpace> target_color_space;
@@ -181,23 +260,38 @@ bool ServiceImageTransferCacheEntry::Deserialize(
 
   DCHECK(SkIsAlign4(reinterpret_cast<uintptr_t>(pixel_data)));
 
+  if (width == 0 || height == 0)
+    return false;
+
+  // Match GrTexture::onGpuMemorySize so that memory traces agree.
+  auto gr_mips = has_mips_ ? GrMipMapped::kYes : GrMipMapped::kNo;
+  size_ = GrContext::ComputeTextureSize(color_type, width, height, gr_mips);
+
   // Const-cast away the "volatile" on |pixel_data|. We specifically understand
   // that a malicious caller may change our pixels under us, and are OK with
   // this as the worst case scenario is visual corruption.
   SkPixmap pixmap(image_info, const_cast<const void*>(pixel_data),
                   image_info.minRowBytes());
+  return MakeSkImage(pixmap, width, height, target_color_space);
+}
+
+bool ServiceImageTransferCacheEntry::MakeSkImage(
+    const SkPixmap& pixmap,
+    uint32_t width,
+    uint32_t height,
+    sk_sp<SkColorSpace> target_color_space) {
+  DCHECK(context_);
 
   // Depending on whether the pixmap will fit in a GPU texture, either create
   // a software or GPU SkImage.
-  uint32_t max_size = context->maxTextureSize();
+  uint32_t max_size = context_->maxTextureSize();
   fits_on_gpu_ = width <= max_size && height <= max_size;
   if (fits_on_gpu_) {
     sk_sp<SkImage> image = SkImage::MakeFromRaster(pixmap, nullptr, nullptr);
     if (!image)
       return false;
-    image_ =
-        MakeTextureImage(context, std::move(image), target_color_space,
-                         needs_mips ? GrMipMapped::kYes : GrMipMapped::kNo);
+    image_ = MakeTextureImage(context_, std::move(image), target_color_space,
+                              has_mips_ ? GrMipMapped::kYes : GrMipMapped::kNo);
   } else {
     sk_sp<SkImage> original =
         SkImage::MakeFromRaster(pixmap, [](const void*, void*) {}, nullptr);
@@ -220,6 +314,14 @@ bool ServiceImageTransferCacheEntry::Deserialize(
 void ServiceImageTransferCacheEntry::EnsureMips() {
   if (has_mips_)
     return;
+
+  if (!plane_images_.empty()) {
+    // TODO(andrescj): generate mipmaps for hardware-accelerated decodes when
+    // requested. This will require some resource management: we either let Skia
+    // own the new textures or we take ownership and delete them in
+    // |destroy_callback_|.
+    NOTIMPLEMENTED();
+  }
 
   has_mips_ = true;
   // TODO(ericrk): consider adding in the DeleteSkImageAndPreventCaching

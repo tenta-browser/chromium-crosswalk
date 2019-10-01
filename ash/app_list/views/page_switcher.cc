@@ -8,8 +8,8 @@
 #include <memory>
 #include <utility>
 
-#include "ash/app_list/pagination_model.h"
-#include "ash/public/cpp/app_list/app_list_constants.h"
+#include "ash/app_list/app_list_metrics.h"
+#include "ash/public/cpp/pagination/pagination_model.h"
 #include "base/i18n/number_formatting.h"
 #include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
@@ -177,14 +177,19 @@ class PageSwitcherButton : public views::Button {
 };
 
 // Gets PageSwitcherButton at |index| in |buttons|.
-PageSwitcherButton* GetButtonByIndex(views::View* buttons, int index) {
-  return static_cast<PageSwitcherButton*>(buttons->child_at(index));
+PageSwitcherButton* GetButtonByIndex(views::View* buttons, size_t index) {
+  return static_cast<PageSwitcherButton*>(buttons->children()[index]);
 }
 
 }  // namespace
 
-PageSwitcher::PageSwitcher(PaginationModel* model, bool vertical)
-    : model_(model), buttons_(new views::View), vertical_(vertical) {
+PageSwitcher::PageSwitcher(ash::PaginationModel* model,
+                           bool vertical,
+                           bool is_tablet_mode)
+    : model_(model),
+      buttons_(new views::View),
+      vertical_(vertical),
+      is_tablet_mode_(is_tablet_mode) {
   SetPaintToLayer();
   layer()->SetFillsBoundsOpaquely(false);
 
@@ -229,23 +234,25 @@ void PageSwitcher::Layout() {
   buttons_->SetBoundsRect(rect);
 }
 
+const char* PageSwitcher::GetClassName() const {
+  return "PageSwitcher";
+}
+
 void PageSwitcher::ButtonPressed(views::Button* sender,
                                  const ui::Event& event) {
   if (!model_ || ignore_button_press_)
     return;
 
-  for (int i = 0; i < buttons_->child_count(); ++i) {
-    if (sender == static_cast<views::Button*>(buttons_->child_at(i))) {
-      if (model_->selected_page() == i)
-        break;
-      UMA_HISTOGRAM_ENUMERATION(
-          kAppListPageSwitcherSourceHistogram,
-          event.IsGestureEvent() ? kTouchPageIndicator : kClickPageIndicator,
-          kMaxAppListPageSwitcherSource);
-      model_->SelectPage(i, true /* animate */);
-      break;
-    }
-  }
+  const auto& children = buttons_->children();
+  const auto it = std::find(children.begin(), children.end(), sender);
+  DCHECK(it != children.end());
+  const int page = std::distance(children.begin(), it);
+  if (page == model_->selected_page())
+    return;
+  RecordPageSwitcherSource(
+      event.IsGestureEvent() ? kTouchPageIndicator : kClickPageIndicator,
+      is_tablet_mode_);
+  model_->SelectPage(page, true /* animate */);
 }
 
 void PageSwitcher::TotalPagesChanged() {
@@ -266,10 +273,10 @@ void PageSwitcher::TotalPagesChanged() {
 }
 
 void PageSwitcher::SelectedPageChanged(int old_selected, int new_selected) {
-  if (old_selected >= 0 && old_selected < buttons_->child_count())
-    GetButtonByIndex(buttons_, old_selected)->SetSelected(false);
-  if (new_selected >= 0 && new_selected < buttons_->child_count())
-    GetButtonByIndex(buttons_, new_selected)->SetSelected(true);
+  if (old_selected >= 0 && size_t{old_selected} < buttons_->children().size())
+    GetButtonByIndex(buttons_, size_t{old_selected})->SetSelected(false);
+  if (new_selected >= 0 && size_t{new_selected} < buttons_->children().size())
+    GetButtonByIndex(buttons_, size_t{new_selected})->SetSelected(true);
 }
 
 void PageSwitcher::TransitionStarted() {}

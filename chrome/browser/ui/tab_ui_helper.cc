@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/tab_ui_helper.h"
 
+#include "base/bind.h"
 #include "build/build_config.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
 #include "chrome/browser/favicon/favicon_utils.h"
@@ -30,9 +31,7 @@ base::string16 FormatUrlToSubdomain(const GURL& url) {
 }  // namespace
 
 TabUIHelper::TabUIData::TabUIData(const GURL& url)
-    : title(FormatUrlToSubdomain(url)),
-      favicon(ui::ResourceBundle::GetSharedInstance().GetImageNamed(
-          IDR_DEFAULT_FAVICON)) {}
+    : title(FormatUrlToSubdomain(url)), favicon(favicon::GetDefaultFavicon()) {}
 
 TabUIHelper::TabUIHelper(content::WebContents* contents)
     : WebContentsObserver(contents), weak_ptr_factory_(this) {}
@@ -107,7 +106,7 @@ bool TabUIHelper::ShouldUseFaviconFromHistory() const {
 
 void TabUIHelper::FetchFaviconFromHistory(
     const GURL& url,
-    const favicon_base::FaviconImageCallback& callback) {
+    favicon_base::FaviconImageCallback callback) {
   Profile* profile =
       Profile::FromBrowserContext(web_contents()->GetBrowserContext());
   favicon::FaviconService* favicon_service =
@@ -115,7 +114,7 @@ void TabUIHelper::FetchFaviconFromHistory(
                                            ServiceAccessType::EXPLICIT_ACCESS);
   // |favicon_service| might be null when testing.
   if (favicon_service) {
-    favicon_service->GetFaviconImageForPageURL(url, callback,
+    favicon_service->GetFaviconImageForPageURL(url, std::move(callback),
                                                &favicon_tracker_);
   }
 }

@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,8 @@
 // NOTE: The format of types has changed. 'FooType' is now
 //   'chrome.automation.FooType'.
 // Please run the closure compiler before committing changes.
-// See https://chromium.googlesource.com/chromium/src/+/master/docs/closure_compilation.md
+// See
+// https://chromium.googlesource.com/chromium/src/+/master/docs/closure_compilation.md
 
 /** @fileoverview Externs generated from namespace: automation */
 
@@ -31,6 +32,7 @@ chrome.automation.EventType = {
   CLICKED: 'clicked',
   DOCUMENT_SELECTION_CHANGED: 'documentSelectionChanged',
   DOCUMENT_TITLE_CHANGED: 'documentTitleChanged',
+  END_OF_TEST: 'endOfTest',
   EXPANDED_CHANGED: 'expandedChanged',
   FOCUS: 'focus',
   FOCUS_CONTEXT: 'focusContext',
@@ -292,6 +294,7 @@ chrome.automation.StateType = {
  * @see https://developer.chrome.com/extensions/automation#type-ActionType
  */
 chrome.automation.ActionType = {
+  ANNOTATE_PAGE_IMAGES: 'annotatePageImages',
   BLUR: 'blur',
   CLEAR_ACCESSIBILITY_FOCUS: 'clearAccessibilityFocus',
   CUSTOM_ACTION: 'customAction',
@@ -300,8 +303,10 @@ chrome.automation.ActionType = {
   FOCUS: 'focus',
   GET_IMAGE_DATA: 'getImageData',
   GET_TEXT_LOCATION: 'getTextLocation',
+  HIDE_TOOLTIP: 'hideTooltip',
   HIT_TEST: 'hitTest',
   INCREMENT: 'increment',
+  INTERNAL_INVALIDATE_TREE: 'internalInvalidateTree',
   LOAD_INLINE_TEXT_BOXES: 'loadInlineTextBoxes',
   REPLACE_SELECTED_TEXT: 'replaceSelectedText',
   SCROLL_BACKWARD: 'scrollBackward',
@@ -309,15 +314,17 @@ chrome.automation.ActionType = {
   SCROLL_FORWARD: 'scrollForward',
   SCROLL_LEFT: 'scrollLeft',
   SCROLL_RIGHT: 'scrollRight',
+  SCROLL_UP: 'scrollUp',
   SCROLL_TO_MAKE_VISIBLE: 'scrollToMakeVisible',
   SCROLL_TO_POINT: 'scrollToPoint',
-  SCROLL_UP: 'scrollUp',
   SET_ACCESSIBILITY_FOCUS: 'setAccessibilityFocus',
   SET_SCROLL_OFFSET: 'setScrollOffset',
   SET_SELECTION: 'setSelection',
   SET_SEQUENTIAL_FOCUS_NAVIGATION_STARTING_POINT: 'setSequentialFocusNavigationStartingPoint',
   SET_VALUE: 'setValue',
   SHOW_CONTEXT_MENU: 'showContextMenu',
+  SIGNAL_END_OF_TEST: 'signalEndOfTest',
+  SHOW_TOOLTIP: 'showTooltip',
 };
 
 /**
@@ -591,6 +598,13 @@ chrome.automation.AutomationNode.prototype.name;
  * @see https://developer.chrome.com/extensions/automation#type-nameFrom
  */
 chrome.automation.AutomationNode.prototype.nameFrom;
+
+/**
+ * The image annotation for image nodes, which may be a human-readable string that is the contextualized annotation or a status string related to annotations.
+ * @type {(string|undefined)}
+ * @see https://developer.chrome.com/extensions/automation#type-imageAnnotation
+ */
+chrome.automation.AutomationNode.prototype.imageAnnotation;
 
 /**
  * The value for this node: for example the <code>value</code> attribute of an <code>&lt;input&gt; element.
@@ -888,6 +902,14 @@ chrome.automation.AutomationNode.prototype.markerEnds;
 chrome.automation.AutomationNode.prototype.markerTypes;
 
 /**
+ * If a selection is present, whether the anchor of the selection comes after
+ * its focus in the accessibility tree.
+ * @type {(boolean|undefined)}
+ * @see https://developer.chrome.com/extensions/automation#type-isSelectionBackward
+ */
+chrome.automation.AutomationNode.prototype.isSelectionBackward;
+
+/**
  * The anchor node of the tree selection, if any.
  * @type {(!chrome.automation.AutomationNode|undefined)}
  * @see https://developer.chrome.com/extensions/automation#type-anchorObject
@@ -928,6 +950,48 @@ chrome.automation.AutomationNode.prototype.focusOffset;
  * @see https://developer.chrome.com/extensions/automation#type-focusAffinity
  */
 chrome.automation.AutomationNode.prototype.focusAffinity;
+
+/**
+ * The selection start node of the tree selection, if any.
+ * @type {(!chrome.automation.AutomationNode|undefined)}
+ * @see https://developer.chrome.com/extensions/automation#type-selectionStartObject
+ */
+chrome.automation.AutomationNode.prototype.selectionStartObject;
+
+/**
+ * The selection start offset of the tree selection, if any.
+ * @type {(number|undefined)}
+ * @see https://developer.chrome.com/extensions/automation#type-selectionStartOffset
+ */
+chrome.automation.AutomationNode.prototype.selectionStartOffset;
+
+/**
+ * The affinity of the tree selection start, if any.
+ * @type {(string|undefined)}
+ * @see https://developer.chrome.com/extensions/automation#type-selectionStartAffinity
+ */
+chrome.automation.AutomationNode.prototype.selectionStartAffinity;
+
+/**
+ * The selection end node of the tree selection, if any.
+ * @type {(!chrome.automation.AutomationNode|undefined)}
+ * @see https://developer.chrome.com/extensions/automation#type-selectionEndObject
+ */
+chrome.automation.AutomationNode.prototype.selectionEndObject;
+
+/**
+ * The selection end offset of the tree selection, if any.
+ * @type {(number|undefined)}
+ * @see https://developer.chrome.com/extensions/automation#type-selectionEndOffset
+ */
+chrome.automation.AutomationNode.prototype.selectionEndOffset;
+
+/**
+ * The affinity of the tree selection end, if any.
+ * @type {(string|undefined)}
+ * @see https://developer.chrome.com/extensions/automation#type-selectionEndAffinity
+ */
+chrome.automation.AutomationNode.prototype.selectionEndAffinity;
 
 /**
  * The current value for this range.
@@ -1182,11 +1246,18 @@ chrome.automation.AutomationNode.prototype.display;
 chrome.automation.AutomationNode.prototype.imageDataUrl;
 
 /**
- * The language code for this subtree.
+ * The author-provided language code for this subtree.
  * @type {(string|undefined)}
  * @see https://developer.chrome.com/extensions/automation#type-language
  */
 chrome.automation.AutomationNode.prototype.language;
+
+/**
+ * The detected language code for this subtree.
+ * @type {(string|undefined)}
+ * @see https://developer.chrome.com/extensions/automation#type-detectedLanguage
+ */
+chrome.automation.AutomationNode.prototype.detectedLanguage;
 
 /**
  * Indicates the availability and type of interactive popup element true - the popup is a menu menu - the popup is a menu listbox - the popup is a listbox tree - the popup is a tree grid - the popup is a grid dialog - the popup is a dialog
@@ -1285,6 +1356,20 @@ chrome.automation.AutomationNode.prototype.lineThrough;
  * @see https://developer.chrome.com/extensions/automation#type-selected
  */
 chrome.automation.AutomationNode.prototype.selected;
+
+/**
+ * Indicates the font size of this node.
+ * @type {(number|undefined)}
+ * @see https://developer.chrome.com/extensions/automation#type-fontSize
+ */
+chrome.automation.AutomationNode.prototype.fontSize;
+
+/**
+ * Indicates the font family.
+ * @type {string}
+ * @see https://developer.chrome.com/extensions/automation#type-fontFamily
+ */
+chrome.automation.AutomationNode.prototype.fontFamily;
 
 /**
  * Walking the tree.

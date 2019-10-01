@@ -26,7 +26,6 @@ cr.define('settings_people_page_sync_page', function() {
         bookmarksSynced: true,
         encryptAllData: false,
         encryptAllDataAllowed: true,
-        enterGooglePassphraseBody: 'Enter Google passphrase.',
         enterPassphraseBody: 'Enter custom passphrase.',
         extensionsEnforced: false,
         extensionsRegistered: true,
@@ -34,7 +33,6 @@ cr.define('settings_people_page_sync_page', function() {
         fullEncryptionBody: '',
         passphrase: '',
         passphraseRequired: false,
-        passphraseTypeIsCustom: false,
         passwordsEnforced: false,
         passwordsRegistered: true,
         passwordsSynced: true,
@@ -583,12 +581,145 @@ cr.define('settings_people_page_sync_page', function() {
         assertFalse(!!toast.open);
 
         // Next, the toast shows up during setup.
-        syncPage.syncStatus = {setupInProgress: true};
+        syncPage.syncStatus = {firstSetupInProgress: true};
         Polymer.dom.flush();
         assertTrue(toast.open);
 
         // At the end, confirm that setup can be cancelled.
         toast.querySelector('paper-button').click();
+
+        return browserProxy.whenCalled('didNavigateAwayFromSyncPage')
+            .then(abort => {
+              assertTrue(abort);
+            });
+      });
+
+      test('SyncSetupLeavePage UnifiedConsentDisabled', function() {
+        syncPage.unifiedConsentEnabled = false;
+        Polymer.dom.flush();
+
+        settings.navigateTo(settings.routes.BASIC);
+
+        return browserProxy.whenCalled('didNavigateAwayFromSyncPage')
+            .then(abort => {
+              assertFalse(abort);
+            });
+      });
+
+      test('SyncSetupCancel UnifiedConsentEnabled', function() {
+        syncPage.diceEnabled = true;
+        syncPage.unifiedConsentEnabled = true;
+        syncPage.syncStatus = {
+          signinAllowed: true,
+          syncSystemEnabled: true,
+          firstSetupInProgress: true,
+          signedIn: true
+        };
+        Polymer.dom.flush();
+        sync_test_util.simulateStoredAccounts([{email: 'foo@foo.com'}]);
+
+        const cancelButton =
+            syncPage.$$('settings-sync-account-control')
+                .shadowRoot.querySelector('#setup-buttons .secondary-button');
+        assertTrue(!!cancelButton);
+
+        // Clicking the setup cancel button aborts sync.
+        cancelButton.click();
+        return browserProxy.whenCalled('didNavigateAwayFromSyncPage')
+            .then(abort => {
+              assertTrue(abort);
+            });
+      });
+
+      test('SyncSetupConfirm UnifiedConsentEnabled', function() {
+        syncPage.diceEnabled = true;
+        syncPage.unifiedConsentEnabled = true;
+        syncPage.syncStatus = {
+          signinAllowed: true,
+          syncSystemEnabled: true,
+          firstSetupInProgress: true,
+          signedIn: true
+        };
+        Polymer.dom.flush();
+        sync_test_util.simulateStoredAccounts([{email: 'foo@foo.com'}]);
+
+        const confirmButton =
+            syncPage.$$('settings-sync-account-control')
+                .shadowRoot.querySelector('#setup-buttons .action-button');
+
+        assertTrue(!!confirmButton);
+        confirmButton.click();
+
+        return browserProxy.whenCalled('didNavigateAwayFromSyncPage')
+            .then(abort => {
+              assertFalse(abort);
+            });
+      });
+
+      test('SyncSetupLeavePage UnifiedConsentEnabled', function() {
+        syncPage.unifiedConsentEnabled = true;
+        syncPage.syncStatus = {
+          signinAllowed: true,
+          syncSystemEnabled: true,
+          firstSetupInProgress: true,
+          signedIn: true
+        };
+        Polymer.dom.flush();
+
+        // Navigating away while setup is in progress opens the 'Cancel sync?'
+        // dialog.
+        settings.navigateTo(settings.routes.BASIC);
+        return test_util.eventToPromise('cr-dialog-open', syncPage)
+            .then(() => {
+              assertEquals(settings.routes.SYNC, settings.getCurrentRoute());
+              assertTrue(syncPage.$$('#setupCancelDialog').open);
+
+              // Clicking the cancel button on the 'Cancel sync?' dialog closes
+              // the dialog and removes it from the DOM.
+              syncPage.$$('#setupCancelDialog')
+                  .querySelector('.cancel-button')
+                  .click();
+
+              return test_util.eventToPromise(
+                  'close', syncPage.$$('#setupCancelDialog'));
+            })
+            .then(() => {
+              Polymer.dom.flush();
+              assertEquals(settings.routes.SYNC, settings.getCurrentRoute());
+              assertFalse(!!syncPage.$$('#setupCancelDialog'));
+
+              // Navigating away while setup is in progress opens the
+              // dialog again.
+              settings.navigateTo(settings.routes.BASIC);
+              return test_util.eventToPromise('cr-dialog-open', syncPage);
+            })
+            .then(() => {
+              assertTrue(syncPage.$$('#setupCancelDialog').open);
+
+              // Clicking the confirm button on the dialog aborts sync.
+              syncPage.$$('#setupCancelDialog')
+                  .querySelector('.action-button')
+                  .click();
+              return browserProxy.whenCalled('didNavigateAwayFromSyncPage');
+            })
+            .then(abort => {
+              assertTrue(abort);
+            });
+      });
+
+      test('SyncSetupSearchSettings UnifiedConsentEnabled', function() {
+        syncPage.unifiedConsentEnabled = true;
+        syncPage.syncStatus = {
+          signinAllowed: true,
+          syncSystemEnabled: true,
+          firstSetupInProgress: true,
+          signedIn: true
+        };
+        Polymer.dom.flush();
+
+        // Searching settings while setup is in progress cancels sync.
+        settings.navigateTo(
+            settings.routes.BASIC, new URLSearchParams('search=foo'));
 
         return browserProxy.whenCalled('didNavigateAwayFromSyncPage')
             .then(abort => {

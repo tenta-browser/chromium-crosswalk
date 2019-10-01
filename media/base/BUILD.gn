@@ -55,6 +55,8 @@ jumbo_source_set("base") {
     "audio_fifo.h",
     "audio_hash.cc",
     "audio_hash.h",
+    "audio_processing.cc",
+    "audio_processing.h",
     "audio_pull_fifo.cc",
     "audio_pull_fifo.h",
     "audio_push_fifo.cc",
@@ -181,6 +183,7 @@ jumbo_source_set("base") {
     "media_track.h",
     "media_tracks.cc",
     "media_tracks.h",
+    "media_types.cc",
     "media_types.h",
     "media_url_demuxer.cc",
     "media_url_demuxer.h",
@@ -233,6 +236,8 @@ jumbo_source_set("base") {
     "serial_runner.h",
     "silent_sink_suspender.cc",
     "silent_sink_suspender.h",
+    "simple_sync_token_client.cc",
+    "simple_sync_token_client.h",
     "sinc_resampler.cc",
     "sinc_resampler.h",
     "stream_parser.cc",
@@ -280,10 +285,10 @@ jumbo_source_set("base") {
     "video_frame_pool.h",
     "video_renderer.cc",
     "video_renderer.h",
-    "video_rotation.cc",
-    "video_rotation.h",
     "video_thumbnail_decoder.cc",
     "video_thumbnail_decoder.h",
+    "video_transformation.cc",
+    "video_transformation.h",
     "video_types.cc",
     "video_types.h",
     "video_util.cc",
@@ -301,19 +306,21 @@ jumbo_source_set("base") {
     ":video_facing",
     "//media:media_buildflags",
     "//media:shared_memory_support",
-    "//third_party/libaom:av1_buildflags",
     "//ui/gfx:color_space",
   ]
   deps = [
     "//base/allocator:buildflags",
     "//gpu/command_buffer/common",
+    "//gpu/ipc/common:common",
     "//skia",
     "//third_party/libyuv",
     "//third_party/widevine/cdm:headers",
+    "//ui/base/mpris/buildflags",
     "//ui/display:display",
     "//ui/events:events_base",
     "//url:url",
   ]
+
   libs = []
   configs += [
     "//build/config:precompiled_headers",
@@ -545,6 +552,7 @@ source_set("unit_tests") {
   ]
   deps = [
     "//base/test:test_support",
+    "//components/viz/common",
     "//gpu/command_buffer/common",
     "//media:test_support",
     "//skia",

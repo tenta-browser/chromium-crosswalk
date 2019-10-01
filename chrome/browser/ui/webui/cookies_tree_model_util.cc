@@ -25,7 +25,6 @@
 #include "extensions/buildflags/buildflags.h"
 #include "net/cookies/canonical_cookie.h"
 #include "storage/common/fileapi/file_system_types.h"
-#include "third_party/blink/public/mojom/appcache/appcache_info.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/text/bytes_formatting.h"
 
@@ -49,12 +48,8 @@ const char kKeyDomain[] = "domain";
 const char kKeyPath[] = "path";
 const char kKeySendFor[] = "sendfor";
 const char kKeyAccessibleToScript[] = "accessibleToScript";
-const char kKeyDesc[] = "desc";
 const char kKeySize[] = "size";
 const char kKeyOrigin[] = "origin";
-const char kKeyManifest[] = "manifest";
-
-const char kKeyAccessed[] = "accessed";
 const char kKeyCreated[] = "created";
 const char kKeyExpires[] = "expires";
 const char kKeyModified[] = "modified";
@@ -79,11 +74,11 @@ CookiesTreeModelUtil::~CookiesTreeModelUtil() {
 std::string CookiesTreeModelUtil::GetTreeNodeId(const CookieTreeNode* node) {
   CookieTreeNodeMap::const_iterator iter = node_map_.find(node);
   if (iter != node_map_.end())
-    return base::IntToString(iter->second);
+    return base::NumberToString(iter->second);
 
   int32_t new_id = id_map_.Add(node);
   node_map_[node] = new_id;
-  return base::IntToString(new_id);
+  return base::NumberToString(new_id);
 }
 
 bool CookiesTreeModelUtil::GetCookieTreeNodeDictionary(
@@ -93,7 +88,7 @@ bool CookiesTreeModelUtil::GetCookieTreeNodeDictionary(
   // Use node's address as an id for WebUI to look it up.
   dict->SetString(kKeyId, GetTreeNodeId(&node));
   dict->SetString(kKeyTitle, node.GetTitle());
-  dict->SetBoolean(kKeyHasChildren, !node.empty());
+  dict->SetBoolean(kKeyHasChildren, !node.children().empty());
 
   switch (node.GetDetailedInfo().node_type) {
     case CookieTreeNode::DetailedInfo::TYPE_HOST: {
@@ -127,27 +122,26 @@ bool CookiesTreeModelUtil::GetCookieTreeNodeDictionary(
     case CookieTreeNode::DetailedInfo::TYPE_DATABASE: {
       dict->SetString(kKeyType, "database");
 
-      const BrowsingDataDatabaseHelper::DatabaseInfo& database_info =
-          *node.GetDetailedInfo().database_info;
+      const content::StorageUsageInfo& usage_info =
+          *node.GetDetailedInfo().usage_info;
 
-      dict->SetString(kKeyName, database_info.database_name.empty() ?
-          l10n_util::GetStringUTF8(IDS_COOKIES_WEB_DATABASE_UNNAMED_NAME) :
-          database_info.database_name);
-      dict->SetString(kKeyDesc, database_info.description);
-      dict->SetString(kKeySize, ui::FormatBytes(database_info.size));
-      dict->SetString(kKeyModified, base::UTF16ToUTF8(
-          base::TimeFormatFriendlyDateAndTime(database_info.last_modified)));
+      dict->SetString(kKeyOrigin, usage_info.origin.Serialize());
+      dict->SetString(kKeySize, ui::FormatBytes(usage_info.total_size_bytes));
+      dict->SetString(kKeyModified,
+                      base::UTF16ToUTF8(base::TimeFormatFriendlyDateAndTime(
+                          usage_info.last_modified)));
 
       break;
     }
     case CookieTreeNode::DetailedInfo::TYPE_LOCAL_STORAGE: {
       dict->SetString(kKeyType, "local_storage");
 
-      const BrowsingDataLocalStorageHelper::LocalStorageInfo&
-         local_storage_info = *node.GetDetailedInfo().local_storage_info;
+      const content::StorageUsageInfo& local_storage_info =
+          *node.GetDetailedInfo().usage_info;
 
-      dict->SetString(kKeyOrigin, local_storage_info.origin_url.spec());
-      dict->SetString(kKeySize, ui::FormatBytes(local_storage_info.size));
+      dict->SetString(kKeyOrigin, local_storage_info.origin.Serialize());
+      dict->SetString(kKeySize,
+                      ui::FormatBytes(local_storage_info.total_size_bytes));
       dict->SetString(kKeyModified, base::UTF16ToUTF8(
           base::TimeFormatFriendlyDateAndTime(
               local_storage_info.last_modified)));
@@ -157,16 +151,14 @@ bool CookiesTreeModelUtil::GetCookieTreeNodeDictionary(
     case CookieTreeNode::DetailedInfo::TYPE_APPCACHE: {
       dict->SetString(kKeyType, "app_cache");
 
-      const blink::mojom::AppCacheInfo& appcache_info =
-          *node.GetDetailedInfo().appcache_info;
+      const content::StorageUsageInfo& usage_info =
+          *node.GetDetailedInfo().usage_info;
 
-      dict->SetString(kKeyManifest, appcache_info.manifest_url.spec());
-      dict->SetString(kKeySize, ui::FormatBytes(appcache_info.size));
-      dict->SetString(kKeyCreated, base::UTF16ToUTF8(
-          base::TimeFormatFriendlyDateAndTime(appcache_info.creation_time)));
-      dict->SetString(kKeyAccessed, base::UTF16ToUTF8(
-          base::TimeFormatFriendlyDateAndTime(appcache_info.last_access_time)));
-
+      dict->SetString(kKeyOrigin, usage_info.origin.Serialize());
+      dict->SetString(kKeySize, ui::FormatBytes(usage_info.total_size_bytes));
+      dict->SetString(kKeyModified,
+                      base::UTF16ToUTF8(base::TimeFormatFriendlyDateAndTime(
+                          usage_info.last_modified)));
       break;
     }
     case CookieTreeNode::DetailedInfo::TYPE_INDEXED_DB: {

@@ -18,7 +18,7 @@ class FakeNavigationManagerDelegate : public NavigationManagerDelegate {
   void OnGoToIndexSameDocumentNavigation(NavigationInitiationType type,
                                          bool has_user_gesture) override;
   void WillChangeUserAgentType() override;
-  void LoadCurrentItem() override;
+  void LoadCurrentItem(NavigationInitiationType type) override;
   void LoadIfNecessary() override;
   void Reload() override;
   void OnNavigationItemsPruned(size_t pruned_item_count) override;
@@ -30,6 +30,7 @@ class FakeNavigationManagerDelegate : public NavigationManagerDelegate {
                                NavigationInitiationType type,
                                bool has_user_gesture) override;
   void RemoveWebView() override;
+  NavigationItemImpl* GetPendingItem() override;
 
   // Setters for tests to inject dependencies.
   void SetWebViewNavigationProxy(id test_web_view);

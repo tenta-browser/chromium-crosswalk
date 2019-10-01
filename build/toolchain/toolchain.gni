@@ -24,10 +24,6 @@ declare_args() {
 
   # Used for binary size analysis.
   generate_linker_map = is_android && is_official_build
-
-  # Use absolute file paths in the compiler diagnostics and __FILE__ macro
-  # if needed.
-  msvc_use_absolute_paths = false
 }
 
 if (generate_linker_map) {
@@ -76,6 +72,13 @@ if (is_posix || is_fuchsia) {
   shlib_prefix = "lib"
 } else {
   shlib_prefix = ""
+}
+
+# Directory for shared library files.
+if (is_fuchsia) {
+  shlib_subdir = "/lib"
+} else {
+  shlib_subdir = ""
 }
 
 # While other "tool"s in a toolchain are specific to the target of that

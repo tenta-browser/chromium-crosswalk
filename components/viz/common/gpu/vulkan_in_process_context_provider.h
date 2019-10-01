@@ -29,11 +29,15 @@ class VIZ_VULKAN_CONTEXT_PROVIDER_EXPORT VulkanInProcessContextProvider
 
   bool Initialize();
   void Destroy();
-  GrContext* GetGrContext() override;
 
   // VulkanContextProvider implementation
   gpu::VulkanImplementation* GetVulkanImplementation() override;
   gpu::VulkanDeviceQueue* GetDeviceQueue() override;
+  GrContext* GetGrContext() override;
+  GrVkSecondaryCBDrawContext* GetGrSecondaryCBDrawContext() override;
+  void EnqueueSecondaryCBSemaphores(
+      std::vector<VkSemaphore> semaphores) override;
+  void EnqueueSecondaryCBPostSubmitTask(base::OnceClosure closure) override;
 
  protected:
   explicit VulkanInProcessContextProvider(

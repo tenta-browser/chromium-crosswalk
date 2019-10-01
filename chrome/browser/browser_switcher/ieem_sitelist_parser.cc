@@ -4,6 +4,7 @@
 
 #include "chrome/browser/browser_switcher/ieem_sitelist_parser.h"
 
+#include "base/bind.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/service_manager_connection.h"
 #include "services/data_decoder/public/cpp/safe_xml_parser.h"
@@ -44,10 +45,10 @@ std::vector<const base::Value*> GetChildrenWithTag(const base::Value& node,
 struct Entry {
   // URL or path concerned.
   std::string text;
-  // Whether to include or exclude the URL.
+  // True if the exclude attribute is "true".
   bool exclude;
-  // List affected by this rule (sitelist or greylist).
-  std::vector<std::string>* list;
+  // True if the doNotTransition attribute is "true".
+  bool do_not_transition;
 };
 
 Entry ParseDomainOrPath(const base::Value& node, ParsedXml* result) {
@@ -62,9 +63,7 @@ Entry ParseDomainOrPath(const base::Value& node, ParsedXml* result) {
 
   std::string do_not_transition_attrib =
       GetXmlElementAttribute(node, kSchema1DoNotTransitionAttribute);
-  entry.list =
-      ((do_not_transition_attrib == kSchema1TrueValue) ? &result->greylist
-                                                       : &result->sitelist);
+  entry.do_not_transition = (do_not_transition_attrib == kSchema1TrueValue);
 
   GetXmlElementText(node, &entry.text);
   base::TrimWhitespaceASCII(entry.text, base::TRIM_ALL, &entry.text);
@@ -86,17 +85,17 @@ void ParseIeFileVersionOne(const base::Value& xml, ParsedXml* result) {
     for (const base::Value* domain_node :
          GetChildrenWithTag(node, kSchema1DomainElement)) {
       Entry domain = ParseDomainOrPath(*domain_node, result);
-      if (!domain.text.empty()) {
-        std::string prefix = (domain.exclude ? "!" : "");
-        domain.list->push_back(prefix + domain.text);
+      if (!domain.text.empty() && !domain.exclude) {
+        std::string prefix = (domain.do_not_transition ? "!" : "");
+        result->rules.push_back(prefix + domain.text);
       }
       // Loop over <path> elements.
       for (const base::Value* path_node :
            GetChildrenWithTag(*domain_node, kSchema1PathElement)) {
         Entry path = ParseDomainOrPath(*path_node, result);
-        if (!path.text.empty() && !domain.text.empty()) {
-          std::string prefix = (path.exclude ? "!" : "");
-          path.list->push_back(prefix + domain.text + path.text);
+        if (!path.text.empty() && !domain.text.empty() && !path.exclude) {
+          std::string prefix = (path.do_not_transition ? "!" : "");
+          result->rules.push_back(prefix + domain.text + path.text);
         }
       }
     }
@@ -122,8 +121,10 @@ void ParseIeFileVersionTwo(const base::Value& xml, ParsedXml* result) {
       GetXmlElementText(*open_in_node, &mode);
     }
     base::TrimWhitespaceASCII(mode, base::TRIM_ALL, &mode);
-    std::string prefix = (mode.empty() || mode == "none") ? "!" : "";
-    result->sitelist.push_back(prefix + url);
+    std::string prefix =
+        (mode.empty() || !base::CompareCaseInsensitiveASCII(mode, "none")) ? "!"
+                                                                           : "";
+    result->rules.push_back(prefix + url);
   }
 }
 
@@ -132,7 +133,7 @@ void RawXmlParsed(base::OnceCallback<void(ParsedXml)> callback,
                   const base::Optional<std::string>& error) {
   if (error) {
     // Copies the string, but it should only be around 20 characters.
-    std::move(callback).Run(ParsedXml({}, {}, *error));
+    std::move(callback).Run(ParsedXml({}, *error));
     return;
   }
   DCHECK(xml);
@@ -155,12 +156,9 @@ void RawXmlParsed(base::OnceCallback<void(ParsedXml)> callback,
 
 ParsedXml::ParsedXml() = default;
 ParsedXml::ParsedXml(ParsedXml&&) = default;
-ParsedXml::ParsedXml(std::vector<std::string>&& sitelist_,
-                     std::vector<std::string>&& greylist_,
+ParsedXml::ParsedXml(std::vector<std::string>&& rules_,
                      base::Optional<std::string>&& error_)
-    : sitelist(std::move(sitelist_)),
-      greylist(std::move(greylist_)),
-      error(std::move(error_)) {}
+    : rules(std::move(rules_)), error(std::move(error_)) {}
 ParsedXml::~ParsedXml() = default;
 
 void ParseIeemXml(const std::string& xml,

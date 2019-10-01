@@ -4,12 +4,8 @@
 
 /** @fileoverview Runs the Polymer welcome tests on onboarding-welcome UI. */
 
-/** @const {string} Path to source root. */
-const ROOT_PATH = '../../../../../';
-
 // Polymer BrowserTest fixture.
-GEN_INCLUDE(
-    [ROOT_PATH + 'chrome/test/data/webui/polymer_browser_test_base.js']);
+GEN_INCLUDE(['//chrome/test/data/webui/polymer_browser_test_base.js']);
 GEN('#include "chrome/browser/ui/webui/welcome/nux_helper.h"');
 
 /**
@@ -22,35 +18,36 @@ const OnboardingWelcomeBrowserTest = class extends PolymerTest {
   }
 
   get extraLibraries() {
-    return PolymerTest.getLibraries(ROOT_PATH).concat([
+    return [
+      ...super.extraLibraries,
       '../test_browser_proxy.js',
-    ]);
+    ];
   }
 
   /** @override */
   get featureList() {
-    return ['nux::kNuxOnboardingForceEnabled', ''];
+    return {enabled: ['nux::kNuxOnboardingForceEnabled']};
   }
 };
 
-OnboardingWelcomeEmailChooserTest = class extends OnboardingWelcomeBrowserTest {
+OnboardingWelcomeAppChooserTest = class extends OnboardingWelcomeBrowserTest {
   /** @override */
   get browsePreload() {
-    return 'chrome://welcome/shared/app_chooser.html';
+    return 'chrome://welcome/google_apps/nux_google_apps.html';
   }
 
   /** @override */
   get extraLibraries() {
     return super.extraLibraries.concat([
-      'email_chooser_test.js',
-      'test_nux_email_proxy.js',
+      'app_chooser_test.js',
+      'test_nux_app_proxy.js',
       'test_metrics_proxy.js',
       'test_bookmark_proxy.js',
     ]);
   }
 };
 
-TEST_F('OnboardingWelcomeEmailChooserTest', 'All', function() {
+TEST_F('OnboardingWelcomeAppChooserTest', 'All', function() {
   mocha.run();
 });
 
@@ -86,7 +83,6 @@ OnboardingWelcomeSigninViewTest = class extends OnboardingWelcomeBrowserTest {
   get extraLibraries() {
     return super.extraLibraries.concat([
       'signin_view_test.js',
-      'test_nux_email_proxy.js',
       'test_welcome_browser_proxy.js',
     ]);
   }
@@ -145,6 +141,7 @@ OnboardingWelcomeSetAsDefaultTest = class extends OnboardingWelcomeBrowserTest {
   /** @override */
   get extraLibraries() {
     return super.extraLibraries.concat([
+      '../settings/test_util.js',
       'nux_set_as_default_test.js',
       'test_nux_set_as_default_proxy.js',
     ]);
@@ -152,5 +149,26 @@ OnboardingWelcomeSetAsDefaultTest = class extends OnboardingWelcomeBrowserTest {
 };
 
 TEST_F('OnboardingWelcomeSetAsDefaultTest', 'All', function() {
+  mocha.run();
+});
+
+OnboardingWelcomeNtpBackgroundTest =
+    class extends OnboardingWelcomeBrowserTest {
+  /** @override */
+  get browsePreload() {
+    return 'chrome://welcome/ntp_background/nux_ntp_background.html';
+  }
+
+  /** @override */
+  get extraLibraries() {
+    return super.extraLibraries.concat([
+      'nux_ntp_background_test.js',
+      'test_metrics_proxy.js',
+      'test_ntp_background_proxy.js',
+    ]);
+  }
+};
+
+TEST_F('OnboardingWelcomeNtpBackgroundTest', 'All', function() {
   mocha.run();
 });

@@ -7,11 +7,23 @@
 
 #import <UIKit/UIKit.h>
 
+// The font text style of the sublabel.
+extern const UIFontTextStyle kTableViewSublabelFontStyle;
+
 // The minimum height for a TableViewHeaderFooterView.
 extern const CGFloat kTableViewHeaderFooterViewHeight;
 
+// The minimum height for a TableViewCell.
+extern const CGFloat kChromeTableViewCellHeight;
+
 // The horizontal spacing between views and the container view of a cell.
 extern const CGFloat kTableViewHorizontalSpacing;
+
+// The vertical spacing for a cell containing only one label.
+extern const CGFloat kTableViewOneLabelCellVerticalSpacing;
+
+// The vertical spacing for a cell containing one label and one sub label.
+extern const CGFloat kTableViewTwoLabelsCellVerticalSpacing;
 
 // The vertical spacing between views and the container view of a cell.
 extern const CGFloat kTableViewVerticalSpacing;

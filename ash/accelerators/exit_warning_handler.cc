@@ -7,7 +7,7 @@
 #include <memory>
 
 #include "ash/public/cpp/shell_window_ids.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "base/metrics/user_metrics.h"
@@ -53,14 +53,14 @@ class ExitWarningWidgetDelegateView : public views::WidgetDelegateView {
     SetPreferredSize(
         gfx::Size(text_width_ + kHorizontalMarginAroundText,
                   font_list.GetHeight() + kVerticalMarginAroundText));
-    views::Label* label = new views::Label();
+    auto label = std::make_unique<views::Label>();
     label->SetText(text_);
     label->SetHorizontalAlignment(gfx::ALIGN_CENTER);
     label->SetFontList(font_list);
     label->SetEnabledColor(kTextColor);
     label->SetAutoColorReadabilityEnabled(false);
     label->SetSubpixelRenderingEnabled(false);
-    AddChildView(label);
+    AddChildView(std::move(label));
     SetLayoutManager(std::make_unique<views::FillLayout>());
   }
 

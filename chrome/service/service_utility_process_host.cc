@@ -42,6 +42,7 @@
 #include "content/public/common/service_manager_connection.h"
 #include "content/public/common/service_names.mojom.h"
 #include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/platform/named_platform_channel.h"
 #include "mojo/public/cpp/platform/platform_channel.h"
 #include "mojo/public/cpp/platform/platform_channel_endpoint.h"
@@ -55,11 +56,11 @@
 #include "services/service_manager/public/cpp/connector.h"
 #include "services/service_manager/public/cpp/constants.h"
 #include "services/service_manager/public/mojom/service.mojom.h"
-#include "services/service_manager/runner/host/service_process_launcher.h"
-#include "services/service_manager/runner/host/service_process_launcher_factory.h"
 #include "services/service_manager/sandbox/sandbox_type.h"
 #include "services/service_manager/sandbox/switches.h"
 #include "services/service_manager/service_manager.h"
+#include "services/service_manager/service_process_launcher.h"
+#include "services/service_manager/service_process_launcher_factory.h"
 #include "ui/base/ui_base_switches.h"
 
 namespace {
@@ -129,24 +130,6 @@ class ServicePdfToEmfConverterClientImpl
   }
 
   mojo::Binding<printing::mojom::PdfToEmfConverterClient> binding_;
-};
-
-class NullServiceProcessLauncherFactory
-    : public service_manager::ServiceProcessLauncherFactory {
- public:
-  NullServiceProcessLauncherFactory() = default;
-  ~NullServiceProcessLauncherFactory() override = default;
-
-  // service_manager::ServiceProcessLauncherFactory:
-  std::unique_ptr<service_manager::ServiceProcessLauncher> Create(
-      const base::FilePath& service_path) override {
-    LOG(ERROR) << "Attempting to run unsupported native service: "
-               << service_path.value();
-    return nullptr;
-  }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(NullServiceProcessLauncherFactory);
 };
 
 class ConnectionFilterImpl : public content::ConnectionFilter {
@@ -364,36 +347,36 @@ bool ServiceUtilityProcessHost::StartProcess(bool sandbox) {
       content::GetContentBrowserManifest(),
       content::GetContentUtilityManifest()};
   service_manager_ = std::make_unique<service_manager::ServiceManager>(
-      std::make_unique<NullServiceProcessLauncherFactory>(), manifests);
+      manifests,
+      service_manager::ServiceManager::ServiceExecutablePolicy::kNotSupported);
 
-  service_manager::mojom::ServicePtr browser_proxy;
+  service_manager::mojom::ServicePtrInfo browser_proxy;
   service_manager_connection_ = content::ServiceManagerConnection::Create(
       mojo::MakeRequest(&browser_proxy),
       base::SequencedTaskRunnerHandle::Get());
   service_manager_connection_->AddConnectionFilter(
       std::make_unique<ConnectionFilterImpl>());
 
-  service_manager::mojom::PIDReceiverPtr pid_receiver;
+  mojo::Remote<service_manager::mojom::ProcessMetadata> metadata;
   service_manager_->RegisterService(
       service_manager::Identity(content::mojom::kBrowserServiceName,
                                 service_manager::kSystemInstanceGroup,
                                 base::Token{}, base::Token::CreateRandom()),
-      std::move(browser_proxy), mojo::MakeRequest(&pid_receiver));
-  pid_receiver->SetPID(base::GetCurrentProcId());
-  pid_receiver.reset();
+      std::move(browser_proxy), metadata.BindNewPipeAndPassReceiver());
+  metadata->SetPID(base::GetCurrentProcId());
+  metadata.reset();
 
   std::string mojo_bootstrap_token = base::NumberToString(base::RandUint64());
-  service_manager::mojom::ServicePtr utility_service;
-  utility_service.Bind(service_manager::mojom::ServicePtrInfo(
-      mojo_invitation_.AttachMessagePipe(mojo_bootstrap_token), 0u));
+  service_manager::mojom::ServicePtrInfo utility_service(
+      mojo_invitation_.AttachMessagePipe(mojo_bootstrap_token), 0u);
   utility_service_instance_identity_ =
       service_manager::Identity(content::mojom::kUtilityServiceName,
                                 service_manager::kSystemInstanceGroup,
                                 base::Token{}, base::Token::CreateRandom());
   service_manager_->RegisterService(utility_service_instance_identity_,
                                     std::move(utility_service),
-                                    mojo::MakeRequest(&pid_receiver));
-  pid_receiver->SetPID(base::GetCurrentProcId());
+                                    metadata.BindNewPipeAndPassReceiver());
+  metadata->SetPID(base::GetCurrentProcId());
 
   service_manager_connection_->Start();
 
@@ -480,7 +463,7 @@ void ServiceUtilityProcessHost::OnChildDisconnected() {
     // If we are yet to receive a reply then notify the client that the
     // child died.
     client_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&Client::OnChildDied, client_.get()));
+        FROM_HERE, base::BindOnce(&Client::OnChildDied, client_.get()));
     ReportUmaEvent(SERVICE_UTILITY_DISCONNECTED);
   }
 
@@ -507,7 +490,7 @@ bool ServiceUtilityProcessHost::OnMessageReceived(const IPC::Message& message) {
   return handled;
 }
 
-const base::Process& ServiceUtilityProcessHost::GetProcess() const {
+const base::Process& ServiceUtilityProcessHost::GetProcess() {
   return process_;
 }
 
@@ -559,8 +542,8 @@ void ServiceUtilityProcessHost::OnPDFToEmfFinished(bool success) {
   ReportUmaEvent(success ? SERVICE_UTILITY_METAFILE_SUCCEEDED
                          : SERVICE_UTILITY_METAFILE_FAILED);
   client_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&Client::OnRenderPDFPagesToMetafileDone,
-                            client_.get(), success));
+      FROM_HERE, base::BindOnce(&Client::OnRenderPDFPagesToMetafileDone,
+                                client_.get(), success));
   pdf_to_emf_state_.reset();
 
   // The child process has finished at this point. This host is done as well.
@@ -574,8 +557,9 @@ void ServiceUtilityProcessHost::OnGetPrinterCapsAndDefaultsSucceeded(
   ReportUmaEvent(SERVICE_UTILITY_CAPS_SUCCEEDED);
   waiting_for_reply_ = false;
   client_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&Client::OnGetPrinterCapsAndDefaults, client_.get(),
-                            true, printer_name, caps_and_defaults));
+      FROM_HERE,
+      base::BindOnce(&Client::OnGetPrinterCapsAndDefaults, client_.get(), true,
+                     printer_name, caps_and_defaults));
   // The child process disconnects itself and this host deletes itself via
   // OnChildDisconnected().
 }
@@ -588,8 +572,8 @@ void ServiceUtilityProcessHost::OnGetPrinterSemanticCapsAndDefaultsSucceeded(
   waiting_for_reply_ = false;
   client_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&Client::OnGetPrinterSemanticCapsAndDefaults, client_.get(),
-                 true, printer_name, caps_and_defaults));
+      base::BindOnce(&Client::OnGetPrinterSemanticCapsAndDefaults,
+                     client_.get(), true, printer_name, caps_and_defaults));
   // The child process disconnects itself and this host deletes itself via
   // OnChildDisconnected().
 }
@@ -601,8 +585,8 @@ void ServiceUtilityProcessHost::OnGetPrinterCapsAndDefaultsFailed(
   waiting_for_reply_ = false;
   client_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&Client::OnGetPrinterCapsAndDefaults, client_.get(), false,
-                 printer_name, printing::PrinterCapsAndDefaults()));
+      base::BindOnce(&Client::OnGetPrinterCapsAndDefaults, client_.get(), false,
+                     printer_name, printing::PrinterCapsAndDefaults()));
   // The child process disconnects itself and this host deletes itself via
   // OnChildDisconnected().
 }
@@ -613,9 +597,9 @@ void ServiceUtilityProcessHost::OnGetPrinterSemanticCapsAndDefaultsFailed(
   ReportUmaEvent(SERVICE_UTILITY_SEMANTIC_CAPS_FAILED);
   waiting_for_reply_ = false;
   client_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&Client::OnGetPrinterSemanticCapsAndDefaults,
-                            client_.get(), false, printer_name,
-                            printing::PrinterSemanticCapsAndDefaults()));
+      FROM_HERE, base::BindOnce(&Client::OnGetPrinterSemanticCapsAndDefaults,
+                                client_.get(), false, printer_name,
+                                printing::PrinterSemanticCapsAndDefaults()));
   // The child process disconnects itself and this host deletes itself via
   // OnChildDisconnected().
 }

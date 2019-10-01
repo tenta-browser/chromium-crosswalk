@@ -4,6 +4,7 @@
 
 #include "ios/web_view/internal/app/application_context.h"
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/no_destructor.h"
 #include "base/path_service.h"
@@ -15,6 +16,7 @@
 #include "components/prefs/pref_service_factory.h"
 #include "components/proxy_config/pref_proxy_config_tracker_impl.h"
 #include "components/translate/core/browser/translate_download_manager.h"
+#include "components/variations/net/variations_http_headers.h"
 #include "ios/web/public/web_thread.h"
 #include "ios/web_view/cwv_web_view_buildflags.h"
 #include "ios/web_view/internal/app/web_view_io_thread.h"
@@ -23,10 +25,11 @@
 #include "services/network/network_change_manager.h"
 #include "services/network/public/cpp/network_connection_tracker.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
+#include "services/network/public/mojom/network_context.mojom.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 
 #if BUILDFLAG(IOS_WEB_VIEW_ENABLE_SYNC)
-#include "ios/web_view/internal/signin/web_view_signin_manager_factory.h"
+#include "services/identity/public/cpp/identity_manager.h"
 #endif
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -100,7 +103,7 @@ PrefService* ApplicationContext::GetLocalState() {
     flags_ui::PrefServiceFlagsStorage::RegisterPrefs(pref_registry.get());
     PrefProxyConfigTrackerImpl::RegisterPrefs(pref_registry.get());
 #if BUILDFLAG(IOS_WEB_VIEW_ENABLE_SYNC)
-    WebViewSigninManagerFactory::RegisterPrefs(pref_registry.get());
+    identity::IdentityManager::RegisterLocalStatePrefs(pref_registry.get());
 #endif  // BUILDFLAG(IOS_WEB_VIEW_ENABLE_SYNC)
 
     base::FilePath local_state_path;
@@ -152,8 +155,13 @@ ApplicationContext::GetSharedURLLoaderFactory() {
 
 network::mojom::NetworkContext* ApplicationContext::GetSystemNetworkContext() {
   if (!network_context_) {
+    network::mojom::NetworkContextParamsPtr network_context_params =
+        network::mojom::NetworkContextParams::New();
+    variations::UpdateCorsExemptHeaderForVariations(
+        network_context_params.get());
     network_context_owner_ = std::make_unique<web::NetworkContextOwner>(
-        GetSystemURLRequestContext(), &network_context_);
+        GetSystemURLRequestContext(),
+        network_context_params->cors_exempt_header_list, &network_context_);
   }
   return network_context_.get();
 }

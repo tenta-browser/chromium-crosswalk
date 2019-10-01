@@ -7,7 +7,7 @@
 
 #include "base/macros.h"
 #include "base/time/time.h"
-#include "content/public/renderer/media_stream_video_renderer.h"
+#include "third_party/blink/public/platform/modules/mediastream/web_media_stream_video_renderer.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace base {
@@ -16,21 +16,20 @@ class SingleThreadTaskRunner;
 
 namespace content {
 
-// A MediaStreamVideoRenderer that generates raw frames and
+// A blink::WebMediaStreamVideoRenderer that generates raw frames and
 // passes them to webmediaplayer.
 // Since non-black pixel values are required in the web test, e.g.,
 // media/video-capture-canvas.html, this class should generate frame with
 // only non-black pixels.
-class TestMediaStreamVideoRenderer : public MediaStreamVideoRenderer {
+class TestMediaStreamVideoRenderer : public blink::WebMediaStreamVideoRenderer {
  public:
   TestMediaStreamVideoRenderer(
       const scoped_refptr<base::SingleThreadTaskRunner>& io_task_runner,
       const gfx::Size& size,
       const base::TimeDelta& frame_duration,
-      const base::Closure& error_cb,
       const RepaintCB& repaint_cb);
 
-  // MediaStreamVideoRenderer implementation.
+  // blink::WebMediaStreamVideoRenderer implementation.
   void Start() override;
   void Stop() override;
   void Resume() override;
@@ -55,7 +54,6 @@ class TestMediaStreamVideoRenderer : public MediaStreamVideoRenderer {
 
   base::TimeDelta current_time_;
   base::TimeDelta frame_duration_;
-  base::Closure error_cb_;
   RepaintCB repaint_cb_;
 
   DISALLOW_COPY_AND_ASSIGN(TestMediaStreamVideoRenderer);

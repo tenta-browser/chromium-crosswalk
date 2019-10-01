@@ -4,15 +4,15 @@
 
 #include "ios/chrome/browser/ui/webui/password_manager_internals_ui_ios.h"
 
-#include "base/hash.h"
+#include "base/hash/hash.h"
 #include "components/grit/components_resources.h"
 #include "components/password_manager/core/browser/password_manager_internals_service.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
 #include "ios/chrome/browser/passwords/password_manager_internals_service_factory.h"
 #import "ios/web/public/web_state/web_state.h"
-#include "ios/web/public/web_ui_ios_data_source.h"
 #include "ios/web/public/webui/web_ui_ios.h"
+#include "ios/web/public/webui/web_ui_ios_data_source.h"
 #include "net/base/escape.h"
 
 using password_manager::PasswordManagerInternalsService;
@@ -23,15 +23,11 @@ web::WebUIIOSDataSource* CreatePasswordManagerInternalsHTMLSource() {
   web::WebUIIOSDataSource* source =
       web::WebUIIOSDataSource::Create(kChromeUIPasswordManagerInternalsHost);
 
-  source->AddResourcePath(
-      "password_manager_internals.js",
-      IDR_PASSWORD_MANAGER_INTERNALS_PASSWORD_MANAGER_INTERNALS_JS);
-  source->AddResourcePath(
-      "password_manager_internals.css",
-      IDR_PASSWORD_MANAGER_INTERNALS_PASSWORD_MANAGER_INTERNALS_CSS);
-  source->SetDefaultResource(
-      IDR_PASSWORD_MANAGER_INTERNALS_PASSWORD_MANAGER_INTERNALS_HTML);
-  source->UseGzip();
+  source->AddResourcePath("autofill_and_password_manager_internals.js",
+                          IDR_AUTOFILL_AND_PASSWORD_MANAGER_INTERNALS_JS);
+  source->AddResourcePath("autofill_and_password_manager_internals.css",
+                          IDR_AUTOFILL_AND_PASSWORD_MANAGER_INTERNALS_CSS);
+  source->SetDefaultResource(IDR_AUTOFILL_AND_PASSWORD_MANAGER_INTERNALS_HTML);
   return source;
 }
 
@@ -70,8 +66,9 @@ void PasswordManagerInternalsUIIOS::LogSavePasswordProgress(
   std::string no_quotes(text);
   std::replace(no_quotes.begin(), no_quotes.end(), '"', ' ');
   base::Value text_string_value(net::EscapeForHTML(no_quotes));
-  web_ui()->CallJavascriptFunction("addSavePasswordProgressLog",
-                                   text_string_value);
+
+  std::vector<const base::Value*> args{&text_string_value};
+  web_ui()->CallJavascriptFunction("addLog", args);
 }
 
 void PasswordManagerInternalsUIIOS::PageLoaded(
@@ -80,6 +77,7 @@ void PasswordManagerInternalsUIIOS::PageLoaded(
   if (load_completion_status != web::PageLoadCompletionStatus::SUCCESS)
     return;
 
+  web_ui()->CallJavascriptFunction("setUpPasswordManagerInternals", {});
   ios::ChromeBrowserState* browser_state =
       ios::ChromeBrowserState::FromWebUIIOS(web_ui());
   PasswordManagerInternalsService* service =
@@ -87,7 +85,9 @@ void PasswordManagerInternalsUIIOS::PageLoaded(
           browser_state);
   // No service means the WebUI is displayed in Incognito.
   base::Value is_incognito(!service);
-  web_ui()->CallJavascriptFunction("notifyAboutIncognito", is_incognito);
+
+  std::vector<const base::Value*> args{&is_incognito};
+  web_ui()->CallJavascriptFunction("notifyAboutIncognito", args);
 
   if (service) {
     registered_with_logging_service_ = true;

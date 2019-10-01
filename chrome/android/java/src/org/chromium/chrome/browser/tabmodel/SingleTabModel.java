@@ -13,6 +13,8 @@ import org.chromium.base.ObserverList;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
 
+import java.util.List;
+
 /**
  * Simple TabModel that assumes that only one Tab exists.
  */
@@ -97,6 +99,12 @@ public class SingleTabModel implements TabModel {
         return false;
     }
 
+    @Override
+    public boolean closeTab(
+            Tab tab, Tab recommendedNextTab, boolean animate, boolean uponExit, boolean canUndo) {
+        return closeTab(tab, animate, uponExit, canUndo);
+    }
+
     /**
      * In webapps, calls finish on the activity, but keeps it in recents. In Document mode,
      * finishes and removes from recents. We use mBlockNewWindows flag to distinguish the user
@@ -108,6 +116,11 @@ public class SingleTabModel implements TabModel {
         } else {
             ApiCompatibilityUtils.finishAndRemoveTask(mActivity);
         }
+    }
+
+    @Override
+    public void closeMultipleTabs(List<Tab> tabs, boolean canUndo) {
+        completeActivity();
     }
 
     @Override

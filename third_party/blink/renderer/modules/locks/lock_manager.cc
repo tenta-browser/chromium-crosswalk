@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/modules/locks/lock_manager.h"
 
 #include <algorithm>
+
 #include "mojo/public/cpp/bindings/associated_binding.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
@@ -19,7 +20,7 @@
 #include "third_party/blink/renderer/platform/bindings/microtask.h"
 #include "third_party/blink/renderer/platform/bindings/name_client.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
-#include "third_party/blink/renderer/platform/bindings/trace_wrapper_member.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
@@ -55,7 +56,6 @@ class LockManager::LockRequestImpl final
     : public GarbageCollectedFinalized<LockRequestImpl>,
       public NameClient,
       public mojom::blink::LockRequest {
-  WTF_MAKE_NONCOPYABLE(LockRequestImpl);
   EAGERLY_FINALIZE();
 
  public:
@@ -103,8 +103,8 @@ class LockManager::LockRequestImpl final
     if (!resolver_->GetScriptState()->ContextIsValid())
       return;
 
-    resolver_->Reject(
-        DOMException::Create(DOMExceptionCode::kAbortError, reason));
+    resolver_->Reject(MakeGarbageCollected<DOMException>(
+        DOMExceptionCode::kAbortError, reason));
   }
 
   void Failed() override {
@@ -173,7 +173,7 @@ class LockManager::LockRequestImpl final
 
  private:
   // Callback passed by script; invoked when the lock is granted.
-  TraceWrapperMember<V8LockGrantedCallback> callback_;
+  Member<V8LockGrantedCallback> callback_;
 
   // Rejects if the request was aborted, otherwise resolves/rejects with
   // |callback_|'s result.
@@ -191,6 +191,8 @@ class LockManager::LockRequestImpl final
   // registered. If the context is destroyed then |manager_| will dispose of
   // |this| which terminates the request on the service side.
   Member<LockManager> manager_;
+
+  DISALLOW_COPY_AND_ASSIGN(LockRequestImpl);
 };
 
 LockManager::LockManager(ExecutionContext* context)
@@ -228,8 +230,10 @@ ScriptPromise LockManager::request(ScriptState* script_state,
   }
 
   if (!service_.get()) {
-    if (auto* provider = context->GetInterfaceProvider())
-      provider->GetInterface(mojo::MakeRequest(&service_));
+    if (auto* provider = context->GetInterfaceProvider()) {
+      provider->GetInterface(mojo::MakeRequest(
+          &service_, context->GetTaskRunner(TaskType::kMiscPlatformAPI)));
+    }
     if (!service_.get()) {
       exception_state.ThrowTypeError("Service not available.");
       return ScriptPromise();
@@ -297,7 +301,7 @@ ScriptPromise LockManager::request(ScriptState* script_state,
                              ? mojom::blink::LockManager::WaitMode::NO_WAIT
                              : mojom::blink::LockManager::WaitMode::WAIT;
 
-  ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   ScriptPromise promise = resolver->Promise();
 
   mojom::blink::LockRequestAssociatedPtrInfo request_info;
@@ -345,15 +349,17 @@ ScriptPromise LockManager::query(ScriptState* script_state,
   }
 
   if (!service_.get()) {
-    if (auto* provider = context->GetInterfaceProvider())
-      provider->GetInterface(mojo::MakeRequest(&service_));
+    if (auto* provider = context->GetInterfaceProvider()) {
+      provider->GetInterface(mojo::MakeRequest(
+          &service_, context->GetTaskRunner(TaskType::kMiscPlatformAPI)));
+    }
     if (!service_.get()) {
       exception_state.ThrowTypeError("Service not available.");
       return ScriptPromise();
     }
   }
 
-  ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   ScriptPromise promise = resolver->Promise();
 
   service_->QueryState(WTF::Bind(

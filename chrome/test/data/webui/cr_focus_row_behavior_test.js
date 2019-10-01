@@ -44,32 +44,25 @@ suite('cr-focus-row-behavior-test', function() {
     Polymer({
       is: 'focus-row-element',
       behaviors: [cr.ui.FocusRowBehavior],
+      focusCallCount: 0,
+
+      focus: function() {
+        this.focusCallCount++;
+      },
     });
   });
 
-  /**
-   * @param {!HTMLElement} element
-   * @return {!Promise} Promise that resolves when an afterNextRender()
-   *     callback on |element| is run.
-   */
-  function afterNextRender(element) {
-    return new Promise(resolve => {
-      Polymer.RenderStatus.afterNextRender(element, resolve);
-    });
-  }
-
-  setup(function() {
+  setup(async function() {
     PolymerTest.clearBody();
 
     testElement = document.createElement('focus-row-element');
     document.body.appendChild(testElement);
 
     // Block so that FocusRowBehavior.attached can run.
-    return afterNextRender(testElement).then(() => {
-      // Wait one more time to ensure that async setup in FocusRowBehavior has
-      // executed.
-      return afterNextRender(testElement);
-    });
+    await PolymerTest.afterNextRender(testElement);
+    // Wait one more time to ensure that async setup in FocusRowBehavior has
+    // executed.
+    await PolymerTest.afterNextRender(testElement);
   });
 
   test('item passes focus to first focusable child', function() {
@@ -119,5 +112,27 @@ suite('cr-focus-row-behavior-test', function() {
       const button = getDeepActiveElement();
       assertEquals('fake button three', button.textContent.trim());
     });
+  });
+
+  test('when shift+tab pressed on first control, focus on container', () => {
+    const first = testElement.$.control;
+    const second = testElement.$.controlTwo;
+    MockInteractions.pressAndReleaseKeyOn(first, '', 'shift', 'Tab');
+    assertEquals(1, testElement.focusCallCount);
+    MockInteractions.pressAndReleaseKeyOn(second, '', 'shift', 'Tab');
+    assertEquals(1, testElement.focusCallCount);
+
+    // Simulate updating a row with same first control.
+    testElement.fire('dom-change');
+    MockInteractions.pressAndReleaseKeyOn(first, '', 'shift', 'Tab');
+    assertEquals(2, testElement.focusCallCount);
+    MockInteractions.pressAndReleaseKeyOn(second, '', 'shift', 'Tab');
+    assertEquals(2, testElement.focusCallCount);
+
+    // Simulate updating row with different first control.
+    first.remove();
+    testElement.fire('dom-change');
+    MockInteractions.pressAndReleaseKeyOn(second, '', 'shift', 'Tab');
+    assertEquals(3, testElement.focusCallCount);
   });
 });

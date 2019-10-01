@@ -659,8 +659,9 @@ const char kEmptyUnencryptedConfiguration[] =
 
 std::unique_ptr<base::Value> ReadDictionaryFromJson(const std::string& json) {
   std::string error;
-  std::unique_ptr<base::Value> root = base::JSONReader::ReadAndReturnError(
-      json, base::JSON_ALLOW_TRAILING_COMMAS, nullptr, &error);
+  std::unique_ptr<base::Value> root =
+      base::JSONReader::ReadAndReturnErrorDeprecated(
+          json, base::JSON_ALLOW_TRAILING_COMMAS, nullptr, &error);
   if (!root || !root->is_dict()) {
     NET_LOG(ERROR) << "Invalid JSON Dictionary: " << error;
     return nullptr;
@@ -1030,7 +1031,8 @@ bool ResolveServerCertRefsInNetworks(const CertPEMsByGUIDMap& certs_by_guid,
     it->GetAsDictionary(&network);
     if (!ResolveServerCertRefsInNetwork(certs_by_guid, network)) {
       std::string guid;
-      network->GetStringWithoutPathExpansion(network_config::kGUID, &guid);
+      network->GetStringWithoutPathExpansion(::onc::network_config::kGUID,
+                                             &guid);
       // This might happen even with correct validation, if the referenced
       // certificate couldn't be imported.
       LOG(ERROR) << "Couldn't resolve some certificate reference of network "

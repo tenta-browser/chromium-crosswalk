@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/task/post_task.h"
 #include "base/task/task_traits.h"
@@ -32,7 +33,8 @@ constexpr char kIconFileExtension[] = ".png";
 // Save |raw_icon| for given |app_id|.
 void SaveIconToLocalOnBlockingPool(const base::FilePath& icon_path,
                                    std::vector<unsigned char> image_data) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   const base::FilePath dir = icon_path.DirName();
   if (!base::PathExists(dir) && !base::CreateDirectory(dir)) {
     LOG(ERROR) << "Failed to create directory to store kiosk icons";
@@ -100,10 +102,9 @@ void KioskAppDataBase::SaveIcon(const SkBitmap& icon,
 
   const base::FilePath icon_path =
       cache_dir.AppendASCII(app_id_).AddExtension(kIconFileExtension);
-  base::PostTaskWithTraits(
-      FROM_HERE, {base::MayBlock()},
-      base::BindOnce(&SaveIconToLocalOnBlockingPool, icon_path,
-                     base::Passed(std::move(image_data))));
+  base::PostTaskWithTraits(FROM_HERE, {base::MayBlock()},
+                           base::BindOnce(&SaveIconToLocalOnBlockingPool,
+                                          icon_path, std::move(image_data)));
 
   icon_path_ = icon_path;
 }

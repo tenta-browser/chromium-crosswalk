@@ -7,12 +7,16 @@ package org.chromium.chrome.browser.tab;
 import android.graphics.Bitmap;
 import android.view.ContextMenu;
 
+import org.chromium.chrome.browser.findinpage.FindMatchRectsDetails;
+import org.chromium.chrome.browser.findinpage.FindNotificationDetails;
 import org.chromium.chrome.browser.fullscreen.FullscreenOptions;
 import org.chromium.chrome.browser.tab.Tab.TabHidingType;
 import org.chromium.chrome.browser.tabmodel.TabSelectionType;
 import org.chromium.content_public.browser.LoadUrlParams;
+import org.chromium.content_public.browser.NavigationHandle;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.common.BrowserControlsState;
+import org.chromium.net.NetError;
 
 /**
  * An implementation of the {@link TabObserver} which has empty implementations of all methods.
@@ -21,6 +25,9 @@ import org.chromium.content_public.common.BrowserControlsState;
  * bloats the number of methods. See https://crbug.com/781359.
  */
 public class EmptyTabObserver implements TabObserver {
+    @Override
+    public void onInitialized(Tab tab, TabState tabState) {}
+
     @Override
     public void onShown(Tab tab, @TabSelectionType int type) {}
 
@@ -46,7 +53,7 @@ public class EmptyTabObserver implements TabObserver {
     public void onPageLoadFinished(Tab tab, String url) {}
 
     @Override
-    public void onPageLoadFailed(Tab tab, int errorCode) { }
+    public void onPageLoadFailed(Tab tab, @NetError int errorCode) {}
 
     @Override
     public void onRestoreStarted(Tab tab) {}
@@ -76,6 +83,9 @@ public class EmptyTabObserver implements TabObserver {
     public void onContextualActionBarVisibilityChanged(Tab tab, boolean visible) { }
 
     @Override
+    public void onCloseContents(Tab tab) {}
+
+    @Override
     public void onLoadStarted(Tab tab, boolean toDifferentDocument) { }
 
     @Override
@@ -98,18 +108,13 @@ public class EmptyTabObserver implements TabObserver {
             Tab tab, boolean isMainFrame, int errorCode, String description, String failingUrl) {}
 
     @Override
-    public void onDidStartNavigation(Tab tab, String url, boolean isInMainFrame,
-            boolean isSameDocument, long navigationHandleProxy) {}
+    public void onDidStartNavigation(Tab tab, NavigationHandle navigationHandle) {}
 
     @Override
-    public void onDidRedirectNavigation(
-            Tab tab, String url, boolean isInMainFrame, long navigationHandleProxy) {}
+    public void onDidRedirectNavigation(Tab tab, NavigationHandle navigationHandle) {}
 
     @Override
-    public void onDidFinishNavigation(Tab tab, String url, boolean isInMainFrame,
-            boolean isErrorPage, boolean hasCommitted, boolean isSameDocument,
-            boolean isFragmentNavigation, Integer pageTransition, int errorCode,
-            int httpStatusCode) {}
+    public void onDidFinishNavigation(Tab tab, NavigationHandle navigationHandle) {}
 
     @Override
     public void didFirstVisuallyNonEmptyPaint(Tab tab) {}
@@ -149,4 +154,19 @@ public class EmptyTabObserver implements TabObserver {
 
     @Override
     public void didReloadLoFiImages(Tab tab) {}
+
+    @Override
+    public void onFindResultAvailable(FindNotificationDetails result) {}
+
+    @Override
+    public void onFindMatchRectsAvailable(FindMatchRectsDetails result) {}
+
+    @Override
+    public void onContentViewChildrenStateUpdated(Tab tab) {}
+
+    @Override
+    public void onContentViewSystemUiVisibilityChanged(Tab tab, int visibility) {}
+
+    @Override
+    public void onRootIdChanged(Tab tab, int newRootId) {}
 }

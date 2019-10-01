@@ -141,18 +141,18 @@ void BrowserStatusMonitor::OnTabStripModelChanged(
     const TabStripModelChange& change,
     const TabStripSelectionChange& selection) {
   if (change.type() == TabStripModelChange::kInserted) {
-    for (const auto& delta : change.deltas())
-      OnTabInserted(delta.insert.contents);
+    for (const auto& contents : change.GetInsert()->contents)
+      OnTabInserted(contents.contents);
   } else if (change.type() == TabStripModelChange::kRemoved) {
-    for (const auto& delta : change.deltas()) {
-      if (delta.remove.will_be_deleted)
-        OnTabClosing(delta.remove.contents);
+    auto* remove = change.GetRemove();
+    if (remove->will_be_deleted) {
+      for (const auto& contents : remove->contents)
+        OnTabClosing(contents.contents);
     }
   } else if (change.type() == TabStripModelChange::kReplaced) {
-    for (const auto& delta : change.deltas()) {
-      OnTabReplaced(tab_strip_model, delta.replace.old_contents,
-                    delta.replace.new_contents);
-    }
+    auto* replace = change.GetReplace();
+    OnTabReplaced(tab_strip_model, replace->old_contents,
+                  replace->new_contents);
   }
 
   if (tab_strip_model->empty())
@@ -269,11 +269,6 @@ void BrowserStatusMonitor::RemoveWebContentsObserver(
   DCHECK(webcontents_to_observer_map_.find(contents) !=
          webcontents_to_observer_map_.end());
   webcontents_to_observer_map_.erase(contents);
-}
-
-ash::ShelfID BrowserStatusMonitor::GetShelfIDForWebContents(
-    content::WebContents* contents) {
-  return launcher_controller_->GetShelfIDForWebContents(contents);
 }
 
 void BrowserStatusMonitor::SetShelfIDForBrowserWindowContents(

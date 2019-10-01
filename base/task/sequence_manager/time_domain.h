@@ -59,9 +59,12 @@ class BASE_EXPORT TimeDomain {
   void AsValueInto(trace_event::TracedValue* state) const;
   bool HasPendingHighResolutionTasks() const;
 
+  // Returns true if there are no pending delayed tasks.
+  bool Empty() const;
+
   // This is the signal that virtual time should step forward. If
   // RunLoop::QuitWhenIdle has been called then |quit_when_idle_requested| will
-  // be true. Returns true if time advanced and there is now a task to run.
+  // be true. Returns true if there is a task to run now.
   virtual bool MaybeFastForwardToNextTask(bool quit_when_idle_requested) = 0;
 
  protected:
@@ -90,15 +93,16 @@ class BASE_EXPORT TimeDomain {
 
   virtual const char* GetName() const = 0;
 
+  // Called when the TimeDomain is registered. |sequence_manager| is expected to
+  // be valid for the duration of TimeDomain's existence.
+  // TODO(scheduler-dev): Pass SequenceManager in the constructor.
+  virtual void OnRegisterWithSequenceManager(
+      internal::SequenceManagerImpl* sequence_manager);
+
  private:
   friend class internal::TaskQueueImpl;
   friend class internal::SequenceManagerImpl;
   friend class TestTimeDomain;
-
-  // Called when the TimeDomain is registered.
-  // TODO(kraynov): Pass SequenceManager in the constructor.
-  void OnRegisterWithSequenceManager(
-      internal::SequenceManagerImpl* sequence_manager);
 
   // Schedule TaskQueue to wake up at certain time, repeating calls with
   // the same |queue| invalidate previous requests.
@@ -112,8 +116,9 @@ class BASE_EXPORT TimeDomain {
   // Remove the TaskQueue from any internal data sctructures.
   void UnregisterQueue(internal::TaskQueueImpl* queue);
 
-  // Wake up each TaskQueue where the delay has elapsed.
-  void WakeUpReadyDelayedQueues(LazyNow* lazy_now);
+  // Wake up each TaskQueue where the delay has elapsed. Note this doesn't
+  // ScheduleWork.
+  void MoveReadyDelayedTasksToWorkQueues(LazyNow* lazy_now);
 
   struct ScheduledDelayedWakeUp {
     internal::DelayedWakeUp wake_up;

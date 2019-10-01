@@ -38,6 +38,7 @@
 #include "third_party/blink/renderer/core/layout/layout_theme.h"
 #include "third_party/blink/renderer/core/mathml_names.h"
 #include "third_party/blink/renderer/platform/data_resource_helper.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/leak_annotations.h"
 
@@ -64,8 +65,8 @@ static const MediaQueryEvaluator& PrintEval() {
 
 static StyleSheetContents* ParseUASheet(const String& str) {
   // UA stylesheets always parse in the insecure context mode.
-  StyleSheetContents* sheet =
-      StyleSheetContents::Create(CSSParserContext::Create(
+  auto* sheet = MakeGarbageCollected<StyleSheetContents>(
+      MakeGarbageCollected<CSSParserContext>(
           kUASheetMode, SecureContextMode::kInsecureContext));
   sheet->ParseString(str);
   // User Agent stylesheets are parsed once for the lifetime of the renderer
@@ -114,9 +115,9 @@ void CSSDefaultStyleSheets::PrepareForLeakDetection() {
 
 void CSSDefaultStyleSheets::InitializeDefaultStyles() {
   // This must be called only from constructor / PrepareForLeakDetection.
-  default_style_ = RuleSet::Create();
-  default_print_style_ = RuleSet::Create();
-  default_quirks_style_ = RuleSet::Create();
+  default_style_ = MakeGarbageCollected<RuleSet>();
+  default_print_style_ = MakeGarbageCollected<RuleSet>();
+  default_quirks_style_ = MakeGarbageCollected<RuleSet>();
 
   default_style_->AddRulesFromSheet(DefaultStyleSheet(), ScreenEval());
   default_print_style_->AddRulesFromSheet(DefaultStyleSheet(), PrintEval());
@@ -125,7 +126,7 @@ void CSSDefaultStyleSheets::InitializeDefaultStyles() {
 
 RuleSet* CSSDefaultStyleSheets::DefaultViewSourceStyle() {
   if (!default_view_source_style_) {
-    default_view_source_style_ = RuleSet::Create();
+    default_view_source_style_ = MakeGarbageCollected<RuleSet>();
     // Loaded stylesheet is leaked on purpose.
     StyleSheetContents* stylesheet =
         ParseUASheet(GetDataResourceAsASCIIString("view-source.css"));

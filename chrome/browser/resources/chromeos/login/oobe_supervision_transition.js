@@ -10,7 +10,7 @@
 Polymer({
   is: 'supervision-transition-md',
 
-  behaviors: [OobeDialogHostBehavior],
+  behaviors: [I18nBehavior, OobeDialogHostBehavior],
 
   properties: {
     /**
@@ -28,6 +28,13 @@ Polymer({
     cr.addWebUIListener(
         'supervision-transition-failed',
         this.showSupervisionTransitionFailedScreen_.bind(this));
+  },
+
+  /** @private */
+  getDialogA11yTitle_: function(isRemovingSupervision, locale) {
+    return isRemovingSupervision ?
+        this.i18nDynamic(locale, 'removingSupervisionTitle') :
+        this.i18nDynamic(locale, 'addingSupervisionTitle');
   },
 
   /** @private */

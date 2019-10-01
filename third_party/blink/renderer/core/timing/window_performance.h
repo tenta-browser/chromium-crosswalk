@@ -32,9 +32,9 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_TIMING_WINDOW_PERFORMANCE_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_TIMING_WINDOW_PERFORMANCE_H_
 
-#include "third_party/blink/public/platform/web_layer_tree_view.h"
+#include "third_party/blink/public/web/web_widget_client.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
+#include "third_party/blink/renderer/core/execution_context/context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/frame/performance_monitor.h"
 #include "third_party/blink/renderer/core/timing/memory_info.h"
 #include "third_party/blink/renderer/core/timing/performance.h"
@@ -51,10 +51,6 @@ class CORE_EXPORT WindowPerformance final : public Performance,
   friend class WindowPerformanceTest;
 
  public:
-  static WindowPerformance* Create(LocalDOMWindow* window) {
-    return MakeGarbageCollected<WindowPerformance>(window);
-  }
-
   explicit WindowPerformance(LocalDOMWindow*);
   ~WindowPerformance() override;
 
@@ -64,8 +60,6 @@ class CORE_EXPORT WindowPerformance final : public Performance,
   PerformanceNavigation* navigation() const override;
 
   MemoryInfo* memory() const override;
-
-  bool shouldYield() const override;
 
   void UpdateLongTaskInstrumentation() override;
 
@@ -83,8 +77,13 @@ class CORE_EXPORT WindowPerformance final : public Performance,
                            bool cancelable);
 
   void AddElementTiming(const AtomicString& name,
-                        const IntRect& rect,
-                        TimeTicks timestamp);
+                        const FloatRect& rect,
+                        TimeTicks start_time,
+                        TimeTicks response_end,
+                        const AtomicString& identifier,
+                        const IntSize& intrinsic_size,
+                        const AtomicString& id,
+                        Element*);
 
   void AddLayoutJankFraction(double jank_fraction);
 
@@ -110,7 +109,7 @@ class CORE_EXPORT WindowPerformance final : public Performance,
 
   // Method called once swap promise is resolved. It will add all event timings
   // that have not been added since the last swap promise.
-  void ReportEventTimings(WebLayerTreeView::SwapResult result,
+  void ReportEventTimings(WebWidgetClient::SwapResult result,
                           TimeTicks timestamp);
 
   void DispatchFirstInputTiming(PerformanceEventTiming* entry);

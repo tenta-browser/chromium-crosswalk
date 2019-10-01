@@ -41,28 +41,36 @@ class ChromiumDepGraph {
             licenseUrl: "https://raw.githubusercontent.com/mojohaus/animal-sniffer/master/animal-sniffer-annotations/pom.xml",
             licensePath: "licenses/Codehaus_License-2009.txt",
             licenseName: "MIT"),
-        'org_checkerframework_checker_compat_qual' :new DependencyDescription(
+        'org_checkerframework_checker_compat_qual': new DependencyDescription(
             licenseUrl: "https://raw.githubusercontent.com/typetools/checker-framework/master/LICENSE.txt",
             licenseName: "GPL v2 with the classpath exception"),
-        'com_google_protobuf_protobuf_lite' :new DependencyDescription(
+        'com_google_protobuf_protobuf_lite': new DependencyDescription(
             url: "https://github.com/protocolbuffers/protobuf/blob/master/java/lite.md",
             licenseUrl: "https://raw.githubusercontent.com/protocolbuffers/protobuf/master/LICENSE",
             licenseName: "BSD"),
-        'com_google_ar_core' :new DependencyDescription(
+        'com_google_ar_core': new DependencyDescription(
             url: "https://github.com/google-ar/arcore-android-sdk",
             licenseUrl: "https://raw.githubusercontent.com/google-ar/arcore-android-sdk/master/LICENSE",
             licenseName: "Apache 2.0"),
+        'net_sf_kxml_kxml2': new DependencyDescription(
+            licenseUrl: "https://raw.githubusercontent.com/stefanhaustein/kxml2/master/license.txt",
+            licenseName: "MIT"),
     ]
 
     Project project
+    boolean skipLicenses
 
     void collectDependencies() {
-        def androidConfig = project.configurations.getByName('compile').resolvedConfiguration
+        def compileConfig = project.configurations.getByName('compile').resolvedConfiguration
+        def buildCompileConfig = project.configurations.getByName('buildCompile').resolvedConfiguration
+        def annotationProcessorConfig = project.configurations.getByName('annotationProcessor').resolvedConfiguration
+        def testCompileConfig = project.configurations.getByName('testCompile').resolvedConfiguration
         List<String> topLevelIds = []
         Set<ResolvedConfiguration> deps = []
-        deps += androidConfig.firstLevelModuleDependencies
-        deps += project.configurations.getByName('annotationProcessor').resolvedConfiguration
-                .firstLevelModuleDependencies
+        deps += compileConfig.firstLevelModuleDependencies
+        deps += buildCompileConfig.firstLevelModuleDependencies
+        deps += annotationProcessorConfig.firstLevelModuleDependencies
+        deps += testCompileConfig.firstLevelModuleDependencies
 
         deps.each { dependency ->
             topLevelIds.add(makeModuleId(dependency.module))
@@ -71,11 +79,30 @@ class ChromiumDepGraph {
 
         topLevelIds.each { id -> dependencies.get(id).visible = true }
 
-        androidConfig.resolvedArtifacts.each { artifact ->
+        testCompileConfig.resolvedArtifacts.each { artifact ->
             def dep = dependencies.get(makeModuleId(artifact))
             assert dep != null : "No dependency collected for artifact ${artifact.name}"
-
             dep.supportsAndroid = true
+            dep.testOnly = true
+            dep.isShipped = false
+        }
+
+        buildCompileConfig.resolvedArtifacts.each { artifact ->
+            def id = makeModuleId(artifact)
+            def dep = dependencies.get(id)
+            assert dep != null : "No dependency collected for artifact ${artifact.name}"
+            dep.supportsAndroid = true
+            dep.testOnly = false
+            dep.isShipped = false
+        }
+
+        compileConfig.resolvedArtifacts.each { artifact ->
+            def id = makeModuleId(artifact)
+            def dep = dependencies.get(id)
+            assert dep != null : "No dependency collected for artifact ${artifact.name}"
+            dep.supportsAndroid = true
+            dep.testOnly = false
+            dep.isShipped = true
         }
     }
 
@@ -137,9 +164,11 @@ class ChromiumDepGraph {
                                 List<String> childModules) {
         def pom = getPomFromArtifact(artifact.id.componentIdentifier).file
         def pomContent = new XmlSlurper(false, false).parse(pom)
-        String licenseName
-        String licenseUrl
-        (licenseName, licenseUrl) = resolveLicenseInformation(id, pomContent)
+        String licenseName = ''
+        String licenseUrl = ''
+        if (!skipLicenses) {
+            (licenseName, licenseUrl) = resolveLicenseInformation(id, pomContent)
+        }
 
         // Get rid of irrelevant indent that might be present in the XML file.
         def description = pomContent.description?.text()?.trim()?.replaceAll(/\s+/, " ")
@@ -180,14 +209,28 @@ class ChromiumDepGraph {
             def fallbackProperties = FALLBACK_PROPERTIES.get(dep.id)
             if (fallbackProperties != null) {
                 project.logger.debug("Using fallback properties for ${dep.id}")
-                dep.licenseName = fallbackProperties.licenseName
-                dep.licenseUrl = fallbackProperties.licenseUrl
+                if (fallbackProperties.licenseName != null) {
+                  dep.licenseName = fallbackProperties.licenseName
+                }
+                if (fallbackProperties.licenseUrl != null) {
+                  dep.licenseUrl = fallbackProperties.licenseUrl
+                }
                 if (fallbackProperties.licensePath != null) {
                     dep.licensePath = fallbackProperties.licensePath
                 }
-                if (dep.url?.isEmpty()) {
+                if (fallbackProperties.url != null) {
                     dep.url = fallbackProperties.url
                 }
+                dep.licenseAndroidCompatible = fallbackProperties.licenseAndroidCompatible
+            }
+        }
+
+        if (skipLicenses) {
+            dep.licenseName = ''
+            dep.licensePath = ''
+            dep.licenseUrl = ''
+            if (dep.id?.endsWith('license')) {
+                dep.exclude = true
             }
         }
 
@@ -218,7 +261,8 @@ class ChromiumDepGraph {
         String group, name, version, extension, displayName, description, url
         String licenseName, licenseUrl, licensePath
         String fileName
-        boolean supportsAndroid, visible, exclude
+        boolean supportsAndroid, visible, exclude, testOnly, isShipped
+        boolean licenseAndroidCompatible
         ComponentIdentifier componentId
         List<String> children
     }

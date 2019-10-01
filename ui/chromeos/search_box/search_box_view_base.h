@@ -7,11 +7,13 @@
 
 #include <vector>
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/strings/string16.h"
 #include "ui/chromeos/search_box/search_box_constants.h"
 #include "ui/chromeos/search_box/search_box_export.h"
 #include "ui/events/event_constants.h"
+#include "ui/views/background.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/textfield/textfield_controller.h"
 #include "ui/views/widget/widget_delegate.h"
@@ -30,7 +32,6 @@ class View;
 namespace search_box {
 
 class SearchBoxViewDelegate;
-class SearchBoxBackground;
 class SearchBoxImageButton;
 
 // These are used in histograms, do not remove/renumber entries. If you're
@@ -85,7 +86,6 @@ class SEARCH_BOX_EXPORT SearchBoxViewBase : public views::WidgetDelegateView,
 
   // Overridden from views::View:
   gfx::Size CalculatePreferredSize() const override;
-  void OnEnabledChanged() override;
   const char* GetClassName() const override;
   void OnGestureEvent(ui::GestureEvent* event) override;
   void OnMouseEvent(ui::MouseEvent* event) override;
@@ -95,7 +95,7 @@ class SEARCH_BOX_EXPORT SearchBoxViewBase : public views::WidgetDelegateView,
   void NotifyGestureEvent();
 
   // Overridden from views::WidgetDelegate:
-  ax::mojom::Role GetAccessibleWindowRole() const override;
+  ax::mojom::Role GetAccessibleWindowRole() override;
   bool ShouldAdvanceFocusToTopLevelWidget() const override;
 
   // Overridden from views::ButtonListener:
@@ -133,10 +133,6 @@ class SEARCH_BOX_EXPORT SearchBoxViewBase : public views::WidgetDelegateView,
   // Nofifies the active status change.
   void NotifyActiveChanged();
 
-  // Sets the background color.
-  void SetBackgroundColor(SkColor light_vibrant);
-  SkColor background_color() const { return background_color_; }
-
   // Sets the search box color.
   void SetSearchBoxColor(SkColor color);
   SkColor search_box_color() const { return search_box_color_; }
@@ -160,7 +156,6 @@ class SEARCH_BOX_EXPORT SearchBoxViewBase : public views::WidgetDelegateView,
   bool is_tablet_mode() const { return is_tablet_mode_; }
 
   void SetSearchBoxBackgroundCornerRadius(int corner_radius);
-  void SetSearchBoxBackgroundColor(SkColor color);
 
   void SetSearchIconImage(gfx::ImageSkia image);
 
@@ -173,31 +168,33 @@ class SEARCH_BOX_EXPORT SearchBoxViewBase : public views::WidgetDelegateView,
   // Updates the search box's background color.
   virtual void UpdateBackgroundColor(SkColor color);
 
+  // Gets the search box background.
+  views::Background* GetSearchBoxBackground();
+
  private:
-  virtual void ModelChanged() = 0;
+  virtual void ModelChanged() {}
 
   // Shows/hides the virtual keyboard if the search box is active.
-  virtual void UpdateKeyboardVisibility() = 0;
+  virtual void UpdateKeyboardVisibility() {}
 
   // Updates model text and selection model with current Textfield info.
-  virtual void UpdateModel(bool initiated_by_user) = 0;
+  virtual void UpdateModel(bool initiated_by_user) {}
 
   // Updates the search icon.
-  virtual void UpdateSearchIcon() = 0;
+  virtual void UpdateSearchIcon() {}
 
   // Update search box border based on whether the search box is activated.
-  virtual void UpdateSearchBoxBorder() = 0;
+  virtual void UpdateSearchBoxBorder() {}
 
   // Setup button's image, accessible name, and tooltip text etc.
-  virtual void SetupAssistantButton() = 0;
-  virtual void SetupCloseButton() = 0;
-  virtual void SetupBackButton() = 0;
+  virtual void SetupAssistantButton() {}
+  virtual void SetupCloseButton() {}
+  virtual void SetupBackButton() {}
 
   // Records in histograms the activation of the searchbox.
   virtual void RecordSearchBoxActivationHistogram(ui::EventType event_type) {}
 
-  // Gets the search box background.
-  SearchBoxBackground* GetSearchBoxBackground() const;
+  void OnEnabledChanged();
 
   SearchBoxViewDelegate* delegate_;  // Not owned.
 
@@ -221,10 +218,13 @@ class SEARCH_BOX_EXPORT SearchBoxViewBase : public views::WidgetDelegateView,
   bool show_assistant_button_ = false;
   // Whether tablet mode is active.
   bool is_tablet_mode_ = false;
-  // The current background color.
-  SkColor background_color_ = kSearchBoxBackgroundDefault;
   // The current search box color.
   SkColor search_box_color_ = kDefaultSearchboxColor;
+
+  views::PropertyChangedSubscription enabled_changed_subscription_ =
+      AddEnabledChangedCallback(
+          base::BindRepeating(&SearchBoxViewBase::OnEnabledChanged,
+                              base::Unretained(this)));
 
   DISALLOW_COPY_AND_ASSIGN(SearchBoxViewBase);
 };

@@ -136,6 +136,38 @@ int AddAnimatedFilter(Animation* target,
   return id;
 }
 
+int AddAnimatedBackdropFilter(Animation* target,
+                              double duration,
+                              float start_invert,
+                              float end_invert,
+                              KeyframeEffectId effect_id) {
+  std::unique_ptr<KeyframedFilterAnimationCurve> curve(
+      KeyframedFilterAnimationCurve::Create());
+
+  if (duration > 0.0) {
+    FilterOperations start_filters;
+    start_filters.Append(FilterOperation::CreateInvertFilter(start_invert));
+    curve->AddKeyframe(
+        FilterKeyframe::Create(base::TimeDelta(), start_filters, nullptr));
+  }
+
+  FilterOperations filters;
+  filters.Append(FilterOperation::CreateInvertFilter(end_invert));
+  curve->AddKeyframe(FilterKeyframe::Create(
+      base::TimeDelta::FromSecondsD(duration), filters, nullptr));
+
+  int id = AnimationIdProvider::NextKeyframeModelId();
+
+  std::unique_ptr<KeyframeModel> keyframe_model(KeyframeModel::Create(
+      std::move(curve), id, AnimationIdProvider::NextGroupId(),
+      TargetProperty::BACKDROP_FILTER));
+  keyframe_model->set_needs_synchronized_start_time(true);
+
+  target->AddKeyframeModelForKeyframeEffect(std::move(keyframe_model),
+                                            effect_id);
+  return id;
+}
+
 FakeFloatAnimationCurve::FakeFloatAnimationCurve()
     : duration_(base::TimeDelta::FromSecondsD(1.0)) {
 }
@@ -275,6 +307,15 @@ int AddAnimatedFilterToAnimation(Animation* animation,
                            end_brightness, effect_id);
 }
 
+int AddAnimatedBackdropFilterToAnimation(Animation* animation,
+                                         double duration,
+                                         float start_invert,
+                                         float end_invert,
+                                         KeyframeEffectId effect_id) {
+  return AddAnimatedBackdropFilter(animation, duration, start_invert,
+                                   end_invert, effect_id);
+}
+
 int AddOpacityStepsToAnimation(Animation* animation,
                                double duration,
                                float start_opacity,
@@ -285,7 +326,7 @@ int AddOpacityStepsToAnimation(Animation* animation,
       KeyframedFloatAnimationCurve::Create());
 
   std::unique_ptr<TimingFunction> func = StepsTimingFunction::Create(
-      num_steps, StepsTimingFunction::StepPosition::MIDDLE);
+      num_steps, StepsTimingFunction::StepPosition::START);
   if (duration > 0.0)
     curve->AddKeyframe(FloatKeyframe::Create(base::TimeDelta(), start_opacity,
                                              std::move(func)));
@@ -324,9 +365,8 @@ void AddKeyframeModelToElementWithExistingKeyframeEffect(
   scoped_refptr<ElementAnimations> element_animations =
       timeline->animation_host()->GetElementAnimationsForElementId(element_id);
   DCHECK(element_animations);
-  DCHECK(element_animations->keyframe_effects_list().might_have_observers());
   KeyframeEffect* keyframe_effect =
-      &*element_animations->keyframe_effects_list().begin();
+      element_animations->FirstKeyframeEffectForTesting();
   DCHECK(keyframe_effect);
   keyframe_effect->AddKeyframeModel(std::move(keyframe_model));
 }
@@ -338,9 +378,8 @@ void RemoveKeyframeModelFromElementWithExistingKeyframeEffect(
   scoped_refptr<ElementAnimations> element_animations =
       timeline->animation_host()->GetElementAnimationsForElementId(element_id);
   DCHECK(element_animations);
-  DCHECK(element_animations->keyframe_effects_list().might_have_observers());
   KeyframeEffect* keyframe_effect =
-      &*element_animations->keyframe_effects_list().begin();
+      element_animations->FirstKeyframeEffectForTesting();
   DCHECK(keyframe_effect);
   keyframe_effect->RemoveKeyframeModel(keyframe_model_id);
 }
@@ -352,9 +391,8 @@ KeyframeModel* GetKeyframeModelFromElementWithExistingKeyframeEffect(
   scoped_refptr<ElementAnimations> element_animations =
       timeline->animation_host()->GetElementAnimationsForElementId(element_id);
   DCHECK(element_animations);
-  DCHECK(element_animations->keyframe_effects_list().might_have_observers());
   KeyframeEffect* keyframe_effect =
-      &*element_animations->keyframe_effects_list().begin();
+      element_animations->FirstKeyframeEffectForTesting();
   DCHECK(keyframe_effect);
   return keyframe_effect->GetKeyframeModelById(keyframe_model_id);
 }

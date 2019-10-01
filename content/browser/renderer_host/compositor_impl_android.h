@@ -22,7 +22,9 @@
 #include "components/viz/common/surfaces/frame_sink_id.h"
 #include "components/viz/common/surfaces/local_surface_id.h"
 #include "components/viz/common/surfaces/local_surface_id_allocation.h"
+#include "components/viz/common/surfaces/parent_local_surface_id_allocator.h"
 #include "components/viz/host/host_frame_sink_client.h"
+#include "components/viz/host/host_frame_sink_manager.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/android/compositor.h"
 #include "gpu/command_buffer/common/capabilities.h"
@@ -32,6 +34,7 @@
 #include "third_party/khronos/GLES2/gl2.h"
 #include "ui/android/resources/resource_manager_impl.h"
 #include "ui/android/resources/ui_resource_provider.h"
+#include "ui/android/window_android.h"
 #include "ui/android/window_android_compositor.h"
 #include "ui/compositor/compositor_lock.h"
 #include "ui/compositor/external_begin_frame_client.h"
@@ -54,7 +57,6 @@ class Display;
 class FrameSinkId;
 class FrameSinkManagerImpl;
 class HostDisplayClient;
-class HostFrameSinkManager;
 class OutputSurface;
 }
 
@@ -96,24 +98,32 @@ class CONTENT_EXPORT CompositorImpl
   }
 
  private:
+  class AndroidHostDisplayClient;
+  class ScopedCachedBackBuffer;
+
   // Compositor implementation.
   void SetRootWindow(gfx::NativeWindow root_window) override;
   void SetRootLayer(scoped_refptr<cc::Layer> root) override;
-  void SetSurface(jobject surface) override;
+  void SetSurface(jobject surface,
+                  bool can_be_used_with_surface_control) override;
   void SetBackgroundColor(int color) override;
   void SetWindowBounds(const gfx::Size& size) override;
   void SetRequiresAlphaChannel(bool flag) override;
   void SetNeedsComposite() override;
   ui::UIResourceProvider& GetUIResourceProvider() override;
   ui::ResourceManager& GetResourceManager() override;
+  void CacheBackBufferForCurrentSurface() override;
+  void EvictCachedBackBuffer() override;
 
   // LayerTreeHostClient implementation.
   void WillBeginMainFrame() override {}
   void DidBeginMainFrame() override {}
+  void WillUpdateLayers() override {}
+  void DidUpdateLayers() override;
   void BeginMainFrame(const viz::BeginFrameArgs& args) override {}
   void BeginMainFrameNotExpectedSoon() override {}
   void BeginMainFrameNotExpectedUntil(base::TimeTicks time) override {}
-  void UpdateLayerTreeHost(bool record_main_frame_metrics) override;
+  void UpdateLayerTreeHost() override;
   void ApplyViewportChanges(const cc::ApplyViewportChangesArgs& args) override {
   }
   void RecordWheelAndTouchScrollingCount(bool has_scrolled_by_wheel,
@@ -134,9 +144,8 @@ class CONTENT_EXPORT CompositorImpl
   void DidPresentCompositorFrame(
       uint32_t frame_token,
       const gfx::PresentationFeedback& feedback) override {}
+  void RecordStartOfFrameMetrics() override {}
   void RecordEndOfFrameMetrics(base::TimeTicks frame_begin_time) override {}
-  void DidGenerateLocalSurfaceIdAllocation(
-      const viz::LocalSurfaceIdAllocation& allocation) override {}
 
   // LayerTreeHostSingleThreadClient implementation.
   void DidSubmitCompositorFrame() override;
@@ -155,6 +164,9 @@ class CONTENT_EXPORT CompositorImpl
       base::TimeDelta timeout) override;
   bool IsDrawingFirstVisibleFrame() const override;
   void SetVSyncPaused(bool paused) override;
+  void OnUpdateRefreshRate(float refresh_rate) override;
+  void OnUpdateSupportedRefreshRates(
+      const std::vector<float>& supported_refresh_rates) override;
 
   // viz::HostFrameSinkClient implementation.
   void OnFirstSurfaceActivation(const viz::SurfaceInfo& surface_info) override;
@@ -187,7 +199,7 @@ class CONTENT_EXPORT CompositorImpl
 
   // Returns a new surface ID when in surface-synchronization mode. Otherwise
   // returns an empty surface.
-  viz::LocalSurfaceIdAllocation GenerateLocalSurfaceId() const;
+  viz::LocalSurfaceIdAllocation GenerateLocalSurfaceId();
 
   // Tears down the display for both Viz and non-Viz, unregistering the root
   // frame sink ID in the process.
@@ -196,7 +208,8 @@ class CONTENT_EXPORT CompositorImpl
   // Registers the root frame sink ID.
   void RegisterRootFrameSink();
 
-  // Called when we fail to create the context for the root frame sink.
+  // Called with the result of context creation for the root frame sink.
+  void OnContextCreationResult(gpu::ContextResult context_result);
   void OnFatalOrSurfaceContextCreationFailure(
       gpu::ContextResult context_result);
 
@@ -226,6 +239,7 @@ class CONTENT_EXPORT CompositorImpl
 
   ANativeWindow* window_;
   gpu::SurfaceHandle surface_handle_;
+  std::unique_ptr<ScopedCachedBackBuffer> cached_back_buffer_;
 
   CompositorClient* client_;
 
@@ -262,9 +276,13 @@ class CONTENT_EXPORT CompositorImpl
   std::unique_ptr<viz::HostDisplayClient> display_client_;
   bool vsync_paused_ = false;
 
+  viz::ParentLocalSurfaceIdAllocator local_surface_id_allocator_;
+
   // Test-only. Called when we are notified of a swap.
   base::RepeatingCallback<void(const gfx::Size&)>
       swap_completed_with_size_for_testing_;
+
+  size_t num_of_consecutive_surface_failures_ = 0u;
 
   base::WeakPtrFactory<CompositorImpl> weak_factory_;
 

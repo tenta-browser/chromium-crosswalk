@@ -13,6 +13,7 @@
 #import "ios/chrome/browser/autofill/automation/automation_action.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
+#import "ios/chrome/test/earl_grey/chrome_error_util.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
 
 #include "base/guid.h"
@@ -26,13 +27,13 @@
 #include "components/autofill/ios/browser/autofill_driver_ios.h"
 #import "ios/chrome/browser/autofill/form_suggestion_label.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
-#import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
+#import "ios/chrome/test/earl_grey/chrome_error_util.h"
+#include "ios/web/public/js_messaging/web_frame_util.h"
+#import "ios/web/public/js_messaging/web_frames_manager.h"
 #import "ios/web/public/test/earl_grey/web_view_actions.h"
 #import "ios/web/public/test/earl_grey/web_view_matchers.h"
 #include "ios/web/public/test/element_selector.h"
 #import "ios/web/public/test/js_test_util.h"
-#include "ios/web/public/web_state/web_frame_util.h"
-#import "ios/web/public/web_state/web_frames_manager.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -81,19 +82,19 @@ static const int kRecipeRetryLimit = 5;
 }
 
 // Loads the recipe file, parse it into Values.
-+ (std::unique_ptr<base::DictionaryValue>)parseRecipeAtPath:
-    (const base::FilePath&)path {
++ (base::Value)parseRecipeAtPath:(const base::FilePath&)path {
   std::string json_text;
 
   bool readSuccess(base::ReadFileToString(path, &json_text));
   GREYAssert(readSuccess, @"Unable to read json file.");
 
-  std::unique_ptr<base::Value> value(base::JSONReader().ReadToValue(json_text));
+  base::Optional<base::Value> value = base::JSONReader::Read(json_text);
 
-  GREYAssert(value, @"Unable to parse json file.");
-  GREYAssert(value->is_dict(), @"Expecting a dictionary in the JSON file.");
+  GREYAssert(value.has_value(), @"Unable to parse json file.");
+  GREYAssert(value.value().is_dict(),
+             @"Expecting a dictionary in the JSON file.");
 
-  return base::DictionaryValue::From(std::move(value));
+  return std::move(value).value();
 }
 
 // Converts a string (from the test recipe) to the autofill ServerFieldType it
@@ -194,6 +195,7 @@ static const int kRecipeRetryLimit = 5;
   autofill::PersonalDataManager* personal_data_manager =
       autofill_manager->client()->GetPersonalDataManager();
 
+  personal_data_manager->ClearAllLocalData();
   personal_data_manager->AddCreditCard(credit_card);
   personal_data_manager->SaveImportedProfile(profile);
 }
@@ -202,18 +204,17 @@ static const int kRecipeRetryLimit = 5;
   [super setUp];
 
   const base::FilePath recipePath = [[self class] recipePath];
-  std::unique_ptr<base::DictionaryValue> recipeRoot =
-      [[self class] parseRecipeAtPath:recipePath];
+  base::Value recipeRoot = [[self class] parseRecipeAtPath:recipePath];
 
   const base::Value* autofillProfile =
-      recipeRoot->FindKeyOfType("autofillProfile", base::Value::Type::LIST);
+      recipeRoot.FindKeyOfType("autofillProfile", base::Value::Type::LIST);
   if (autofillProfile) {
     [self prepareAutofillProfileWithValues:autofillProfile];
   }
 
   // Extract the starting URL.
   base::Value* startUrlValue =
-      recipeRoot->FindKeyOfType("startingURL", base::Value::Type::STRING);
+      recipeRoot.FindKeyOfType("startingURL", base::Value::Type::STRING);
   GREYAssert(startUrlValue, @"Test file is missing startingURL.");
 
   const std::string startUrlString(startUrlValue->GetString());
@@ -223,7 +224,7 @@ static const int kRecipeRetryLimit = 5;
 
   // Extract the actions.
   base::Value* actionValue =
-      recipeRoot->FindKeyOfType("actions", base::Value::Type::LIST);
+      recipeRoot.FindKeyOfType("actions", base::Value::Type::LIST);
   GREYAssert(actionValue, @"Test file is missing actions.");
 
   const base::Value::ListStorage& actionsValues(actionValue->GetList());
@@ -233,10 +234,14 @@ static const int kRecipeRetryLimit = 5;
   for (auto const& actionValue : actionsValues) {
     GREYAssert(actionValue.is_dict(),
                @"Expecting each action to be a dictionary in the JSON file.");
-    [actions_ addObject:[AutomationAction
-                            actionWithValueDictionary:
-                                static_cast<const base::DictionaryValue&>(
-                                    actionValue)]];
+
+    NSError* actionCreationError = nil;
+    AutomationAction* action = [AutomationAction
+        actionWithValueDictionary:static_cast<const base::DictionaryValue&>(
+                                      actionValue)
+                            error:&actionCreationError];
+    CHROME_EG_ASSERT_NO_ERROR(actionCreationError);
+    [actions_ addObject:action];
   }
 }
 
@@ -282,10 +287,10 @@ static const int kRecipeRetryLimit = 5;
 - (bool)runActionsOnce {
   @try {
     // Load the initial page of the recipe.
-    [ChromeEarlGrey loadURL:startUrl];
+    CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:startUrl]);
 
     for (AutomationAction* action in actions_) {
-      [action execute];
+      CHROME_EG_ASSERT_NO_ERROR([action execute]);
     }
   } @catch (NSException* e) {
     return false;

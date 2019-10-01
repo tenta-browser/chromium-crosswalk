@@ -13,7 +13,7 @@
 #include "crypto/random.h"
 #import "ios/chrome/browser/chrome_url_util.h"
 #include "ios/chrome/common/x_callback_url.h"
-#include "ios/web/public/web_state/url_verification_constants.h"
+#include "ios/web/public/deprecated/url_verification_constants.h"
 #import "ios/web/public/web_state/web_state.h"
 #include "net/base/url_util.h"
 
@@ -59,22 +59,6 @@ const char kRequestIDKey[] = "requestId";
     _requestToURLMap = [[NSMutableDictionary alloc] init];
   }
   return self;
-}
-
-+ (BOOL)isU2FURL:(const GURL&)URL {
-  std::string isU2F;
-  if (net::GetValueForKeyInQuery(URL, std::string(kIsU2FKey), &isU2F)) {
-    return isU2F == "1";
-  }
-  return NO;
-}
-
-+ (NSString*)tabIDFromResponseURL:(const GURL&)URL {
-  std::string tabID;
-  if (net::GetValueForKeyInQuery(URL, std::string(kTabIDKey), &tabID)) {
-    return base::SysUTF8ToNSString(tabID);
-  }
-  return nil;
 }
 
 - (GURL)XCallbackFromRequestURL:(const GURL&)requestURL

@@ -7,19 +7,13 @@
  */
 class SwitchAccessOptions {
   constructor() {
-    const background = chrome.extension.getBackgroundPage();
-
     /**
      * SwitchAccess reference.
      * @private {!SwitchAccessInterface}
      */
-    this.switchAccess_ = background.switchAccess;
+    this.switchAccess_ = chrome.extension.getBackgroundPage().switchAccess;
 
     this.init_();
-
-    document.addEventListener('change', this.handleInputChange_.bind(this));
-    background.document.addEventListener(
-        'prefsUpdate', this.handlePrefsUpdate_.bind(this));
   }
 
   /**
@@ -29,14 +23,23 @@ class SwitchAccessOptions {
    * @private
    */
   init_() {
+    document.addEventListener('change', this.handleInputChange_.bind(this));
+    chrome.storage.onChanged.addListener(this.handleStorageChange_.bind(this));
+
     document.getElementById('enableAutoScan').checked =
-        this.switchAccess_.getBooleanPref('enableAutoScan');
+        this.switchAccess_.getBooleanPreference(
+            SAConstants.Preference.ENABLE_AUTO_SCAN);
     document.getElementById('autoScanTime').value =
-        this.switchAccess_.getNumberPref('autoScanTime') / 1000;
+        this.switchAccess_.getNumberPreference(
+            SAConstants.Preference.AUTO_SCAN_TIME) /
+        1000;
 
     for (const command of this.switchAccess_.getCommands()) {
-      document.getElementById(command).value =
-          String.fromCharCode(this.switchAccess_.getNumberPref(command));
+      // All commands are preferences (see switch_access_constants.js).
+      const pref = /** @type {SAConstants.Preference} */ (command);
+      const keyCode = this.switchAccess_.getNumberPreferenceIfDefined(pref);
+      if (keyCode)
+        document.getElementById(command).value = String.fromCharCode(keyCode);
     }
   }
 
@@ -50,28 +53,37 @@ class SwitchAccessOptions {
     const input = event.target;
     switch (input.id) {
       case 'enableAutoScan':
-        this.switchAccess_.setPref(input.id, input.checked);
+        this.switchAccess_.setPreference(input.id, input.checked);
         break;
       case 'autoScanTime':
-        const oldVal = this.switchAccess_.getNumberPref(input.id);
+        const oldVal = this.switchAccess_.getNumberPreference(input.id);
         const val = Number(input.value) * 1000;
         const min = Number(input.min) * 1000;
         if (this.isValidScanTimeInput_(val, oldVal, min)) {
           input.value = Number(input.value);
-          this.switchAccess_.setPref(input.id, val);
+          this.switchAccess_.setPreference(input.id, val);
         } else {
           input.value = oldVal;
         }
         break;
       default:
-        if (this.switchAccess_.getCommands().includes(input.id)) {
+        if (this.switchAccess_.hasCommand(input.id)) {
+          // If the input is empty, remove any existing key-mapping.
+          if (!input.value) {
+            chrome.storage.sync.remove(input.id);
+            break;
+          }
           const keyCode = input.value.toUpperCase().charCodeAt(0);
           if (this.isValidKeyCode_(keyCode)) {
             input.value = input.value.toUpperCase();
-            this.switchAccess_.setPref(input.id, keyCode);
+            this.switchAccess_.setPreference(input.id, keyCode);
           } else {
-            const oldKeyCode = this.switchAccess_.getNumberPref(input.id);
-            input.value = String.fromCharCode(oldKeyCode);
+            const oldKeyCode =
+                this.switchAccess_.getNumberPreferenceIfDefined(input.id);
+            if (oldKeyCode)
+              input.value = String.fromCharCode(oldKeyCode);
+            else
+              input.value = '';
           }
         }
     }
@@ -106,23 +118,27 @@ class SwitchAccessOptions {
   /**
    * Handle a change in user preferences.
    *
-   * @param {!Event} event
+   * @param {!Object} storageChanges
+   * @param {string} areaName
    * @private
    */
-  handlePrefsUpdate_(event) {
-    const updatedPrefs = event.detail;
-    for (let key of Object.keys(updatedPrefs)) {
+  handleStorageChange_(storageChanges, areaName) {
+    for (let key of Object.keys(storageChanges)) {
+      const newValue = storageChanges[key].newValue;
       switch (key) {
         case 'enableAutoScan':
-          document.getElementById(key).checked = updatedPrefs[key];
+          document.getElementById(key).checked = newValue;
           break;
         case 'autoScanTime':
-          document.getElementById(key).value = updatedPrefs[key] / 1000;
+          document.getElementById(key).value = newValue / 1000;
           break;
         default:
-          if (this.switchAccess_.getCommands().includes(key))
-            document.getElementById(key).value =
-                String.fromCharCode(updatedPrefs[key]);
+          if (!this.switchAccess_.hasCommand(key))
+            break;
+          if (newValue)
+            document.getElementById(key).value = String.fromCharCode(newValue);
+          else
+            document.getElementById(key).value = '';
       }
     }
   }

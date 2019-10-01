@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/startup/bad_flags_prompt.h"
 
+#include <string>
+
 #include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
@@ -12,14 +14,13 @@
 #include "base/trace_event/memory_dump_manager.h"
 #include "build/build_config.h"
 #include "chrome/browser/infobars/infobar_service.h"
-#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/simple_message_box.h"
-#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/autofill/core/common/autofill_switches.h"
+#include "components/data_reduction_proxy/core/common/data_reduction_proxy_switches.h"
 #include "components/infobars/core/infobar_delegate.h"
 #include "components/infobars/core/simple_alert_infobar_delegate.h"
 #include "components/invalidation/impl/invalidation_switches.h"
@@ -32,6 +33,7 @@
 #include "content/public/common/content_switches.h"
 #include "extensions/common/switches.h"
 #include "google_apis/gaia/gaia_switches.h"
+#include "gpu/config/gpu_switches.h"
 #include "media/base/media_switches.h"
 #include "media/media_buildflags.h"
 #include "services/network/public/cpp/network_switches.h"
@@ -41,6 +43,8 @@
 
 #if defined(OS_ANDROID)
 #include "chrome/browser/android/chrome_feature_list.h"
+#else
+#include "chrome/browser/ui/browser.h"
 #endif  // OS_ANDROID
 
 namespace chrome {
@@ -97,7 +101,7 @@ static const char* kBadFlags[] = {
 
     // This flag allows people to whitelist certain origins as secure, even
     // if they are not.
-    switches::kUnsafelyTreatInsecureOriginAsSecure,
+    network::switches::kUnsafelyTreatInsecureOriginAsSecure,
 
     // This flag allows sites to access the camera and microphone without
     // getting the user's permission.
@@ -113,12 +117,20 @@ static const char* kBadFlags[] = {
     // normally with this flag, it is expected that some non-visible operations
     // such as writing user data to disk, cleaning caches, reporting metrics or
     // updating components won't be performed until shutdown.
-    switches::kDisableBackgroundTasks,
+    switches::kDisableBestEffortTasks,
 
     // The UI for Web Bluetooth scanning is not yet implemented. Without the
     // UI websites can scan for bluetooth without user intervention. Show a
     // warning until the UI is complete.
     switches::kEnableWebBluetoothScanning,
+
+    // Enables save data feature which can cause user traffic to be proxied via
+    // Google's data reduction proxy servers.
+    data_reduction_proxy::switches::kEnableDataReductionProxy,
+
+    // GPU sanboxing isn't implemented for the Web GPU API yet meaning it would
+    // be possible to read GPU data for other Chromium processes.
+    switches::kEnableUnsafeWebGPU,
 };
 #endif  // OS_ANDROID
 

@@ -24,6 +24,7 @@ class BuildConfigGenerator extends DefaultTask {
     private static final BUILD_GN_GEN_PATTERN = Pattern.compile(
             "${BUILD_GN_TOKEN_START}(.*)${BUILD_GN_TOKEN_END}",
             Pattern.DOTALL)
+    private static final BUILD_GN_GEN_REMINDER = "# This is generated, do not edit. Update BuildConfigGenerator.groovy instead.\n"
     private static final DEPS_TOKEN_START = "# === ANDROID_DEPS Generated Code Start ==="
     private static final DEPS_TOKEN_END = "# === ANDROID_DEPS Generated Code End ==="
     private static final DEPS_GEN_PATTERN = Pattern.compile(
@@ -34,6 +35,14 @@ class BuildConfigGenerator extends DefaultTask {
     // to cr0.
     private static final CIPD_SUFFIX = "cr0"
 
+    // Some libraries are hosted in Chromium's //third_party directory. This is a mapping between
+    // them so they can be used instead of android_deps pulling in its own copy.
+    private static final def EXISTING_LIBS = [
+        'junit_junit': '//third_party/junit:junit',
+        'org_hamcrest_hamcrest_core': '//third_party/hamcrest:hamcrest_core_java',
+    ]
+
+
     /**
      * Directory where the artifacts will be downloaded and where files will be generated.
      * Note: this path is specified as relative to the chromium source root, and must be normalised
@@ -42,9 +51,41 @@ class BuildConfigGenerator extends DefaultTask {
      */
     String repositoryPath
 
+    /**
+     * Relative path to the DEPS file where the cipd packages are specified.
+     */
+    String depsPath
+
+    /**
+     * Relative path to the Chromium source root from the build.gradle file.
+     */
+    String chromiumSourceRoot
+
+    /**
+     * Name of the cipd root package.
+     */
+    String cipdBucket
+
+    /**
+     * Prefix of path to strip before uploading to CIPD.
+     */
+    String stripFromCipdPath
+
+    /**
+     * Skips license file import.
+     */
+    boolean skipLicenses
+
+    /**
+     * Only pull play services targets into BUILD.gn file.
+     * If the play services target depends on a non-play services target, it will use the target in
+     * //third_party/android_deps/BUILD.gn.
+     */
+    boolean onlyPlayServices
+
     @TaskAction
     void main() {
-        def graph = new ChromiumDepGraph(project: project)
+        def graph = new ChromiumDepGraph(project: project, skipLicenses: skipLicenses)
         def normalisedRepoPath = normalisePath(repositoryPath)
         def rootDirPath = normalisePath(".")
 
@@ -54,7 +95,7 @@ class BuildConfigGenerator extends DefaultTask {
         // 2. Import artifacts into the local repository
         def dependencyDirectories = []
         graph.dependencies.values().each { dependency ->
-            if (dependency.exclude) {
+            if (excludeDependency(dependency, onlyPlayServices)) {
                 return
             }
             logger.debug "Processing ${dependency.name}: \n${jsonDump(dependency)}"
@@ -74,25 +115,31 @@ class BuildConfigGenerator extends DefaultTask {
             }
 
             new File("${absoluteDepDir}/README.chromium").write(makeReadme(dependency))
-            new File("${absoluteDepDir}/cipd.yaml").write(makeCipdYaml(dependency, repositoryPath))
+            new File("${absoluteDepDir}/cipd.yaml").write(makeCipdYaml(dependency, cipdBucket,
+                                                                       stripFromCipdPath,
+                                                                       repositoryPath))
             new File("${absoluteDepDir}/OWNERS").write(makeOwners())
-            if (!dependency.licensePath?.trim()?.isEmpty()) {
-                new File("${absoluteDepDir}/LICENSE").write(
-                        new File("${normalisedRepoPath}/${dependency.licensePath}").text)
-            } else if (!dependency.licenseUrl?.trim()?.isEmpty()) {
-                downloadFile(dependency.licenseUrl, new File("${absoluteDepDir}/LICENSE"))
+            if (!skipLicenses) {
+                if (!dependency.licensePath?.trim()?.isEmpty()) {
+                    new File("${absoluteDepDir}/LICENSE").write(
+                            new File("${normalisedRepoPath}/${dependency.licensePath}").text)
+                } else if (!dependency.licenseUrl?.trim()?.isEmpty()) {
+                    downloadFile(dependency.licenseUrl, new File("${absoluteDepDir}/LICENSE"))
+                }
             }
         }
 
         // 3. Generate the root level build files
-        updateBuildTargetDeclaration(graph, "${normalisedRepoPath}/BUILD.gn")
-        updateDepsDeclaration(graph, repositoryPath, "${rootDirPath}/DEPS")
+        updateBuildTargetDeclaration(graph, "${normalisedRepoPath}/BUILD.gn", onlyPlayServices)
+        updateDepsDeclaration(graph, cipdBucket, stripFromCipdPath, repositoryPath,
+                              "${rootDirPath}/${depsPath}", onlyPlayServices)
         dependencyDirectories.sort { path1, path2 -> return path1.compareTo(path2) }
         updateReadmeReferenceFile(dependencyDirectories,
                                   "${normalisedRepoPath}/additional_readme_paths.json")
     }
 
-    private static void updateBuildTargetDeclaration(ChromiumDepGraph depGraph, String path) {
+    private static void updateBuildTargetDeclaration(ChromiumDepGraph depGraph, String path,
+                                                     boolean onlyPlayServices) {
         File buildFile = new File(path)
         def sb = new StringBuilder()
 
@@ -106,30 +153,43 @@ class BuildConfigGenerator extends DefaultTask {
         }
 
         depGraph.dependencies.values().sort(dependencyComparator).each { dependency ->
-            if (dependency.exclude) {
+            if (excludeDependency(dependency, onlyPlayServices)) {
                 return
             }
             def depsStr = ""
             if (!dependency.children.isEmpty()) {
                 dependency.children.each { childDep ->
-                    if (depGraph.dependencies[childDep].exclude) {
+                    def dep = depGraph.dependencies[childDep]
+                    if (dep.exclude) {
                         return
                     }
-                    depsStr += "\":${depGraph.dependencies[childDep].id}_java\","
+                    // Special case: If a child dependency is an existing lib, rather than skipping
+                    // it, replace the child dependency with the existing lib.
+                    def existingLib = EXISTING_LIBS.get(dep.id)
+                    def targetName = translateTargetName(dep.id) + "_java"
+                    if (existingLib != null) {
+                        depsStr += "\"${existingLib}\","
+                    } else if (onlyPlayServices && !isPlayServicesTarget(dep.id)) {
+                        depsStr += "\"//third_party/android_deps:${targetName}\","
+                    } else {
+                        depsStr += "\":${targetName}\","
+                    }
                 }
             }
 
             def libPath = "${DOWNLOAD_DIRECTORY_NAME}/${dependency.id}"
+            def targetName = translateTargetName(dependency.id) + "_java"
+            sb.append(BUILD_GN_GEN_REMINDER)
             if (dependency.extension == 'jar') {
                 sb.append("""\
-                java_prebuilt("${dependency.id}_java") {
+                java_prebuilt("${targetName}") {
                   jar_path = "${libPath}/${dependency.fileName}"
                   output_name = "${dependency.id}"
                 """.stripIndent())
                 if (dependency.supportsAndroid) sb.append("  supports_android = true\n")
             } else if (dependency.extension == 'aar') {
                 sb.append("""\
-                android_aar_prebuilt("${dependency.id}_java") {
+                android_aar_prebuilt("${targetName}") {
                   aar_path = "${libPath}/${dependency.fileName}"
                   info_path = "${libPath}/${dependency.id}.info"
                 """.stripIndent())
@@ -137,7 +197,12 @@ class BuildConfigGenerator extends DefaultTask {
                 throw new IllegalStateException("Dependency type should be JAR or AAR")
             }
 
-            if (!dependency.visible) sb.append("  visibility = [ \":*\" ]\n")
+            if (!dependency.visible) {
+              sb.append("  # To remove visibility constraint, add this dependency to\n")
+              sb.append("  # //tools/android/roll/android_deps/build.gradle.\n")
+              sb.append("  visibility = [ \":*\" ]\n")
+            }
+            if (dependency.testOnly) sb.append("  testonly = true\n")
             if (!depsStr.empty) sb.append("  deps = [${depsStr}]\n")
             addSpecialTreatment(sb, dependency.id)
 
@@ -150,7 +215,29 @@ class BuildConfigGenerator extends DefaultTask {
                 "${BUILD_GN_TOKEN_START}\n${sb.toString()}\n${BUILD_GN_TOKEN_END}"))
     }
 
+    public static String translateTargetName(String targetName) {
+        if (isPlayServicesTarget(targetName)) {
+            return targetName.replaceFirst("com_", "").replaceFirst("android_gms_", "")
+        }
+        return targetName
+    }
+
+    public static boolean isPlayServicesTarget(String dependencyId) {
+        // Firebase has historically been treated as a part of play services, so it counts here for
+        // backwards compatibility.
+        return Pattern.matches(".*google.*(play_services|firebase).*", dependencyId)
+    }
+
     private static void addSpecialTreatment(StringBuilder sb, String dependencyId) {
+        if (isPlayServicesTarget(dependencyId)) {
+            if (Pattern.matches(".*cast_framework.*", dependencyId)) {
+                sb.append('  # Removing all resources from cast framework as they are unused bloat.\n')
+                sb.append('  strip_resources = true\n')
+            } else {
+                sb.append('  # Removing drawables from GMS .aars as they are unused bloat.\n')
+                sb.append('  strip_drawables = true\n')
+            }
+        }
         switch(dependencyId) {
             case 'com_android_support_support_compat':
             case 'com_android_support_support_media_compat':
@@ -170,12 +257,31 @@ class BuildConfigGenerator extends DefaultTask {
                 // Target .aar file contains .so libraries that need to be extracted,
                 // and android_aar_prebuilt template will fail if it's not set explictly.
                 sb.append('  extract_native_libraries = true\n')
+                // InstallActivity class is downloaded as a part of DFM & we need to inject
+                // a call to SplitCompat.install() into it.
+                sb.append('  split_compat_class_names = [ "com/google/ar/core/InstallActivity" ]\n')
+                break
+            case 'androidx_test_rules':
+                // Target needs Android SDK deps which exist in third_party/android_sdk.
+                sb.append("""\
+                |  deps += [
+                |    "//third_party/android_sdk:android_test_base_java",
+                |    "//third_party/android_sdk:android_test_mock_java",
+                |    "//third_party/android_sdk:android_test_runner_java",
+                |  ]
+                |
+                |""".stripMargin())
+                break
+            case 'net_sf_kxml_kxml2':
+                sb.append('  # Target needs to exclude *xmlpull* files as already included in Android SDK.\n')
+                sb.append('  jar_excluded_patterns = [ "*xmlpull*" ]\n')
                 break
         }
     }
 
-    private static void updateDepsDeclaration(ChromiumDepGraph depGraph, String repoPath,
-            String depsFilePath) {
+    private static void updateDepsDeclaration(ChromiumDepGraph depGraph, String cipdBucket,
+                                              String stripFromCipdPath, String repoPath,
+                                              String depsFilePath, boolean onlyPlayServices) {
         File depsFile = new File(depsFilePath)
         def sb = new StringBuilder()
         // Note: The string we're inserting is nested 1 level, hence the 2 leading spaces. Same
@@ -188,16 +294,24 @@ class BuildConfigGenerator extends DefaultTask {
         }
 
         depGraph.dependencies.values().sort(dependencyComparator).each { dependency ->
-            if (dependency.exclude) {
+            if (excludeDependency(dependency, onlyPlayServices)) {
                 return
             }
             def depPath = "${DOWNLOAD_DIRECTORY_NAME}/${dependency.id}"
+            def cipdPath = "${cipdBucket}/"
+            if (stripFromCipdPath) {
+                assert repoPath.startsWith(stripFromCipdPath)
+                cipdPath += repoPath.substring(stripFromCipdPath.length() + 1)
+            } else {
+                cipdPath += repoPath
+            }
+            cipdPath += "/${depPath}"
             sb.append("""\
             |
             |  'src/${repoPath}/${depPath}': {
             |      'packages': [
             |          {
-            |              'package': 'chromium/${repoPath}/${depPath}',
+            |              'package': '${cipdPath}',
             |              'version': 'version:${dependency.version}-${CIPD_SUFFIX}',
             |          },
             |      ],
@@ -217,9 +331,14 @@ class BuildConfigGenerator extends DefaultTask {
         refFile.write(JsonOutput.prettyPrint(JsonOutput.toJson(directories)) + "\n")
     }
 
+    public static boolean excludeDependency(ChromiumDepGraph.DependencyDescription dependency,
+                                             boolean onlyPlayServices) {
+        return dependency.exclude || EXISTING_LIBS.get(dependency.id) != null ||
+                (onlyPlayServices && !isPlayServicesTarget(dependency.id))
+    }
+
     private String normalisePath(String pathRelativeToChromiumRoot) {
-        def pathToChromiumRoot = "../../../.." // Relative to build.gradle, the project root.
-        return project.file("${pathToChromiumRoot}/${pathRelativeToChromiumRoot}").absolutePath
+        return project.file("${chromiumSourceRoot}/${pathRelativeToChromiumRoot}").absolutePath
     }
 
     static String makeOwners() {
@@ -238,7 +357,8 @@ class BuildConfigGenerator extends DefaultTask {
                 licenseString = dependency.licenseName
         }
 
-        def licenseFile = dependency.supportsAndroid ? "LICENSE" : "NOT_SHIPPED"
+        def securityCritical = dependency.supportsAndroid && dependency.isShipped
+        def licenseFile = dependency.isShipped? "LICENSE" : "NOT_SHIPPED"
 
         return """\
         Name: ${dependency.displayName}
@@ -247,8 +367,8 @@ class BuildConfigGenerator extends DefaultTask {
         Version: ${dependency.version}
         License: ${licenseString}
         License File: ${licenseFile}
-        Security Critical: ${dependency.supportsAndroid ? "yes" : "no"}
-
+        Security Critical: ${securityCritical? "yes" : "no"}
+        ${dependency.licenseAndroidCompatible? "License Android Compatible: yes" : ""}
         Description:
         ${dependency.description}
 
@@ -257,8 +377,20 @@ class BuildConfigGenerator extends DefaultTask {
         """.stripIndent()
     }
 
-    static String makeCipdYaml(ChromiumDepGraph.DependencyDescription dependency, String repoPath) {
+    static String makeCipdYaml(ChromiumDepGraph.DependencyDescription dependency, String cipdBucket,
+                               String stripFromCipdPath, String repoPath) {
+        if (!stripFromCipdPath) {
+            stripFromCipdPath = ''
+        }
         def cipdVersion = "${dependency.version}-${CIPD_SUFFIX}"
+        def cipdPath = "${cipdBucket}/"
+        if (stripFromCipdPath) {
+            assert repoPath.startsWith(stripFromCipdPath)
+            cipdPath += repoPath.substring(stripFromCipdPath.length() + 1)
+        } else {
+            cipdPath += repoPath
+        }
+        cipdPath += "/${DOWNLOAD_DIRECTORY_NAME}/${dependency.id}"
 
         // NOTE: the fetch_all.py script relies on the format of this file!
         // See fetch_all.py:GetCipdPackageInfo().
@@ -269,7 +401,7 @@ class BuildConfigGenerator extends DefaultTask {
 
         # To create CIPD package run the following command.
         # cipd create --pkg-def cipd.yaml -tag version:${cipdVersion}
-        package: chromium/${repoPath}/${DOWNLOAD_DIRECTORY_NAME}/${dependency.id}
+        package: ${cipdPath}
         description: "${dependency.displayName}"
         data:
         - file: ${dependency.fileName}

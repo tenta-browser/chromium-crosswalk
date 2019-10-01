@@ -16,9 +16,7 @@ import java.util.List;
 /**
  * Utility class that interacts with native to retrieve and set website settings.
  */
-public abstract class WebsitePreferenceBridge {
-    private static final String LOG_TAG = "WebsiteSettingsUtils";
-
+public class WebsitePreferenceBridge {
     /**
      * Interface for an object that listens to storage info is cleared callback.
      */
@@ -31,7 +29,7 @@ public abstract class WebsitePreferenceBridge {
      * @return the list of all origins that have permissions in non-incognito mode.
      */
     @SuppressWarnings("unchecked")
-    public static List<PermissionInfo> getPermissionInfo(@PermissionInfo.Type int type) {
+    public List<PermissionInfo> getPermissionInfo(@PermissionInfo.Type int type) {
         ArrayList<PermissionInfo> list = new ArrayList<PermissionInfo>();
         // Camera, Location & Microphone can be managed by the custodian
         // of a supervised account or by enterprise policy.
@@ -139,12 +137,12 @@ public abstract class WebsitePreferenceBridge {
     @SuppressWarnings("unchecked")
     @CalledByNative
     private static void insertLocalStorageInfoIntoMap(
-            HashMap map, String origin, String fullOrigin, long size, boolean important) {
+            HashMap map, String origin, long size, boolean important) {
         ((HashMap<String, LocalStorageInfo>) map)
                 .put(origin, new LocalStorageInfo(origin, size, important));
     }
 
-    public static List<ContentSettingException> getContentSettingsExceptions(
+    public List<ContentSettingException> getContentSettingsExceptions(
             @ContentSettingsType int contentSettingsType) {
         List<ContentSettingException> exceptions =
                 PrefServiceBridge.getInstance().getContentSettingsExceptions(
@@ -163,11 +161,11 @@ public abstract class WebsitePreferenceBridge {
         return managedExceptions;
     }
 
-    public static void fetchLocalStorageInfo(Callback<HashMap> callback, boolean fetchImportant) {
+    public void fetchLocalStorageInfo(Callback<HashMap> callback, boolean fetchImportant) {
         nativeFetchLocalStorageInfo(callback, fetchImportant);
     }
 
-    public static void fetchStorageInfo(Callback<ArrayList> callback) {
+    public void fetchStorageInfo(Callback<ArrayList> callback) {
         nativeFetchStorageInfo(callback);
     }
 
@@ -178,7 +176,7 @@ public abstract class WebsitePreferenceBridge {
      * two origin/embedder pairs have permission for the same object there will be two
      * ChosenObjectInfo instances.
      */
-    public static List<ChosenObjectInfo> getChosenObjectInfo(
+    public List<ChosenObjectInfo> getChosenObjectInfo(
             @ContentSettingsType int contentSettingsType) {
         ArrayList<ChosenObjectInfo> list = new ArrayList<ChosenObjectInfo>();
         nativeGetChosenObjects(contentSettingsType, list);
@@ -190,8 +188,10 @@ public abstract class WebsitePreferenceBridge {
      */
     @CalledByNative
     private static void insertChosenObjectInfoIntoList(ArrayList<ChosenObjectInfo> list,
-            int contentSettingsType, String origin, String embedder, String name, String object) {
-        list.add(new ChosenObjectInfo(contentSettingsType, origin, embedder, name, object));
+            int contentSettingsType, String origin, String embedder, String name, String object,
+            boolean isManaged) {
+        list.add(new ChosenObjectInfo(
+                contentSettingsType, origin, embedder, name, object, isManaged));
     }
 
     /**

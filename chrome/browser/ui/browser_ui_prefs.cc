@@ -50,17 +50,15 @@ void RegisterBrowserPrefs(PrefRegistrySimple* registry) {
 }
 
 void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
-  registry->RegisterBooleanPref(
-      prefs::kHomePageIsNewTabPage,
-      true,
-      GetHomeButtonAndHomePageIsNewTabPageFlags());
+  registry->RegisterBooleanPref(prefs::kHomePageIsNewTabPage, true,
+                                GetHomeButtonAndHomePageIsNewTabPageFlags());
   registry->RegisterBooleanPref(prefs::kShowHomeButton, false,
                                 GetHomeButtonAndHomePageIsNewTabPageFlags());
 
   registry->RegisterInt64Pref(prefs::kDefaultBrowserLastDeclined, 0);
   bool reset_check_default = false;
 #if defined(OS_WIN)
-  reset_check_default = base::win::GetVersion() >= base::win::VERSION_WIN10;
+  reset_check_default = base::win::GetVersion() >= base::win::Version::WIN10;
 #endif
   registry->RegisterBooleanPref(prefs::kResetCheckDefaultBrowser,
                                 reset_check_default);
@@ -77,8 +75,7 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterDictionaryPref(prefs::kBrowserWindowPlacementPopup);
   registry->RegisterDictionaryPref(prefs::kAppWindowPlacement);
   registry->RegisterBooleanPref(
-      prefs::kEnableDoNotTrack,
-      false,
+      prefs::kEnableDoNotTrack, false,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
 #if !defined(OS_CHROMEOS) && !defined(OS_ANDROID)
   registry->RegisterBooleanPref(prefs::kPrintPreviewUseSystemDefaultPrinter,
@@ -115,8 +112,7 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
   // that use this preference.
   registry->RegisterBooleanPref(prefs::kShowUpdatePromotionInfoBar, true);
   registry->RegisterBooleanPref(
-      prefs::kShowFullscreenToolbar,
-      true,
+      prefs::kShowFullscreenToolbar, true,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterBooleanPref(
       prefs::kAllowJavascriptAppleEvents, false,
@@ -127,4 +123,10 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
 
   registry->RegisterBooleanPref(prefs::kEnterpriseHardwarePlatformAPIEnabled,
                                 false);
+  registry->RegisterBooleanPref(prefs::kAllowPopupsDuringPageUnload, false);
+
+#if !defined(OS_ANDROID)
+  registry->RegisterBooleanPref(prefs::kShowFirstRunDefaultSearchShortcut,
+                                false);
+#endif  // !defined(OS_ANDROID)
 }

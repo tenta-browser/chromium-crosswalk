@@ -16,27 +16,23 @@ const service_manager::Manifest& GetContentRendererManifest() {
       service_manager::ManifestBuilder()
           .WithServiceName(mojom::kRendererServiceName)
           .WithDisplayName("Content (renderer process)")
-          .ExposeCapability("service_manager:service_factory",
-                            std::set<const char*>{
-                                "service_manager.mojom.ServiceFactory",
-                            })
           .ExposeCapability(
               "browser",
               std::set<const char*>{
-                  "blink.mojom.AppCacheFrontend",
                   "blink.mojom.CodeCacheHost",
                   "blink.mojom.CrashMemoryMetricsReporter",
                   "blink.mojom.LeakDetector",
                   "blink.mojom.OomIntervention",
+                  "blink.mojom.SharedWorkerFactory",
                   "blink.mojom.WebDatabase",
                   "content.mojom.Child",
                   "content.mojom.ChildControl",
                   "content.mojom.ChildHistogramFetcher",
                   "content.mojom.ChildHistogramFetcherFactory",
                   "content.mojom.FrameFactory",
+                  "content.mojom.MhtmlFileWriter",
                   "content.mojom.RenderWidgetWindowTreeClientFactory",
                   "content.mojom.ResourceUsageReporter",
-                  "content.mojom.SharedWorkerFactory",
                   "IPC.mojom.ChannelBootstrap",
                   "visitedlink.mojom.VisitedLinkNotificationSink",
                   "web_cache.mojom.WebCache",
@@ -50,9 +46,11 @@ const service_manager::Manifest& GetContentRendererManifest() {
           .RequireCapability("device", "device:screen_orientation")
           .RequireCapability("device", "device:time_zone_monitor")
           .RequireCapability(mojom::kBrowserServiceName, "dwrite_font_proxy")
-          .RequireCapability(mojom::kBrowserServiceName, "field_trials")
+          .RequireCapability(mojom::kSystemServiceName, "dwrite_font_proxy")
+          .RequireCapability(mojom::kSystemServiceName, "field_trials")
           .RequireCapability(mojom::kBrowserServiceName, "renderer")
-          .RequireCapability(mojom::kBrowserServiceName, "sandbox_support")
+          .RequireCapability(mojom::kSystemServiceName, "renderer")
+          .RequireCapability(mojom::kSystemServiceName, "sandbox_support")
           .RequireInterfaceFilterCapability_Deprecated(
               mojom::kBrowserServiceName, "navigation:shared_worker",
               "renderer")

@@ -14,12 +14,50 @@ interface AbortSignal : EventTarget
     getter onabort
     method constructor
     setter onabort
+interface BackgroundFetchEvent : ExtendableEvent
+    attribute @@toStringTag
+    getter registration
+    method constructor
+interface BackgroundFetchManager
+    attribute @@toStringTag
+    method constructor
+    method fetch
+    method get
+    method getIds
+interface BackgroundFetchRecord
+    attribute @@toStringTag
+    getter request
+    getter responseReady
+    method constructor
+interface BackgroundFetchRegistration : EventTarget
+    attribute @@toStringTag
+    getter downloadTotal
+    getter downloaded
+    getter failureReason
+    getter id
+    getter onprogress
+    getter recordsAvailable
+    getter result
+    getter uploadTotal
+    getter uploaded
+    method abort
+    method constructor
+    method match
+    method matchAll
+    setter onprogress
+interface BackgroundFetchUpdateUIEvent : BackgroundFetchEvent
+    attribute @@toStringTag
+    method constructor
+    method updateUI
 interface Blob
     attribute @@toStringTag
     getter size
     getter type
+    method arrayBuffer
     method constructor
     method slice
+    method stream
+    method text
 interface BroadcastChannel : EventTarget
     attribute @@toStringTag
     getter name
@@ -488,6 +526,7 @@ interface IDBCursor
     getter direction
     getter key
     getter primaryKey
+    getter request
     getter source
     method advance
     method constructor
@@ -604,6 +643,7 @@ interface IDBTransaction : EventTarget
     getter oncomplete
     getter onerror
     method abort
+    method commit
     method constructor
     method objectStore
     setter onabort
@@ -622,6 +662,11 @@ interface ImageBitmap
     getter width
     method close
     method constructor
+interface ImageBitmapRenderingContext
+    attribute @@toStringTag
+    getter canvas
+    method constructor
+    method transferFromImageBitmap
 interface ImageData
     attribute @@toStringTag
     getter data
@@ -641,6 +686,10 @@ interface LockManager
     method constructor
     method query
     method request
+interface MediaCapabilities
+    attribute @@toStringTag
+    method constructor
+    method decodingInfo
 interface MessageChannel
     attribute @@toStringTag
     getter port1
@@ -839,6 +888,7 @@ interface PaymentRequestEvent : ExtendableEvent
     getter paymentRequestOrigin
     getter topOrigin
     getter total
+    method changePaymentMethod
     method constructor
     method openWindow
     method respondWith
@@ -1021,6 +1071,7 @@ interface ServiceWorkerGlobalScope : WorkerGlobalScope
 interface ServiceWorkerRegistration : EventTarget
     attribute @@toStringTag
     getter active
+    getter backgroundFetch
     getter installing
     getter navigationPreload
     getter onupdatefound
@@ -1086,6 +1137,7 @@ interface TextEncoder
     getter encoding
     method constructor
     method encode
+    method encodeInto
 interface TextEncoderStream
     attribute @@toStringTag
     getter encoding
@@ -2505,6 +2557,7 @@ interface WorkerNavigator
     getter language
     getter languages
     getter locks
+    getter mediaCapabilities
     getter onLine
     getter permissions
     getter platform
@@ -2526,6 +2579,10 @@ interface WritableStream
     getter clients
     getter onabortpayment
     getter onactivate
+    getter onbackgroundfetchabort
+    getter onbackgroundfetchclick
+    getter onbackgroundfetchfail
+    getter onbackgroundfetchsuccess
     getter oncanmakepayment
     getter onfetch
     getter oninstall
@@ -2541,6 +2598,10 @@ interface WritableStream
     method skipWaiting
     setter onabortpayment
     setter onactivate
+    setter onbackgroundfetchabort
+    setter onbackgroundfetchclick
+    setter onbackgroundfetchfail
+    setter onbackgroundfetchsuccess
     setter oncanmakepayment
     setter onfetch
     setter oninstall

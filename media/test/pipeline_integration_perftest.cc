@@ -68,7 +68,7 @@ static const char* kAudioTestFiles[] {
 
 // For simplicity we only test codecs with above 2% daily usage as measured by
 // the Media.AudioCodec histogram.
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     /* no prefix */,
     ClocklessAudioPipelineIntegrationPerfTest,
     testing::ValuesIn(kAudioTestFiles));
@@ -80,6 +80,13 @@ TEST(PipelineIntegrationPerfTest, VP8PlaybackBenchmark) {
 TEST(PipelineIntegrationPerfTest, VP9PlaybackBenchmark) {
   RunVideoPlaybackBenchmark("bear-vp9.webm", "clockless_video_playback_vp9");
 }
+
+#if BUILDFLAG(ENABLE_AV1_DECODER)
+TEST(PipelineIntegrationPerfTest, AV1PlaybackBenchmark) {
+  RunVideoPlaybackBenchmark("bear-av1-640x480.webm",
+                            "clockless_video_playback_av1");
+}
+#endif
 
 #if BUILDFLAG(USE_PROPRIETARY_CODECS) && BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS)
 TEST(PipelineIntegrationPerfTest, MP4PlaybackBenchmark) {

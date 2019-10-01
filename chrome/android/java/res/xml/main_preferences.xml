@@ -15,10 +15,11 @@
         android:order="1"
         android:title="@string/sign_in_to_chrome"/>
     <org.chromium.chrome.browser.preferences.ChromeBasePreference
-        android:fragment="org.chromium.chrome.browser.preferences.SyncAndServicesPreferences"
         android:key="sync_and_services"
         android:order="2"
-        android:title="@string/prefs_sync_and_services"/>
+        android:layout="@layout/account_management_account_row"
+        android:title="@string/prefs_sync_and_services"
+        android:fragment="org.chromium.chrome.browser.preferences.SyncAndServicesPreferences"/>
 
     <PreferenceCategory
         android:key="basics_section"
@@ -55,15 +56,15 @@
         android:order="9"
         android:title="@string/prefs_notifications"/>
     <Preference
-        android:fragment="org.chromium.chrome.browser.preferences.ContextualSuggestionsPreference"
-        android:key="contextual_suggestions"
-        android:order="10"
-        android:title="@string/prefs_contextual_suggestions"/>
-    <Preference
         android:fragment="org.chromium.chrome.browser.preferences.HomepagePreferences"
         android:key="homepage"
-        android:order="11"
+        android:order="10"
         android:title="@string/options_homepage_title"/>
+    <Preference
+        android:fragment="org.chromium.chrome.browser.preferences.themes.ThemePreferences"
+        android:key="ui_theme"
+        android:order="11"
+        android:title="@string/prefs_themes" />
 
     <PreferenceCategory
         android:key="advanced_section"
@@ -89,11 +90,11 @@
         android:key="languages"
         android:order="16"
         android:title="@string/prefs_languages"/>
-    <org.chromium.chrome.browser.preferences.datareduction.DataReductionPreference
+    <org.chromium.chrome.browser.preferences.ChromeBasePreference
         android:fragment="org.chromium.chrome.browser.preferences.datareduction.DataReductionPreferenceFragment"
         android:key="data_reduction"
         android:order="17"
-        android:title="@string/data_reduction_title"/>
+        android:title="@string/data_reduction_title_lite_mode"/>
     <org.chromium.chrome.browser.preferences.ChromeBasePreference
         android:fragment="org.chromium.chrome.browser.preferences.download.DownloadPreferences"
         android:key="downloads"

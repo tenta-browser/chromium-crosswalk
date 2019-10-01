@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
@@ -141,6 +142,7 @@ TEST_F(XRRuntimeManagerTest, AddRemoveDevices) {
 
   device::mojom::XRSessionOptions options = {};
   options.environment_integration = true;
+  options.immersive = true;
   EXPECT_TRUE(DeviceManager()->GetRuntimeForOptions(&options));
   Provider()->RemoveDevice(device->GetId());
   EXPECT_TRUE(!DeviceManager()->GetRuntimeForOptions(&options));

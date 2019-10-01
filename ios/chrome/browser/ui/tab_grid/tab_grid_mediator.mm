@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/scoped_observer.h"
 #include "components/favicon/ios/web_favicon_driver.h"
@@ -13,16 +14,15 @@
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
 #import "ios/chrome/browser/chrome_url_util.h"
-#include "ios/chrome/browser/experimental_flags.h"
 #import "ios/chrome/browser/snapshots/snapshot_cache.h"
 #import "ios/chrome/browser/snapshots/snapshot_cache_factory.h"
 #import "ios/chrome/browser/snapshots/snapshot_cache_observer.h"
 #import "ios/chrome/browser/snapshots/snapshot_tab_helper.h"
+#include "ios/chrome/browser/system_flags.h"
 #import "ios/chrome/browser/tabs/tab_model.h"
 #import "ios/chrome/browser/tabs/tab_title_util.h"
 #import "ios/chrome/browser/ui/tab_grid/grid/grid_consumer.h"
 #import "ios/chrome/browser/ui/tab_grid/grid/grid_item.h"
-#include "ios/chrome/browser/ui/util/ui_util.h"
 #import "ios/chrome/browser/web/tab_id_tab_helper.h"
 #include "ios/chrome/browser/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/web_state_list/web_state_list_observer_bridge.h"
@@ -64,11 +64,6 @@ NSArray* CreateItems(WebStateList* web_state_list) {
 
 // Returns the ID of the active tab in |web_state_list|.
 NSString* GetActiveTabId(WebStateList* web_state_list) {
-  // TODO(crbug.com/877792) : Real-world crashes have been caused by
-  // |web_state_list| being nil in this function. Capture histogram to retain
-  // visibility of issue severity.
-  UMA_HISTOGRAM_BOOLEAN("IOS.TabGridMediator.GetActiveTabIDNilWebStateList",
-                        !web_state_list);
   if (!web_state_list)
     return nil;
 
@@ -214,11 +209,6 @@ web::WebState* GetWebStateWithId(WebStateList* web_state_list,
 - (void)webStateList:(WebStateList*)webStateList
     didDetachWebState:(web::WebState*)webState
               atIndex:(int)index {
-  // TODO(crbug.com/877792) : Real-world crashes have been caused by
-  // |webStateList| being nil in this callback. Capture histogram to retain
-  // visibility of issue severity.
-  UMA_HISTOGRAM_BOOLEAN("IOS.TabGridMediator.DidDetachNilWebStateList",
-                        !webStateList);
   if (!webStateList)
     return;
   TabIdTabHelper* tabHelper = TabIdTabHelper::FromWebState(webState);
@@ -400,16 +390,10 @@ web::WebState* GetWebStateWithId(WebStateList* web_state_list,
   if (IsURLNtp(webState->GetVisibleURL())) {
     return;
   }
-  UIImage* defaultFavicon;
-  if (IsUIRefreshPhase1Enabled()) {
-    if (webState->GetBrowserState()->IsOffTheRecord()) {
-      defaultFavicon = [UIImage imageNamed:@"default_world_favicon_incognito"];
-    } else {
-      defaultFavicon = [UIImage imageNamed:@"default_world_favicon_regular"];
-    }
-  } else {
-    defaultFavicon = [UIImage imageNamed:@"default_favicon"];
-  }
+  UIImage* defaultFavicon =
+      webState->GetBrowserState()->IsOffTheRecord()
+          ? [UIImage imageNamed:@"default_world_favicon_incognito"]
+          : [UIImage imageNamed:@"default_world_favicon_regular"];
   completion(defaultFavicon);
 
   favicon::FaviconDriver* faviconDriver =

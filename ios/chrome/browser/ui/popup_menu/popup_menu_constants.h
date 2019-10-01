@@ -5,7 +5,7 @@
 #ifndef IOS_CHROME_BROWSER_UI_POPUP_MENU_POPUP_MENU_CONSTANTS_H_
 #define IOS_CHROME_BROWSER_UI_POPUP_MENU_POPUP_MENU_CONSTANTS_H_
 
-#import <UIKit/UIKit.h>
+#import <Foundation/Foundation.h>
 
 // Accessibility IDs for the table view in various kinds of popup menus.
 extern NSString* const kPopupMenuToolsMenuTableViewId;
@@ -36,6 +36,8 @@ extern NSString* const kToolsMenuOtherDevicesId;
 extern NSString* const kToolsMenuHistoryId;
 // Report an issue item accessibility Identifier.
 extern NSString* const kToolsMenuReportAnIssueId;
+// Translate item accessibility Identifier.
+extern NSString* const kToolsMenuTranslateId;
 // Find in Page item accessibility Identifier.
 extern NSString* const kToolsMenuFindInPageId;
 // Request desktop item accessibility Identifier.

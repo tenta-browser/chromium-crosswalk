@@ -4,12 +4,13 @@
 
 package org.chromium.chrome.test.ui;
 
-import android.app.Activity;
 import android.os.Bundle;
 import android.support.annotation.IdRes;
+import android.support.annotation.LayoutRes;
+import android.support.v7.app.AppCompatActivity;
 
 /** Dummy activity to test UI components without Chrome browser initialization and natives. */
-public class DummyUiActivity extends Activity {
+public class DummyUiActivity extends AppCompatActivity {
     private static int sTestTheme;
     private static int sTestLayout;
 
@@ -40,7 +41,7 @@ public class DummyUiActivity extends Activity {
      * launched.
      * @param layoutResID Resource ID to be inflated.
      */
-    public static void setTestLayout(@IdRes int layoutResID) {
+    public static void setTestLayout(@LayoutRes int layoutResID) {
         sTestLayout = layoutResID;
     }
 }

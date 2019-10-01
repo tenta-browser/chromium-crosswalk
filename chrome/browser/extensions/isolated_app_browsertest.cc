@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -72,17 +73,8 @@ std::unique_ptr<net::test_server::HttpResponse> HandleExpectAndSetCookieRequest(
     std::string escaped_value(
         query_string.substr(value_pos.begin, value_pos.len));
 
-    std::string key = net::UnescapeURLComponent(
-        escaped_key,
-        net::UnescapeRule::NORMAL | net::UnescapeRule::SPACES |
-            net::UnescapeRule::PATH_SEPARATORS |
-            net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS);
-
-    std::string value = net::UnescapeURLComponent(
-        escaped_value,
-        net::UnescapeRule::NORMAL | net::UnescapeRule::SPACES |
-            net::UnescapeRule::PATH_SEPARATORS |
-            net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS);
+    std::string key = net::UnescapeBinaryURLComponent(escaped_key);
+    std::string value = net::UnescapeBinaryURLComponent(escaped_value);
 
     if (key == "expect") {
       if (request_cookies.find(value) == std::string::npos)

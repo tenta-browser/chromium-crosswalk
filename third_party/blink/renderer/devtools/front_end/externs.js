@@ -906,6 +906,24 @@ ReportRenderer.prototype = {
 };
 
 /**
+ * @constructor
+ * @param {!DOM} dom
+ */
+const ReportUIFeatures = function(dom) {};
+
+ReportUIFeatures.prototype = {
+  /**
+   * @param {!Document|!Element} context
+   */
+  setTemplateContext: function(context) {},
+
+  /**
+   * @param {!ReportRenderer.ReportJSON} report
+   */
+  initFeatures: function(report) {},
+};
+
+/**
  * @typedef {{
  *     rawValue: (number|boolean|undefined),
  *     id: string,
@@ -1050,3 +1068,20 @@ Clipboard.prototype.writeText = function(data) {};
 
 /** @type {Clipboard} */
 Navigator.prototype.clipboard;
+
+const Lighthouse = {};
+
+Lighthouse.ReportGenerator = {};
+
+/**
+ * @param {!ReportRenderer.ReportJSON} lhr
+ * @return {string}
+ */
+Lighthouse.ReportGenerator.generateReportHtml;
+
+/**
+ * @param {string} source
+ * @param {Array<{search: string, replacement: string}>} replacements
+ * @return {string}
+ */
+Lighthouse.ReportGenerator.replaceStrings;

@@ -6,8 +6,8 @@
 #include <tuple>
 
 #include "ash/accelerators/accelerator_table.h"
+#include "base/hash/md5.h"
 #include "base/macros.h"
-#include "base/md5.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -17,10 +17,10 @@ namespace ash {
 namespace {
 
 // The number of non-Search-based accelerators.
-constexpr int kNonSearchAcceleratorsNum = 89;
+constexpr int kNonSearchAcceleratorsNum = 92;
 // The hash of non-Search-based accelerators. See HashAcceleratorData().
 constexpr char kNonSearchAcceleratorsHash[] =
-    "bb35892635c794d78a20ff5f8a051aab";
+    "aebfcdff71290bb9af4060871b72e4f7";
 
 struct Cmp {
   bool operator()(const AcceleratorData& lhs,

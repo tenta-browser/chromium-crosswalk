@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/metrics/user_metrics.h"
 #include "base/single_thread_task_runner.h"
@@ -246,9 +247,9 @@ void WebViewPermissionHelper::OnMediaPermissionResponse(
 void WebViewPermissionHelper::CanDownload(
     const GURL& url,
     const std::string& request_method,
-    const base::Callback<void(bool)>& callback) {
+    base::OnceCallback<void(bool)> callback) {
   web_view_permission_helper_delegate_->CanDownload(url, request_method,
-                                                    callback);
+                                                    std::move(callback));
 }
 
 void WebViewPermissionHelper::RequestPointerLockPermission(
@@ -263,9 +264,9 @@ void WebViewPermissionHelper::RequestGeolocationPermission(
     int bridge_id,
     const GURL& requesting_frame,
     bool user_gesture,
-    const base::Callback<void(bool)>& callback) {
+    base::OnceCallback<void(bool)> callback) {
   web_view_permission_helper_delegate_->RequestGeolocationPermission(
-      bridge_id, requesting_frame, user_gesture, callback);
+      bridge_id, requesting_frame, user_gesture, std::move(callback));
 }
 
 void WebViewPermissionHelper::CancelGeolocationPermissionRequest(

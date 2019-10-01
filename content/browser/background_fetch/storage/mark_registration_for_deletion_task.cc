@@ -6,13 +6,13 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "content/browser/background_fetch/background_fetch.pb.h"
 #include "content/browser/background_fetch/background_fetch_data_manager.h"
 #include "content/browser/background_fetch/storage/database_helpers.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
 
 namespace content {
-
 namespace background_fetch {
 
 MarkRegistrationForDeletionTask::MarkRegistrationForDeletionTask(
@@ -159,5 +159,4 @@ std::string MarkRegistrationForDeletionTask::HistogramName() const {
 }
 
 }  // namespace background_fetch
-
 }  // namespace content

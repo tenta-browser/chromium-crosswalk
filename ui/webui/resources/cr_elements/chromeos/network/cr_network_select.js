@@ -44,6 +44,9 @@ Polymer({
       reflectToAttribute: true,
     },
 
+    /** Whether to show technology badges on mobile network icons. */
+    showTechnologyBadge: {type: Boolean, value: true},
+
     /**
      * List of all network state data for all visible networks.
      * @private {!Array<!CrOnc.NetworkStateProperties>}
@@ -215,7 +218,8 @@ Polymer({
   },
 
   /**
-   * Modifies |networkStates| to include a cellular network if none exists.
+   * Modifies |networkStates| to include a cellular network if one is required
+   * but does not exist.
    * @param {!Array<!CrOnc.NetworkStateProperties>} networkStates
    * @private
    */
@@ -225,6 +229,21 @@ Polymer({
         })) {
       return;
     }
+    let connectionState;
+    switch (this.cellularDeviceState_.State) {
+      case CrOnc.DeviceState.DISABLED:
+      case CrOnc.DeviceState.PROHIBITED:
+        return;  // No Cellular network
+      case CrOnc.DeviceState.UNINITIALIZED:
+      case CrOnc.DeviceState.ENABLING:
+        // Leave |connectionState| undefined to indicate "initializing".
+        break;
+      case CrOnc.DeviceState.ENABLED:
+        // The default network state is never connected. When a real network
+        // state is provided, it will have ConnectionState properly set.
+        connectionState = CrOnc.ConnectionState.NOT_CONNECTED;
+        break;
+    }
     // Add a Cellular network after the Ethernet network if it exists.
     const idx = networkStates.length > 0 &&
             networkStates[0].Type == CrOnc.Type.ETHERNET ?
@@ -233,7 +252,8 @@ Polymer({
     const cellular = {
       GUID: '',
       Type: CrOnc.Type.CELLULAR,
-      Cellular: {Scanning: this.cellularDeviceState_.Scanning}
+      Cellular: {Scanning: this.cellularDeviceState_.Scanning},
+      ConnectionState: connectionState,
     };
     networkStates.splice(idx, 0, cellular);
   },

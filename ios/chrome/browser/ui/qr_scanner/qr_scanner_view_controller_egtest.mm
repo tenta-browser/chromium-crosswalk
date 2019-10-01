@@ -12,7 +12,6 @@
 #include "components/strings/grit/components_strings.h"
 #include "components/version_info/version_info.h"
 #import "ios/chrome/app/main_controller.h"
-#import "ios/chrome/browser/ui/browser_view_controller.h"
 #include "ios/chrome/browser/ui/icons/chrome_icon.h"
 #import "ios/chrome/browser/ui/location_bar/location_bar_coordinator.h"
 #import "ios/chrome/browser/ui/location_bar/location_bar_url_loader.h"
@@ -22,11 +21,15 @@
 #include "ios/chrome/browser/ui/qr_scanner/qr_scanner_view_controller.h"
 #import "ios/chrome/browser/ui/toolbar/public/features.h"
 #include "ios/chrome/browser/ui/util/ui_util.h"
+#import "ios/chrome/browser/url_loading/url_loading_params.h"
+#import "ios/chrome/browser/url_loading/url_loading_service.h"
+#import "ios/chrome/browser/url_loading/url_loading_service_factory.h"
 #include "ios/chrome/grit/ios_chromium_strings.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
 #import "ios/chrome/test/base/scoped_block_swizzler.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
+#import "ios/chrome/test/earl_grey/chrome_error_util.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
 #import "ios/web/public/test/http_server/http_server.h"
@@ -113,8 +116,9 @@ void ShowQRScanner() {
   // Tap the omnibox to get the keyboard accessory view to show up.
   [[EarlGrey selectElementWithMatcher:chrome_test_util::NewTabPageOmnibox()]
       performAction:grey_tap()];
-  [ChromeEarlGrey
-      waitForElementWithMatcherSufficientlyVisible:chrome_test_util::Omnibox()];
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey waitForSufficientlyVisibleElementWithMatcher:
+                          chrome_test_util::Omnibox()]);
 
   // Tap the QR Code scanner button in the keyboard accessory view.
   id<GREYMatcher> matcher =
@@ -413,20 +417,22 @@ void TapKeyboardReturnKeyInOmniboxWithText(std::string text) {
     (const GURL&)replacementURL {
   // The specific class to swizzle depends on whether the UIRefresh experiment
   // is enabled.
-    void (^loadGURLFromLocationBarBlock)(LocationBarCoordinator*, const GURL&,
-                                         ui::PageTransition) =
-        ^void(LocationBarCoordinator* self, const GURL& url,
-              ui::PageTransition transition) {
-          web::NavigationManager::WebLoadParams params(replacementURL);
-          params.transition_type = transition;
-          ChromeLoadParams chromeParams(params);
-          [self.URLLoader loadURLWithParams:chromeParams];
-          [self cancelOmniboxEdit];
-        };
-    load_GURL_from_location_bar_swizzler_.reset(new ScopedBlockSwizzler(
-        [LocationBarCoordinator class],
-        @selector(loadGURLFromLocationBar:transition:disposition:),
-        loadGURLFromLocationBarBlock));
+  void (^loadGURLFromLocationBarBlock)(LocationBarCoordinator*,
+                                       TemplateURLRef::PostContent*,
+                                       const GURL&, ui::PageTransition) =
+      ^void(LocationBarCoordinator* self,
+            TemplateURLRef::PostContent* postContent, const GURL& url,
+            ui::PageTransition transition) {
+        web::NavigationManager::WebLoadParams params(replacementURL);
+        params.transition_type = transition;
+        UrlLoadingServiceFactory::GetForBrowserState(self.browserState)
+            ->Load(UrlLoadParams::InCurrentTab(params));
+        [self cancelOmniboxEdit];
+      };
+  load_GURL_from_location_bar_swizzler_.reset(new ScopedBlockSwizzler(
+      [LocationBarCoordinator class],
+      @selector(loadGURLFromLocationBar:postContent:transition:disposition:),
+      loadGURLFromLocationBarBlock));
 }
 
 // Creates a new CameraController mock with camera permission granted if
@@ -771,7 +777,8 @@ void TapKeyboardReturnKeyInOmniboxWithText(std::string text) {
   } else {
     TapKeyboardReturnKeyInOmniboxWithText(result);
   }
-  [ChromeEarlGrey waitForWebViewContainingText:response];
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey waitForWebStateContainingText:response]);
 
   // Press the back button to get back to the NTP.
   [[EarlGrey selectElementWithMatcher:chrome_test_util::BackButton()]

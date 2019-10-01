@@ -9,6 +9,7 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/macros.h"
@@ -17,6 +18,7 @@
 #include "base/no_destructor.h"
 #include "base/strings/string_split.h"
 #include "base/timer/timer.h"
+#include "build/build_config.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_features.h"
@@ -35,10 +37,13 @@ bool IsSiteIsolationDisabled() {
     return true;
   }
 
+#if defined(OS_ANDROID)
+  // Desktop platforms no longer support disabling Site Isolation by policy.
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kDisableSiteIsolationForPolicy)) {
     return true;
   }
+#endif
 
   return GetContentClient() &&
          GetContentClient()->browser()->ShouldDisableSiteIsolation();
@@ -75,8 +80,6 @@ void SiteIsolationPolicy::PopulateURLLoaderFactoryParamsPtrForCORB(
   }
 
   params->is_corb_enabled = true;
-  params->corb_detachable_resource_type = RESOURCE_TYPE_PREFETCH;
-  params->corb_excluded_resource_type = RESOURCE_TYPE_PLUGIN_RESOURCE;
 }
 
 // static
@@ -99,6 +102,19 @@ bool SiteIsolationPolicy::AreIsolatedOriginsEnabled() {
 }
 
 // static
+bool SiteIsolationPolicy::IsStrictOriginIsolationEnabled() {
+  // TODO(wjmaclean): Figure out what should happen when this feature is
+  // combined with --isolate-origins.
+  if (IsSiteIsolationDisabled())
+    return false;
+
+  // The feature needs to be checked last, because checking the feature
+  // activates the field trial and assigns the client either to a control or an
+  // experiment group - such assignment should be final.
+  return base::FeatureList::IsEnabled(features::kStrictOriginIsolation);
+}
+
+// static
 bool SiteIsolationPolicy::IsErrorPageIsolationEnabled(bool in_main_frame) {
   return GetContentClient()->browser()->ShouldIsolateErrorPage(in_main_frame);
 }
@@ -112,6 +128,11 @@ bool SiteIsolationPolicy::ShouldPdfCompositorBeEnabledForOopifs() {
   // feature testing purpose. Eventually, we will remove this check and use pdf
   // compositor service by default for printing.
   return AreIsolatedOriginsEnabled() || UseDedicatedProcessesForAllSites();
+}
+
+// static
+bool SiteIsolationPolicy::AreDynamicIsolatedOriginsEnabled() {
+  return !IsSiteIsolationDisabled();
 }
 
 // static

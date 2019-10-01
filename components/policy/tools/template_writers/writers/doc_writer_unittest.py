@@ -63,6 +63,12 @@ class DocWriterUnittest(writer_unittest_common.WriterUnittestCommon):
         'doc_description': {
             'text': '_test_description'
         },
+        'doc_schema': {
+            'text': '_test_schema'
+        },
+        'doc_url_schema': {
+            'text': '_test_url_schema'
+        },
         'doc_arc_support': {
             'text': '_test_arc_support'
         },
@@ -195,7 +201,7 @@ class DocWriterUnittest(writer_unittest_common.WriterUnittestCommon):
     # Test if localized messages are retrieved correctly.
     self.writer.messages = {'doc_hello_world': {'text': 'hello, vilag!'}}
     self.assertEquals(
-        self.writer._GetLocalizedMessage('hello_world'), 'hello, vilag!')
+        self.writer.GetLocalizedMessage('hello_world'), 'hello, vilag!')
 
   def testMapListToString(self):
     # Test function DocWriter.MapListToString()
@@ -302,6 +308,41 @@ See <a href="http://policy-explanation.example.com">http://policy-explanation.ex
 </p><ul><li>&quot;one&quot; = Disable foo</li><li>&quot;two&quot; = Solve your problem</li><li>&quot;three&quot; = Enable bar</li></ul></root>'''
     )
 
+  def testAddSchema(self):
+    # Test if the schema of a policy is handled correctly.
+    policy = {
+        'type': 'dict',
+        'schema': {
+            'properties': {
+                'foo': {
+                    'type': 'integer'
+                }
+            },
+            'type': 'object'
+        }
+    }
+    self.writer._AddSchema(self.doc_root, policy['schema'])
+    self.assertEquals(
+        self.doc_root.toxml(), '<root>'
+        '<dt style="style_dt;">_test_schema</dt>'
+        '<dd style="style_.monospace;style_.pre-wrap;">{\n'
+        '  &quot;properties&quot;: {\n'
+        '    &quot;foo&quot;: {\n'
+        '      &quot;type&quot;: &quot;integer&quot;\n'
+        '    }\n'
+        '  }, \n'
+        '  &quot;type&quot;: &quot;object&quot;\n'
+        '}</dd></root>')
+
+  def testAddUrlSchema(self):
+    # Test if the expanded schema description of a policy is handled correctly.
+    policy = {'url_schema': 'https://example.com/details'}
+    self.writer._AddTextWithLinks(self.doc_root, policy['url_schema'])
+    self.assertEquals(
+        self.doc_root.toxml(),
+        '<root><a href="https://example.com/details">https://example.com/details</a></root>'
+    )
+
   def testAddFeatures(self):
     # Test if the list of features of a policy is handled correctly.
     policy = {
@@ -337,21 +378,24 @@ See <a href="http://policy-explanation.example.com">http://policy-explanation.ex
         self.doc_root.toxml(), '<root>'
         '<dl style="style_dd dl;">'
         '<dt>_test_example_value_win</dt>'
-        '<dd style="style_.monospace;style_.pre;">'
+        '<dd style="style_.monospace;style_.pre-wrap;">'
         'MockKey\\PolicyName\\1 = &quot;Foo&quot;\n'
         'MockKey\\PolicyName\\2 = &quot;Bar&quot;'
         '</dd>'
         '<dt>_test_example_value_chrome_os</dt>'
-        '<dd style="style_.monospace;style_.pre;">'
+        '<dd style="style_.monospace;style_.pre-wrap;">'
         'MockKeyCrOS\\PolicyName\\1 = &quot;Foo&quot;\n'
         'MockKeyCrOS\\PolicyName\\2 = &quot;Bar&quot;'
         '</dd>'
         '<dt>Android/Linux:</dt>'
-        '<dd style="style_.monospace;">'
-        '[&quot;Foo&quot;, &quot;Bar&quot;]'
+        '<dd style="style_.monospace;style_.pre-wrap;">'
+        '[\n'
+        '  &quot;Foo&quot;,\n'
+        '  &quot;Bar&quot;\n'
+        ']'
         '</dd>'
         '<dt>Mac:</dt>'
-        '<dd style="style_.monospace;style_.pre;">'
+        '<dd style="style_.monospace;style_.pre-wrap;">'
         '&lt;array&gt;\n'
         '  &lt;string&gt;Foo&lt;/string&gt;\n'
         '  &lt;string&gt;Bar&lt;/string&gt;\n'
@@ -431,8 +475,11 @@ See <a href="http://policy-explanation.example.com">http://policy-explanation.ex
     self.assertEquals(
         self.doc_root.toxml(), '<root><dl style="style_dd dl;">'
         '<dt>Android/Linux:</dt>'
-        '<dd style="style_.monospace;">'
-        '[&quot;one&quot;, &quot;two&quot;]'
+        '<dd style="style_.monospace;style_.pre-wrap;">'
+        '[\n'
+        '  &quot;one&quot;,\n'
+        '  &quot;two&quot;\n'
+        ']'
         '</dd></dl></root>')
 
   def testStringEnumListExample(self):
@@ -449,8 +496,11 @@ See <a href="http://policy-explanation.example.com">http://policy-explanation.ex
     self.assertEquals(
         self.doc_root.toxml(), '<root><dl style="style_dd dl;">'
         '<dt>Android/Linux:</dt>'
-        '<dd style="style_.monospace;">'
-        '[&quot;one&quot;, &quot;two&quot;]'
+        '<dd style="style_.monospace;style_.pre-wrap;">'
+        '[\n'
+        '  &quot;one&quot;,\n'
+        '  &quot;two&quot;\n'
+        ']'
         '</dd></dl></root>')
 
   def testStringExample(self):
@@ -623,6 +673,16 @@ See <a href="http://policy-explanation.example.com">http://policy-explanation.ex
             'TestPolicyCaption',
         'desc':
             'TestPolicyDesc',
+        'schema': {
+            'properties': {
+                'foo': {
+                    'type': 'integer'
+                }
+            },
+            'type': 'object'
+        },
+        'url_schema':
+            'https://example.com/details',
         'supported_on': [{
             'product': 'chrome',
             'platforms': ['win', 'mac', 'linux', 'chrome_os'],
@@ -656,20 +716,40 @@ See <a href="http://policy-explanation.example.com">http://policy-explanation.ex
         '<dt style="style_dt;">_test_supported_features</dt>'
         '<dd>_test_feature_dynamic_refresh: _test_not_supported</dd>'
         '<dt style="style_dt;">_test_description</dt><dd><p>TestPolicyDesc</p></dd>'
+        '<dt style="style_dt;">_test_schema</dt>'
+        '<dd style="style_.monospace;style_.pre-wrap;">{\n'
+        '  &quot;properties&quot;: {\n'
+        '    &quot;foo&quot;: {\n'
+        '      &quot;type&quot;: &quot;integer&quot;\n'
+        '    }\n'
+        '  }, \n'
+        '  &quot;type&quot;: &quot;object&quot;\n'
+        '}</dd>'
+        '<dt style="style_dt;">_test_url_schema</dt>'
+        '<dd><a href="https://example.com/details">https://example.com/details</a></dd>'
         '<dt style="style_dt;">_test_example_value</dt>'
         '<dd>'
         '<dl style="style_dd dl;">'
         '<dt>_test_example_value_win</dt>'
-        '<dd style="style_.monospace;style_.pre;">'
-        'MockKey\TestPolicyName = {&quot;foo&quot;: 123}</dd>'
+        '<dd style="style_.monospace;style_.pre-wrap;">'
+        'MockKey\TestPolicyName = {\n'
+        '  &quot;foo&quot;: 123\n'
+        '}'
+        '</dd>'
         '<dt>_test_example_value_chrome_os</dt>'
-        '<dd style="style_.monospace;style_.pre;">'
-        'MockKeyCrOS\TestPolicyName = {&quot;foo&quot;: 123}</dd>'
+        '<dd style="style_.monospace;style_.pre-wrap;">'
+        'MockKeyCrOS\TestPolicyName = {\n'
+        '  &quot;foo&quot;: 123\n'
+        '}'
+        '</dd>'
         '<dt>Android/Linux:</dt>'
-        '<dd style="style_.monospace;">'
-        'TestPolicyName: {&quot;foo&quot;: 123}</dd>'
+        '<dd style="style_.monospace;style_.pre-wrap;">'
+        'TestPolicyName: {\n'
+        '  &quot;foo&quot;: 123\n'
+        '}'
+        '</dd>'
         '<dt>Mac:</dt>'
-        '<dd style="style_.monospace;style_.pre;">'
+        '<dd style="style_.monospace;style_.pre-wrap;">'
         '&lt;key&gt;TestPolicyName&lt;/key&gt;\n'
         '&lt;dict&gt;\n'
         '  &lt;key&gt;foo&lt;/key&gt;\n'
@@ -692,6 +772,17 @@ See <a href="http://policy-explanation.example.com">http://policy-explanation.ex
             'TestPolicyCaption',
         'desc':
             'TestPolicyDesc',
+        'description_schema': {
+            'properties': {
+                'url': {
+                    'type': 'string'
+                },
+                'hash': {
+                    'type': 'string'
+                },
+            },
+            'type': 'object'
+        },
         'supported_on': [{
             'product': 'chrome',
             'platforms': ['win', 'mac', 'linux'],
@@ -725,23 +816,37 @@ See <a href="http://policy-explanation.example.com">http://policy-explanation.ex
         '<dt style="style_dt;">_test_supported_features</dt>'
         '<dd>_test_feature_dynamic_refresh: _test_not_supported</dd>'
         '<dt style="style_dt;">_test_description</dt><dd><p>TestPolicyDesc</p></dd>'
+        '<dt style="style_dt;">_test_schema</dt>'
+        '<dd style="style_.monospace;style_.pre-wrap;">{\n'
+        '  &quot;properties&quot;: {\n'
+        '    &quot;hash&quot;: {\n'
+        '      &quot;type&quot;: &quot;string&quot;\n'
+        '    }, \n'
+        '    &quot;url&quot;: {\n'
+        '      &quot;type&quot;: &quot;string&quot;\n'
+        '    }\n'
+        '  }, \n'
+        '  &quot;type&quot;: &quot;object&quot;\n'
+        '}</dd>'
         '<dt style="style_dt;">_test_example_value</dt>'
         '<dd>'
         '<dl style="style_dd dl;">'
         '<dt>_test_example_value_win</dt>'
-        '<dd style="style_.monospace;style_.pre;">'
-        'MockKey\TestPolicyName = {'
-        '&quot;url&quot;: &quot;https://example.com/avatar.jpg&quot;, '
-        '&quot;hash&quot;: &quot;deadbeef&quot;}'
+        '<dd style="style_.monospace;style_.pre-wrap;">'
+        'MockKey\TestPolicyName = {\n'
+        '  &quot;hash&quot;: &quot;deadbeef&quot;, \n'
+        '  &quot;url&quot;: &quot;https://example.com/avatar.jpg&quot;\n'
+        '}'
         '</dd>'
         '<dt>Android/Linux:</dt>'
-        '<dd style="style_.monospace;">'
-        'TestPolicyName: {'
-        '&quot;url&quot;: &quot;https://example.com/avatar.jpg&quot;, '
-        '&quot;hash&quot;: &quot;deadbeef&quot;}'
+        '<dd style="style_.monospace;style_.pre-wrap;">'
+        'TestPolicyName: {\n'
+        '  &quot;hash&quot;: &quot;deadbeef&quot;, \n'
+        '  &quot;url&quot;: &quot;https://example.com/avatar.jpg&quot;\n'
+        '}'
         '</dd>'
         '<dt>Mac:</dt>'
-        '<dd style="style_.monospace;style_.pre;">'
+        '<dd style="style_.monospace;style_.pre-wrap;">'
         '&lt;key&gt;TestPolicyName&lt;/key&gt;\n'
         '&lt;dict&gt;\n'
         '  &lt;key&gt;hash&lt;/key&gt;\n'
@@ -1170,17 +1275,57 @@ See <a href="http://policy-explanation.example.com">http://policy-explanation.ex
         },
     }
     self.writer._AddDictionaryExample(self.doc_root, policy)
-    value = json.dumps(policy['example_value']).replace('"', '&quot;')
     self.assertEquals(
         self.doc_root.toxml(), '<root>'
         '<dl style="style_dd dl;">'
         '<dt>_test_example_value_win</dt>'
-        '<dd style="style_.monospace;style_.pre;">MockKey\PolicyName = ' + value
-        + '</dd>'
+        '<dd style="style_.monospace;style_.pre-wrap;">MockKey\PolicyName = {\n'
+        '  &quot;DictList&quot;: [\n'
+        '    {\n'
+        '      &quot;A&quot;: 1, \n'
+        '      &quot;B&quot;: 2\n'
+        '    }, \n'
+        '    {\n'
+        '      &quot;C&quot;: 3, \n'
+        '      &quot;D&quot;: 4\n'
+        '    }\n'
+        '  ], \n'
+        '  &quot;False&quot;: false, \n'
+        '  &quot;Integer&quot;: 123, \n'
+        '  &quot;List&quot;: [\n'
+        '    &quot;1&quot;, \n'
+        '    &quot;2&quot;, \n'
+        '    &quot;3&quot;\n'
+        '  ], \n'
+        '  &quot;ProxyMode&quot;: &quot;direct&quot;, \n'
+        '  &quot;True&quot;: true\n'
+        '}'
+        '</dd>'
         '<dt>Android/Linux:</dt>'
-        '<dd style="style_.monospace;">PolicyName: ' + value + '</dd>'
+        '<dd style="style_.monospace;style_.pre-wrap;">PolicyName: {\n'
+        '  &quot;DictList&quot;: [\n'
+        '    {\n'
+        '      &quot;A&quot;: 1, \n'
+        '      &quot;B&quot;: 2\n'
+        '    }, \n'
+        '    {\n'
+        '      &quot;C&quot;: 3, \n'
+        '      &quot;D&quot;: 4\n'
+        '    }\n'
+        '  ], \n'
+        '  &quot;False&quot;: false, \n'
+        '  &quot;Integer&quot;: 123, \n'
+        '  &quot;List&quot;: [\n'
+        '    &quot;1&quot;, \n'
+        '    &quot;2&quot;, \n'
+        '    &quot;3&quot;\n'
+        '  ], \n'
+        '  &quot;ProxyMode&quot;: &quot;direct&quot;, \n'
+        '  &quot;True&quot;: true\n'
+        '}'
+        '</dd>'
         '<dt>Mac:</dt>'
-        '<dd style="style_.monospace;style_.pre;">'
+        '<dd style="style_.monospace;style_.pre-wrap;">'
         '&lt;key&gt;PolicyName&lt;/key&gt;\n'
         '&lt;dict&gt;\n'
         '  &lt;key&gt;DictList&lt;/key&gt;\n'
@@ -1242,17 +1387,23 @@ See <a href="http://policy-explanation.example.com">http://policy-explanation.ex
         },
     }
     self.writer._AddDictionaryExample(self.doc_root, policy)
-    value = json.dumps(policy['example_value']).replace('"', '&quot;')
     self.assertEquals(
         self.doc_root.toxml(), '<root>'
         '<dl style="style_dd dl;">'
         '<dt>_test_example_value_win</dt>'
-        '<dd style="style_.monospace;style_.pre;">MockKey\PolicyName = ' + value
-        + '</dd>'
+        '<dd style="style_.monospace;style_.pre-wrap;">MockKey\PolicyName = {\n'
+        '  &quot;hash&quot;: &quot;deadbeef&quot;, \n'
+        '  &quot;url&quot;: &quot;https://example.com/avatar.jpg&quot;\n'
+        '}'
+        '</dd>'
         '<dt>Android/Linux:</dt>'
-        '<dd style="style_.monospace;">PolicyName: ' + value + '</dd>'
+        '<dd style="style_.monospace;style_.pre-wrap;">PolicyName: {\n'
+        '  &quot;hash&quot;: &quot;deadbeef&quot;, \n'
+        '  &quot;url&quot;: &quot;https://example.com/avatar.jpg&quot;\n'
+        '}'
+        '</dd>'
         '<dt>Mac:</dt>'
-        '<dd style="style_.monospace;style_.pre;">'
+        '<dd style="style_.monospace;style_.pre-wrap;">'
         '&lt;key&gt;PolicyName&lt;/key&gt;\n'
         '&lt;dict&gt;\n'
         '  &lt;key&gt;hash&lt;/key&gt;\n'

@@ -7,7 +7,10 @@
 #include <string>
 #include <utility>
 
+#include "ash/keyboard/ui/keyboard_controller.h"
 #include "ash/shell.h"
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/macros.h"
 #include "base/no_destructor.h"
 #include "chrome/browser/ui/ash/keyboard/chrome_keyboard_bounds_observer.h"
@@ -22,7 +25,6 @@
 #include "ui/compositor/layer.h"
 #include "ui/compositor_extra/shadow.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/keyboard/keyboard_controller.h"
 #include "ui/wm/core/shadow_types.h"
 
 namespace {
@@ -49,12 +51,12 @@ aura::Window* ChromeKeyboardUI::LoadKeyboardWindow(LoadCallback callback) {
       browser_context_,
       ChromeKeyboardControllerClient::Get()->GetVirtualKeyboardUrl(),
       base::BindOnce(
-          [](LoadCallback callback, const base::UnguessableToken&,
-             const gfx::Size&) {
+          [](LoadCallback callback, const gfx::Size&) {
             ChromeKeyboardControllerClient::Get()->NotifyKeyboardLoaded();
             std::move(callback).Run();
           },
-          std::move(callback)));
+          std::move(callback)),
+      base::NullCallback());
 
   aura::Window* keyboard_window =
       keyboard_contents_->web_contents()->GetNativeView();

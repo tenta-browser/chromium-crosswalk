@@ -8,8 +8,10 @@
 #include <string.h>
 
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
@@ -38,7 +40,7 @@
 #include "chromecast/browser/cast_net_log.h"
 #include "chromecast/browser/devtools/remote_debugging_server.h"
 #include "chromecast/browser/media/media_caps_impl.h"
-#include "chromecast/browser/metrics/cast_metrics_service_client.h"
+#include "chromecast/browser/metrics/cast_browser_metrics.h"
 #include "chromecast/browser/tts/tts_controller_impl.h"
 #include "chromecast/browser/tts/tts_platform_stub.h"
 #include "chromecast/browser/url_request_context_factory.h"
@@ -48,6 +50,7 @@
 #include "chromecast/media/base/media_resource_tracker.h"
 #include "chromecast/media/base/video_plane_controller.h"
 #include "chromecast/media/cma/backend/media_pipeline_backend_manager.h"
+#include "chromecast/metrics/cast_metrics_service_client.h"
 #include "chromecast/net/connectivity_checker.h"
 #include "chromecast/public/cast_media_shlib.h"
 #include "chromecast/service/cast_service.h"
@@ -63,7 +66,6 @@
 #include "media/base/media_switches.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "ui/base/ui_base_switches.h"
-#include "ui/compositor/compositor_switches.h"
 #include "ui/gl/gl_switches.h"
 
 #if defined(OS_LINUX)
@@ -97,6 +99,7 @@
 #include "chromecast/graphics/cast_window_manager_aura.h"
 #include "components/viz/service/display/overlay_strategy_underlay_cast.h"  // nogncheck
 #include "ui/display/screen.h"
+#include "ui/views/views_delegate.h"  // nogncheck
 #else
 #include "chromecast/graphics/cast_window_manager_default.h"
 #endif
@@ -120,6 +123,12 @@
 #if !defined(OS_ANDROID) && !defined(OS_FUCHSIA)
 #include "device/bluetooth/cast/bluetooth_adapter_cast.h"
 #endif  // !defined(OS_ANDROID) && !defined(OS_FUCHSIA)
+
+#if !defined(OS_FUCHSIA)
+#include "base/bind_helpers.h"
+#include "components/heap_profiling/client_connection_manager.h"
+#include "components/heap_profiling/supervisor.h"
+#endif  // !defined(OS_FUCHSIA)
 
 namespace {
 
@@ -218,6 +227,33 @@ void DeregisterKillOnAlarm() {
 
 #endif  // !defined(OS_ANDROID) && !defined(OS_FUCHSIA)
 
+#if !defined(OS_FUCHSIA)
+
+std::unique_ptr<heap_profiling::ClientConnectionManager>
+CreateClientConnectionManager(
+    base::WeakPtr<heap_profiling::Controller> controller_weak_ptr,
+    heap_profiling::Mode mode) {
+  return std::make_unique<heap_profiling::ClientConnectionManager>(
+      std::move(controller_weak_ptr), mode);
+}
+
+#endif
+
+#if defined(USE_AURA)
+
+// Provide a basic implementation. No need to override anything since we're not
+// planning on customizing any behavior at this point.
+class CastViewsDelegate : public views::ViewsDelegate {
+ public:
+  CastViewsDelegate() = default;
+  ~CastViewsDelegate() override = default;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(CastViewsDelegate);
+};
+
+#endif  // defined(USE_AURA)
+
 }  // namespace
 
 namespace chromecast {
@@ -300,10 +336,10 @@ void AddDefaultCommandLineSwitches(base::CommandLine* command_line) {
     std::string name(default_switch.switch_name);
     if (!command_line->HasSwitch(name)) {
       std::string value(default_switch.switch_value);
-      VLOG(2) << "Set default switch '" << name << "' = '" << value << "'";
+      DVLOG(2) << "Set default switch '" << name << "' = '" << value << "'";
       command_line->AppendSwitchASCII(name, value);
     } else {
-      VLOG(2) << "Skip setting default switch '" << name << "', already set";
+      DVLOG(2) << "Skip setting default switch '" << name << "', already set";
     }
   }
 }
@@ -393,6 +429,12 @@ void CastBrowserMainParts::PostMainMessageLoopStart() {
 }
 
 void CastBrowserMainParts::ToolkitInitialized() {
+#if defined(USE_AURA)
+  // Needs to be initialize before any UI is created.
+  if (!views::ViewsDelegate::GetInstance())
+    views_delegate_ = std::make_unique<CastViewsDelegate>();
+#endif  // defined(USE_AURA)
+
 #if defined(OS_LINUX)
   // Without this call, the FontConfig library gets implicitly initialized
   // on the first call to FontConfig. Since it's not safe to initialize it
@@ -477,6 +519,7 @@ void CastBrowserMainParts::PreMainMessageLoopRun() {
       std::make_unique<CastBrowserContext>(url_request_context_factory_));
   cast_browser_process_->SetMetricsServiceClient(
       std::make_unique<metrics::CastMetricsServiceClient>(
+          cast_browser_process_->browser_client(),
           cast_browser_process_->pref_service(),
           content::BrowserContext::GetDefaultStoragePartition(
               cast_browser_process_->browser_context())
@@ -568,10 +611,14 @@ void CastBrowserMainParts::PreMainMessageLoopRun() {
 #endif
 
   // Initializing metrics service and network delegates must happen after cast
-  // service is intialized because CastMetricsServiceClient and
-  // CastNetworkDelegate may use components initialized by cast service.
-  cast_browser_process_->metrics_service_client()->Initialize();
+  // service is initialized because CastMetricsServiceClient,
+  // CastURLLoaderThrottle and CastNetworkDelegate may use components
+  // initialized by cast service.
+  cast_browser_process_->cast_browser_metrics()->Initialize();
+  cast_content_browser_client_->InitializeURLLoaderThrottleDelegate();
   url_request_context_factory_->InitializeNetworkDelegates();
+
+  cast_content_browser_client_->CreateGeneralAudienceBrowsingService();
 
   cast_browser_process_->cast_service()->Start();
 }
@@ -654,7 +701,7 @@ void CastBrowserMainParts::PostMainMessageLoopRun() {
   window_manager_.reset();
 
   cast_browser_process_->cast_service()->Finalize();
-  cast_browser_process_->metrics_service_client()->Finalize();
+  cast_browser_process_->cast_browser_metrics()->Finalize();
   cast_browser_process_.reset();
 
 #if !defined(OS_FUCHSIA)
@@ -667,6 +714,17 @@ void CastBrowserMainParts::PostDestroyThreads() {
 #if !defined(OS_ANDROID)
   cast_content_browser_client_->ResetMediaResourceTracker();
 #endif  // !defined(OS_ANDROID)
+}
+
+void CastBrowserMainParts::ServiceManagerConnectionStarted(
+    content::ServiceManagerConnection* connection) {
+#if !defined(OS_FUCHSIA)
+  heap_profiling::Supervisor* supervisor =
+      heap_profiling::Supervisor::GetInstance();
+  supervisor->SetClientConnectionManagerConstructor(
+      &CreateClientConnectionManager);
+  supervisor->Start(connection, base::NullCallback());
+#endif  // !defined(OS_FUCHSIA)
 }
 
 }  // namespace shell

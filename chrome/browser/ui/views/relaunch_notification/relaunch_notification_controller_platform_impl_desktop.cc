@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/views/relaunch_notification/relaunch_notification_controller_platform_impl_desktop.h"
 
+#include "base/bind.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/ui/browser.h"
@@ -51,7 +52,8 @@ RelaunchNotificationControllerPlatformImpl::
     RelaunchNotificationControllerPlatformImpl() = default;
 
 void RelaunchNotificationControllerPlatformImpl::NotifyRelaunchRecommended(
-    base::Time detection_time) {
+    base::Time detection_time,
+    bool /*past_deadline*/) {
   // Nothing to do if the bubble is visible.
   if (widget_)
     return;

@@ -10,12 +10,13 @@
 #include "ash/public/cpp/immersive/immersive_focus_watcher.h"
 #include "ash/public/cpp/immersive/immersive_fullscreen_controller_delegate.h"
 #include "ash/public/cpp/window_properties.h"
+#include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
+#include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/cursor_client.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_targeter.h"
-#include "ui/base/ui_base_features.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/events/base_event_utils.h"
@@ -25,7 +26,13 @@
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
 
+DEFINE_UI_CLASS_PROPERTY_TYPE(ash::ImmersiveFullscreenController*)
+
 namespace ash {
+
+DEFINE_UI_CLASS_PROPERTY_KEY(ImmersiveFullscreenController*,
+                             kImmersiveFullscreenControllerKey,
+                             nullptr)
 
 namespace {
 
@@ -87,10 +94,8 @@ bool ImmersiveFullscreenController::value_for_animations_disabled_for_test_ =
 
 ////////////////////////////////////////////////////////////////////////////////
 
-ImmersiveFullscreenController::ImmersiveFullscreenController(
-    ImmersiveContext* context)
-    : immersive_context_(context),
-      animations_disabled_for_test_(value_for_animations_disabled_for_test_) {}
+ImmersiveFullscreenController::ImmersiveFullscreenController()
+    : animations_disabled_for_test_(value_for_animations_disabled_for_test_) {}
 
 ImmersiveFullscreenController::~ImmersiveFullscreenController() {
   EnableEventObservers(false);
@@ -108,6 +113,15 @@ void ImmersiveFullscreenController::Init(
   delegate_ = delegate;
   top_container_ = top_container;
   widget_ = widget;
+
+  // A widget can have more than one ImmersiveFullscreenController
+  // (WideFrameView does this), so this key only tracks the first
+  // ImmersiveFullscreenController.
+  if (nullptr == widget->GetNativeWindow()->GetProperty(
+                     kImmersiveFullscreenControllerKey)) {
+    widget->GetNativeWindow()->SetProperty(kImmersiveFullscreenControllerKey,
+                                           this);
+  }
 
   EnableWindowObservers(true);
 }
@@ -271,6 +285,13 @@ void ImmersiveFullscreenController::EnableForWidget(views::Widget* widget,
     widget->GetNativeWindow()->SetProperty(kImmersiveIsActive, enabled);
 }
 
+// static
+ImmersiveFullscreenController* ImmersiveFullscreenController::GetForTest(
+    views::Widget* widget) {
+  return widget->GetNativeWindow()->GetProperty(
+      kImmersiveFullscreenControllerKey);
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // private:
 
@@ -296,10 +317,7 @@ void ImmersiveFullscreenController::EnableEventObservers(bool enable) {
   event_observers_enabled_ = enable;
 
   aura::Window* window = widget_->GetNativeWindow();
-  // For Mash, handle events sent to the Mus client's root window.
-  if (features::IsUsingWindowService())
-    window = window->GetRootWindow();
-  aura::Env* env = window->env();
+  aura::Env* env = aura::Env::GetInstance();
   if (enable) {
     immersive_focus_watcher_ = std::make_unique<ImmersiveFocusWatcher>(this);
     std::set<ui::EventType> types = {
@@ -371,7 +389,7 @@ void ImmersiveFullscreenController::UpdateTopEdgeHoverTimer(
 
   // Mouse hover should not initiate revealing the top-of-window views while a
   // window has mouse capture.
-  if (immersive_context_->DoesAnyWindowHaveCapture())
+  if (ImmersiveContext::Get()->DoesAnyWindowHaveCapture())
     return;
 
   if (ShouldIgnoreMouseEventAtLocation(location_in_screen))
@@ -428,7 +446,7 @@ void ImmersiveFullscreenController::UpdateLocatedEventRevealedLock(
 
   // Ignore all events while a window has capture. This keeps the top-of-window
   // views revealed during a drag.
-  if (immersive_context_->DoesAnyWindowHaveCapture())
+  if (ImmersiveContext::Get()->DoesAnyWindowHaveCapture())
     return;
 
   if ((!event || event->IsMouseEvent()) &&
@@ -682,7 +700,7 @@ bool ImmersiveFullscreenController::ShouldHandleGestureEvent(
 }
 
 gfx::Rect ImmersiveFullscreenController::GetDisplayBoundsInScreen() const {
-  return immersive_context_->GetDisplayBoundsInScreen(widget_);
+  return ImmersiveContext::Get()->GetDisplayBoundsInScreen(widget_);
 }
 
 bool ImmersiveFullscreenController::IsTargetForWidget(
@@ -703,7 +721,7 @@ void ImmersiveFullscreenController::UpdateEnabled() {
 
   EnableEventObservers(enabled_);
 
-  immersive_context_->OnEnteringOrExitingImmersive(this, enabled);
+  ImmersiveContext::Get()->OnEnteringOrExitingImmersive(this, enabled);
 
   if (enabled_) {
     // Animate enabling immersive mode by sliding out the top-of-window views.

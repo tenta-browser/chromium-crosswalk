@@ -57,12 +57,12 @@ Audits2.ReportRenderer = class extends ReportRenderer {
       origElement.appendChild(element);
     }
   }
-};
 
-class ReportUIFeatures {
   /**
-   * @param {!ReportRenderer.ReportJSON} report
+   * @param {!Element} el
    */
-  initFeatures(report) {
+  static handleDarkMode(el) {
+    if (UI.themeSupport.themeName() === 'dark')
+      el.classList.add('dark');
   }
-}
+};

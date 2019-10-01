@@ -5,6 +5,7 @@
 #include "chrome/browser/push_messaging/push_messaging_notification_manager.h"
 
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
+#include "base/bind.h"
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/test_renderer_host.h"
@@ -75,8 +76,11 @@ TEST_F(PushMessagingNotificationManagerTest,
   bool was_called = false;
   manager.EnforceUserVisibleOnlyRequirements(
       app_url.GetOrigin(), 0l,
-      base::BindRepeating([](bool* was_called) { *was_called = true; },
-                          &was_called));
+      base::BindRepeating(
+          [](bool* was_called, bool did_show_generic_notification) {
+            *was_called = true;
+          },
+          &was_called));
   EXPECT_TRUE(was_called);
 }
 #endif

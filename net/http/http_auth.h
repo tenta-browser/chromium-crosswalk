@@ -12,6 +12,7 @@
 #include "net/base/auth.h"
 #include "net/base/net_export.h"
 #include "net/http/http_util.h"
+#include "net/log/net_log_parameters_callback.h"
 
 template <class T> class scoped_refptr;
 
@@ -20,6 +21,7 @@ namespace net {
 class HttpAuthHandler;
 class HttpAuthHandlerFactory;
 class HttpResponseHeaders;
+class HostResolver;
 class NetLogWithSource;
 class SSLInfo;
 
@@ -102,6 +104,18 @@ class NET_EXPORT_PRIVATE HttpAuth {
     AUTH_SCHEME_MAX,
   };
 
+  // Type of Kerberos credentials delegation to be performed during
+  // authentication.
+  enum class DelegationType {
+    // Disallow delegation.
+    kNone,
+    // Delegate if approved by KDC policy. Implemented in GSSAPI.
+    kByKdcPolicy,
+    // Unconstrained delegation. On Windows both kByKdcPolicy and kUnconstraned
+    // check KDC policy.
+    kUnconstrained,
+  };
+
   // Helper structure used by HttpNetworkTransaction to track
   // the current identity being used for authorization.
   struct Identity {
@@ -127,10 +141,20 @@ class NET_EXPORT_PRIVATE HttpAuth {
   // Returns a string representation of an authentication Scheme.
   static const char* SchemeToString(Scheme scheme);
 
+  // Returns a string representation of an authorization result.
+  static const char* AuthorizationResultToString(
+      AuthorizationResult authorization_result);
+
+  // Use with BoundNetLog to log an authorization result. The returned callback
+  // is valid as long as |name| is valid.
+  static NetLogParametersCallback NetLogAuthorizationResultCallback(
+      const char* name,
+      AuthorizationResult authorization_result);
+
   // Iterate through |response_headers|, and pick the best one that we support.
   // Obtains the implementation class for handling the challenge, and passes it
   // back in |*handler|. If no supported challenge was found, |*handler| is set
-  // to NULL.
+  // to nullptr.
   //
   // |disabled_schemes| is the set of schemes that we should not use.
   //
@@ -147,6 +171,7 @@ class NET_EXPORT_PRIVATE HttpAuth {
       const GURL& origin,
       const std::set<Scheme>& disabled_schemes,
       const NetLogWithSource& net_log,
+      HostResolver* host_resolver,
       std::unique_ptr<HttpAuthHandler>* handler);
 
   // Handle a 401/407 response from a server/proxy after a previous
@@ -156,7 +181,7 @@ class NET_EXPORT_PRIVATE HttpAuth {
   // rejection of the previous challenge, except in the Digest case when a
   // "stale" attribute is present.
   //
-  // |handler| must be non-NULL, and is the HttpAuthHandler from the previous
+  // |handler| must be non-nullptr, and is the HttpAuthHandler from the previous
   // authentication round.
   //
   // |response_headers| must contain the new HTTP response.

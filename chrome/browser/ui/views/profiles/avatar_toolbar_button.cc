@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/views/profiles/avatar_toolbar_button.h"
 
+#include <vector>
+
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/app/vector_icons/vector_icons.h"
@@ -14,7 +16,6 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profiles_state.h"
 #include "chrome/browser/signin/account_consistency_mode_manager.h"
-#include "chrome/browser/signin/account_tracker_service_factory.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/signin/signin_ui_util.h"
 #include "chrome/browser/sync/sync_ui_util.h"
@@ -23,7 +24,8 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/view_ids.h"
-#include "chrome/browser/ui/views/profiles/incognito_window_count_view.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/toolbar/toolbar_ink_drop_util.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/grit/generated_resources.h"
 #include "services/identity/public/cpp/identity_manager.h"
@@ -34,6 +36,7 @@
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/paint_vector_icon.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/button/label_button_border.h"
 
 namespace {
@@ -59,23 +62,17 @@ AvatarToolbarButton::AvatarToolbarButton(Browser* browser)
 #endif  // !defined(OS_CHROMEOS)
       browser_list_observer_(this),
       profile_observer_(this),
-      identity_manager_observer_(this),
-      account_tracker_service_observer_(this) {
-
+      identity_manager_observer_(this) {
   if (IsIncognitoCounterActive())
     browser_list_observer_.Add(BrowserList::GetInstance());
 
   profile_observer_.Add(
       &g_browser_process->profile_manager()->GetProfileAttributesStorage());
 
-  if (!IsIncognito() && !profile_->IsGuestSession()) {
+  if (profile_->IsRegularProfile()) {
     identity_manager_observer_.Add(
         IdentityManagerFactory::GetForProfile(profile_));
-    account_tracker_service_observer_.Add(
-        AccountTrackerServiceFactory::GetForProfile(profile_));
   }
-
-  SetInsets();
 
   // Activate on press for left-mouse-button only to mimic other MenuButtons
   // without drag-drop actions (specifically the adjacent browser menu).
@@ -95,7 +92,7 @@ AvatarToolbarButton::AvatarToolbarButton(Browser* browser)
   // and Guest sessions. It should not be instantiated for regular profiles and
   // it should not be enabled as there's no profile switcher to trigger / show,
   // unless incognito window counter is available.
-  DCHECK(IsIncognito() || profile_->IsGuestSession());
+  DCHECK(!profile_->IsRegularProfile());
   SetEnabled(IsIncognitoCounterActive());
 #else
   // The profile switcher is only available outside incognito or if incognito
@@ -134,26 +131,33 @@ void AvatarToolbarButton::UpdateText() {
       SetTextColor(STATE_DISABLED, text_color);
   }
 
-  if (IsIncognitoCounterActive()) {
-    const int incognito_window_count =
+  if (IsIncognito()) {
+    int incognito_window_count =
         BrowserList::GetIncognitoSessionsActiveForProfile(profile_);
-    if (incognito_window_count > 1) {
-      text = base::IntToString16(incognito_window_count);
-      SetHorizontalAlignment(gfx::ALIGN_LEFT);
+    if (IsIncognitoCounterActive()) {
+      SetAccessibleName(l10n_util::GetPluralStringFUTF16(
+          IDS_INCOGNITO_BUBBLE_ACCESSIBLE_TITLE, incognito_window_count));
+    } else {
+      incognito_window_count = 1;
     }
-  } else if (IsIncognito()) {
-    text = l10n_util::GetStringUTF16(IDS_AVATAR_BUTTON_INCOGNITO);
+    text = l10n_util::GetPluralStringFUTF16(IDS_AVATAR_BUTTON_INCOGNITO,
+                                            incognito_window_count);
   } else if (sync_state == SyncState::kError) {
-    color = gfx::kGoogleRed600;
+    color = AdjustHighlightColorForContrast(
+        GetThemeProvider(), gfx::kGoogleRed300, gfx::kGoogleRed600,
+        gfx::kGoogleRed050, gfx::kGoogleRed900);
     text = l10n_util::GetStringUTF16(IDS_AVATAR_BUTTON_SYNC_ERROR);
   } else if (sync_state == SyncState::kPaused) {
-    color = gfx::kGoogleBlue600;
+    color = AdjustHighlightColorForContrast(
+        GetThemeProvider(), gfx::kGoogleBlue300, gfx::kGoogleBlue600,
+        gfx::kGoogleBlue050, gfx::kGoogleBlue900);
+
     text = l10n_util::GetStringUTF16(IDS_AVATAR_BUTTON_SYNC_PAUSED);
   }
 
+  SetInsets();
   SetHighlightColor(color);
   SetText(text);
-
   SetTooltipText(GetAvatarTooltipText());
 }
 
@@ -162,17 +166,13 @@ void AvatarToolbarButton::NotifyClick(const ui::Event& event) {
   // TODO(bsep): Other toolbar buttons have ToolbarView as a listener and let it
   // call ExecuteCommandWithDisposition on their behalf. Unfortunately, it's not
   // possible to plumb IsKeyEvent through, so this has to be a special case.
-  if (IsIncognitoCounterActive()) {
-    IncognitoWindowCountView::ShowBubble(
-        this, browser_,
-        BrowserList::GetIncognitoSessionsActiveForProfile(profile_));
-  } else {
-    browser_->window()->ShowAvatarBubbleFromAvatarButton(
-        BrowserWindow::AVATAR_BUBBLE_MODE_DEFAULT,
-        signin::ManageAccountsParams(),
-        signin_metrics::AccessPoint::ACCESS_POINT_AVATAR_BUBBLE_SIGN_IN,
-        event.IsKeyEvent());
-  }
+  if (IsIncognito() && !IsIncognitoCounterActive())
+    return;
+
+  browser_->window()->ShowAvatarBubbleFromAvatarButton(
+      BrowserWindow::AVATAR_BUBBLE_MODE_DEFAULT, signin::ManageAccountsParams(),
+      signin_metrics::AccessPoint::ACCESS_POINT_AVATAR_BUBBLE_SIGN_IN,
+      event.IsKeyEvent());
 }
 
 void AvatarToolbarButton::OnThemeChanged() {
@@ -235,11 +235,13 @@ void AvatarToolbarButton::OnAccountsInCookieUpdated(
   UpdateIcon();
 }
 
-void AvatarToolbarButton::OnAccountUpdated(const AccountInfo& info) {
+void AvatarToolbarButton::OnExtendedAccountInfoUpdated(
+    const AccountInfo& info) {
   UpdateIcon();
 }
 
-void AvatarToolbarButton::OnAccountRemoved(const AccountInfo& info) {
+void AvatarToolbarButton::OnExtendedAccountInfoRemoved(
+    const AccountInfo& info) {
   UpdateIcon();
 }
 
@@ -249,7 +251,7 @@ void AvatarToolbarButton::OnTouchUiChanged() {
 }
 
 bool AvatarToolbarButton::IsIncognito() const {
-  return profile_->IsOffTheRecord() && !profile_->IsGuestSession();
+  return profile_->IsIncognitoProfile();
 }
 
 bool AvatarToolbarButton::IsIncognitoCounterActive() const {
@@ -260,8 +262,7 @@ bool AvatarToolbarButton::IsIncognitoCounterActive() const {
 bool AvatarToolbarButton::ShouldShowGenericIcon() const {
   // This function should only be used for regular profiles. Guest and Incognito
   // sessions should be handled separately and never call this function.
-  DCHECK(!profile_->IsGuestSession());
-  DCHECK(!profile_->IsOffTheRecord());
+  DCHECK(profile_->IsRegularProfile());
 #if !defined(OS_CHROMEOS)
   if (!signin_ui_util::GetAccountsForDicePromos(profile_).empty())
     return false;
@@ -272,7 +273,7 @@ bool AvatarToolbarButton::ShouldShowGenericIcon() const {
     // This can happen if the user deletes the current profile.
     return true;
   }
-  return entry->IsUsingDefaultAvatar() &&
+  return entry->GetAvatarIconIndex() == 0 &&
          g_browser_process->profile_manager()
                  ->GetProfileAttributesStorage()
                  .GetNumberOfProfiles() == 1 &&
@@ -307,7 +308,10 @@ base::string16 AvatarToolbarButton::GetAvatarTooltipText() const {
 }
 
 gfx::ImageSkia AvatarToolbarButton::GetAvatarIcon() const {
-  const int icon_size = ui::MaterialDesignController::touch_ui() ? 24 : 20;
+  // Note that the non-touchable icon size is larger than the default to
+  // make the avatar icon easier to read.
+  const int icon_size =
+      ui::MaterialDesignController::touch_ui() ? kDefaultTouchableIconSize : 20;
 
   SkColor icon_color =
       GetThemeProvider()->GetColor(ThemeProperties::COLOR_TOOLBAR_BUTTON_ICON);
@@ -381,8 +385,7 @@ AvatarToolbarButton::SyncState AvatarToolbarButton::GetSyncState() const {
     const bool should_show_sync_paused_ui =
         AccountConsistencyModeManager::IsDiceEnabledForProfile(profile_) &&
         sync_ui_util::GetMessagesForAvatarSyncError(
-            profile_, IdentityManagerFactory::GetForProfile(profile_), &unused,
-            &unused) == sync_ui_util::AUTH_ERROR;
+            profile_, &unused, &unused) == sync_ui_util::AUTH_ERROR;
     return should_show_sync_paused_ui ? SyncState::kPaused : SyncState::kError;
   }
 #endif  // !defined(OS_CHROMEOS)
@@ -392,6 +395,7 @@ AvatarToolbarButton::SyncState AvatarToolbarButton::GetSyncState() const {
 void AvatarToolbarButton::SetInsets() {
   // In non-touch mode we use a larger-than-normal icon size for avatars as 16dp
   // is hard to read for user avatars, so we need to set corresponding insets.
-  SetLayoutInsetDelta(
-      gfx::Insets(ui::MaterialDesignController::touch_ui() ? 0 : -2));
+  gfx::Insets layout_insets(ui::MaterialDesignController::touch_ui() ? 0 : -2);
+
+  SetLayoutInsetDelta(layout_insets);
 }

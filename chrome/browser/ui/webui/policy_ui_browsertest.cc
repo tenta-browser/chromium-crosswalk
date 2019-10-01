@@ -19,9 +19,8 @@
 #include "build/build_config.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
-#include "chrome/browser/policy/profile_policy_connector_factory.h"
+#include "chrome/browser/policy/profile_policy_connector_builder.h"
 #include "chrome/browser/policy/schema_registry_service.h"
-#include "chrome/browser/policy/schema_registry_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -59,8 +58,7 @@ class PolicySchemaAvailableWaiter : public policy::SchemaRegistry::Observer {
  public:
   PolicySchemaAvailableWaiter(Profile* profile,
                               const policy::PolicyNamespace& policy_namespace)
-      : registry_(policy::SchemaRegistryServiceFactory::GetForContext(profile)
-                      ->registry()),
+      : registry_(profile->GetPolicySchemaRegistryService()->registry()),
         policy_namespace_(policy_namespace) {}
 
   ~PolicySchemaAvailableWaiter() override { registry_->RemoveObserver(this); }
@@ -105,6 +103,15 @@ std::vector<std::string> PopulateExpectedPolicy(
     bool unknown) {
   std::vector<std::string> expected_policy;
 
+  // Populate expected policy name.
+  expected_policy.push_back(name);
+
+  // Populate expected policy value.
+  expected_policy.push_back(value);
+
+  // Populate expected source name.
+  expected_policy.push_back(source);
+
   // Populate expected scope.
   if (policy_map_entry) {
     expected_policy.push_back(l10n_util::GetStringUTF8(
@@ -124,26 +131,14 @@ std::vector<std::string> PopulateExpectedPolicy(
   } else {
     expected_policy.push_back(std::string());
   }
-  // Populate expected source name.
-  expected_policy.push_back(source);
-
-  // Populate expected policy name.
-  expected_policy.push_back(name);
-
-  // Populate expected policy value.
-  expected_policy.push_back(value);
 
   // Populate expected status.
   if (unknown)
-    expected_policy.push_back(l10n_util::GetStringUTF8(IDS_POLICY_UNKNOWN));
-  else if (policy_map_entry)
-    expected_policy.push_back(l10n_util::GetStringUTF8(IDS_POLICY_OK));
-  else
+    expected_policy.push_back(l10n_util::GetStringUTF8(IDS_POLICY_LABEL_ERROR));
+  else if (!policy_map_entry)
     expected_policy.push_back(l10n_util::GetStringUTF8(IDS_POLICY_UNSET));
-
-  // Populate expected expanded policy value.
-  expected_policy.push_back(value);
-
+  else
+    expected_policy.push_back(l10n_util::GetStringUTF8(IDS_POLICY_OK));
   return expected_policy;
 }
 
@@ -153,6 +148,8 @@ void SetExpectedPolicy(base::DictionaryValue* expected,
                        const std::string& scope,
                        const std::string& source,
                        const std::string& error,
+                       const std::string& warning,
+                       bool ignored,
                        const base::Value& value) {
   const char prefix[] = "chromePolicies";
   expected->SetPath({prefix, name.c_str(), "level"}, base::Value(level));
@@ -160,6 +157,10 @@ void SetExpectedPolicy(base::DictionaryValue* expected,
   expected->SetPath({prefix, name.c_str(), "source"}, base::Value(source));
   if (!error.empty())
     expected->SetPath({prefix, name.c_str(), "error"}, base::Value(error));
+  if (!warning.empty())
+    expected->SetPath({prefix, name.c_str(), "warning"}, base::Value(warning));
+  if (ignored)
+    expected->SetPath({prefix, name.c_str(), "ignored"}, base::Value(ignored));
   expected->SetPath({prefix, name.c_str(), "value"}, value.Clone());
 }
 
@@ -246,8 +247,7 @@ void PolicyUITest::SetUpInProcessBrowserTestFixture() {
   EXPECT_CALL(provider_, IsInitializationComplete(_))
       .WillRepeatedly(Return(true));
   policy::BrowserPolicyConnector::SetPolicyProviderForTesting(&provider_);
-  policy::ProfilePolicyConnectorFactory::GetInstance()->PushProviderForTesting(
-      &provider_);
+  policy::PushProfilePolicyConnectorProviderForTesting(&provider_);
 
   // Create a directory for testing exporting policies.
   ASSERT_TRUE(export_policies_test_dir.CreateUniqueTempDir());
@@ -271,27 +271,19 @@ void PolicyUITest::VerifyPolicies(
 
   // Retrieve the text contents of the policy table cells for all policies.
   const std::string javascript =
-      "var entries = document.querySelectorAll("
-      "    'section.policy-table-section > * > tbody');"
+      "var entries = document.getElementById('policy-ui')"
+      "  .querySelectorAll('.policy-table');"
       "var policies = [];"
       "for (var i = 0; i < entries.length; ++i) {"
-      "  var items = "
-      "entries[i].querySelectorAll('tr:not(.expanded-status-container) > td');"
-      "  var values = [];"
+      "  var items = entries[i].querySelectorAll('.policy.row');"
       "  for (var j = 0; j < items.length; ++j) {"
-      "    var item = items[j];"
-      "    var children = item.getElementsByTagName('div');"
-      "    if (children.length == 1)"
-      "      item = children[0];"
-      "    children = item.getElementsByTagName('span');"
-      "    if (children.length == 1)"
-      "      item = children[0];"
-      "    children = item.getElementsByClassName('name-link');"
-      "    if (children.length == 1)"
-      "      item = children[0];"
-      "    values.push(item.textContent);"
+      "    var children = items[j].querySelectorAll('div');"
+      "    var values = [];"
+      "    for(var k = 0; k < children.length - 1; ++k) {"
+      "      values.push(children[k].textContent.trim());"
+      "    }"
+      "    policies.push(values);"
       "  }"
-      "  policies.push(values);"
       "}"
       "domAutomationController.send(JSON.stringify(policies));";
   content::WebContents* contents =
@@ -299,7 +291,8 @@ void PolicyUITest::VerifyPolicies(
   std::string json;
   ASSERT_TRUE(content::ExecuteScriptAndExtractString(contents, javascript,
                                                      &json));
-  std::unique_ptr<base::Value> value_ptr = base::JSONReader::Read(json);
+  std::unique_ptr<base::Value> value_ptr =
+      base::JSONReader::ReadDeprecated(json);
   const base::ListValue* actual_policies = NULL;
   ASSERT_TRUE(value_ptr.get());
   ASSERT_TRUE(value_ptr->GetAsList(&actual_policies));
@@ -314,7 +307,8 @@ void PolicyUITest::VerifyPolicies(
     for (size_t j = 0; j < expected_policy.size(); ++j) {
       std::string value;
       ASSERT_TRUE(actual_policy->GetString(j, &value));
-      EXPECT_EQ(expected_policy[j], value);
+      if (expected_policy[j] != value)
+        EXPECT_EQ(expected_policy[j], value);
     }
   }
 }
@@ -329,13 +323,13 @@ void PolicyUITest::VerifyExportingPolicies(
 
   // Click on 'save policies' button.
   const std::string javascript =
-      "document.getElementById(\"export-policies\").click()";
+      "document.getElementById('export-policies').click()";
 
   content::WebContents* contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   EXPECT_TRUE(content::ExecuteScript(contents, javascript));
 
-  base::TaskScheduler::GetInstance()->FlushForTesting();
+  base::ThreadPoolInstance::Get()->FlushForTesting();
   // Open the created file.
   base::ScopedAllowBlockingForTesting allow_blocking;
   std::string file_contents;
@@ -343,7 +337,7 @@ void PolicyUITest::VerifyExportingPolicies(
       base::ReadFileToString(export_policies_test_file_path, &file_contents));
 
   std::unique_ptr<base::Value> value_ptr =
-      base::JSONReader::Read(file_contents);
+      base::JSONReader::ReadDeprecated(file_contents);
 
   // Check that the file contains a valid dictionary.
   EXPECT_TRUE(value_ptr.get());
@@ -368,14 +362,14 @@ IN_PROC_BROWSER_TEST_F(PolicyUITest, WritePoliciesToJSONFile) {
              popups_blocked_for_urls.CreateDeepCopy(), nullptr);
   SetExpectedPolicy(&expected_values, policy::key::kPopupsBlockedForUrls,
                     "mandatory", "machine", "sourcePlatform", std::string(),
-                    popups_blocked_for_urls);
+                    std::string(), false, popups_blocked_for_urls);
 
   values.Set(policy::key::kDefaultImagesSetting, policy::POLICY_LEVEL_MANDATORY,
              policy::POLICY_SCOPE_MACHINE, policy::POLICY_SOURCE_CLOUD,
              std::make_unique<base::Value>(2), nullptr);
   SetExpectedPolicy(&expected_values, policy::key::kDefaultImagesSetting,
                     "mandatory", "machine", "sourceCloud", std::string(),
-                    base::Value(2));
+                    std::string(), false, base::Value(2));
 
   // This also checks that we save complex policies correctly.
   base::DictionaryValue unknown_policy;
@@ -390,12 +384,16 @@ IN_PROC_BROWSER_TEST_F(PolicyUITest, WritePoliciesToJSONFile) {
              unknown_policy.CreateDeepCopy(), nullptr);
   SetExpectedPolicy(&expected_values, kUnknownPolicy, "recommended", "user",
                     "sourceCloud", l10n_util::GetStringUTF8(IDS_POLICY_UNKNOWN),
-                    unknown_policy);
+                    std::string(), false, unknown_policy);
 
   // Set the extension policies to an empty dictionary as we haven't added any
   // such policies.
   expected_values.SetDictionary("extensionPolicies",
                                 std::make_unique<base::DictionaryValue>());
+#if defined(OS_CHROMEOS)
+  expected_values.SetDictionary("deviceLocalAccountPolicies",
+                                std::make_unique<base::DictionaryValue>());
+#endif  // defined(OS_CHROMEOS)
 
   provider_.UpdateChromePolicy(values);
 
@@ -418,7 +416,7 @@ IN_PROC_BROWSER_TEST_F(PolicyUITest, WritePoliciesToJSONFile) {
              std::make_unique<base::Value>(false), nullptr);
   SetExpectedPolicy(&expected_values, policy::key::kAllowFileSelectionDialogs,
                     "mandatory", "machine", "sourcePlatform", std::string(),
-                    base::Value(false));
+                    std::string(), false, base::Value(false));
 #endif
 
   popups_blocked_for_urls.AppendString("ddd");
@@ -427,7 +425,7 @@ IN_PROC_BROWSER_TEST_F(PolicyUITest, WritePoliciesToJSONFile) {
              popups_blocked_for_urls.CreateDeepCopy(), nullptr);
   SetExpectedPolicy(&expected_values, policy::key::kPopupsBlockedForUrls,
                     "mandatory", "machine", "sourcePlatform", std::string(),
-                    popups_blocked_for_urls);
+                    std::string(), false, popups_blocked_for_urls);
 
   provider_.UpdateChromePolicy(values);
 

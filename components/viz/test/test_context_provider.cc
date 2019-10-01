@@ -23,6 +23,7 @@
 #include "gpu/skia_bindings/grcontext_for_gles2_interface.h"
 #include "third_party/skia/include/gpu/GrContext.h"
 #include "third_party/skia/include/gpu/gl/GrGLInterface.h"
+#include "ui/gfx/gpu_memory_buffer.h"
 
 namespace viz {
 
@@ -123,6 +124,7 @@ gpu::Mailbox TestSharedImageInterface::CreateSharedImage(
     uint32_t usage) {
   auto mailbox = gpu::Mailbox::GenerateForSharedImage();
   shared_images_.insert(mailbox);
+  most_recent_size_ = size;
   return mailbox;
 }
 
@@ -144,6 +146,7 @@ gpu::Mailbox TestSharedImageInterface::CreateSharedImage(
     uint32_t usage) {
   auto mailbox = gpu::Mailbox::GenerateForSharedImage();
   shared_images_.insert(mailbox);
+  most_recent_size_ = gpu_memory_buffer->GetSize();
   return mailbox;
 }
 
@@ -157,11 +160,44 @@ void TestSharedImageInterface::DestroySharedImage(
     const gpu::SyncToken& sync_token,
     const gpu::Mailbox& mailbox) {
   shared_images_.erase(mailbox);
+  most_recent_destroy_token_ = sync_token;
+}
+
+#if defined(OS_WIN)
+gpu::SharedImageInterface::SwapChainMailboxes
+TestSharedImageInterface::CreateSwapChain(ResourceFormat format,
+                                          const gfx::Size& size,
+                                          const gfx::ColorSpace& color_space,
+                                          uint32_t usage) {
+  NOTREACHED();
+  return {};
+}
+
+void TestSharedImageInterface::PresentSwapChain(
+    const gpu::SyncToken& sync_token,
+    const gpu::Mailbox& mailbox) {
+  NOTREACHED();
+}
+#endif  // OS_WIN
+
+gpu::SyncToken TestSharedImageInterface::GenVerifiedSyncToken() {
+  most_recent_generated_token_ =
+      gpu::SyncToken(gpu::CommandBufferNamespace::GPU_IO,
+                     gpu::CommandBufferId(), ++release_id_);
+  most_recent_generated_token_.SetVerifyFlush();
+  return most_recent_generated_token_;
 }
 
 gpu::SyncToken TestSharedImageInterface::GenUnverifiedSyncToken() {
-  return gpu::SyncToken(gpu::CommandBufferNamespace::GPU_IO,
-                        gpu::CommandBufferId(), ++release_id_);
+  most_recent_generated_token_ =
+      gpu::SyncToken(gpu::CommandBufferNamespace::GPU_IO,
+                     gpu::CommandBufferId(), ++release_id_);
+  return most_recent_generated_token_;
+}
+
+bool TestSharedImageInterface::CheckSharedImageExists(
+    const gpu::Mailbox& mailbox) const {
+  return shared_images_.contains(mailbox);
 }
 
 // static

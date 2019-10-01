@@ -69,7 +69,7 @@ void TtsMessageFilter::OnChannelClosing() {
   valid_ = false;
   base::PostTaskWithTraits(
       FROM_HERE, {BrowserThread::UI},
-      base::Bind(&TtsMessageFilter::OnChannelClosingInUIThread, this));
+      base::BindOnce(&TtsMessageFilter::OnChannelClosingInUIThread, this));
 }
 
 bool TtsMessageFilter::Valid() {
@@ -151,6 +151,7 @@ void TtsMessageFilter::OnCancel() {
 void TtsMessageFilter::OnTtsEvent(content::TtsUtterance* utterance,
                                   content::TtsEventType event_type,
                                   int char_index,
+                                  int length,
                                   const std::string& error_message) {
   if (!Valid())
     return;
@@ -164,10 +165,10 @@ void TtsMessageFilter::OnTtsEvent(content::TtsUtterance* utterance,
       Send(new TtsMsg_DidFinishSpeaking(utterance->GetSrcId()));
       break;
     case content::TTS_EVENT_WORD:
-      Send(new TtsMsg_WordBoundary(utterance->GetSrcId(), char_index));
+      Send(new TtsMsg_WordBoundary(utterance->GetSrcId(), char_index, length));
       break;
     case content::TTS_EVENT_SENTENCE:
-      Send(new TtsMsg_SentenceBoundary(utterance->GetSrcId(), char_index));
+      Send(new TtsMsg_SentenceBoundary(utterance->GetSrcId(), char_index, 0));
       break;
     case content::TTS_EVENT_MARKER:
       Send(new TtsMsg_MarkerEvent(utterance->GetSrcId(), char_index));

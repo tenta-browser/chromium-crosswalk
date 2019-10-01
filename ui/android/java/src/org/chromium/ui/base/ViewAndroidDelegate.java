@@ -8,21 +8,23 @@ import android.annotation.TargetApi;
 import android.content.ClipData;
 import android.graphics.Bitmap;
 import android.os.Build;
+import android.os.Bundle;
 import android.support.v4.view.MarginLayoutParamsCompat;
 import android.view.MotionEvent;
 import android.view.PointerIcon;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.inputmethod.InputConnection;
 import android.widget.FrameLayout.LayoutParams;
 import android.widget.ImageView;
 
-import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.ObserverList;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
 import org.chromium.base.compat.ApiHelperForN;
 import org.chromium.blink_public.web.WebCursorInfoType;
+import org.chromium.ui.touchless.TouchlessEventHandler;
 
 /**
  * Class to acquire, position, and remove anchor views from the implementing View.
@@ -144,7 +146,7 @@ public class ViewAndroidDelegate {
         int heightInt = Math.round(height);
         int startMargin;
 
-        if (ApiCompatibilityUtils.isLayoutRtl(containerView)) {
+        if (containerView.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL) {
             startMargin = containerView.getMeasuredWidth() - Math.round(width + x);
         } else {
             startMargin = leftMargin;
@@ -435,4 +437,30 @@ public class ViewAndroidDelegate {
         ViewGroup containerView = getContainerView();
         if (containerView != null) ViewUtils.requestFocus(containerView);
     }
+
+    @CalledByNative
+    private static boolean hasTouchlessEventHandler() {
+        return TouchlessEventHandler.hasTouchlessEventHandler();
+    }
+
+    @CalledByNative
+    private static boolean onUnconsumedKeyboardEventAck(int nativeCode) {
+        return TouchlessEventHandler.onUnconsumedKeyboardEventAck(nativeCode);
+    }
+
+    @CalledByNative
+    private static void fallbackCursorModeLockCursor(
+            boolean left, boolean right, boolean up, boolean down) {
+        TouchlessEventHandler.fallbackCursorModeLockCursor(left, right, up, down);
+    }
+
+    @CalledByNative
+    private static void fallbackCursorModeSetCursorVisibility(boolean visible) {
+        TouchlessEventHandler.fallbackCursorModeSetCursorVisibility(visible);
+    }
+
+    /**
+     * @see InputConnection#performPrivateCommand(java.lang.String, android.os.Bundle)
+     */
+    public void performPrivateImeCommand(String action, Bundle data) {}
 }

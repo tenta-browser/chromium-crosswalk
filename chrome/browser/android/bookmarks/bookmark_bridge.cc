@@ -11,6 +11,7 @@
 
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
+#include "base/bind.h"
 #include "base/containers/stack.h"
 #include "base/containers/stack_container.h"
 #include "base/i18n/string_compare.h"
@@ -807,7 +808,7 @@ const BookmarkNode* BookmarkBridge::GetFolderWithFallback(long folder_id,
   const BookmarkNode* folder = GetNodeByID(folder_id, type);
   if (!folder || folder->type() == BookmarkNode::URL ||
       !IsFolderAvailable(folder)) {
-    if (!managed_bookmark_service_->managed_node()->empty())
+    if (!managed_bookmark_service_->managed_node()->children().empty())
       folder = managed_bookmark_service_->managed_node();
     else
       folder = bookmark_model_->mobile_node();
@@ -875,7 +876,8 @@ bool BookmarkBridge::IsFolderAvailable(
     const BookmarkNode* folder) const {
   // The managed bookmarks folder is not shown if there are no bookmarks
   // configured via policy.
-  if (folder == managed_bookmark_service_->managed_node() && folder->empty())
+  if (folder == managed_bookmark_service_->managed_node() &&
+      folder->children().empty())
     return false;
 
   auto* identity_manager =

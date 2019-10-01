@@ -26,9 +26,9 @@ static const char kDismiss[] = "dismiss";
 static const char kDismissAndNotify[] = "dismiss and notify";
 static const char kIgnore[] = "ignore";
 
-// Controls whether ChromeDriver operates in W3C mode (when true) or legacy
-// mode (when false) by default.
-static const bool kW3CDefault = false;
+// Controls whether ChromeDriver operates in W3C mode (when true) by default
+// or legacy mode (when false).
+static const bool kW3CDefault = true;
 
 namespace base {
 class DictionaryValue;
@@ -47,6 +47,20 @@ struct FrameInfo {
   std::string parent_frame_id;
   std::string frame_id;
   std::string chromedriver_frame_id;
+};
+
+struct InputCancelListEntry {
+  InputCancelListEntry(base::DictionaryValue* input_state,
+                       const MouseEvent* mouse_event,
+                       const TouchEvent* touch_event,
+                       const KeyEvent* key_event);
+  InputCancelListEntry(InputCancelListEntry&& other);
+  ~InputCancelListEntry();
+
+  base::DictionaryValue* input_state;
+  std::unique_ptr<MouseEvent> mouse_event;
+  std::unique_ptr<TouchEvent> touch_event;
+  std::unique_ptr<KeyEvent> key_event;
 };
 
 struct Session {
@@ -82,6 +96,8 @@ struct Session {
   // Map between input id and input source state for the corresponding input
   // source. One entry for each item in active_input_sources
   base::DictionaryValue input_state_table;
+  // List of actions for Release Actions command.
+  std::vector<InputCancelListEntry> input_cancel_list;
   // List of |FrameInfo|s for each frame to the current target frame from the
   // first frame element in the root document. If target frame is window.top,
   // this list will be empty.
@@ -109,6 +125,8 @@ struct Session {
   std::vector<std::unique_ptr<CommandListener>> command_listeners;
   bool strict_file_interactability;
   std::string unhandled_prompt_behavior;
+  int click_count;
+  base::TimeTicks mouse_click_timestamp;
 };
 
 Session* GetThreadLocalSession();

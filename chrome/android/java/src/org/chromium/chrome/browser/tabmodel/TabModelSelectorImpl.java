@@ -102,11 +102,7 @@ public class TabModelSelectorImpl extends TabModelSelectorBase implements TabMod
         if (tab != null) mTabSaver.addTabToSaveQueue(tab);
     }
 
-    /**
-     *
-     * @param overviewModeBehavior The {@link OverviewModeBehavior} that should be used to determine
-     *                             when the app is in overview mode or not.
-     */
+    @Override
     public void setOverviewModeBehavior(OverviewModeBehavior overviewModeBehavior) {
         assert overviewModeBehavior != null;
         mOverviewModeBehavior = overviewModeBehavior;
@@ -139,8 +135,8 @@ public class TabModelSelectorImpl extends TabModelSelectorBase implements TabMod
                 regularTabCreator, incognitoTabCreator, mUma, mOrderController,
                 mTabContentManager, mTabSaver, this));
         initialize(isIncognitoSelected(), normalModel, incognitoModel);
-        regularTabCreator.setTabModel(normalModel, mOrderController, mTabContentManager);
-        incognitoTabCreator.setTabModel(incognitoModel, mOrderController, mTabContentManager);
+        regularTabCreator.setTabModel(normalModel, mOrderController);
+        incognitoTabCreator.setTabModel(incognitoModel, mOrderController);
         mTabSaver.setTabContentManager(mTabContentManager);
 
         addObserver(new EmptyTabModelSelectorObserver() {
@@ -195,6 +191,21 @@ public class TabModelSelectorImpl extends TabModelSelectorBase implements TabMod
 
             @Override
             public void onNavigationEntriesDeleted(Tab tab) {
+                mTabSaver.addTabToSaveQueue(tab);
+            }
+
+            @Override
+            public void onActivityAttachmentChanged(Tab tab, boolean attached) {
+                if (!attached) getModel(tab.isIncognito()).removeTab(tab);
+            }
+
+            @Override
+            public void onCloseContents(Tab tab) {
+                closeTab(tab);
+            }
+
+            @Override
+            public void onRootIdChanged(Tab tab, int newRootId) {
                 mTabSaver.addTabToSaveQueue(tab);
             }
         };

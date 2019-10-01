@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/core/css/parser/css_parser.h"
 
 #include <memory>
+
 #include "third_party/blink/renderer/core/css/css_color_value.h"
 #include "third_party/blink/renderer/core/css/css_keyframe_rule.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_fast_paths.h"
@@ -18,6 +19,7 @@
 #include "third_party/blink/renderer/core/css/style_rule.h"
 #include "third_party/blink/renderer/core/css/style_sheet_contents.h"
 #include "third_party/blink/renderer/core/layout/layout_theme.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 
@@ -119,10 +121,12 @@ MutableCSSPropertyValueSet::SetResult CSSParser::ParseValue(
   }
   CSSParserContext* context;
   if (style_sheet) {
-    context = CSSParserContext::Create(style_sheet->ParserContext(), nullptr);
+    context =
+        MakeGarbageCollected<CSSParserContext>(style_sheet->ParserContext());
     context->SetMode(parser_mode);
   } else {
-    context = CSSParserContext::Create(parser_mode, secure_context_mode);
+    context = MakeGarbageCollected<CSSParserContext>(parser_mode,
+                                                     secure_context_mode);
   }
   return ParseValue(declaration, unresolved_property, string, important,
                     context);
@@ -146,10 +150,12 @@ MutableCSSPropertyValueSet::SetResult CSSParser::ParseValueForCustomProperty(
   CSSParserMode parser_mode = declaration->CssParserMode();
   CSSParserContext* context;
   if (style_sheet) {
-    context = CSSParserContext::Create(style_sheet->ParserContext(), nullptr);
+    context =
+        MakeGarbageCollected<CSSParserContext>(style_sheet->ParserContext());
     context->SetMode(parser_mode);
   } else {
-    context = CSSParserContext::Create(parser_mode, secure_context_mode);
+    context = MakeGarbageCollected<CSSParserContext>(parser_mode,
+                                                     secure_context_mode);
   }
   return CSSParserImpl::ParseVariableValue(declaration, property_name, registry,
                                            value, important, context,
@@ -203,7 +209,7 @@ StyleRuleKeyframe* CSSParser::ParseKeyframeRule(const CSSParserContext* context,
                                                 const String& rule) {
   StyleRuleBase* keyframe = CSSParserImpl::ParseRule(
       rule, context, nullptr, CSSParserImpl::kKeyframeRules);
-  return ToStyleRuleKeyframe(keyframe);
+  return To<StyleRuleKeyframe>(keyframe);
 }
 
 bool CSSParser::ParseSupportsCondition(const String& condition,
@@ -236,13 +242,15 @@ bool CSSParser::ParseColor(Color& color, const String& string, bool strict) {
     // context mode. If a function/unit/etc will require a secure context check
     // in the future, plumbing will need to be added.
     value = ParseSingleValue(
-        CSSPropertyColor, string,
+        CSSPropertyID::kColor, string,
         StrictCSSParserContext(SecureContextMode::kInsecureContext));
   }
 
-  if (!value || !value->IsColorValue())
+  auto* color_value = DynamicTo<CSSColorValue>(value);
+  if (!color_value)
     return false;
-  color = ToCSSColorValue(*value).Value();
+
+  color = color_value->Value();
   return true;
 }
 
@@ -259,8 +267,8 @@ const CSSValue* CSSParser::ParseFontFaceDescriptor(
     CSSPropertyID property_id,
     const String& property_value,
     const CSSParserContext* context) {
-  MutableCSSPropertyValueSet* style =
-      MutableCSSPropertyValueSet::Create(kCSSFontFaceRuleMode);
+  auto* style =
+      MakeGarbageCollected<MutableCSSPropertyValueSet>(kCSSFontFaceRuleMode);
   CSSParser::ParseValue(style, property_id, property_value, true, context);
   const CSSValue* value = style->GetPropertyCSSValue(property_id);
 

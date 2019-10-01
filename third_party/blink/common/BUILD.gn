@@ -26,9 +26,9 @@ jumbo_source_set("common") {
     "client_hints/client_hints.cc",
     "device_memory/approximated_device_memory.cc",
     "dom_storage/session_storage_namespace_id.cc",
-    "download/download_stats.cc",
     "experiments/memory_ablation_experiment.cc",
     "feature_policy/feature_policy.cc",
+    "feature_policy/policy_value.cc",
     "features.cc",
     "frame/frame_policy.cc",
     "frame/from_ad_state.cc",
@@ -40,8 +40,10 @@ jumbo_source_set("common") {
     "indexeddb/indexeddb_metadata.cc",
     "loader/url_loader_factory_bundle.cc",
     "loader/url_loader_factory_bundle_mojom_traits.cc",
+    "logging/logging_utils.cc",
     "manifest/manifest.cc",
     "manifest/manifest_icon_selector.cc",
+    "manifest/manifest_util.cc",
     "mediastream/media_devices.cc",
     "mediastream/media_devices_mojom_traits.cc",
     "mediastream/media_stream_controls.cc",
@@ -66,6 +68,7 @@ jumbo_source_set("common") {
     "service_worker/service_worker_status_code.cc",
     "service_worker/service_worker_type_converters.cc",
     "service_worker/service_worker_utils.cc",
+    "web_package/signed_exchange_consts.cc",
   ]
 
   public_deps = [
@@ -118,11 +121,13 @@ jumbo_source_set("common_unittests_sources") {
   testonly = true
 
   sources = [
+    "client_hints/client_hints_unittest.cc",
     "device_memory/approximated_device_memory_unittest.cc",
     "feature_policy/feature_policy_unittest.cc",
     "frame/user_activation_state_unittest.cc",
     "indexeddb/indexeddb_key_unittest.cc",
     "manifest/manifest_icon_selector_unittest.cc",
+    "manifest/manifest_util_unittest.cc",
     "mediastream/media_devices_unittest.cc",
     "mime_util/mime_util_unittest.cc",
     "notifications/notification_struct_traits_unittest.cc",

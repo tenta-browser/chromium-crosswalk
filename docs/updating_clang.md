@@ -18,22 +18,18 @@ An archive of all packages built so far is at https://is.gd/chromeclang
     bucket to the production one. For example:
 
     ```shell
-    $ export rev=123456-1
+    $ export rev=123456-abcd1234-1
     $ for x in Linux_x64 Mac Win ; do \
         gsutil.py cp -n -a public-read gs://chromium-browser-clang-staging/$x/clang-$rev.tgz \
             gs://chromium-browser-clang/$x/clang-$rev.tgz ; \
+        gsutil.py cp -n -a public-read gs://chromium-browser-clang-staging/$x/clang-$rev-buildlog.txt \
+            gs://chromium-browser-clang/$x/clang-$rev-buildlog.txt ; \
         gsutil.py cp -n -a public-read gs://chromium-browser-clang-staging/$x/llvmobjdump-$rev.tgz \
             gs://chromium-browser-clang/$x/llvmobjdump-$rev.tgz ; \
-        gsutil.py cp -n -a public-read gs://chromium-browser-clang-staging/$x/llvmcfiverify-$rev.tgz \
-            gs://chromium-browser-clang/$x/llvmcfiverify-$rev.tgz ; \
         gsutil.py cp -n -a public-read gs://chromium-browser-clang-staging/$x/translation_unit-$rev.tgz \
             gs://chromium-browser-clang/$x/translation_unit-$rev.tgz ; \
         gsutil.py cp -n -a public-read gs://chromium-browser-clang-staging/$x/llvm-code-coverage-$rev.tgz \
             gs://chromium-browser-clang/$x/llvm-code-coverage-$rev.tgz ; \
-        done
-    $ for x in Linux_x64 Mac ; do \
-        gsutil.py cp -n -a public-read gs://chromium-browser-clang-staging/$x/llvmstrip-$rev.tgz \
-            gs://chromium-browser-clang/$x/llvmstrip-$rev.tgz ; \
         done
     $ gsutil.py cp -n -a public-read gs://chromium-browser-clang-staging/Mac/lld-$rev.tgz \
           gs://chromium-browser-clang/Mac/lld-$rev.tgz

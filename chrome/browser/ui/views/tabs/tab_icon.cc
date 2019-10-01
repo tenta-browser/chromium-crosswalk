@@ -6,6 +6,7 @@
 
 #include "base/time/default_tick_clock.h"
 #include "cc/paint/paint_flags.h"
+#include "chrome/browser/favicon/favicon_utils.h"
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/views/tabs/tab_renderer_data.h"
@@ -29,10 +30,6 @@
 #include "url/gurl.h"
 
 namespace {
-
-bool UseNewLoadingAnimation() {
-  return base::FeatureList::IsEnabled(features::kNewTabLoadingAnimation);
-}
 
 constexpr int kAttentionIndicatorRadius = 3;
 constexpr int kNewLoadingAnimationStrokeWidthDp = 2;
@@ -83,15 +80,12 @@ class TabIcon::CrashAnimation : public gfx::LinearAnimation,
 
 TabIcon::TabIcon()
     : clock_(base::DefaultTickClock::GetInstance()),
+      use_new_loading_animation_(
+          base::FeatureList::IsEnabled(features::kNewTabLoadingAnimation)),
       favicon_fade_in_animation_(base::TimeDelta::FromMilliseconds(250),
                                  gfx::LinearAnimation::kDefaultFrameRate,
                                  this) {
   set_can_process_events_within_subtree(false);
-
-  if (UseNewLoadingAnimation()) {
-    SetBorder(views::CreateEmptyBorder(
-        gfx::Insets(kNewLoadingAnimationStrokeWidthDp)));
-  }
 
   // The minimum size to avoid clipping the attention indicator.
   const int preferred_width =
@@ -108,9 +102,10 @@ void TabIcon::SetData(const TabRendererData& data) {
   const bool was_showing_load = ShowingLoadingAnimation();
 
   inhibit_loading_animation_ = data.should_hide_throbber;
-  SetIcon(data.url, data.favicon);
+  SetIcon(data.visible_url, data.favicon);
   SetNetworkState(data.network_state);
   SetIsCrashed(data.IsCrashed());
+  has_tab_renderer_data_ = true;
 
   const bool showing_load = ShowingLoadingAnimation();
 
@@ -186,12 +181,14 @@ void TabIcon::OnPaint(gfx::Canvas* canvas) {
       std::min(gfx::kFaviconSize, contents_bounds.height()));
 
   // The old animation replaces the favicon and should early-abort.
-  if (!UseNewLoadingAnimation() && ShowingLoadingAnimation()) {
+  if (!use_new_loading_animation_ && ShowingLoadingAnimation()) {
     PaintLoadingAnimation(canvas, icon_bounds);
     return;
   }
 
-  if (ShowingAttentionIndicator() && !should_display_crashed_favicon_) {
+  // Don't paint the attention indicator during the loading animation.
+  if (!ShowingLoadingAnimation() && ShowingAttentionIndicator() &&
+      !should_display_crashed_favicon_) {
     PaintAttentionIndicatorAndIcon(canvas, GetIconToPaint(), icon_bounds);
   } else {
     MaybePaintFavicon(canvas, GetIconToPaint(), icon_bounds);
@@ -252,11 +249,8 @@ void TabIcon::PaintAttentionIndicatorAndIcon(gfx::Canvas* canvas,
 void TabIcon::PaintLoadingAnimation(gfx::Canvas* canvas, gfx::Rect bounds) {
   const ui::ThemeProvider* tp = GetThemeProvider();
   base::Optional<SkScalar> stroke_width;
-  if (UseNewLoadingAnimation()) {
-    // The new loading animation paints just outside the favicon area.
-    bounds.Inset(-gfx::Insets(kNewLoadingAnimationStrokeWidthDp));
+  if (use_new_loading_animation_)
     stroke_width = kNewLoadingAnimationStrokeWidthDp;
-  }
 
   if (network_state_ == TabNetworkState::kWaiting) {
     gfx::PaintThrobberWaiting(
@@ -306,13 +300,18 @@ void TabIcon::MaybePaintFavicon(gfx::Canvas* canvas,
   }
 
   std::unique_ptr<gfx::ScopedCanvas> scoped_canvas;
+  bool use_scale_filter = false;
 
   if (ShowingLoadingAnimation() || favicon_fade_in_animation_.is_animating()) {
     scoped_canvas = std::make_unique<gfx::ScopedCanvas>(canvas);
-
-    const float kInitialFaviconDiameterDp = gfx::kFaviconSize - 2;
-    // This a full outset circle of the favicon square, the animation ends when
-    // the entire favicon is shown.
+    use_scale_filter = true;
+    // The favicon is initially inset with the width of the loading-animation
+    // stroke + an additional dp to create some visual separation.
+    const float kInitialFaviconInsetDp = 1 + kNewLoadingAnimationStrokeWidthDp;
+    const float kInitialFaviconDiameterDp =
+        gfx::kFaviconSize - 2 * kInitialFaviconInsetDp;
+    // This a full outset circle of the favicon square. The animation ends with
+    // the entire favicon shown.
     const float kFinalFaviconDiameterDp = sqrt(2) * gfx::kFaviconSize;
 
     SkScalar diameter = kInitialFaviconDiameterDp;
@@ -326,16 +325,26 @@ void TabIcon::MaybePaintFavicon(gfx::Canvas* canvas,
     gfx::PointF center = gfx::RectF(bounds).CenterPoint();
     path.addCircle(center.x(), center.y(), diameter / 2);
     canvas->ClipPath(path, true);
+    // This scales and offsets painting so that the drawn favicon is downscaled
+    // to fit in the cropping area.
+    const float offset =
+        (gfx::kFaviconSize -
+         std::min(diameter, SkFloatToScalar(gfx::kFaviconSize))) /
+        2;
+    const float scale = std::min(diameter, SkFloatToScalar(gfx::kFaviconSize)) /
+                        gfx::kFaviconSize;
+    canvas->Translate(gfx::Vector2d(offset, offset));
+    canvas->Scale(scale, scale);
   }
 
   canvas->DrawImageInt(icon, 0, 0, bounds.width(), bounds.height(), bounds.x(),
-                       bounds.y(), bounds.width(), bounds.height(), false);
+                       bounds.y(), bounds.width(), bounds.height(),
+                       use_scale_filter);
 }
 
 bool TabIcon::HasNonDefaultFavicon() const {
-  ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   return !favicon_.isNull() && !favicon_.BackedBySameObjectAs(
-                                   *rb.GetImageSkiaNamed(IDR_DEFAULT_FAVICON));
+                                   favicon::GetDefaultFavicon().AsImageSkia());
 }
 
 void TabIcon::SetIcon(const GURL& url, const gfx::ImageSkia& icon) {
@@ -359,7 +368,7 @@ void TabIcon::SetNetworkState(TabNetworkState network_state) {
   const bool was_animated = NetworkStateIsAnimated(network_state_);
   network_state_ = network_state;
   const bool is_animated = NetworkStateIsAnimated(network_state_);
-  if (UseNewLoadingAnimation() && was_animated != is_animated) {
+  if (use_new_loading_animation_ && was_animated != is_animated) {
     if (was_animated && HasNonDefaultFavicon()) {
       favicon_fade_in_animation_.Start();
     } else {
@@ -382,10 +391,16 @@ void TabIcon::SetIsCrashed(bool is_crashed) {
     hiding_fraction_ = 0.0;
   } else {
     // Transitioned from non-crashed to crashed.
-    if (!crash_animation_)
-      crash_animation_ = std::make_unique<CrashAnimation>(this);
-    if (!crash_animation_->is_animating())
-      crash_animation_->Start();
+    if (!has_tab_renderer_data_) {
+      // This is the initial SetData(), so show the crashed icon directly
+      // without animating.
+      should_display_crashed_favicon_ = true;
+    } else {
+      if (!crash_animation_)
+        crash_animation_ = std::make_unique<CrashAnimation>(this);
+      if (!crash_animation_->is_animating())
+        crash_animation_->Start();
+    }
   }
   SchedulePaint();
 }
@@ -409,6 +424,11 @@ void TabIcon::RefreshLayer() {
 }
 
 gfx::ImageSkia TabIcon::ThemeImage(const gfx::ImageSkia& source) {
-  return gfx::ImageSkiaOperations::CreateHSLShiftedImage(
-      source, GetThemeProvider()->GetTint(ThemeProperties::TINT_BUTTONS));
+  if (!GetThemeProvider()->HasCustomColor(
+          ThemeProperties::COLOR_TOOLBAR_BUTTON_ICON))
+    return source;
+
+  return gfx::ImageSkiaOperations::CreateColorMask(
+      source,
+      GetThemeProvider()->GetColor(ThemeProperties::COLOR_TOOLBAR_BUTTON_ICON));
 }

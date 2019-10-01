@@ -81,7 +81,7 @@ GURL IOSChromeSyncedTabDelegate::GetVirtualURLAtIndex(int i) const {
 GURL IOSChromeSyncedTabDelegate::GetFaviconURLAtIndex(int i) const {
   DCHECK_GE(i, 0);
   NavigationItem* item = GetPossiblyPendingItemAtIndex(web_state_, i);
-  return (item->GetFavicon().valid ? item->GetFavicon().url : GURL());
+  return (item && item->GetFavicon().valid ? item->GetFavicon().url : GURL());
 }
 
 ui::PageTransition IOSChromeSyncedTabDelegate::GetTransitionAtIndex(
@@ -134,3 +134,25 @@ bool IOSChromeSyncedTabDelegate::ShouldSync(
   }
   return false;
 }
+
+int64_t IOSChromeSyncedTabDelegate::GetTaskIdForNavigationId(int nav_id) const {
+  // TODO(davidjm) https://crbug.com/946356 - new task track implementation
+  // doesn't support iOS yet.
+  return -1;
+}
+
+int64_t IOSChromeSyncedTabDelegate::GetParentTaskIdForNavigationId(
+    int nav_id) const {
+  // TODO(davidjm) https://crbug.com/946356 - new task track implementation
+  // doesn't support iOS yet.
+  return -1;
+}
+
+int64_t IOSChromeSyncedTabDelegate::GetRootTaskIdForNavigationId(
+    int nav_id) const {
+  // TODO(davidjm) https://crbug.com/946356 - new task track implementation
+  // doesn't support iOS yet.
+  return -1;
+}
+
+WEB_STATE_USER_DATA_KEY_IMPL(IOSChromeSyncedTabDelegate)

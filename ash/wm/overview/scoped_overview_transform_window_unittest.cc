@@ -4,19 +4,24 @@
 
 #include "ash/wm/overview/scoped_overview_transform_window.h"
 
+#include "ash/public/cpp/ash_features.h"
+#include "ash/public/cpp/window_properties.h"
 #include "ash/test/ash_test_base.h"
+#include "ash/wm/overview/overview_utils.h"
 #include "ash/wm/window_state.h"
+#include "base/test/scoped_feature_list.h"
 #include "ui/aura/window.h"
 #include "ui/display/display.h"
 #include "ui/display/manager/display_manager.h"
 #include "ui/display/screen.h"
+#include "ui/wm/core/window_util.h"
 
 namespace ash {
 
 namespace {
 
-float GetItemScale(const gfx::Rect& source,
-                   const gfx::Rect& target,
+float GetItemScale(const gfx::RectF& source,
+                   const gfx::RectF& target,
                    int top_view_inset,
                    int title_height) {
   return ScopedOverviewTransformWindow::GetItemScale(
@@ -38,36 +43,36 @@ TEST_F(ScopedOverviewTransformWindowTest, TransformedRectMaintainsAspect) {
       CreateTestWindow(gfx::Rect(10, 10, 100, 100));
   ScopedOverviewTransformWindow transform_window(nullptr, window.get());
 
-  gfx::Rect rect(50, 50, 200, 400);
-  gfx::Rect bounds(100, 100, 50, 50);
-  gfx::Rect transformed_rect =
+  gfx::RectF rect(50.f, 50.f, 200.f, 400.f);
+  gfx::RectF bounds(100.f, 100.f, 50.f, 50.f);
+  gfx::RectF transformed_rect =
       transform_window.ShrinkRectToFitPreservingAspectRatio(rect, bounds, 0, 0);
   float scale = GetItemScale(rect, bounds, 0, 0);
   EXPECT_NEAR(scale * rect.width(), transformed_rect.width(), 1);
   EXPECT_NEAR(scale * rect.height(), transformed_rect.height(), 1);
 
-  rect = gfx::Rect(50, 50, 400, 200);
+  rect = gfx::RectF(50.f, 50.f, 400.f, 200.f);
   scale = GetItemScale(rect, bounds, 0, 0);
   transformed_rect =
       transform_window.ShrinkRectToFitPreservingAspectRatio(rect, bounds, 0, 0);
   EXPECT_NEAR(scale * rect.width(), transformed_rect.width(), 1);
   EXPECT_NEAR(scale * rect.height(), transformed_rect.height(), 1);
 
-  rect = gfx::Rect(50, 50, 25, 25);
+  rect = gfx::RectF(50.f, 50.f, 25.f, 25.f);
   scale = GetItemScale(rect, bounds, 0, 0);
   transformed_rect =
       transform_window.ShrinkRectToFitPreservingAspectRatio(rect, bounds, 0, 0);
   EXPECT_NEAR(scale * rect.width(), transformed_rect.width(), 1);
   EXPECT_NEAR(scale * rect.height(), transformed_rect.height(), 1);
 
-  rect = gfx::Rect(50, 50, 25, 50);
+  rect = gfx::RectF(50.f, 50.f, 25.f, 50.f);
   scale = GetItemScale(rect, bounds, 0, 0);
   transformed_rect =
       transform_window.ShrinkRectToFitPreservingAspectRatio(rect, bounds, 0, 0);
   EXPECT_NEAR(scale * rect.width(), transformed_rect.width(), 1);
   EXPECT_NEAR(scale * rect.height(), transformed_rect.height(), 1);
 
-  rect = gfx::Rect(50, 50, 50, 25);
+  rect = gfx::RectF(50.f, 50.f, 50.f, 25.f);
   scale = GetItemScale(rect, bounds, 0, 0);
   transformed_rect =
       transform_window.ShrinkRectToFitPreservingAspectRatio(rect, bounds, 0, 0);
@@ -80,9 +85,9 @@ TEST_F(ScopedOverviewTransformWindowTest, TransformedRectIsCentered) {
   std::unique_ptr<aura::Window> window =
       CreateTestWindow(gfx::Rect(10, 10, 100, 100));
   ScopedOverviewTransformWindow transform_window(nullptr, window.get());
-  gfx::Rect rect(50, 50, 200, 400);
-  gfx::Rect bounds(100, 100, 50, 50);
-  gfx::Rect transformed_rect =
+  gfx::RectF rect(50.f, 50.f, 200.f, 400.f);
+  gfx::RectF bounds(100.f, 100.f, 50.f, 50.f);
+  gfx::RectF transformed_rect =
       transform_window.ShrinkRectToFitPreservingAspectRatio(rect, bounds, 0, 0);
   EXPECT_GE(transformed_rect.x(), bounds.x());
   EXPECT_LE(transformed_rect.right(), bounds.right());
@@ -100,12 +105,12 @@ TEST_F(ScopedOverviewTransformWindowTest, TransformedRectIsCenteredWithInset) {
   std::unique_ptr<aura::Window> window =
       CreateTestWindow(gfx::Rect(10, 10, 100, 100));
   ScopedOverviewTransformWindow transform_window(nullptr, window.get());
-  gfx::Rect rect(50, 50, 400, 200);
-  gfx::Rect bounds(100, 100, 50, 50);
+  gfx::RectF rect(50.f, 50.f, 400.f, 200.f);
+  gfx::RectF bounds(100.f, 100.f, 50.f, 50.f);
   const int inset = 20;
   const int header_height = 10;
   const float scale = GetItemScale(rect, bounds, inset, header_height);
-  gfx::Rect transformed_rect =
+  gfx::RectF transformed_rect =
       transform_window.ShrinkRectToFitPreservingAspectRatio(rect, bounds, inset,
                                                             header_height);
   // The |rect| width does not fit and therefore it gets centered outside
@@ -136,10 +141,10 @@ TEST_F(ScopedOverviewTransformWindowTest, TransformingLetteredRect) {
 
   // Without any headers, the width should match the target, and the height
   // should be such that the aspect ratio of |original_bounds| is maintained.
-  const gfx::Rect overview_bounds(0, 0, 100, 100);
-  gfx::Rect transformed_rect =
+  const gfx::RectF overview_bounds(100.f, 100.f);
+  gfx::RectF transformed_rect =
       transform_window.ShrinkRectToFitPreservingAspectRatio(
-          original_bounds, overview_bounds, 0, 0);
+          gfx::RectF(original_bounds), overview_bounds, 0, 0);
   EXPECT_EQ(overview_bounds.width(), transformed_rect.width());
   EXPECT_NEAR(overview_bounds.height() / scale, transformed_rect.height(), 1);
 
@@ -149,18 +154,19 @@ TEST_F(ScopedOverviewTransformWindowTest, TransformingLetteredRect) {
   const int original_header = 10;
   const int overview_header = 20;
   transformed_rect = transform_window.ShrinkRectToFitPreservingAspectRatio(
-      original_bounds, overview_bounds, original_header, overview_header);
+      gfx::RectF(original_bounds), overview_bounds, original_header,
+      overview_header);
   EXPECT_EQ(overview_bounds.width(), transformed_rect.width());
   EXPECT_NEAR((overview_bounds.height() - original_header) / scale,
               transformed_rect.height() - original_header / scale, 1);
   EXPECT_TRUE(overview_bounds.Contains(transformed_rect));
 
   // Verify that for an extreme window, the transform window stores the
-  // original window selector bounds, minus the header.
-  gfx::Rect selector_bounds = overview_bounds;
-  selector_bounds.Inset(0, overview_header, 0, 0);
+  // original overview item bounds, minus the header.
+  gfx::RectF new_overview_bounds = overview_bounds;
+  new_overview_bounds.Inset(0, overview_header, 0, 0);
   ASSERT_TRUE(transform_window.overview_bounds().has_value());
-  EXPECT_EQ(transform_window.overview_bounds().value(), selector_bounds);
+  EXPECT_EQ(transform_window.overview_bounds().value(), new_overview_bounds);
 }
 
 // Verify that a window which will be displayed like a pillar box on the window
@@ -176,10 +182,10 @@ TEST_F(ScopedOverviewTransformWindowTest, TransformingPillaredRect) {
 
   // Without any headers, the height should match the target, and the width
   // should be such that the aspect ratio of |original_bounds| is maintained.
-  const gfx::Rect overview_bounds(0, 0, 100, 100);
-  gfx::Rect transformed_rect =
+  const gfx::RectF overview_bounds(100.f, 100.f);
+  gfx::RectF transformed_rect =
       transform_window.ShrinkRectToFitPreservingAspectRatio(
-          original_bounds, overview_bounds, 0, 0);
+          gfx::RectF(original_bounds), overview_bounds, 0, 0);
   EXPECT_EQ(overview_bounds.height(), transformed_rect.height());
   EXPECT_NEAR(overview_bounds.width() / scale, transformed_rect.width(), 1);
 
@@ -189,32 +195,30 @@ TEST_F(ScopedOverviewTransformWindowTest, TransformingPillaredRect) {
   const int original_header = 10;
   const int overview_header = 20;
   transformed_rect = transform_window.ShrinkRectToFitPreservingAspectRatio(
-      original_bounds, overview_bounds, original_header, overview_header);
+      gfx::RectF(original_bounds), overview_bounds, original_header,
+      overview_header);
   EXPECT_NEAR(overview_bounds.height() - overview_header,
               transformed_rect.height() - original_header / scale, 1);
   EXPECT_TRUE(overview_bounds.Contains(transformed_rect));
 
   // Verify that for an extreme window, the transform window stores the
-  // original window selector bounds, minus the header.
-  gfx::Rect selector_bounds = overview_bounds;
-  selector_bounds.Inset(0, overview_header, 0, 0);
+  // original overview item bounds, minus the header.
+  gfx::RectF new_overview_bounds = overview_bounds;
+  new_overview_bounds.Inset(0, overview_header, 0, 0);
   ASSERT_TRUE(transform_window.overview_bounds().has_value());
-  EXPECT_EQ(transform_window.overview_bounds().value(), selector_bounds);
+  EXPECT_EQ(transform_window.overview_bounds().value(), new_overview_bounds);
 }
 
 // Tests the cases when very wide or tall windows enter overview mode.
 TEST_F(ScopedOverviewTransformWindowTest, ExtremeWindowBounds) {
   // Add three windows which in overview mode will be considered wide, tall and
-  // normal. Window |wide|, with size (400, 160) will be resized to (200, 160)
-  // when the 400x200 is rotated to 200x400, and should be considered a normal
+  // normal. Window |wide|, with size (400, 160) will be resized to (300, 160)
+  // when the 400x300 is rotated to 300x400, and should be considered a normal
   // overview window after display change.
-  UpdateDisplay("400x200");
-  std::unique_ptr<aura::Window> wide =
-      CreateTestWindow(gfx::Rect(10, 10, 400, 160));
-  std::unique_ptr<aura::Window> tall =
-      CreateTestWindow(gfx::Rect(10, 10, 50, 200));
-  std::unique_ptr<aura::Window> normal =
-      CreateTestWindow(gfx::Rect(10, 10, 200, 200));
+  UpdateDisplay("400x300");
+  std::unique_ptr<aura::Window> wide = CreateTestWindow(gfx::Rect(400, 160));
+  std::unique_ptr<aura::Window> tall = CreateTestWindow(gfx::Rect(100, 300));
+  std::unique_ptr<aura::Window> normal = CreateTestWindow(gfx::Rect(300, 300));
 
   ScopedOverviewTransformWindow scoped_wide(nullptr, wide.get());
   ScopedOverviewTransformWindow scoped_tall(nullptr, tall.get());
@@ -243,9 +247,61 @@ TEST_F(ScopedOverviewTransformWindowTest, ExtremeWindowBounds) {
   EXPECT_EQ(GridWindowFillMode::kNormal, scoped_normal.type());
 }
 
+// Tests that transients which should be invisible in overview do not have their
+// transforms or opacities altered.
+TEST_F(ScopedOverviewTransformWindowTest, InvisibleTransients) {
+  auto window = CreateTestWindow(gfx::Rect(200, 200));
+  auto child = CreateTestWindow(gfx::Rect(100, 190, 100, 10),
+                                aura::client::WINDOW_TYPE_POPUP);
+  auto child2 = CreateTestWindow(gfx::Rect(0, 190, 100, 10),
+                                 aura::client::WINDOW_TYPE_POPUP);
+  ::wm::AddTransientChild(window.get(), child.get());
+  ::wm::AddTransientChild(window.get(), child2.get());
+
+  child2->SetProperty(kHideInOverviewKey, true);
+
+  for (auto* it : {window.get(), child.get(), child2.get()}) {
+    it->SetTransform(gfx::Transform());
+    it->layer()->SetOpacity(1.f);
+  }
+
+  ScopedOverviewTransformWindow scoped_window(nullptr, window.get());
+  scoped_window.SetOpacity(0.5f);
+  EXPECT_EQ(0.5f, window->layer()->opacity());
+  EXPECT_EQ(0.5f, child->layer()->opacity());
+  EXPECT_EQ(0.f, child2->layer()->opacity());
+  EXPECT_TRUE(window->IsVisible());
+  EXPECT_TRUE(child->IsVisible());
+  EXPECT_FALSE(child2->IsVisible());
+
+  gfx::Transform transform(1.f, 0.f, 0.f, 1.f, 10.f, 10.f);
+  SetTransform(window.get(), transform);
+  EXPECT_EQ(transform, window->transform());
+  EXPECT_EQ(transform, child->transform());
+  EXPECT_TRUE(child2->transform().IsIdentity());
+}
+
+class ScopedOverviewTransformWindowWithMaskTest
+    : public ScopedOverviewTransformWindowTest {
+ public:
+  ScopedOverviewTransformWindowWithMaskTest() = default;
+  ~ScopedOverviewTransformWindowWithMaskTest() override = default;
+
+  void SetUp() override {
+    ScopedOverviewTransformWindowTest::SetUp();
+    scoped_feature_list_.InitAndDisableFeature(
+        ash::features::kUseShaderRoundedCorner);
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+
+  DISALLOW_COPY_AND_ASSIGN(ScopedOverviewTransformWindowWithMaskTest);
+};
+
 // Verify that if the window's bounds are changed while it's in overview mode,
 // the rounded edge mask's bounds are also changed accordingly.
-TEST_F(ScopedOverviewTransformWindowTest, WindowBoundsChangeTest) {
+TEST_F(ScopedOverviewTransformWindowWithMaskTest, WindowBoundsChangeTest) {
   UpdateDisplay("400x400");
   const gfx::Rect bounds(10, 10, 200, 200);
   std::unique_ptr<aura::Window> window = CreateTestWindow(bounds);

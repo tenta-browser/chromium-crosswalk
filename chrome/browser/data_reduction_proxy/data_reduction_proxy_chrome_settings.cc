@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "base/base64.h"
+#include "base/bind.h"
 #include "base/memory/ref_counted.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
@@ -17,6 +18,7 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/chrome_content_browser_client.h"
 #include "chrome/browser/data_use_measurement/chrome_data_use_measurement.h"
 #include "chrome/browser/loader/chrome_navigation_data.h"
 #include "chrome/browser/metrics/chrome_metrics_service_accessor.h"
@@ -24,6 +26,7 @@
 #include "chrome/browser/previews/previews_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/renderer_host/chrome_navigation_ui_data.h"
 #include "chrome/common/channel_info.h"
 #include "chrome/common/pref_names.h"
 #include "components/data_reduction_proxy/content/browser/data_reduction_proxy_pingback_client_impl.h"
@@ -33,8 +36,10 @@
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_io_data.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_service.h"
 #include "components/data_reduction_proxy/core/browser/data_store.h"
+#include "components/data_reduction_proxy/core/common/data_reduction_proxy_features.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_headers.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
+#include "components/data_reduction_proxy/core/common/data_reduction_proxy_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/previews/content/previews_ui_service.h"
@@ -186,7 +191,6 @@ DataReductionProxyChromeSettings::MigrateDataReductionProxyOffProxyPrefsHelper(
 
 DataReductionProxyChromeSettings::DataReductionProxyChromeSettings()
     : data_reduction_proxy::DataReductionProxySettings(),
-      data_reduction_proxy_enabled_pref_name_(prefs::kDataSaverEnabled),
       profile_(nullptr) {}
 
 DataReductionProxyChromeSettings::~DataReductionProxyChromeSettings() {}
@@ -238,11 +242,10 @@ void DataReductionProxyChromeSettings::InitDataReductionProxySettings(
           ui_task_runner, io_data->io_task_runner(), db_task_runner,
           commit_delay);
   data_reduction_proxy::DataReductionProxySettings::
-      InitDataReductionProxySettings(data_reduction_proxy_enabled_pref_name_,
-                                     profile_prefs, io_data,
+      InitDataReductionProxySettings(profile_prefs, io_data,
                                      std::move(service));
   io_data->SetDataReductionProxyService(
-      data_reduction_proxy_service()->GetWeakPtr());
+      data_reduction_proxy_service()->GetWeakPtr(), GetUserAgent());
 
   data_reduction_proxy::DataReductionProxySettings::
       SetCallbackToRegisterSyntheticFieldTrial(base::Bind(
@@ -280,9 +283,6 @@ DataReductionProxyChromeSettings::CreateDataFromNavigationHandle(
     return nullptr;
 
   // TODO(721403): Need to fill in:
-  //  - client_lofi_requestd_
-  //  - session_key_
-  //  - page_id_
   //  - request_info_
   auto data = std::make_unique<data_reduction_proxy::DataReductionProxyData>();
   data->set_request_url(handle->GetURL());
@@ -321,6 +321,23 @@ DataReductionProxyChromeSettings::CreateDataFromNavigationHandle(
     case data_reduction_proxy::TRANSFORM_NONE:
     case data_reduction_proxy::TRANSFORM_UNKNOWN:
       break;
+  }
+
+  const ChromeNavigationUIData* chrome_navigation_ui_data =
+      static_cast<const ChromeNavigationUIData*>(handle->GetNavigationUIData());
+  if (data_reduction_proxy::params::IsEnabledWithNetworkService() &&
+      base::FeatureList::IsEnabled(
+          data_reduction_proxy::features::
+              kDataReductionProxyPopulatePreviewsPageIDToPingback)) {
+    if (chrome_navigation_ui_data) {
+      data->set_page_id(
+          chrome_navigation_ui_data->data_reduction_proxy_page_id());
+    }
+    const auto session_key =
+        data_reduction_proxy::DataReductionProxyRequestOptions::
+            GetSessionKeyFromRequestHeaders(GetProxyRequestHeaders());
+    if (session_key)
+      data->set_session_key(session_key.value());
   }
   return data;
 }

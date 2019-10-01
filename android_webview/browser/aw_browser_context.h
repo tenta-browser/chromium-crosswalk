@@ -8,12 +8,14 @@
 #include <memory>
 #include <vector>
 
-#include "android_webview/browser/aw_safe_browsing_ui_manager.h"
 #include "android_webview/browser/aw_ssl_host_state_delegate.h"
+#include "android_webview/browser/net/aw_proxy_config_monitor.h"
+#include "android_webview/browser/safe_browsing/aw_safe_browsing_ui_manager.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "components/keyed_service/core/simple_factory_key.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/safe_browsing/android/remote_database_manager.h"
 #include "components/visitedlink/browser/visitedlink_delegate.h"
@@ -22,6 +24,7 @@
 
 class GURL;
 class PrefService;
+class PrefRegistrySimple;
 
 namespace autofill {
 class AutocompleteHistoryManager;
@@ -32,6 +35,10 @@ class PermissionControllerDelegate;
 class ResourceContext;
 class SSLHostStateDelegate;
 class WebContents;
+}
+
+namespace download {
+class InProgressDownloadManager;
 }
 
 namespace net {
@@ -83,7 +90,15 @@ class AwBrowserContext : public content::BrowserContext,
   static AwBrowserContext* FromWebContents(
       content::WebContents* web_contents);
 
+  // TODO(ntfschr): consider moving these into our PathService in
+  // common/aw_paths.h (http://crbug.com/934184).
   static base::FilePath GetCacheDir();
+  static base::FilePath GetCookieStorePath();
+
+  static void RegisterPrefs(PrefRegistrySimple* registry);
+
+  // Get the list of authentication schemes to support.
+  static std::vector<std::string> GetAuthSchemes();
 
   // Maps to BrowserMainParts::PreMainMessageLoopRun.
   void PreMainMessageLoopRun(net::NetLog* net_log);
@@ -127,6 +142,8 @@ class AwBrowserContext : public content::BrowserContext,
   net::URLRequestContextGetter* CreateMediaRequestContextForStoragePartition(
       const base::FilePath& partition_path,
       bool in_memory) override;
+  download::InProgressDownloadManager* RetriveInProgressDownloadManager()
+      override;
 
   // visitedlink::VisitedLinkDelegate implementation.
   void RebuildTable(const scoped_refptr<URLEnumerator>& enumerator) override;
@@ -136,8 +153,12 @@ class AwBrowserContext : public content::BrowserContext,
   safe_browsing::TriggerManager* GetSafeBrowsingTriggerManager() const;
   AwSafeBrowsingWhitelistManager* GetSafeBrowsingWhitelistManager() const;
 
+  // Constructs HttpAuthDynamicParams based on |user_pref_service_|.
+  network::mojom::HttpAuthDynamicParamsPtr CreateHttpAuthDynamicParams();
+
  private:
   void OnWebRestrictionsAuthorityChanged();
+  void OnAuthPrefsChanged();
 
   // The file path where data for this context is persisted.
   base::FilePath context_storage_path_;
@@ -167,6 +188,7 @@ class AwBrowserContext : public content::BrowserContext,
 
   std::unique_ptr<AwSafeBrowsingWhitelistManager>
       safe_browsing_whitelist_manager_;
+  SimpleFactoryKey simple_factory_key_;
 
   DISALLOW_COPY_AND_ASSIGN(AwBrowserContext);
 };

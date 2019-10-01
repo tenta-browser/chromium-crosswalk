@@ -27,7 +27,7 @@
 #include "net/http/http_stream_factory.h"
 #include "net/quic/quic_utils_chromium.h"
 #include "net/spdy/spdy_session_pool.h"
-#include "net/third_party/quic/core/quic_packets.h"
+#include "net/third_party/quiche/src/quic/core/quic_packets.h"
 #include "net/third_party/quiche/src/spdy/core/spdy_protocol.h"
 
 #if defined(OS_MACOSX) && !defined(OS_IOS)
@@ -325,19 +325,42 @@ bool ShouldQuicGoawayOnPathDegrading(
       "true");
 }
 
-bool ShouldQuicRaceStaleDNSOnConnection(
-    const VariationParameters& quic_trial_params) {
-  return base::LowerCaseEqualsASCII(
-      GetVariationParam(quic_trial_params, "race_stale_dns_on_connection"),
-      "true");
-}
-
 int GetQuicMaxTimeOnNonDefaultNetworkSeconds(
     const VariationParameters& quic_trial_params) {
   int value;
   if (base::StringToInt(
           GetVariationParam(quic_trial_params,
                             "max_time_on_non_default_network_seconds"),
+          &value)) {
+    return value;
+  }
+  return 0;
+}
+
+bool ShouldQuicMigrateIdleSessions(
+    const VariationParameters& quic_trial_params) {
+  return base::LowerCaseEqualsASCII(
+      GetVariationParam(quic_trial_params, "migrate_idle_sessions"), "true");
+}
+
+int GetQuicRetransmittableOnWireTimeoutMilliseconds(
+    const VariationParameters& quic_trial_params) {
+  int value;
+  if (base::StringToInt(
+          GetVariationParam(quic_trial_params,
+                            "retransmittable_on_wire_timeout_milliseconds"),
+          &value)) {
+    return value;
+  }
+  return 0;
+}
+
+int GetQuicIdleSessionMigrationPeriodSeconds(
+    const VariationParameters& quic_trial_params) {
+  int value;
+  if (base::StringToInt(
+          GetVariationParam(quic_trial_params,
+                            "idle_session_migration_period_seconds"),
           &value)) {
     return value;
   }
@@ -376,6 +399,18 @@ bool ShouldQuicAllowServerMigration(
       GetVariationParam(quic_trial_params, "allow_server_migration"), "true");
 }
 
+int GetQuicInitialRttForHandshakeMilliseconds(
+    const VariationParameters& quic_trial_params) {
+  int value;
+  if (base::StringToInt(
+          GetVariationParam(quic_trial_params,
+                            "initial_rtt_for_handshake_milliseconds"),
+          &value)) {
+    return value;
+  }
+  return 0;
+}
+
 base::flat_set<std::string> GetQuicHostWhitelist(
     const VariationParameters& quic_trial_params) {
   std::string host_whitelist =
@@ -394,7 +429,7 @@ size_t GetQuicMaxPacketLength(const VariationParameters& quic_trial_params) {
   return 0;
 }
 
-quic::QuicTransportVersionVector GetQuicVersions(
+quic::ParsedQuicVersionVector GetQuicVersions(
     const VariationParameters& quic_trial_params) {
   return network_session_configurator::ParseQuicVersions(
       GetVariationParam(quic_trial_params, "quic_version"));
@@ -477,8 +512,26 @@ void ConfigureQuicParams(base::StringPiece quic_trial_group,
         ShouldQuicRetryOnAlternateNetworkBeforeHandshake(quic_trial_params);
     params->quic_go_away_on_path_degrading =
         ShouldQuicGoawayOnPathDegrading(quic_trial_params);
-    params->quic_race_stale_dns_on_connection =
-        ShouldQuicRaceStaleDNSOnConnection(quic_trial_params);
+    int initial_rtt_for_handshake_milliseconds =
+        GetQuicInitialRttForHandshakeMilliseconds(quic_trial_params);
+    if (initial_rtt_for_handshake_milliseconds > 0) {
+      params->quic_initial_rtt_for_handshake_milliseconds =
+          initial_rtt_for_handshake_milliseconds;
+    }
+    int retransmittable_on_wire_timeout_milliseconds =
+        GetQuicRetransmittableOnWireTimeoutMilliseconds(quic_trial_params);
+    if (retransmittable_on_wire_timeout_milliseconds > 0) {
+      params->quic_retransmittable_on_wire_timeout_milliseconds =
+          retransmittable_on_wire_timeout_milliseconds;
+    }
+    params->quic_migrate_idle_sessions =
+        ShouldQuicMigrateIdleSessions(quic_trial_params);
+    int idle_session_migration_period_seconds =
+        GetQuicIdleSessionMigrationPeriodSeconds(quic_trial_params);
+    if (idle_session_migration_period_seconds > 0) {
+      params->quic_idle_session_migration_period =
+          base::TimeDelta::FromSeconds(idle_session_migration_period_seconds);
+    }
     int max_time_on_non_default_network_seconds =
         GetQuicMaxTimeOnNonDefaultNetworkSeconds(quic_trial_params);
     if (max_time_on_non_default_network_seconds > 0) {
@@ -511,7 +564,7 @@ void ConfigureQuicParams(base::StringPiece quic_trial_group,
 
   params->quic_user_agent_id = quic_user_agent_id;
 
-  quic::QuicTransportVersionVector supported_versions =
+  quic::ParsedQuicVersionVector supported_versions =
       GetQuicVersions(quic_trial_params);
   if (!supported_versions.empty())
     params->quic_supported_versions = supported_versions;
@@ -521,9 +574,9 @@ void ConfigureQuicParams(base::StringPiece quic_trial_group,
 
 namespace network_session_configurator {
 
-quic::QuicTransportVersionVector ParseQuicVersions(
+quic::ParsedQuicVersionVector ParseQuicVersions(
     const std::string& quic_versions) {
-  quic::QuicTransportVersionVector supported_versions;
+  quic::ParsedQuicVersionVector supported_versions;
   quic::QuicTransportVersionVector all_supported_versions =
       quic::AllSupportedTransportVersions();
 
@@ -532,7 +585,8 @@ quic::QuicTransportVersionVector ParseQuicVersions(
     auto it = all_supported_versions.begin();
     while (it != all_supported_versions.end()) {
       if (quic::QuicVersionToString(*it) == version) {
-        supported_versions.push_back(*it);
+        supported_versions.push_back(
+            quic::ParsedQuicVersion(quic::PROTOCOL_QUIC_CRYPTO, *it));
         // Remove the supported version to deduplicate versions extracted from
         // |quic_versions|.
         all_supported_versions.erase(it);
@@ -589,7 +643,7 @@ void ParseCommandLineAndFieldTrials(const base::CommandLine& command_line,
     }
 
     if (command_line.HasSwitch(switches::kQuicVersion)) {
-      quic::QuicTransportVersionVector supported_versions =
+      quic::ParsedQuicVersionVector supported_versions =
           network_session_configurator::ParseQuicVersions(
               command_line.GetSwitchValueASCII(switches::kQuicVersion));
       if (!supported_versions.empty())

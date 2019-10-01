@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 #include "base/feature_list.h"
+#include "base/metrics/field_trial_params.h"
 
 #include "base/macros.h"
 #include "base/values.h"
@@ -22,10 +23,8 @@ namespace safe_browsing {
 const base::Feature kAdSamplerTriggerFeature{"SafeBrowsingAdSamplerTrigger",
                                              base::FEATURE_DISABLED_BY_DEFAULT};
 
-// Controls the billing interstitial UI.
-// TODO(http://crbug.com/933807): remove this base::Feature after a full launch.
-const base::Feature kBillingInterstitial{"BillingInterstitial",
-                                         base::FEATURE_ENABLED_BY_DEFAULT};
+const base::Feature kCaptureSafetyNetId{"SafeBrowsingCaptureSafetyNetId",
+                                        base::FEATURE_DISABLED_BY_DEFAULT};
 
 // If enabled in pre-network-service world, SafeBrowsing URL checks are done by
 // applying SafeBrowsing's URLLoaderThrottle subclasses to ThrottlingURLLoader.
@@ -40,14 +39,12 @@ const base::Feature kCheckByURLLoaderThrottle{
 const base::Feature kCommittedSBInterstitials{
     "SafeBrowsingCommittedInterstitials", base::FEATURE_DISABLED_BY_DEFAULT};
 
-const base::Feature kForceEnableResetPasswordWebUI{
-    "ForceEnableResetPasswordWebUI", base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kPasswordProtectionForSignedInUsers{
+    "SafeBrowsingPasswordProtectionForSignedInUsers",
+    base::FEATURE_DISABLED_BY_DEFAULT};
 
 const base::Feature kSuspiciousSiteTriggerQuotaFeature{
     "SafeBrowsingSuspiciousSiteTriggerQuota", base::FEATURE_ENABLED_BY_DEFAULT};
-
-const base::Feature kTelemetryForApkDownloads{
-    "SafeBrowsingTelemetryForApkDownloads", base::FEATURE_DISABLED_BY_DEFAULT};
 
 const base::Feature kThreatDomDetailsTagAndAttributeFeature{
     "ThreatDomDetailsTagAttributes", base::FEATURE_DISABLED_BY_DEFAULT};
@@ -59,11 +56,14 @@ const base::Feature kTriggerThrottlerDailyQuotaFeature{
 const base::Feature kUseLocalBlacklistsV2{"SafeBrowsingUseLocalBlacklistsV2",
                                           base::FEATURE_DISABLED_BY_DEFAULT};
 
-const base::Feature kInspectRarContentFeature{
-    "InspectRarContent", base::FEATURE_DISABLED_BY_DEFAULT};
-
 const base::Feature kUseAPDownloadProtection{"UseAPDownloadProtection",
                                              base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kForceUseAPDownloadProtection{
+    "ForceUseAPDownloadProtection", base::FEATURE_DISABLED_BY_DEFAULT};
+
+constexpr base::FeatureParam<bool> kShouldFillOldPhishGuardProto{
+    &kPasswordProtectionForSignedInUsers, "DeprecateOldProto", false};
 
 namespace {
 // List of experimental features. Boolean value for each list member should be
@@ -75,16 +75,16 @@ constexpr struct {
   bool probabilistically_enabled;
 } kExperimentalFeatures[]{
     {&kAdSamplerTriggerFeature, false},
-    {&kBillingInterstitial, true},
+    {&kCaptureSafetyNetId, true},
     {&kCheckByURLLoaderThrottle, true},
     {&kCommittedSBInterstitials, true},
-    {&kForceEnableResetPasswordWebUI, true},
+    {&kPasswordProtectionForSignedInUsers, true},
     {&kSuspiciousSiteTriggerQuotaFeature, true},
-    {&kTelemetryForApkDownloads, true},
     {&kThreatDomDetailsTagAndAttributeFeature, false},
     {&kTriggerThrottlerDailyQuotaFeature, false},
     {&kUseLocalBlacklistsV2, true},
     {&kUseAPDownloadProtection, false},
+    {&kForceUseAPDownloadProtection, false},
 };
 
 // Adds the name and the enabled/disabled status of a given feature.
@@ -108,6 +108,10 @@ base::ListValue GetFeatureStatusList() {
       AddFeatureAndAvailability(feature_status.feature, &param_list);
   }
   return param_list;
+}
+
+bool GetShouldFillOldPhishGuardProto() {
+  return kShouldFillOldPhishGuardProto.Get();
 }
 
 }  // namespace safe_browsing

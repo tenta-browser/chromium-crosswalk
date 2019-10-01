@@ -28,6 +28,7 @@
 namespace gpu {
 class GpuInit;
 class SyncPointManager;
+class SharedImageManager;
 }  // namespace gpu
 
 namespace service_manager {
@@ -77,6 +78,7 @@ class VizMainImpl : public mojom::VizMain {
 
     bool create_display_compositor = false;
     gpu::SyncPointManager* sync_point_manager = nullptr;
+    gpu::SharedImageManager* shared_image_manager = nullptr;
     base::WaitableEvent* shutdown_event = nullptr;
     scoped_refptr<base::SingleThreadTaskRunner> io_thread_task_runner;
     service_manager::Connector* connector = nullptr;
@@ -153,15 +155,8 @@ class VizMainImpl : public mojom::VizMain {
 
   // This is created for OOP-D only. It allows the display compositor to use
   // InProcessCommandBuffer to send GPU commands to the GPU thread from the
-  // compositor thread.
-  // TODO(kylechar): The only reason this member variable exists is so the last
-  // reference is released and the object is destroyed on the GPU thread. This
-  // works because |task_executor_| is destroyed after the VizCompositorThread
-  // has been shutdown. All usage of CommandBufferTaskExecutor has the same
-  // pattern, where the last scoped_refptr is released on the GPU thread after
-  // all InProcessCommandBuffers are destroyed, so the class doesn't need to be
-  // RefCountedThreadSafe.
-  scoped_refptr<gpu::CommandBufferTaskExecutor> task_executor_;
+  // compositor thread. This must outlive |viz_compositor_thread_runner_|.
+  std::unique_ptr<gpu::CommandBufferTaskExecutor> task_executor_;
 
   // If the gpu service is not yet ready then we stash pending
   // FrameSinkManagerParams.

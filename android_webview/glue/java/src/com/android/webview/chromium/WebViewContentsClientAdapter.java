@@ -41,6 +41,7 @@ import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.AwContentsClient;
 import org.chromium.android_webview.AwContentsClientBridge;
 import org.chromium.android_webview.AwGeolocationPermissions;
+import org.chromium.android_webview.AwHistogramRecorder;
 import org.chromium.android_webview.AwHttpAuthHandler;
 import org.chromium.android_webview.AwRenderProcessGoneDetail;
 import org.chromium.android_webview.AwWebResourceResponse;
@@ -51,8 +52,9 @@ import org.chromium.android_webview.permission.AwPermissionRequest;
 import org.chromium.android_webview.permission.Resource;
 import org.chromium.base.Callback;
 import org.chromium.base.Log;
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.TraceEvent;
+import org.chromium.base.task.PostTask;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 
 import java.lang.ref.WeakReference;
 import java.security.Principal;
@@ -118,7 +120,7 @@ class WebViewContentsClientAdapter extends SharedWebViewContentsClientAdapter {
                             WebView newWebView = t.getWebView();
                             if (newWebView == mWebView) {
                                 throw new IllegalArgumentException(
-                                        "Parent WebView cannot host it's own popup window. Please "
+                                        "Parent WebView cannot host its own popup window. Please "
                                         + "use WebSettings.setSupportMultipleWindows(false)");
                             }
 
@@ -310,6 +312,10 @@ class WebViewContentsClientAdapter extends SharedWebViewContentsClientAdapter {
             TraceEvent.begin("WebViewContentsClientAdapter.onLoadResource");
             if (TRACE) Log.i(TAG, "onLoadResource=" + url);
             mWebViewClient.onLoadResource(mWebView, url);
+
+            // Record UMA for onLoadResource.
+            AwHistogramRecorder.recordCallbackInvocation(
+                    AwHistogramRecorder.WebViewCallbackType.ON_LOAD_RESOURCE);
         } finally {
             TraceEvent.end("WebViewContentsClientAdapter.onLoadResource");
         }
@@ -407,6 +413,11 @@ class WebViewContentsClientAdapter extends SharedWebViewContentsClientAdapter {
             TraceEvent.begin("WebViewContentsClientAdapter.onPageStarted");
             if (TRACE) Log.i(TAG, "onPageStarted=" + url);
             mWebViewClient.onPageStarted(mWebView, url, mWebView.getFavicon());
+
+            // Record UMA for onPageStarted.
+            AwHistogramRecorder.recordCallbackInvocation(
+                    AwHistogramRecorder.WebViewCallbackType.ON_PAGE_STARTED);
+
         } finally {
             TraceEvent.end("WebViewContentsClientAdapter.onPageStarted");
         }
@@ -422,6 +433,10 @@ class WebViewContentsClientAdapter extends SharedWebViewContentsClientAdapter {
             if (TRACE) Log.i(TAG, "onPageFinished=" + url);
             mWebViewClient.onPageFinished(mWebView, url);
 
+            // Record UMA for onPageFinished.
+            AwHistogramRecorder.recordCallbackInvocation(
+                    AwHistogramRecorder.WebViewCallbackType.ON_PAGE_FINISHED);
+
             // See b/8208948
             // This fakes an onNewPicture callback after onPageFinished to allow
             // CTS tests to run in an un-flaky manner. This is required as the
@@ -433,14 +448,11 @@ class WebViewContentsClientAdapter extends SharedWebViewContentsClientAdapter {
             // no further updates after onPageStarted, we'll fail the test by timing
             // out waiting for a Picture.
             if (mPictureListener != null) {
-                ThreadUtils.postOnUiThreadDelayed(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (mPictureListener != null) {
-                            if (TRACE) Log.i(TAG, "onPageFinished-fake");
-                            mPictureListener.onNewPicture(mWebView,
-                                    mPictureListenerInvalidateOnly ? null : new Picture());
-                        }
+                PostTask.postDelayedTask(UiThreadTaskTraits.DEFAULT, () -> {
+                    if (mPictureListener != null) {
+                        if (TRACE) Log.i(TAG, "onPageFinished-fake");
+                        mPictureListener.onNewPicture(
+                                mWebView, mPictureListenerInvalidateOnly ? null : new Picture());
                     }
                 }, 100);
             }

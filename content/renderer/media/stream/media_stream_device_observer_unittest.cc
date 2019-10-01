@@ -10,6 +10,7 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_task_environment.h"
 #include "content/renderer/media/stream/mock_mojo_media_stream_dispatcher_host.h"
@@ -23,7 +24,7 @@ class MediaStreamDeviceObserverTest : public ::testing::Test {
   MediaStreamDeviceObserverTest()
       : observer_(std::make_unique<MediaStreamDeviceObserver>(nullptr)) {}
 
-  void OnDeviceOpened(base::Closure quit_closure,
+  void OnDeviceOpened(base::OnceClosure quit_closure,
                       bool success,
                       const std::string& label,
                       const blink::MediaStreamDevice& device) {

@@ -58,7 +58,8 @@ class PageInfoBubbleViewsMacTest
 IN_PROC_BROWSER_TEST_P(PageInfoBubbleViewsMacTest, NoCrashOnFullScreenToggle) {
   ui::test::ScopedFakeNSWindowFullscreen fake_fullscreen;
   ui_test_utils::NavigateToURL(browser(), GURL(GetParam().url));
-  ShowPageInfoDialog(browser()->tab_strip_model()->GetWebContentsAt(0));
+  ShowPageInfoDialog(browser()->tab_strip_model()->GetWebContentsAt(0),
+                     base::BindOnce([](views::Widget::CloseReason, bool) {}));
   ExclusiveAccessManager* access_manager =
       browser()->exclusive_access_manager();
   FullscreenController* fullscreen_controller =
@@ -86,11 +87,13 @@ IN_PROC_BROWSER_TEST_P(PageInfoBubbleViewsMacTest,
   // Add a second tab, but make sure the first is selected.
   AddTabAtIndex(1, GURL("https://test_url.com"),
                 ui::PageTransition::PAGE_TRANSITION_LINK);
-  browser()->tab_strip_model()->ActivateTabAt(0, true);
+  browser()->tab_strip_model()->ActivateTabAt(
+      0, {TabStripModel::GestureType::kOther});
   EXPECT_EQ(0, browser()->tab_strip_model()->active_index());
 
   // Show the (internal or external) Page Info bubble and check it's visible.
-  ShowPageInfoDialog(browser()->tab_strip_model()->GetWebContentsAt(0));
+  ShowPageInfoDialog(browser()->tab_strip_model()->GetWebContentsAt(0),
+                     base::BindOnce([](views::Widget::CloseReason, bool) {}));
   EXPECT_EQ(GetParam().bubble_type, PageInfoBubbleView::GetShownBubbleType());
   views::BubbleDialogDelegateView* page_info =
       PageInfoBubbleView::GetPageInfoBubble();
@@ -113,6 +116,6 @@ IN_PROC_BROWSER_TEST_P(PageInfoBubbleViewsMacTest,
   EXPECT_FALSE(PageInfoBubbleView::GetPageInfoBubble());
 }
 
-INSTANTIATE_TEST_CASE_P(,
-                        PageInfoBubbleViewsMacTest,
-                        testing::ValuesIn(kGurlBubbleTypePairs));
+INSTANTIATE_TEST_SUITE_P(,
+                         PageInfoBubbleViewsMacTest,
+                         testing::ValuesIn(kGurlBubbleTypePairs));

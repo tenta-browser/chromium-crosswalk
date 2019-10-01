@@ -13,6 +13,7 @@ namespace blink {
 class CustomElementDefinition;
 class CustomElementReaction;
 class Document;
+class FileOrUSVStringOrFormData;
 class HTMLFormElement;
 class QualifiedName;
 
@@ -41,9 +42,13 @@ class CustomElementReactionFactory {
       HTMLFormElement* nullable_form);
   static CustomElementReaction& CreateFormReset(
       CustomElementDefinition& definition);
-  static CustomElementReaction& CreateDisabledStateChanged(
+  static CustomElementReaction& CreateFormDisabled(
       CustomElementDefinition& definition,
       bool is_disabled);
+  static CustomElementReaction& CreateFormStateRestore(
+      CustomElementDefinition& definition,
+      const FileOrUSVStringOrFormData& value,
+      const String& mode);
 };
 
 }  // namespace blink

@@ -4,6 +4,7 @@
 
 #include "ui/ozone/platform/cast/surface_factory_cast.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/macros.h"
@@ -49,11 +50,10 @@ class CastPixmap : public gfx::NativePixmap {
   CastPixmap() {}
 
   bool AreDmaBufFdsValid() const override { return false; }
-  size_t GetDmaBufFdCount() const override { return 0; }
   int GetDmaBufFd(size_t plane) const override { return -1; }
   int GetDmaBufPitch(size_t plane) const override { return 0; }
   int GetDmaBufOffset(size_t plane) const override { return 0; }
-  uint64_t GetDmaBufModifier(size_t plane) const override { return 0; }
+  uint64_t GetBufferFormatModifier() const override { return 0; }
   gfx::BufferFormat GetBufferFormat() const override {
     return gfx::BufferFormat::BGRA_8888;
   }
@@ -120,6 +120,7 @@ std::unique_ptr<SurfaceOzoneCanvas> SurfaceFactoryCast::CreateCanvasForWidget(
 
 scoped_refptr<gfx::NativePixmap> SurfaceFactoryCast::CreateNativePixmap(
     gfx::AcceleratedWidget widget,
+    VkDevice vk_device,
     gfx::Size size,
     gfx::BufferFormat format,
     gfx::BufferUsage usage) {

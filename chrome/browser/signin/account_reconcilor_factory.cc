@@ -7,16 +7,18 @@
 #include <memory>
 #include <utility>
 
+#include "base/feature_list.h"
 #include "base/logging.h"
+#include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/account_consistency_mode_manager.h"
 #include "chrome/browser/signin/chrome_signin_client_factory.h"
-#include "chrome/browser/signin/gaia_cookie_manager_service_factory.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/signin/core/browser/account_consistency_method.h"
 #include "components/signin/core/browser/account_reconcilor.h"
 #include "components/signin/core/browser/account_reconcilor_delegate.h"
+#include "components/signin/core/browser/consistency_cookie_manager_base.h"
 #include "components/signin/core/browser/mirror_account_reconcilor_delegate.h"
 #include "components/signin/core/browser/signin_buildflags.h"
 
@@ -29,6 +31,11 @@
 #include "chromeos/constants/chromeos_switches.h"
 #include "components/user_manager/user_manager.h"
 #include "google_apis/gaia/google_service_auth_error.h"
+#endif
+
+#if defined(OS_ANDROID)
+#include "components/signin/core/browser/consistency_cookie_manager_android.h"
+#include "components/signin/core/browser/mice_account_reconcilor_delegate.h"
 #endif
 
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
@@ -114,7 +121,6 @@ AccountReconcilorFactory::AccountReconcilorFactory()
           "AccountReconcilor",
           BrowserContextDependencyManager::GetInstance()) {
   DependsOn(ChromeSigninClientFactory::GetInstance());
-  DependsOn(GaiaCookieManagerServiceFactory::GetInstance());
   DependsOn(IdentityManagerFactory::GetInstance());
 }
 
@@ -134,12 +140,16 @@ AccountReconcilorFactory* AccountReconcilorFactory::GetInstance() {
 KeyedService* AccountReconcilorFactory::BuildServiceInstanceFor(
     content::BrowserContext* context) const {
   Profile* profile = Profile::FromBrowserContext(context);
-  AccountReconcilor* reconcilor = new AccountReconcilor(
-      IdentityManagerFactory::GetForProfile(profile),
-      ChromeSigninClientFactory::GetForProfile(profile),
-      GaiaCookieManagerServiceFactory::GetForProfile(profile),
-      CreateAccountReconcilorDelegate(profile));
+  identity::IdentityManager* identity_manager =
+      IdentityManagerFactory::GetForProfile(profile);
+  SigninClient* signin_client =
+      ChromeSigninClientFactory::GetForProfile(profile);
+  AccountReconcilor* reconcilor =
+      new AccountReconcilor(identity_manager, signin_client,
+                            CreateAccountReconcilorDelegate(profile));
   reconcilor->Initialize(true /* start_reconcile_if_tokens_available */);
+  reconcilor->SetConsistencyCookieManager(CreateConsistencyCookieManager(
+      identity_manager, signin_client, reconcilor));
   return reconcilor;
 }
 
@@ -167,6 +177,9 @@ AccountReconcilorFactory::CreateAccountReconcilorDelegate(Profile* profile) {
             chromeos::AccountManagerMigratorFactory::GetForBrowserContext(
                 profile));
       }
+#elif defined(OS_ANDROID)
+      if (base::FeatureList::IsEnabled(signin::kMiceFeature))
+        return std::make_unique<signin::MiceAccountReconcilorDelegate>();
 #endif
       return std::make_unique<signin::MirrorAccountReconcilorDelegate>(
           IdentityManagerFactory::GetForProfile(profile));
@@ -187,5 +200,19 @@ AccountReconcilorFactory::CreateAccountReconcilorDelegate(Profile* profile) {
   }
 
   NOTREACHED();
+  return nullptr;
+}
+
+std::unique_ptr<signin::ConsistencyCookieManagerBase>
+AccountReconcilorFactory::CreateConsistencyCookieManager(
+    identity::IdentityManager* identity_manager,
+    SigninClient* signin_client,
+    AccountReconcilor* account_reconcilor) const {
+#if defined(OS_ANDROID)
+  if (base::FeatureList::IsEnabled(signin::kMiceFeature)) {
+    return std::make_unique<signin::ConsistencyCookieManagerAndroid>(
+        identity_manager, signin_client, account_reconcilor);
+  }
+#endif
   return nullptr;
 }

@@ -11,6 +11,7 @@
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "ios/web/common/features.h"
 #import "ios/web/navigation/navigation_manager_delegate.h"
 #import "ios/web/navigation/navigation_manager_impl.h"
 #import "ios/web/navigation/wk_navigation_util.h"
@@ -56,6 +57,7 @@ bool WebUIUrlRewriter(GURL* url, BrowserState* browser_state) {
     GURL::Replacements scheme_replacements;
     scheme_replacements.SetSchemeStr(kTestWebUIScheme);
     *url = url->ReplaceComponents(scheme_replacements);
+    return true;
   }
   return false;
 }
@@ -73,7 +75,7 @@ class MockNavigationManagerDelegate : public NavigationManagerDelegate {
   MOCK_METHOD2(OnGoToIndexSameDocumentNavigation,
                void(NavigationInitiationType type, bool has_user_gesture));
   MOCK_METHOD0(WillChangeUserAgentType, void());
-  MOCK_METHOD0(LoadCurrentItem, void());
+  MOCK_METHOD1(LoadCurrentItem, void(NavigationInitiationType type));
   MOCK_METHOD0(LoadIfNecessary, void());
   MOCK_METHOD0(Reload, void());
   MOCK_METHOD1(OnNavigationItemsPruned, void(size_t));
@@ -83,6 +85,7 @@ class MockNavigationManagerDelegate : public NavigationManagerDelegate {
                     NavigationItem*,
                     NavigationInitiationType,
                     bool));
+  MOCK_METHOD0(GetPendingItem, NavigationItemImpl*());
 
  private:
   WebState* GetWebState() override { return nullptr; }
@@ -112,10 +115,7 @@ class WKBasedNavigationManagerTest : public PlatformTest {
 
   // Returns the value of the "#session=" URL hash component from |url|.
   static std::string ExtractRestoredSession(const GURL& url) {
-    std::string decoded = net::UnescapeURLComponent(
-        url.ref(), net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS |
-                       net::UnescapeRule::SPACES |
-                       net::UnescapeRule::PATH_SEPARATORS);
+    std::string decoded = net::UnescapeBinaryURLComponent(url.ref());
     return decoded.substr(
         strlen(wk_navigation_util::kRestoreSessionSessionHashPrefix));
   }
@@ -296,9 +296,8 @@ TEST_F(WKBasedNavigationManagerTest, ReusePendingItemForHistoryNavigation) {
   mock_wk_list_.currentItem = wk_item0;
   mock_wk_list_.backList = nil;
   mock_wk_list_.forwardList = @[ wk_item1 ];
-  OCMExpect([mock_web_view_ URL])
+  OCMStub([mock_web_view_ URL])
       .andReturn([[NSURL alloc] initWithString:@"http://www.0.com"]);
-
   manager_->AddPendingItem(
       GURL("http://www.0.com"), Referrer(), ui::PAGE_TRANSITION_TYPED,
       web::NavigationInitiationType::BROWSER_INITIATED,
@@ -609,10 +608,13 @@ TEST_F(WKBasedNavigationManagerTest, CanGoToOffset) {
   EXPECT_FALSE(manager_->CanGoToOffset(2));
 }
 
-// Tests that non-empty session history can be restored.
+// Tests that non-empty session history can be restored, and are re-written if
+// necessary.
 TEST_F(WKBasedNavigationManagerTest, RestoreSessionWithHistory) {
+  manager_->AddTransientURLRewriter(&WebUIUrlRewriter);
   auto item0 = std::make_unique<NavigationItemImpl>();
-  item0->SetURL(GURL("http://www.0.com"));
+  GURL url(url::SchemeHostPort(kSchemeToRewrite, "test", 0).Serialize());
+  item0->SetURL(url);
   item0->SetTitle(base::ASCIIToUTF16("Test Website 0"));
   auto item1 = std::make_unique<NavigationItemImpl>();
   item1->SetURL(GURL("http://www.1.com"));
@@ -632,11 +634,12 @@ TEST_F(WKBasedNavigationManagerTest, RestoreSessionWithHistory) {
   GURL pending_url = pending_item->GetURL();
   EXPECT_TRUE(pending_url.SchemeIsFile());
   EXPECT_EQ("restore_session.html", pending_url.ExtractFileName());
-  EXPECT_EQ("http://www.0.com/", pending_item->GetVirtualURL());
+  EXPECT_EQ(url.spec(), pending_item->GetVirtualURL());
   EXPECT_EQ("Test Website 0", base::UTF16ToUTF8(pending_item->GetTitle()));
 
   EXPECT_EQ("{\"offset\":0,\"titles\":[\"Test Website 0\",\"\"],"
-            "\"urls\":[\"http://www.0.com/\",\"http://www.1.com/\"]}",
+            "\"urls\":[\"testwebui://test/\","
+            "\"http://www.1.com/\"]}",
             ExtractRestoredSession(pending_url));
 
   // Check that cached visible item is returned.
@@ -795,6 +798,8 @@ TEST_F(WKBasedNavigationManagerTest, EmptyWindowOpenNavigation) {
 
   [mock_wk_list_ setCurrentURL:@"http://www.2.com"];
   manager_->CommitPendingItem();
+  OCMExpect([mock_web_view_ URL])
+      .andReturn([[NSURL alloc] initWithString:@"http://www.2.com"]);
 
   const NavigationItem* last_committed_item_2 =
       manager_->GetLastCommittedItem();
@@ -843,6 +848,11 @@ class WKBasedNavigationManagerDetachedModeTest
     ASSERT_EQ(url0_, manager_->GetItemAtIndex(0)->GetURL());
     ASSERT_EQ(url1_, manager_->GetItemAtIndex(1)->GetURL());
     ASSERT_EQ(url2_, manager_->GetItemAtIndex(2)->GetURL());
+  }
+
+  NSString* CreateRedirectUrlForWKList(GURL url) {
+    GURL redirect_url = wk_navigation_util::CreateRedirectUrl(url);
+    return base::SysUTF8ToNSString(redirect_url.spec());
   }
 
   GURL url0_;
@@ -987,6 +997,18 @@ TEST_F(WKBasedNavigationManagerDetachedModeTest, LoadURLWithParams) {
 
   histogram_tester_.ExpectTotalCount(kRestoreNavigationItemCount, 1);
   histogram_tester_.ExpectBucketCount(kRestoreNavigationItemCount, 3, 1);
+}
+
+// Tests that detaching placeholder urls are cleaned before being cached.
+TEST_F(WKBasedNavigationManagerDetachedModeTest, CachedPlaceholders) {
+  [mock_wk_list_ setCurrentURL:CreateRedirectUrlForWKList(url1_)
+                  backListURLs:@[ CreateRedirectUrlForWKList(url0_) ]
+               forwardListURLs:@[ CreateRedirectUrlForWKList(url2_) ]];
+  manager_->DetachFromWebView();
+
+  EXPECT_EQ(url0_, manager_->GetNavigationItemImplAtIndex(0)->GetURL());
+  EXPECT_EQ(url1_, manager_->GetNavigationItemImplAtIndex(1)->GetURL());
+  EXPECT_EQ(url2_, manager_->GetNavigationItemImplAtIndex(2)->GetURL());
 }
 
 }  // namespace web

@@ -67,7 +67,7 @@ cvox.OptionsPage.init = function() {
     $('virtual_braille_display_rows_input').value = items['virtualBrailleRows'];
   });
   chrome.storage.local.get({'virtualBrailleColumns': 40}, function(items) {
-    $('virtual_braille_display_columns_input').value =
+    $('virtual-braille-display-columns-input').value =
         items['virtualBrailleColumns'];
   });
   var changeToInterleave =
@@ -108,6 +108,14 @@ cvox.OptionsPage.init = function() {
         }
       });
 
+  chrome.commandLinePrivate.hasSwitch(
+      'enable-experimental-accessibility-chromevox-rich-text-indication',
+      function(enabled) {
+        if (!enabled) {
+          $('richTextIndicationOption').style.display = 'none';
+        }
+      });
+
   var registerEventStreamFiltersListener = function() {
     $('toggleEventStreamFilters').addEventListener('click', function(evt) {
       if ($('eventStreamFilters').hidden) {
@@ -120,19 +128,28 @@ cvox.OptionsPage.init = function() {
     });
   };
 
-  chrome.commandLinePrivate.hasSwitch(
-      'enable-chromevox-developer-option', function(enable) {
-        if (!enable) {
-          $('developerDescription').hidden = true;
-          $('developerSpeechLogging').hidden = true;
-          $('developerEarconLogging').hidden = true;
-          $('developerBrailleLogging').hidden = true;
-          $('developerEventStream').hidden = true;
-          return;
-        }
-        registerEventStreamFiltersListener();
-      });
+  $('chromeVoxDeveloperOptions').addEventListener('expanded-changed', () => {
+    const hidden = !$('chromeVoxDeveloperOptions').expanded;
+    $('developerSpeechLogging').hidden = hidden;
+    $('developerEarconLogging').hidden = hidden;
+    $('developerBrailleLogging').hidden = hidden;
+    $('developerEventStream').hidden = hidden;
+    $('showDeveloperLog').hidden = hidden;
+  });
 
+  $('openDeveloperLog').addEventListener('click', function(evt) {
+    const logPage = {url: 'cvox2/background/log.html'};
+    chrome.tabs.create(logPage);
+  });
+
+  // Hide developer options by default.
+  $('developerSpeechLogging').hidden = true;
+  $('developerEarconLogging').hidden = true;
+  $('developerBrailleLogging').hidden = true;
+  $('developerEventStream').hidden = true;
+  $('showDeveloperLog').hidden = true;
+
+  registerEventStreamFiltersListener();
   Msgs.addTranslatedMessagesToDom(document);
   cvox.OptionsPage.hidePlatformSpecifics();
 

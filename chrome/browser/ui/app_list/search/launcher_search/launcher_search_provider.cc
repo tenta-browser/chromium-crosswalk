@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chromeos/launcher_search_provider/launcher_search_provider_service.h"
@@ -26,6 +27,9 @@ LauncherSearchProvider::LauncherSearchProvider(Profile* profile)
 }
 
 LauncherSearchProvider::~LauncherSearchProvider() {
+  Service* service = Service::Get(profile_);
+  if (service->IsQueryRunning())
+    service->OnQueryEnded();
 }
 
 void LauncherSearchProvider::Start(const base::string16& query) {

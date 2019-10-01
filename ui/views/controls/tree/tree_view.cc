@@ -5,8 +5,11 @@
 #include "ui/views/controls/tree/tree_view.h"
 
 #include <algorithm>
+#include <utility>
 
+#include "base/containers/adapters.h"
 #include "base/i18n/rtl.h"
+#include "base/memory/ptr_util.h"
 #include "build/build_config.h"
 #include "components/vector_icons/vector_icons.h"
 #include "ui/accessibility/ax_node_data.h"
@@ -42,16 +45,16 @@ using ui::TreeModelNode;
 namespace views {
 
 // Insets around the view.
-static const int kHorizontalInset = 2;
+static constexpr int kHorizontalInset = 2;
 // Padding before/after the image.
-static const int kImagePadding = 4;
+static constexpr int kImagePadding = 4;
 // Size of the arrow region.
-static const int kArrowRegionSize = 12;
+static constexpr int kArrowRegionSize = 12;
 // Padding around the text (on each side).
-static const int kTextVerticalPadding = 3;
-static const int kTextHorizontalPadding = 2;
+static constexpr int kTextVerticalPadding = 3;
+static constexpr int kTextHorizontalPadding = 2;
 // How much children are indented from their parent.
-static const int kIndent = 20;
+static constexpr int kIndent = 20;
 
 // static
 const char TreeView::kViewClassName[] = "TreeView";
@@ -66,16 +69,7 @@ bool EventIsDoubleTapOrClick(const ui::LocatedEvent& event) {
 
 }  // namespace
 TreeView::TreeView()
-    : model_(NULL),
-      selected_node_(NULL),
-      editing_(false),
-      editor_(NULL),
-      focus_manager_(NULL),
-      auto_expand_children_(false),
-      editable_(true),
-      controller_(NULL),
-      root_shown_(true),
-      row_height_(font_list_.GetHeight() + kTextVerticalPadding * 2),
+    : row_height_(font_list_.GetHeight() + kTextVerticalPadding * 2),
       drawing_provider_(std::make_unique<TreeViewDrawingProvider>()) {
   // Always focusable, even on Mac (consistent with NSOutlineView).
   SetFocusBehavior(FocusBehavior::ALWAYS);
@@ -115,13 +109,15 @@ TreeView::~TreeView() {
 
   if (focus_manager_) {
     focus_manager_->RemoveFocusChangeListener(this);
-    focus_manager_ = NULL;
+    focus_manager_ = nullptr;
   }
 }
 
-View* TreeView::CreateParentIfNecessary() {
-  ScrollView* scroll_view = ScrollView::CreateScrollViewWithBorder();
-  scroll_view->SetContents(this);
+// static
+std::unique_ptr<ScrollView> TreeView::CreateScrollViewWithTree(
+    std::unique_ptr<TreeView> tree) {
+  auto scroll_view = ScrollView::CreateScrollViewWithBorder();
+  scroll_view->SetContents(std::move(tree));
   return scroll_view;
 }
 
@@ -134,7 +130,7 @@ void TreeView::SetModel(TreeModel* model) {
   CancelEdit();
 
   model_ = model;
-  selected_node_ = NULL;
+  selected_node_ = nullptr;
   icons_.clear();
   if (model_) {
     model_->AddObserver(this);
@@ -214,7 +210,7 @@ void TreeView::CancelEdit() {
   editing_ = false;
   if (focus_manager_) {
     focus_manager_->RemoveFocusChangeListener(this);
-    focus_manager_ = NULL;
+    focus_manager_ = nullptr;
   }
   editor_->SetVisible(false);
   SchedulePaint();
@@ -236,7 +232,7 @@ void TreeView::CommitEdit() {
 }
 
 TreeModelNode* TreeView::GetEditingNode() {
-  return editing_ ? selected_node_->model_node() : NULL;
+  return editing_ ? selected_node_->model_node() : nullptr;
 }
 
 void TreeView::SetSelectedNode(TreeModelNode* model_node) {
@@ -246,15 +242,16 @@ void TreeView::SetSelectedNode(TreeModelNode* model_node) {
     Expand(model_->GetParent(model_node));
   if (model_node && model_node == root_.model_node() && !root_shown_)
     return;  // Ignore requests to select the root when not shown.
-  InternalNode* node = model_node ? GetInternalNodeForModelNode(
-      model_node, CREATE_IF_NOT_LOADED) : NULL;
-  bool was_empty_selection = (selected_node_ == NULL);
+  InternalNode* node =
+      model_node ? GetInternalNodeForModelNode(model_node, CREATE_IF_NOT_LOADED)
+                 : nullptr;
+  bool was_empty_selection = (selected_node_ == nullptr);
   bool changed = (selected_node_ != node);
   if (changed) {
     SchedulePaintForNode(selected_node_);
     selected_node_ = node;
     if (selected_node_ == &root_ && !root_shown_)
-      selected_node_ = NULL;
+      selected_node_ = nullptr;
     if (selected_node_ && selected_node_ != &root_)
       Expand(model_->GetParent(selected_node_->model_node()));
     SchedulePaintForNode(selected_node_);
@@ -280,7 +277,7 @@ void TreeView::SetSelectedNode(TreeModelNode* model_node) {
 }
 
 TreeModelNode* TreeView::GetSelectedNode() {
-  return selected_node_ ? selected_node_->model_node() : NULL;
+  return selected_node_ ? selected_node_->model_node() : nullptr;
 }
 
 void TreeView::Collapse(ui::TreeModelNode* model_node) {
@@ -313,8 +310,8 @@ void TreeView::ExpandAll(TreeModelNode* node) {
   // Expand the node.
   bool expanded_at_least_one = ExpandImpl(node);
   // And recursively expand all the children.
-  for (int i = model_->GetChildCount(node) - 1; i >= 0; --i) {
-    TreeModelNode* child = model_->GetChild(node, i);
+  const auto& children = model_->GetChildren(node);
+  for (TreeModelNode* child : base::Reversed(children)) {
     if (ExpandImpl(child))
       expanded_at_least_one = true;
   }
@@ -346,10 +343,8 @@ void TreeView::SetRootShown(bool root_shown) {
     return;
   root_shown_ = root_shown;
   if (!root_shown_ && selected_node_ == &root_) {
-    if (model_->GetChildCount(root_.model_node()))
-      SetSelectedNode(model_->GetChild(root_.model_node(), 0));
-    else
-      SetSelectedNode(NULL);
+    const auto& children = model_->GetChildren(root_.model_node());
+    SetSelectedNode(children.empty() ? nullptr : children.front());
   }
   DrawnNodesChanged();
 }
@@ -357,7 +352,7 @@ void TreeView::SetRootShown(bool root_shown) {
 ui::TreeModelNode* TreeView::GetNodeForRow(int row) {
   int depth = 0;
   InternalNode* node = GetNodeByRow(row, &depth);
-  return node ? node->model_node() : NULL;
+  return node ? node->model_node() : nullptr;
 }
 
 int TreeView::GetRowForNode(ui::TreeModelNode* node) {
@@ -457,10 +452,11 @@ void TreeView::TreeNodesAdded(TreeModel* model,
       GetInternalNodeForModelNode(parent, DONT_CREATE_IF_NOT_LOADED);
   if (!parent_node || !parent_node->loaded_children())
     return;
-  for (int i = 0; i < count; ++i) {
-    std::unique_ptr<InternalNode> child = std::make_unique<InternalNode>();
-    ConfigureInternalNode(model_->GetChild(parent, start + i), child.get());
-    parent_node->Add(std::move(child), start + i);
+  const auto& children = model_->GetChildren(parent);
+  for (int i = start; i < start + count; ++i) {
+    auto child = std::make_unique<InternalNode>();
+    ConfigureInternalNode(children[size_t{i}], child.get());
+    parent_node->Add(std::move(child), i);
   }
   if (IsExpanded(parent))
     DrawnNodesChanged();
@@ -486,11 +482,11 @@ void TreeView::TreeNodesRemoved(TreeModel* model,
     // its model_node() is likely deleted). Explicitly NULL out the field
     // rather than invoking SetSelectedNode() otherwise, we'll try and use a
     // deleted value.
-    selected_node_ = NULL;
+    selected_node_ = nullptr;
     TreeModelNode* to_select = parent;
     if (parent == root_.model_node() && !root_shown_) {
-      to_select = model_->GetChildCount(parent) > 0 ?
-          model_->GetChild(parent, 0) : NULL;
+      const auto& children = model_->GetChildren(parent);
+      to_select = children.empty() ? nullptr : children.front();
     }
     SetSelectedNode(to_select);
   }
@@ -697,10 +693,9 @@ void TreeView::LoadChildren(InternalNode* node) {
   DCHECK_EQ(0, node->child_count());
   DCHECK(!node->loaded_children());
   node->set_loaded_children(true);
-  for (int i = 0, child_count = model_->GetChildCount(node->model_node());
-       i < child_count; ++i) {
+  for (auto* model_child : model_->GetChildren(node->model_node())) {
     std::unique_ptr<InternalNode> child = std::make_unique<InternalNode>();
-    ConfigureInternalNode(model_->GetChild(node->model_node(), i), child.get());
+    ConfigureInternalNode(model_child, child.get());
     node->Add(std::move(child), node->child_count());
   }
 }
@@ -799,7 +794,7 @@ void TreeView::PaintRow(gfx::Canvas* canvas,
     canvas->FillRect(GetBackgroundBoundsForNode(node), selected_row_bg_color);
   }
 
-  if (model_->GetChildCount(node->model_node()))
+  if (!model_->GetChildren(node->model_node()).empty())
     PaintExpandControl(canvas, bounds, node->is_expanded());
 
   if (drawing_provider()->ShouldDrawIconForNode(this, node->model_node()))
@@ -898,10 +893,10 @@ TreeView::InternalNode* TreeView::GetInternalNodeForModelNode(
   InternalNode* parent_internal_node =
       GetInternalNodeForModelNode(model_->GetParent(model_node), create_type);
   if (!parent_internal_node)
-    return NULL;
+    return nullptr;
   if (!parent_internal_node->loaded_children()) {
     if (create_type == DONT_CREATE_IF_NOT_LOADED)
-      return NULL;
+      return nullptr;
     LoadChildren(parent_internal_node);
   }
   return parent_internal_node->GetChild(
@@ -1027,7 +1022,7 @@ TreeView::InternalNode* TreeView::GetNodeByRowImpl(InternalNode* node,
         return result;
     }
   }
-  return NULL;
+  return nullptr;
 }
 
 void TreeView::IncrementSelection(IncrementType type) {
@@ -1105,13 +1100,13 @@ bool TreeView::ExpandImpl(TreeModelNode* model_node) {
 
 PrefixSelector* TreeView::GetPrefixSelector() {
   if (!selector_)
-    selector_.reset(new PrefixSelector(this, this));
+    selector_ = std::make_unique<PrefixSelector>(this, this);
   return selector_.get();
 }
 
 bool TreeView::IsPointInExpandControl(InternalNode* node,
                                       const gfx::Point& point) {
-  if (!model_->GetChildCount(node->model_node()))
+  if (model_->GetChildren(node->model_node()).empty())
     return false;
 
   int depth = -1;
@@ -1136,15 +1131,9 @@ void TreeView::SetHasFocusIndicator(bool shows) {
 
 // InternalNode ----------------------------------------------------------------
 
-TreeView::InternalNode::InternalNode()
-    : model_node_(NULL),
-      loaded_children_(false),
-      is_expanded_(false),
-      text_width_(0) {
-}
+TreeView::InternalNode::InternalNode() = default;
 
-TreeView::InternalNode::~InternalNode() {
-}
+TreeView::InternalNode::~InternalNode() = default;
 
 void TreeView::InternalNode::Reset(ui::TreeModelNode* node) {
   model_node_ = node;

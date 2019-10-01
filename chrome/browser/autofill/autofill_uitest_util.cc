@@ -8,8 +8,8 @@
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "components/autofill/core/browser/autofill_profile.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/autofill/core/browser/personal_data_manager_observer.h"
 #include "content/public/test/test_utils.h"
@@ -90,12 +90,26 @@ void AddTestCreditCard(Browser* browser, const CreditCard& card) {
   observer.Wait();
 }
 
+void AddTestServerCreditCard(Browser* browser, const CreditCard& card) {
+  PdmChangeWaiter observer(browser);
+  GetPersonalDataManager(browser->profile())->AddFullServerCreditCard(card);
+
+  // AddCreditCard is asynchronous. Wait for it to finish before continuing the
+  // tests.
+  observer.Wait();
+}
+
 void AddTestAutofillData(Browser* browser,
                          const AutofillProfile& profile,
                          const CreditCard& card) {
   AddTestProfile(browser, profile);
   PdmChangeWaiter observer(browser);
   GetPersonalDataManager(browser->profile())->AddCreditCard(card);
+  observer.Wait();
+}
+
+void WaitForPersonalDataChange(Browser* browser) {
+  PdmChangeWaiter observer(browser);
   observer.Wait();
 }
 

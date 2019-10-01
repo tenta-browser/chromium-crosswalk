@@ -121,27 +121,28 @@ int MapOpenSSLErrorSSL(uint32_t error_code) {
       }
       return ERR_SSL_PROTOCOL_ERROR;
     }
+    case SSL_R_KEY_USAGE_BIT_INCORRECT:
+      return ERR_SSL_KEY_USAGE_INCOMPATIBLE;
     default:
       return ERR_SSL_PROTOCOL_ERROR;
   }
 }
 
-std::unique_ptr<base::Value> NetLogOpenSSLErrorCallback(
-    int net_error,
-    int ssl_error,
-    const OpenSSLErrorInfo& error_info,
-    NetLogCaptureMode /* capture_mode */) {
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-  dict->SetInteger("net_error", net_error);
-  dict->SetInteger("ssl_error", ssl_error);
+base::Value NetLogOpenSSLErrorCallback(int net_error,
+                                       int ssl_error,
+                                       const OpenSSLErrorInfo& error_info,
+                                       NetLogCaptureMode /* capture_mode */) {
+  base::DictionaryValue dict;
+  dict.SetInteger("net_error", net_error);
+  dict.SetInteger("ssl_error", ssl_error);
   if (error_info.error_code != 0) {
-    dict->SetInteger("error_lib", ERR_GET_LIB(error_info.error_code));
-    dict->SetInteger("error_reason", ERR_GET_REASON(error_info.error_code));
+    dict.SetInteger("error_lib", ERR_GET_LIB(error_info.error_code));
+    dict.SetInteger("error_reason", ERR_GET_REASON(error_info.error_code));
   }
-  if (error_info.file != NULL)
-    dict->SetString("file", error_info.file);
+  if (error_info.file != nullptr)
+    dict.SetString("file", error_info.file);
   if (error_info.line != 0)
-    dict->SetInteger("line", error_info.line);
+    dict.SetInteger("line", error_info.line);
   return std::move(dict);
 }
 

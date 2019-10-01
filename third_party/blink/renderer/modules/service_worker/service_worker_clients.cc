@@ -4,14 +4,12 @@
 
 #include "third_party/blink/renderer/modules/service_worker/service_worker_clients.h"
 
-#include <memory>
 #include <utility>
 
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/scoped_refptr.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_client.mojom-blink.h"
-#include "third_party/blink/public/platform/modules/service_worker/web_service_worker_clients_info.h"
 #include "third_party/blink/renderer/bindings/core/v8/callback_promise_adapter.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
@@ -22,6 +20,7 @@
 #include "third_party/blink/renderer/modules/service_worker/service_worker_global_scope_client.h"
 #include "third_party/blink/renderer/modules/service_worker/service_worker_window_client.h"
 #include "third_party/blink/renderer/platform/bindings/v8_throw_exception.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
@@ -117,7 +116,7 @@ ScriptPromise ServiceWorkerClients::get(ScriptState* script_state,
   if (!execution_context)
     return ScriptPromise();
 
-  ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   ServiceWorkerGlobalScopeClient::From(execution_context)
       ->GetClient(id, WTF::Bind(&DidGetClient, WrapPersistent(resolver)));
   return resolver->Promise();
@@ -131,7 +130,7 @@ ScriptPromise ServiceWorkerClients::matchAll(
   if (!execution_context)
     return ScriptPromise();
 
-  ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   ServiceWorkerGlobalScopeClient::From(execution_context)
       ->GetClients(
           mojom::blink::ServiceWorkerClientQueryOptions::New(
@@ -147,7 +146,7 @@ ScriptPromise ServiceWorkerClients::claim(ScriptState* script_state) {
   if (!execution_context)
     return ScriptPromise();
 
-  ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   ServiceWorkerGlobalScopeClient::From(execution_context)
       ->Claim(WTF::Bind(&DidClaim, WrapPersistent(resolver)));
   return resolver->Promise();
@@ -155,7 +154,7 @@ ScriptPromise ServiceWorkerClients::claim(ScriptState* script_state) {
 
 ScriptPromise ServiceWorkerClients::openWindow(ScriptState* script_state,
                                                const String& url) {
-  ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   ScriptPromise promise = resolver->Promise();
   ExecutionContext* context = ExecutionContext::From(script_state);
 
@@ -175,8 +174,9 @@ ScriptPromise ServiceWorkerClients::openWindow(ScriptState* script_state,
   }
 
   if (!context->IsWindowInteractionAllowed()) {
-    resolver->Reject(DOMException::Create(DOMExceptionCode::kInvalidAccessError,
-                                          "Not allowed to open a window."));
+    resolver->Reject(MakeGarbageCollected<DOMException>(
+        DOMExceptionCode::kInvalidAccessError,
+        "Not allowed to open a window."));
     return promise;
   }
   context->ConsumeWindowInteraction();

@@ -43,8 +43,6 @@ grit("resources") {
 
 jumbo_static_library("renderer") {
   sources = [
-    "app_categorizer.cc",
-    "app_categorizer.h",
     "benchmarking_extension.cc",
     "benchmarking_extension.h",
     "chrome_content_renderer_client.cc",
@@ -53,8 +51,6 @@ jumbo_static_library("renderer") {
     "chrome_render_frame_observer.h",
     "chrome_render_thread_observer.cc",
     "chrome_render_thread_observer.h",
-    "chrome_render_view_observer.cc",
-    "chrome_render_view_observer.h",
     "content_settings_observer.cc",
     "content_settings_observer.h",
     "custom_menu_commands.h",
@@ -102,16 +98,24 @@ jumbo_static_library("renderer") {
     "prerender/prerenderer_client.h",
     "sandbox_status_extension_android.cc",
     "sandbox_status_extension_android.h",
-    "security_filter_peer.cc",
-    "security_filter_peer.h",
-    "ssl/ssl_certificate_error_page_controller.cc",
-    "ssl/ssl_certificate_error_page_controller.h",
+    "security_interstitials/security_interstitial_page_controller.cc",
+    "security_interstitials/security_interstitial_page_controller.h",
+    "subresource_redirect/subresource_redirect_params.cc",
+    "subresource_redirect/subresource_redirect_params.h",
+    "subresource_redirect/subresource_redirect_switches.cc",
+    "subresource_redirect/subresource_redirect_switches.h",
+    "subresource_redirect/subresource_redirect_url_loader_throttle.cc",
+    "subresource_redirect/subresource_redirect_url_loader_throttle.h",
+    "subresource_redirect/subresource_redirect_util.cc",
+    "subresource_redirect/subresource_redirect_util.h",
     "supervised_user/supervised_user_error_page_controller.cc",
     "supervised_user/supervised_user_error_page_controller.h",
     "tts_dispatcher.cc",
     "tts_dispatcher.h",
     "url_loader_throttle_provider_impl.cc",
     "url_loader_throttle_provider_impl.h",
+    "v8_unwinder.cc",
+    "v8_unwinder.h",
     "web_apps.cc",
     "web_apps.h",
     "websocket_handshake_throttle_provider_impl.cc",
@@ -131,6 +135,7 @@ jumbo_static_library("renderer") {
     "//chrome/common/net",
     "//components/autofill/content/renderer",
     "//components/cdm/renderer",
+    "//components/content_capture/renderer",
     "//components/contextual_search/content:renderer",
     "//components/data_reduction_proxy/content/common",
     "//components/data_reduction_proxy/content/renderer",
@@ -149,7 +154,6 @@ jumbo_static_library("renderer") {
     "//components/spellcheck:buildflags",
     "//components/startup_metric_utils/common:interfaces",
     "//components/subresource_filter/content/renderer",
-    "//components/task_scheduler_util",
     "//components/translate/content/renderer",
     "//components/translate/core/common",
     "//components/translate/core/language_detection",
@@ -178,8 +182,9 @@ jumbo_static_library("renderer") {
     "//third_party/icu",
     "//third_party/re2",
     "//third_party/widevine/cdm:buildflags",
+    "//third_party/zlib/google:compression_utils",
     "//ui/surface",
-    "//v8:v8",
+    "//v8",
   ]
 
   data_deps = [
@@ -243,7 +248,7 @@ jumbo_static_library("renderer") {
 
   if (safe_browsing_mode != 0) {
     deps += [
-      "//components/safe_browsing/common:common",
+      "//components/safe_browsing/common",
       "//components/safe_browsing/renderer",
     ]
     if (safe_browsing_mode == 1) {
@@ -277,16 +282,8 @@ jumbo_static_library("renderer") {
 
   if (enable_extensions) {
     sources += [
-      "extensions/app_bindings.cc",
-      "extensions/app_bindings.h",
-      "extensions/app_bindings_core.cc",
-      "extensions/app_bindings_core.h",
       "extensions/app_hooks_delegate.cc",
       "extensions/app_hooks_delegate.h",
-      "extensions/automation_ax_tree_wrapper.cc",
-      "extensions/automation_ax_tree_wrapper.h",
-      "extensions/automation_internal_custom_bindings.cc",
-      "extensions/automation_internal_custom_bindings.h",
       "extensions/chrome_extensions_dispatcher_delegate.cc",
       "extensions/chrome_extensions_dispatcher_delegate.h",
       "extensions/chrome_extensions_renderer_client.cc",
@@ -333,25 +330,6 @@ jumbo_static_library("renderer") {
       "media/cast_transport_ipc.h",
       "media/cast_udp_transport.cc",
       "media/cast_udp_transport.h",
-      "resources/extensions/app_custom_bindings.js",
-      "resources/extensions/automation_custom_bindings.js",
-      "resources/extensions/browser_action_custom_bindings.js",
-      "resources/extensions/chrome_setting.js",
-      "resources/extensions/content_setting.js",
-      "resources/extensions/declarative_content_custom_bindings.js",
-      "resources/extensions/easy_unlock_proximity_required.js",
-      "resources/extensions/enterprise_platform_keys_custom_bindings.js",
-      "resources/extensions/gcm_custom_bindings.js",
-      "resources/extensions/identity_custom_bindings.js",
-      "resources/extensions/image_writer_private_custom_bindings.js",
-      "resources/extensions/input.ime_custom_bindings.js",
-      "resources/extensions/notifications_custom_bindings.js",
-      "resources/extensions/omnibox_custom_bindings.js",
-      "resources/extensions/page_action_custom_bindings.js",
-      "resources/extensions/page_capture_custom_bindings.js",
-      "resources/extensions/system_indicator_custom_bindings.js",
-      "resources/extensions/tts_custom_bindings.js",
-      "resources/extensions/tts_engine_custom_bindings.js",
     ]
     deps += [
       # TODO(hclam): See crbug.com/298380 for details.

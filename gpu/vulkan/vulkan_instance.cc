@@ -47,7 +47,8 @@ VulkanInstance::~VulkanInstance() {
 
 bool VulkanInstance::Initialize(
     const std::vector<const char*>& required_extensions,
-    const std::vector<const char*>& required_layers) {
+    const std::vector<const char*>& required_layers,
+    bool using_swiftshader) {
   DCHECK(!vk_instance_);
 
   VulkanFunctionPointers* vulkan_function_pointers =
@@ -56,12 +57,23 @@ bool VulkanInstance::Initialize(
   if (!vulkan_function_pointers->BindUnassociatedFunctionPointers())
     return false;
 
+  uint32_t supported_api_version = VK_MAKE_VERSION(1, 0, 0);
+  if (vulkan_function_pointers->vkEnumerateInstanceVersionFn) {
+    vulkan_function_pointers->vkEnumerateInstanceVersionFn(
+        &supported_api_version);
+  }
+
+  // Use Vulkan 1.1 if it's available.
+  api_version_ = (supported_api_version >= VK_MAKE_VERSION(1, 1, 0))
+                     ? VK_MAKE_VERSION(1, 1, 0)
+                     : VK_MAKE_VERSION(1, 0, 0);
+
   VkResult result = VK_SUCCESS;
 
   VkApplicationInfo app_info = {};
   app_info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
   app_info.pApplicationName = "Chromium";
-  app_info.apiVersion = VK_MAKE_VERSION(1, 1, 0);
+  app_info.apiVersion = api_version_;
 
   std::vector<const char*> enabled_extensions;
   enabled_extensions.insert(std::end(enabled_extensions),
@@ -93,6 +105,23 @@ bool VulkanInstance::Initialize(
       enabled_extensions.push_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
     }
   }
+
+#if DCHECK_IS_ON()
+  for (const char* enabled_extension : enabled_extensions) {
+    bool found = false;
+    for (const VkExtensionProperties& ext_property : instance_exts) {
+      if (strcmp(ext_property.extensionName, enabled_extension) == 0) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      DLOG(ERROR) << "Required extension " << enabled_extension
+                  << " missing from enumerated Vulkan extensions. "
+                     "vkCreateInstance will likely fail.";
+    }
+  }
+#endif
 
   std::vector<const char*> enabled_layer_names;
 #if DCHECK_IS_ON()
@@ -193,6 +222,21 @@ bool VulkanInstance::Initialize(
         vkGetInstanceProcAddr(vk_instance_, "vkDestroySurfaceKHR"));
     if (!vkDestroySurfaceKHR)
       return false;
+
+#if defined(USE_X11)
+    vkCreateXlibSurfaceKHR = reinterpret_cast<PFN_vkCreateXlibSurfaceKHR>(
+        vkGetInstanceProcAddr(vk_instance_, "vkCreateXlibSurfaceKHR"));
+    if (!vkCreateXlibSurfaceKHR)
+      return false;
+    vkGetPhysicalDeviceXlibPresentationSupportKHR =
+        reinterpret_cast<PFN_vkGetPhysicalDeviceXlibPresentationSupportKHR>(
+            vkGetInstanceProcAddr(
+                vk_instance_, "vkGetPhysicalDeviceXlibPresentationSupportKHR"));
+    // TODO(samans): Remove |using_swiftshader| once Swiftshader supports this
+    // method. https://crbug.com/swiftshader/129
+    if (!vkGetPhysicalDeviceXlibPresentationSupportKHR && !using_swiftshader)
+      return false;
+#endif
 
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR =
         reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR>(

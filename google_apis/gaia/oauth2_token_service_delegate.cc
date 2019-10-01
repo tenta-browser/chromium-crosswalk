@@ -58,10 +58,6 @@ void OAuth2TokenServiceDelegate::RemoveObserver(
 
 void OAuth2TokenServiceDelegate::StartBatchChanges() {
   ++batch_change_depth_;
-  if (batch_change_depth_ == 1) {
-    for (auto& observer : observer_list_)
-      observer.OnStartBatchChanges();
-  }
 }
 
 void OAuth2TokenServiceDelegate::EndBatchChanges() {
@@ -75,12 +71,14 @@ void OAuth2TokenServiceDelegate::EndBatchChanges() {
 
 void OAuth2TokenServiceDelegate::FireRefreshTokenAvailable(
     const std::string& account_id) {
+  DCHECK(!account_id.empty());
   for (auto& observer : observer_list_)
     observer.OnRefreshTokenAvailable(account_id);
 }
 
 void OAuth2TokenServiceDelegate::FireRefreshTokenRevoked(
     const std::string& account_id) {
+  DCHECK(!account_id.empty());
   for (auto& observer : observer_list_)
     observer.OnRefreshTokenRevoked(account_id);
 }
@@ -93,6 +91,7 @@ void OAuth2TokenServiceDelegate::FireRefreshTokensLoaded() {
 void OAuth2TokenServiceDelegate::FireAuthErrorChanged(
     const std::string& account_id,
     const GoogleServiceAuthError& error) {
+  DCHECK(!account_id.empty());
   for (auto& observer : observer_list_)
     observer.OnAuthErrorChanged(account_id, error);
 }

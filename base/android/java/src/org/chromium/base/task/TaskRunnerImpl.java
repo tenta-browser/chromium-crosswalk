@@ -4,10 +4,11 @@
 
 package org.chromium.base.task;
 
+import android.os.Process;
 import android.support.annotation.Nullable;
 import android.util.Pair;
 
-import org.chromium.base.GcStateAssert;
+import org.chromium.base.LifetimeAssert;
 import org.chromium.base.TraceEvent;
 import org.chromium.base.annotations.JNINamespace;
 
@@ -15,21 +16,24 @@ import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 
+import javax.annotation.concurrent.GuardedBy;
+
 /**
  * Implementation of the abstract class {@link TaskRunnerImpl}. Uses AsyncTasks until
  * native APIs are available.
  */
 @JNINamespace("base")
 public class TaskRunnerImpl implements TaskRunner {
-    @Nullable
     private final TaskTraits mTaskTraits;
     private final String mTraceEvent;
     private final @TaskRunnerType int mTaskRunnerType;
-    private final Object mLock = new Object();
+    protected final Object mLock = new Object();
+    @GuardedBy("mLock")
     protected long mNativeTaskRunnerAndroid;
     protected final Runnable mRunPreNativeTaskClosure = this::runPreNativeTask;
+    @GuardedBy("mLock")
     private boolean mIsDestroying;
-    private final GcStateAssert mGcStateAssert = GcStateAssert.create(this, true);
+    private final LifetimeAssert mLifetimeAssert = LifetimeAssert.create(this);
 
     @Nullable
     protected LinkedList<Runnable> mPreNativeTasks = new LinkedList<>();
@@ -60,11 +64,21 @@ public class TaskRunnerImpl implements TaskRunner {
     @Override
     public void destroy() {
         synchronized (mLock) {
-            GcStateAssert.setSafeToGc(mGcStateAssert, true);
-            if (mNativeTaskRunnerAndroid != 0) nativeDestroy(mNativeTaskRunnerAndroid);
-            mNativeTaskRunnerAndroid = 0;
+            LifetimeAssert.setSafeToGc(mLifetimeAssert, true);
             mIsDestroying = true;
+            destroyInternal();
         }
+    }
+
+    @GuardedBy("mLock")
+    protected void destroyInternal() {
+        if (mNativeTaskRunnerAndroid != 0) nativeDestroy(mNativeTaskRunnerAndroid);
+        mNativeTaskRunnerAndroid = 0;
+    }
+
+    @Override
+    public void disableLifetimeCheck() {
+        LifetimeAssert.setSafeToGc(mLifetimeAssert, true);
     }
 
     @Override
@@ -76,8 +90,8 @@ public class TaskRunnerImpl implements TaskRunner {
     public void postDelayedTask(Runnable task, long delay) {
         synchronized (mLock) {
             assert !mIsDestroying;
-            if (mNativeTaskRunnerAndroid != 0) {
-                nativePostDelayedTask(mNativeTaskRunnerAndroid, task, delay);
+            if (mPreNativeTasks == null) {
+                postDelayedTaskToNative(task, delay);
                 return;
             }
             // We don't expect a whole lot of these, if that changes consider pooling them.
@@ -99,7 +113,7 @@ public class TaskRunnerImpl implements TaskRunner {
      * time.
      */
     protected void schedulePreNativeTask() {
-        AsyncTask.THREAD_POOL_EXECUTOR.execute(mRunPreNativeTaskClosure);
+        PostTask.getPrenativeThreadPoolExecutor().execute(mRunPreNativeTaskClosure);
     }
 
     /**
@@ -112,6 +126,17 @@ public class TaskRunnerImpl implements TaskRunner {
                 if (mPreNativeTasks == null) return;
                 task = mPreNativeTasks.poll();
             }
+            switch (mTaskTraits.mPriority) {
+                case TaskPriority.USER_VISIBLE:
+                    Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT);
+                    break;
+                case TaskPriority.HIGHEST:
+                    Process.setThreadPriority(Process.THREAD_PRIORITY_MORE_FAVORABLE);
+                    break;
+                default:
+                    Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
+                    break;
+            }
             task.run();
         }
     }
@@ -123,28 +148,44 @@ public class TaskRunnerImpl implements TaskRunner {
     @Override
     public void initNativeTaskRunner() {
         synchronized (mLock) {
-            if (mPreNativeTasks != null) {
-                GcStateAssert.setSafeToGc(mGcStateAssert, false);
-                mNativeTaskRunnerAndroid =
-                        nativeInit(mTaskRunnerType, mTaskTraits.mPrioritySetExplicitly,
-                                mTaskTraits.mPriority, mTaskTraits.mMayBlock,
-                                mTaskTraits.mExtensionId, mTaskTraits.mExtensionData);
-                for (Runnable task : mPreNativeTasks) {
-                    nativePostDelayedTask(mNativeTaskRunnerAndroid, task, 0);
-                }
-                for (Pair<Runnable, Long> task : mPreNativeDelayedTasks) {
-                    nativePostDelayedTask(mNativeTaskRunnerAndroid, task.first, task.second);
-                }
-                mPreNativeTasks = null;
-                mPreNativeDelayedTasks = null;
-            }
+            initNativeTaskRunnerInternal();
+            migratePreNativeTasksToNative();
         }
+    }
+
+    @GuardedBy("mLock")
+    protected void initNativeTaskRunnerInternal() {
+        if (mNativeTaskRunnerAndroid == 0) {
+            mNativeTaskRunnerAndroid = nativeInit(mTaskRunnerType,
+                    mTaskTraits.mPrioritySetExplicitly, mTaskTraits.mPriority,
+                    mTaskTraits.mMayBlock, mTaskTraits.mUseThreadPool, mTaskTraits.mExtensionId,
+                    mTaskTraits.mExtensionData);
+        }
+    }
+
+    @GuardedBy("mLock")
+    protected void migratePreNativeTasksToNative() {
+        if (mPreNativeTasks != null) {
+            for (Runnable task : mPreNativeTasks) {
+                postDelayedTaskToNative(task, 0);
+            }
+            for (Pair<Runnable, Long> task : mPreNativeDelayedTasks) {
+                postDelayedTaskToNative(task.first, task.second);
+            }
+            mPreNativeTasks = null;
+            mPreNativeDelayedTasks = null;
+        }
+    }
+
+    @GuardedBy("mLock")
+    protected void postDelayedTaskToNative(Runnable r, long delay) {
+        nativePostDelayedTask(mNativeTaskRunnerAndroid, r, delay);
     }
 
     // NB due to Proguard obfuscation it's easiest to pass the traits via arguments.
     private native long nativeInit(@TaskRunnerType int taskRunnerType,
-            boolean prioritySetExplicitly, int priority, boolean mayBlock, byte extensionId,
-            byte[] extensionData);
+            boolean prioritySetExplicitly, int priority, boolean mayBlock, boolean useThreadPool,
+            byte extensionId, byte[] extensionData);
     private native void nativeDestroy(long nativeTaskRunnerAndroid);
     private native void nativePostDelayedTask(
             long nativeTaskRunnerAndroid, Runnable task, long delay);

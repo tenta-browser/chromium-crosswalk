@@ -15,16 +15,17 @@ namespace blink {
 
 CustomProperty::CustomProperty(const AtomicString& name,
                                const Document& document)
-    : name_(name), registration_(PropertyRegistration::From(&document, name)) {}
+    : CustomProperty(name, PropertyRegistration::From(&document, name)) {}
 
 CustomProperty::CustomProperty(const AtomicString& name,
                                const PropertyRegistry* registry)
-    : name_(name),
-      registration_(registry ? registry->Registration(name) : nullptr) {}
+    : CustomProperty(name, registry ? registry->Registration(name) : nullptr) {}
 
-bool CustomProperty::IsInherited() const {
-  return !registration_ || registration_->Inherits();
-}
+CustomProperty::CustomProperty(const AtomicString& name,
+                               const PropertyRegistration* registration)
+    : Variable(!registration || registration->Inherits()),
+      name_(name),
+      registration_(registration) {}
 
 const AtomicString& CustomProperty::GetPropertyNameAtomicString() const {
   return name_;
@@ -35,35 +36,36 @@ CSSPropertyName CustomProperty::GetCSSPropertyName() const {
 }
 
 void CustomProperty::ApplyInitial(StyleResolverState& state) const {
-  state.Style()->RemoveVariable(name_, IsInherited());
+  bool is_inherited_property = IsInherited();
+
+  if (!registration_) {
+    state.Style()->SetVariableData(name_, nullptr, is_inherited_property);
+    return;
+  }
+
+  state.Style()->SetVariableData(name_, registration_->InitialVariableData(),
+                                 is_inherited_property);
+  state.Style()->SetVariableValue(name_, registration_->Initial(),
+                                  is_inherited_property);
 }
 
 void CustomProperty::ApplyInherit(StyleResolverState& state) const {
   bool is_inherited_property = IsInherited();
-  state.Style()->RemoveVariable(name_, is_inherited_property);
 
-  CSSVariableData* parent_value =
-      state.ParentStyle()->GetVariable(name_, is_inherited_property);
+  CSSVariableData* parent_data =
+      state.ParentStyle()->GetVariableData(name_, is_inherited_property);
 
-  if (!parent_value)
-    return;
-
-  state.Style()->SetVariable(name_, parent_value, is_inherited_property);
+  state.Style()->SetVariableData(name_, parent_data, is_inherited_property);
 
   if (registration_) {
-    const CSSValue* parent_css_value =
-        parent_value ? state.ParentStyle()->GetNonInitialRegisteredVariable(
-                           name_, is_inherited_property)
-                     : nullptr;
-    state.Style()->SetRegisteredVariable(name_, parent_css_value,
-                                         is_inherited_property);
+    const CSSValue* parent_value = state.ParentStyle()->GetVariableValue(name_);
+    state.Style()->SetVariableValue(name_, parent_value, is_inherited_property);
   }
 }
 
 void CustomProperty::ApplyValue(StyleResolverState& state,
                                 const CSSValue& value) const {
-  const CSSCustomPropertyDeclaration& declaration =
-      ToCSSCustomPropertyDeclaration(value);
+  const auto& declaration = To<CSSCustomPropertyDeclaration>(value);
 
   bool is_inherited_property = IsInherited();
   bool initial = declaration.IsInitial(is_inherited_property);
@@ -77,11 +79,10 @@ void CustomProperty::ApplyValue(StyleResolverState& state,
   } else if (inherit) {
     ApplyInherit(state);
   } else {
-    state.Style()->SetVariable(name_, declaration.Value(),
-                               is_inherited_property);
+    state.Style()->SetVariableData(name_, declaration.Value(),
+                                   is_inherited_property);
     if (registration_) {
-      state.Style()->SetRegisteredVariable(name_, nullptr,
-                                           is_inherited_property);
+      state.Style()->SetVariableValue(name_, nullptr, is_inherited_property);
     }
   }
 }
@@ -111,7 +112,7 @@ const CSSValue* CustomProperty::CSSValueFromComputedStyleInternal(
     Node* styled_node,
     bool allow_visited_style) const {
   if (registration_) {
-    const CSSValue* value = style.GetRegisteredVariable(name_, IsInherited());
+    const CSSValue* value = style.GetVariableValue(name_, IsInherited());
     if (value)
       return value;
     // If we don't have CSSValue for this registered property, it means that
@@ -119,12 +120,12 @@ const CSSValue* CustomProperty::CSSValueFromComputedStyleInternal(
     // hence we proceed with unregistered behavior.
   }
 
-  CSSVariableData* data = style.GetVariable(name_, IsInherited());
+  CSSVariableData* data = style.GetVariableData(name_, IsInherited());
 
   if (!data)
     return nullptr;
 
-  return CSSCustomPropertyDeclaration::Create(name_, data);
+  return MakeGarbageCollected<CSSCustomPropertyDeclaration>(name_, data);
 }
 
 const CSSValue* CustomProperty::ParseUntyped(

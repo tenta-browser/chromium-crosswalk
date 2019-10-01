@@ -14,9 +14,9 @@ cr.define('multidevice_setup', function() {
     constructor() {
       /**
        * @private {?chromeos.multideviceSetup.mojom.
-       *               PrivilegedHostDeviceSetterPtr}
+       *               PrivilegedHostDeviceSetterProxy}
        */
-      this.ptr_ = null;
+      this.proxy_ = null;
     }
 
     /** @override */
@@ -30,15 +30,13 @@ cr.define('multidevice_setup', function() {
       // required.
       assert(!opt_authToken);
 
-      if (!this.ptr_) {
-        this.ptr_ =
-            new chromeos.multideviceSetup.mojom.PrivilegedHostDeviceSetterPtr();
-        Mojo.bindInterface(
-            chromeos.multideviceSetup.mojom.PrivilegedHostDeviceSetter.name,
-            mojo.makeRequest(this.ptr_).handle);
+      if (!this.proxy_) {
+        this.proxy_ = chromeos.multideviceSetup.mojom.PrivilegedHostDeviceSetter
+                          .getProxy();
       }
 
-      return this.ptr_.setHostDevice(hostDeviceId);
+      return /** @type {!Promise<{success: boolean}>} */ (
+          this.proxy_.setHostDevice(hostDeviceId));
     }
 
     /** @override */
@@ -62,12 +60,11 @@ cr.define('multidevice_setup', function() {
       delegate_: Object,
 
       /**
-       * Text to be shown on the forward navigation button.
+       * ID of loadTimeData string to be shown on the forward navigation button.
        * @private {string|undefined}
        */
-      forwardButtonText_: {
+      forwardButtonTextId_: {
         type: String,
-        value: '',
       },
 
       /**
@@ -80,12 +77,11 @@ cr.define('multidevice_setup', function() {
       },
 
       /**
-       * Text to be shown on the cancel button.
+       * ID of loadTimeData string to be shown on the cancel button.
        * @private {string|undefined}
        */
-      cancelButtonText_: {
+      cancelButtonTextId_: {
         type: String,
-        value: '',
       },
 
       /** Whether the webview overlay should be hidden. */
@@ -111,17 +107,24 @@ cr.define('multidevice_setup', function() {
     /** @override */
     attached: function() {
       this.delegate_ = new MultiDeviceSetupFirstRunDelegate();
-      this.addWebUIListener(
-          'multidevice_setup.initializeSetupFlow',
-          this.initializeSetupFlow.bind(this));
     },
 
-    initializeSetupFlow: function() {
-      this.$$('#next-button').focus();
+    /** @override */
+    ready: function() {
+      this.updateLocalizedContent();
+    },
+
+    updateLocalizedContent: function() {
+      this.i18nUpdateLocale();
+      this.$.multideviceSetup.updateLocalizedContent();
+    },
+
+    onForwardButtonFocusRequested_: function() {
+      this.$.nextButton.focus();
     },
 
     /**
-     * @param {!{detail:{didUserCompleteSetup: boolean}}} event
+     * @param {!CustomEvent<!{didUserCompleteSetup: boolean}>} event
      * @private
      */
     onExitRequested_: function(event) {
@@ -152,7 +155,7 @@ cr.define('multidevice_setup', function() {
     },
 
     /**
-     * @param {!{detail: string}} event
+     * @param {!CustomEvent<string>} event
      * @private
      */
     onOpenLearnMoreWebviewRequested_: function(event) {

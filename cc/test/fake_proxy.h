@@ -31,8 +31,9 @@ class FakeProxy : public Proxy {
   void SetNeedsRedraw(const gfx::Rect& damage_rect) override {}
   void SetNextCommitWaitsForActivation() override {}
   bool RequestedAnimatePending() override;
-  void NotifyInputThrottledUntilCommit() override {}
   void SetDeferMainFrameUpdate(bool defer_main_frame_update) override {}
+  void StartDeferringCommits(base::TimeDelta timeout) override {}
+  void StopDeferringCommits(PaintHoldingCommitTrigger) override {}
   bool CommitRequested() const override;
   void Start() override {}
   void Stop() override {}
@@ -45,7 +46,7 @@ class FakeProxy : public Proxy {
                                   BrowserControlsState current,
                                   bool animate) override {}
   void RequestBeginMainFrameNotExpected(bool new_state) override {}
-  void SetURLForUkm(const GURL& url) override {}
+  void SetSourceURL(ukm::SourceId source_id, const GURL& url) override {}
   void ClearHistory() override {}
   void SetRenderFrameObserver(
       std::unique_ptr<RenderFrameMetadataObserver> observer) override {}

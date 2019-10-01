@@ -12,8 +12,8 @@
 #include "chrome/browser/sync/test/integration/performance/sync_timing_helper.h"
 #include "chrome/browser/sync/test/integration/profile_sync_service_harness.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
-#include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/autofill/core/browser/webdata/autofill_entry.h"
 #include "components/sync/driver/sync_driver_switches.h"
 
@@ -172,9 +172,9 @@ IN_PROC_BROWSER_TEST_P(AutofillProfileSyncPerfTest, P0) {
 
 // Only parametrize the test above that tests autofill_profile, the test below
 // addresses autocomplete and thus does not need parametrizing.
-INSTANTIATE_TEST_CASE_P(USS,
-                        AutofillProfileSyncPerfTest,
-                        ::testing::Values(false, true));
+INSTANTIATE_TEST_SUITE_P(USS,
+                         AutofillProfileSyncPerfTest,
+                         ::testing::Values(false, true));
 
 class AutocompleteSyncPerfTest : public SyncTest {
  public:

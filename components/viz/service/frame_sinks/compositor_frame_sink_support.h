@@ -10,11 +10,11 @@
 
 #include "base/callback.h"
 #include "base/compiler_specific.h"
-#include "base/containers/flat_map.h"
 #include "base/memory/weak_ptr.h"
 #include "base/optional.h"
 #include "base/time/time.h"
 #include "components/viz/common/frame_sinks/begin_frame_source.h"
+#include "components/viz/common/presentation_feedback_map.h"
 #include "components/viz/common/quads/compositor_frame.h"
 #include "components/viz/common/surfaces/surface_info.h"
 #include "components/viz/common/surfaces/surface_range.h"
@@ -40,9 +40,12 @@ class SurfaceManager;
 enum class SubmitResult {
   ACCEPTED = 0,
   COPY_OUTPUT_REQUESTS_NOT_ALLOWED = 1,
-  SURFACE_INVARIANTS_VIOLATION = 2,
+  // SURFACE_INVARIANTS_VIOLATION = 2 is deprecated.
+  SIZE_MISMATCH = 3,
+  SURFACE_ID_DECREASED = 4,
+  SURFACE_OWNED_BY_ANOTHER_CLIENT = 5,
   // Magic constant used by the histogram macros.
-  kMaxValue = SURFACE_INVARIANTS_VIOLATION,
+  kMaxValue = SURFACE_OWNED_BY_ANOTHER_CLIENT,
 };
 
 class VIZ_SERVICE_EXPORT CompositorFrameSinkSupport
@@ -80,10 +83,11 @@ class VIZ_SERVICE_EXPORT CompositorFrameSinkSupport
 
   FrameSinkManagerImpl* frame_sink_manager() { return frame_sink_manager_; }
 
-  const base::flat_map<uint32_t, gfx::PresentationFeedback>&
-  presentation_feedbacks() {
+  const PresentationFeedbackMap& presentation_feedbacks() {
     return presentation_feedbacks_;
   }
+
+  PresentationFeedbackMap TakePresentationFeedbacks() WARN_UNUSED_RESULT;
 
   // Viz hit-test setup is only called when |is_root_| is true (except on
   // android webview).
@@ -99,7 +103,8 @@ class VIZ_SERVICE_EXPORT CompositorFrameSinkSupport
 
   // SurfaceClient implementation.
   void OnSurfaceActivated(Surface* surface) override;
-  void OnSurfaceDiscarded(Surface* surface) override;
+  void OnSurfaceDestroyed(Surface* surface) override;
+  void OnSurfaceDrawn(Surface* surface) override;
   void RefResources(
       const std::vector<TransferableResource>& resources) override;
   void UnrefResources(const std::vector<ReturnedResource>& resources) override;
@@ -118,6 +123,9 @@ class VIZ_SERVICE_EXPORT CompositorFrameSinkSupport
       const CompositorFrame& frame,
       const gfx::Rect& damage_rect,
       base::TimeTicks expected_display_time) override;
+  void OnSurfacePresented(uint32_t frame_token,
+                          const gfx::PresentationFeedback& feedback) override;
+  bool NeedsSyncTokens() const override;
 
   // mojom::CompositorFrameSink helpers.
   void SetNeedsBeginFrame(bool needs_begin_frame);
@@ -210,10 +218,9 @@ class VIZ_SERVICE_EXPORT CompositorFrameSinkSupport
   const BeginFrameArgs& LastUsedBeginFrameArgs() const override;
   void OnBeginFrameSourcePausedChanged(bool paused) override;
   bool WantsAnimateOnlyBeginFrames() const override;
+  bool IsRoot() const override;
 
   void UpdateNeedsBeginFramesInternal();
-  Surface* CreateSurface(const SurfaceInfo& surface_info,
-                         bool block_activation_on_parent);
 
   // For the sync API calls, if we are blocking a client callback, runs it once
   // BeginFrame and FrameAck are done.
@@ -224,6 +231,12 @@ class VIZ_SERVICE_EXPORT CompositorFrameSinkSupport
   void MaybeEvictSurfaces();
   void EvictLastActiveSurface();
   bool ShouldSendBeginFrame(base::TimeTicks timestamp);
+
+  bool IsEvicted(const LocalSurfaceId& local_surface_id) const;
+
+  // Checks if any of the pending surfaces should activate now because their
+  // deadline has passed. This is called every BeginFrame.
+  void CheckPendingSurfaces();
 
   mojom::CompositorFrameSinkClient* const client_;
 
@@ -304,10 +317,19 @@ class VIZ_SERVICE_EXPORT CompositorFrameSinkSupport
   bool callback_received_receive_ack_ = true;
   uint32_t trace_sequence_ = 0;
 
-  base::flat_map<uint32_t, gfx::PresentationFeedback> presentation_feedbacks_;
-  uint32_t last_evicted_parent_sequence_number_ = 0;
+  PresentationFeedbackMap presentation_feedbacks_;
+  LocalSurfaceId last_evicted_local_surface_id_;
 
   base::TimeTicks last_frame_time_;
+
+  // Initialize |last_drawn_frame_index_| as though the frame before the first
+  // has been drawn.
+  static_assert(kFrameIndexStart > 1,
+                "|last_drawn_frame_index| relies on kFrameIndexStart > 1");
+  uint64_t last_drawn_frame_index_ = kFrameIndexStart - 1;
+
+  // The set of surfaces owned by this frame sink that have pending frame.
+  base::flat_set<Surface*> pending_surfaces_;
 
   base::WeakPtrFactory<CompositorFrameSinkSupport> weak_factory_;
 

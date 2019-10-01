@@ -12,12 +12,15 @@
 #include <utility>
 
 #include "ash/public/cpp/app_list/app_list_features.h"
+#include "base/feature_list.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/simple_test_clock.h"
 #include "base/time/time.h"
+#include "chrome/browser/apps/app_service/app_service_proxy_impl.h"
 #include "chrome/browser/chromeos/crostini/crostini_test_helper.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/sync/session_sync_service_factory.h"
@@ -29,9 +32,12 @@
 #include "chrome/browser/ui/app_list/extension_app_model_builder.h"
 #include "chrome/browser/ui/app_list/search/chrome_search_result.h"
 #include "chrome/browser/ui/app_list/search/search_result_ranker/app_search_result_ranker.h"
+#include "chrome/browser/ui/app_list/search/search_result_ranker/ranking_item_util.h"
 #include "chrome/browser/ui/app_list/test/fake_app_list_model_updater.h"
 #include "chrome/browser/ui/app_list/test/test_app_list_controller_delegate.h"
 #include "chrome/common/chrome_constants.h"
+#include "chrome/common/chrome_features.h"
+#include "chrome/services/app_service/public/cpp/stub_icon_loader.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/arc/test/fake_app_instance.h"
 #include "components/crx_file/id_util.h"
@@ -56,7 +62,7 @@ namespace test {
 
 namespace {
 
-constexpr char kGmailQeuery[] = "Gmail";
+constexpr char kGmailQuery[] = "Gmail";
 constexpr char kGmailArcName[] = "Gmail ARC";
 constexpr char kGmailExtensionName[] = "Gmail Ext";
 constexpr char kGmailArcPackage[] = "com.google.android.gm";
@@ -77,6 +83,8 @@ constexpr char kRankingNormalAppName[] = "testRankingAppNormal";
 constexpr char kRankingNormalAppPackageName[] = "test.ranking.app.normal";
 
 constexpr char kSettingsInternalName[] = "Settings";
+
+constexpr bool kEphemeralUser = true;
 
 // Waits for base::Time::Now() is updated.
 void WaitTimeUpdated() {
@@ -106,18 +114,20 @@ class AppSearchProviderTest : public AppListTestBase {
 
     model_updater_ = std::make_unique<FakeAppListModelUpdater>();
     controller_ = std::make_unique<::test::TestAppListControllerDelegate>();
+    ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
   }
 
   void CreateSearch() {
     clock_.SetNow(kTestCurrentTime);
+    // Create ranker here so that tests can modify feature flags.
+    ranker_ = std::make_unique<AppSearchResultRanker>(temp_dir_.GetPath(),
+                                                      kEphemeralUser);
     app_search_ = std::make_unique<AppSearchProvider>(
-        profile_.get(), nullptr, &clock_, model_updater_.get());
+        profile_.get(), nullptr, &clock_, model_updater_.get(), ranker_.get());
   }
 
   void CreateSearchWithContinueReading() {
-    clock_.SetNow(kTestCurrentTime);
-    app_search_ = std::make_unique<AppSearchProvider>(
-        profile_.get(), nullptr, &clock_, model_updater_.get());
+    CreateSearch();
 
     session_tracker_ = std::make_unique<sync_sessions::SyncedSessionTracker>(
         &mock_sync_sessions_client_);
@@ -164,7 +174,7 @@ class AppSearchProviderTest : public AppListTestBase {
   void AddExtension(const std::string& id,
                     const std::string& name,
                     extensions::Manifest::Location location,
-                    int extra_flags) {
+                    int init_from_value_flags) {
     scoped_refptr<const extensions::Extension> extension =
         extensions::ExtensionBuilder()
             .SetManifest(
@@ -189,22 +199,26 @@ class AppSearchProviderTest : public AppListTestBase {
                              .Build())
                     .Build())
             .SetLocation(location)
-            .AddFlags(extra_flags)
+            .AddFlags(init_from_value_flags)
             .SetID(id)
             .Build();
-    service()->AddExtension(extension.get());
-    // This sets install time and other extension parameters.
-    extensions::ExtensionPrefs::Get(profile())->OnExtensionInstalled(
-        extension.get(), extensions::Extension::ENABLED,
-        syncer::StringOrdinal::CreateInitialOrdinal() /* page_ordinal */,
-        std::string() /* install_parameter */);
+
+    const syncer::StringOrdinal& page_ordinal =
+        syncer::StringOrdinal::CreateInitialOrdinal();
+
+    service()->OnExtensionInstalled(extension.get(), page_ordinal,
+                                    extensions::kInstallFlagNone);
   }
 
   const SearchProvider::Results& results() { return app_search_->results(); }
   ArcAppTest& arc_test() { return arc_test_; }
 
   // Train the |app_search| provider with id.
-  void Train(const std::string& id) { app_search_->Train(id); }
+  void Train(const std::string& id) {
+    app_search_->Train(id, RankingItemType::kApp);
+  }
+
+  void CallViewClosing() { app_search_->ViewClosing(); }
 
   sync_sessions::SyncedSessionTracker* session_tracker() {
     return session_tracker_.get();
@@ -212,9 +226,11 @@ class AppSearchProviderTest : public AppListTestBase {
 
  private:
   base::SimpleTestClock clock_;
+  base::ScopedTempDir temp_dir_;
   std::unique_ptr<FakeAppListModelUpdater> model_updater_;
   std::unique_ptr<AppSearchProvider> app_search_;
   std::unique_ptr<::test::TestAppListControllerDelegate> controller_;
+  std::unique_ptr<AppSearchResultRanker> ranker_;
   ArcAppTest arc_test_;
 
   // For continue reading.
@@ -228,10 +244,12 @@ class AppSearchProviderTest : public AppListTestBase {
 
 TEST_F(AppSearchProviderTest, Basic) {
   arc_test().SetUp(profile());
-  arc_test().app_instance()->RefreshAppList();
   std::vector<arc::mojom::AppInfo> arc_apps(arc_test().fake_apps().begin(),
                                             arc_test().fake_apps().begin() + 2);
   arc_test().app_instance()->SendRefreshAppList(arc_apps);
+
+  // Allow async callbacks to run.
+  base::RunLoop().RunUntilIdle();
 
   CreateSearch();
 
@@ -258,6 +276,21 @@ TEST_F(AppSearchProviderTest, Basic) {
               result == "Fake App 1,Packaged App 1");
 }
 
+TEST_F(AppSearchProviderTest, NormalizeAppID) {
+  const std::string raw_id = "mgndgikekgjfcpckkfioiadnlibdjbkf";
+  const std::string id_with_scheme =
+      "chrome-extension://mgndgikekgjfcpckkfioiadnlibdjbkf";
+  const std::string id_with_slash = "mgndgikekgjfcpckkfioiadnlibdjbkf/";
+  const std::string id_with_scheme_and_slash =
+      "chrome-extension://mgndgikekgjfcpckkfioiadnlibdjbkf/";
+
+  EXPECT_EQ(AppSearchProvider::NormalizeIDForTest(raw_id), raw_id);
+  EXPECT_EQ(AppSearchProvider::NormalizeIDForTest(id_with_scheme), raw_id);
+  EXPECT_EQ(AppSearchProvider::NormalizeIDForTest(id_with_slash), raw_id);
+  EXPECT_EQ(AppSearchProvider::NormalizeIDForTest(id_with_scheme_and_slash),
+            raw_id);
+}
+
 TEST_F(AppSearchProviderTest, DisableAndEnable) {
   CreateSearch();
 
@@ -279,7 +312,7 @@ TEST_F(AppSearchProviderTest, UninstallExtension) {
   service_->UninstallExtension(kPackagedApp1Id,
                                extensions::UNINSTALL_REASON_FOR_TESTING, NULL);
 
-  // Allow async AppSearchProvider::UpdateResults to run.
+  // Allow async callbacks to run.
   base::RunLoop().RunUntilIdle();
 
   // Uninstalling an app should update the result list without needing to start
@@ -296,8 +329,10 @@ TEST_F(AppSearchProviderTest, UninstallExtension) {
 TEST_F(AppSearchProviderTest, InstallUninstallArc) {
   arc_test().SetUp(profile());
   std::vector<arc::mojom::AppInfo> arc_apps;
-  arc_test().app_instance()->RefreshAppList();
   arc_test().app_instance()->SendRefreshAppList(arc_apps);
+
+  // Allow async callbacks to run.
+  base::RunLoop().RunUntilIdle();
 
   CreateSearch();
 
@@ -305,20 +340,18 @@ TEST_F(AppSearchProviderTest, InstallUninstallArc) {
   EXPECT_EQ("", RunQuery("fapp0"));
 
   arc_apps.push_back(arc_test().fake_apps()[0]);
-  arc_test().app_instance()->RefreshAppList();
   arc_test().app_instance()->SendRefreshAppList(arc_apps);
 
-  // Allow async AppSearchProvider::UpdateResults to run.
+  // Allow async callbacks to run.
   base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ("Fake App 0", RunQuery("fapp0"));
   EXPECT_FALSE(results().empty());
 
   arc_apps.clear();
-  arc_test().app_instance()->RefreshAppList();
   arc_test().app_instance()->SendRefreshAppList(arc_apps);
 
-  // Allow async AppSearchProvider::UpdateResults to run.
+  // Allow async callbacks to run.
   base::RunLoop().RunUntilIdle();
 
   EXPECT_TRUE(results().empty());
@@ -337,12 +370,16 @@ TEST_F(AppSearchProviderTest, FetchRecommendations) {
   prefs->SetLastLaunchTime(kHostedAppId, base::Time::FromInternalValue(20));
   prefs->SetLastLaunchTime(kPackagedApp1Id, base::Time::FromInternalValue(10));
   prefs->SetLastLaunchTime(kPackagedApp2Id, base::Time::FromInternalValue(5));
+  // Allow async callbacks to run.
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ("Hosted App,Packaged App 1,Packaged App 2,Settings,Camera",
             RunQuery(""));
 
   prefs->SetLastLaunchTime(kHostedAppId, base::Time::FromInternalValue(5));
   prefs->SetLastLaunchTime(kPackagedApp1Id, base::Time::FromInternalValue(10));
   prefs->SetLastLaunchTime(kPackagedApp2Id, base::Time::FromInternalValue(20));
+  // Allow async callbacks to run.
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ("Packaged App 2,Packaged App 1,Hosted App,Settings,Camera",
             RunQuery(""));
 
@@ -351,6 +388,8 @@ TEST_F(AppSearchProviderTest, FetchRecommendations) {
                            kTestCurrentTime + base::TimeDelta::FromSeconds(5));
   prefs->SetLastLaunchTime(kPackagedApp1Id, base::Time::FromInternalValue(10));
   prefs->SetLastLaunchTime(kPackagedApp2Id, base::Time::FromInternalValue(5));
+  // Allow async callbacks to run.
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ("Hosted App,Packaged App 1,Packaged App 2,Settings,Camera",
             RunQuery(""));
 }
@@ -368,18 +407,17 @@ TEST_F(AppSearchProviderTest, FetchRecommendationsWithContinueReading) {
   constexpr SessionID kTabId2 = SessionID::FromSerializedValue(222);
   constexpr SessionID kTabId3 = SessionID::FromSerializedValue(333);
 
+  const base::Time now = base::Time::Now();
+
   // Case 1: test that ContinueReading is recommended for the latest foreign
   // tab.
   {
     CreateSearchWithContinueReading();
     session_tracker()->InitLocalSession(kLocalSessionTag, kLocalSessionName,
                                         sync_pb::SyncEnums::TYPE_CROS);
-    const base::Time kTimestamp1 =
-        base::Time::Now() - base::TimeDelta::FromMinutes(2);
-    const base::Time kTimestamp2 =
-        base::Time::Now() - base::TimeDelta::FromMinutes(1);
-    const base::Time kTimestamp3 =
-        base::Time::Now() - base::TimeDelta::FromMinutes(3);
+    const base::Time kTimestamp1 = now - base::TimeDelta::FromMinutes(2);
+    const base::Time kTimestamp2 = now - base::TimeDelta::FromMinutes(1);
+    const base::Time kTimestamp3 = now - base::TimeDelta::FromMinutes(3);
 
     session_tracker()->PutWindowInSession(kForeignSessionTag1, kWindowId1);
     session_tracker()->PutTabInWindow(kForeignSessionTag1, kWindowId1, kTabId1);
@@ -432,8 +470,7 @@ TEST_F(AppSearchProviderTest, FetchRecommendationsWithContinueReading) {
     CreateSearchWithContinueReading();
     session_tracker()->InitLocalSession(kLocalSessionTag, kLocalSessionName,
                                         sync_pb::SyncEnums::TYPE_CROS);
-    const base::Time kTimestamp1 =
-        base::Time::Now() - base::TimeDelta::FromMinutes(1);
+    const base::Time kTimestamp1 = now - base::TimeDelta::FromMinutes(1);
 
     session_tracker()->PutWindowInSession(kLocalSessionTag, kWindowId1);
     session_tracker()->PutTabInWindow(kLocalSessionTag, kWindowId1, kTabId1);
@@ -459,8 +496,7 @@ TEST_F(AppSearchProviderTest, FetchRecommendationsWithContinueReading) {
     CreateSearchWithContinueReading();
     session_tracker()->InitLocalSession(kLocalSessionTag, kLocalSessionName,
                                         sync_pb::SyncEnums::TYPE_CROS);
-    const base::Time kTimestamp1 =
-        base::Time::Now() - base::TimeDelta::FromMinutes(121);
+    const base::Time kTimestamp1 = now - base::TimeDelta::FromMinutes(121);
 
     session_tracker()->PutWindowInSession(kForeignSessionTag1, kWindowId1);
     session_tracker()->PutTabInWindow(kForeignSessionTag1, kWindowId1, kTabId1);
@@ -486,8 +522,7 @@ TEST_F(AppSearchProviderTest, FetchRecommendationsWithContinueReading) {
     CreateSearchWithContinueReading();
     session_tracker()->InitLocalSession(kLocalSessionTag, kLocalSessionName,
                                         sync_pb::SyncEnums::TYPE_CROS);
-    const base::Time kTimestamp1 =
-        base::Time::Now() - base::TimeDelta::FromMinutes(1);
+    const base::Time kTimestamp1 = now - base::TimeDelta::FromMinutes(1);
 
     session_tracker()->PutWindowInSession(kForeignSessionTag1, kWindowId1);
     session_tracker()->PutTabInWindow(kForeignSessionTag1, kWindowId1, kTabId1);
@@ -513,8 +548,7 @@ TEST_F(AppSearchProviderTest, FetchRecommendationsWithContinueReading) {
     CreateSearchWithContinueReading();
     session_tracker()->InitLocalSession(kLocalSessionTag, kLocalSessionName,
                                         sync_pb::SyncEnums::TYPE_CROS);
-    const base::Time kTimestamp1 =
-        base::Time::Now() - base::TimeDelta::FromMinutes(1);
+    const base::Time kTimestamp1 = now - base::TimeDelta::FromMinutes(1);
 
     session_tracker()->PutWindowInSession(kForeignSessionTag1, kWindowId1);
     session_tracker()->PutTabInWindow(kForeignSessionTag1, kWindowId1, kTabId1);
@@ -540,8 +574,7 @@ TEST_F(AppSearchProviderTest, FetchRecommendationsWithContinueReading) {
     CreateSearchWithContinueReading();
     session_tracker()->InitLocalSession(kLocalSessionTag, kLocalSessionName,
                                         sync_pb::SyncEnums::TYPE_CROS);
-    const base::Time kTimestamp1 =
-        base::Time::Now() - base::TimeDelta::FromMinutes(1);
+    const base::Time kTimestamp1 = now - base::TimeDelta::FromMinutes(1);
 
     session_tracker()->PutWindowInSession(kForeignSessionTag1, kWindowId1);
     session_tracker()->PutTabInWindow(kForeignSessionTag1, kWindowId1, kTabId1);
@@ -566,8 +599,7 @@ TEST_F(AppSearchProviderTest, FetchRecommendationsWithContinueReading) {
     CreateSearchWithContinueReading();
     session_tracker()->InitLocalSession(kLocalSessionTag, kLocalSessionName,
                                         sync_pb::SyncEnums::TYPE_CROS);
-    const base::Time kTimestamp1 =
-        base::Time::Now() - base::TimeDelta::FromMinutes(1);
+    const base::Time kTimestamp1 = now - base::TimeDelta::FromMinutes(1);
 
     session_tracker()->PutWindowInSession(kForeignSessionTag1, kWindowId1);
     session_tracker()->PutTabInWindow(kForeignSessionTag1, kWindowId1, kTabId1);
@@ -604,7 +636,7 @@ TEST_F(AppSearchProviderTest, FetchUnlaunchedRecommendations) {
 TEST_F(AppSearchProviderTest, FetchRecommendationsFromRanker) {
   base::test::ScopedFeatureList scoped_feature_list_;
   scoped_feature_list_.InitWithFeatures(
-      {app_list_features::kEnableAppSearchResultRanker}, {});
+      {app_list_features::kEnableZeroStateAppsRanker}, {});
   CreateSearch();
 
   extensions::ExtensionPrefs* prefs =
@@ -626,7 +658,7 @@ TEST_F(AppSearchProviderTest, FetchRecommendationsFromRanker) {
 TEST_F(AppSearchProviderTest, RankerIsDisabledWithFlag) {
   base::test::ScopedFeatureList scoped_feature_list_;
   scoped_feature_list_.InitWithFeatures(
-      {}, {app_list_features::kEnableAppSearchResultRanker});
+      {}, {app_list_features::kEnableZeroStateAppsRanker});
   CreateSearch();
 
   extensions::ExtensionPrefs* prefs =
@@ -654,7 +686,8 @@ TEST_F(AppSearchProviderTest, FilterDuplicate) {
 
   AddExtension(extension_misc::kGmailAppId, kGmailExtensionName,
                extensions::Manifest::EXTERNAL_PREF_DOWNLOAD,
-               0 /* extra_flags */);
+               extensions::Extension::NO_FLAGS);
+
   const std::string arc_gmail_app_id =
       AddArcApp(kGmailArcName, kGmailArcPackage, kGmailArcActivity);
   arc_test().arc_app_list_prefs()->SetLastLaunchTime(arc_gmail_app_id);
@@ -670,15 +703,21 @@ TEST_F(AppSearchProviderTest, FilterDuplicate) {
       extension_misc::kGmailAppId,
       arc_gmail_app_info->last_launch_time - base::TimeDelta::FromSeconds(1));
 
+  // Allow async callbacks to run.
+  base::RunLoop().RunUntilIdle();
+
   CreateSearch();
-  EXPECT_EQ(kGmailArcName, RunQuery(kGmailQeuery));
+  EXPECT_EQ(kGmailArcName, RunQuery(kGmailQuery));
 
   extension_prefs->SetLastLaunchTime(
       extension_misc::kGmailAppId,
       arc_gmail_app_info->last_launch_time + base::TimeDelta::FromSeconds(1));
 
+  // Allow async callbacks to run.
+  base::RunLoop().RunUntilIdle();
+
   CreateSearch();
-  EXPECT_EQ(kGmailExtensionName, RunQuery(kGmailQeuery));
+  EXPECT_EQ(kGmailExtensionName, RunQuery(kGmailQuery));
 }
 
 TEST_F(AppSearchProviderTest, FetchInternalApp) {
@@ -747,6 +786,51 @@ TEST_F(AppSearchProviderTest, CrostiniApp) {
   EXPECT_EQ("", RunQuery("terrible"));
 }
 
+TEST_F(AppSearchProviderTest, AppServiceIconCache) {
+  // Skip this App Service specific test if the App Service is disabled.
+  if (!base::FeatureList::IsEnabled(features::kAppServiceAsh)) {
+    return;
+  }
+
+  apps::AppServiceProxyImpl* proxy =
+      apps::AppServiceProxyImpl::GetImplForTesting(profile());
+  ASSERT_NE(proxy, nullptr);
+
+  apps::StubIconLoader stub_icon_loader;
+  apps::IconLoader* old_icon_loader =
+      proxy->OverrideInnerIconLoaderForTesting(&stub_icon_loader);
+
+  // Insert dummy map values so that the stub_icon_loader knows of these apps.
+  stub_icon_loader.timelines_by_app_id_[kPackagedApp1Id] = 1;
+  stub_icon_loader.timelines_by_app_id_[kPackagedApp2Id] = 2;
+
+  // The stub_icon_loader should start with no LoadIconFromIconKey calls.
+  CreateSearch();
+  EXPECT_EQ(0, stub_icon_loader.NumLoadIconFromIconKeyCalls());
+
+  // Running the "pa" query should get two hits (for "Packaged App #"), which
+  // should lead to 2 LoadIconFromIconKey calls on the stub_icon_loader.
+  RunQuery("pa");
+  EXPECT_EQ(2, stub_icon_loader.NumLoadIconFromIconKeyCalls());
+
+  // Issuing the same "pa" query should hit the AppServiceDataSource's icon
+  // cache, with no further calls to the wrapped stub_icon_loader.
+  RunQuery("pa");
+  EXPECT_EQ(2, stub_icon_loader.NumLoadIconFromIconKeyCalls());
+
+  // Hiding the UI (i.e. calling ViewClosing) should clear the icon cache. The
+  // number of LoadIconFromIconKey calls should not change.
+  CallViewClosing();
+  EXPECT_EQ(2, stub_icon_loader.NumLoadIconFromIconKeyCalls());
+
+  // Issuing the same "pa" query should bypass the now-clear icon cache, with 2
+  // further calls to the wrapped stub_icon_loader, bringing the total to 4.
+  RunQuery("pa");
+  EXPECT_EQ(4, stub_icon_loader.NumLoadIconFromIconKeyCalls());
+
+  proxy->OverrideInnerIconLoaderForTesting(old_icon_loader);
+}
+
 enum class TestExtensionInstallType {
   CONTROLLED_BY_POLICY,
   CHROME_COMPONENT,
@@ -765,7 +849,7 @@ class AppSearchProviderWithExtensionInstallType
   DISALLOW_COPY_AND_ASSIGN(AppSearchProviderWithExtensionInstallType);
 };
 
-TEST_P(AppSearchProviderWithExtensionInstallType, InstallInernallyRanking) {
+TEST_P(AppSearchProviderWithExtensionInstallType, InstallInternallyRanking) {
   extensions::ExtensionPrefs* const prefs =
       extensions::ExtensionPrefs::Get(profile());
   ASSERT_TRUE(prefs);
@@ -775,7 +859,7 @@ TEST_P(AppSearchProviderWithExtensionInstallType, InstallInernallyRanking) {
       crx_file::id_util::GenerateId(kRankingNormalAppName);
   AddExtension(normal_app_id, kRankingNormalAppName,
                extensions::Manifest::EXTERNAL_PREF_DOWNLOAD,
-               0 /* extra_flags */);
+               extensions::Extension::NO_FLAGS);
 
   // Wait a bit to make sure time is updated.
   WaitTimeUpdated();
@@ -787,11 +871,12 @@ TEST_P(AppSearchProviderWithExtensionInstallType, InstallInernallyRanking) {
     case TestExtensionInstallType::CONTROLLED_BY_POLICY:
       AddExtension(internal_app_id, kRankingInternalAppName,
                    extensions::Manifest::EXTERNAL_POLICY_DOWNLOAD,
-                   0 /* extra_flags */);
+                   extensions::Extension::NO_FLAGS);
       break;
     case TestExtensionInstallType::CHROME_COMPONENT:
       AddExtension(internal_app_id, kRankingInternalAppName,
-                   extensions::Manifest::COMPONENT, 0 /* extra_flags */);
+                   extensions::Manifest::COMPONENT,
+                   extensions::Extension::NO_FLAGS);
       break;
     case TestExtensionInstallType::INSTALLED_BY_DEFAULT:
       AddExtension(internal_app_id, kRankingInternalAppName,
@@ -805,12 +890,16 @@ TEST_P(AppSearchProviderWithExtensionInstallType, InstallInernallyRanking) {
       break;
   }
 
+  // Allow async callbacks to run.
+  base::RunLoop().RunUntilIdle();
   EXPECT_LT(prefs->GetInstallTime(normal_app_id),
             prefs->GetInstallTime(internal_app_id));
 
   // Installed internally app has runking below other apps, even if it's install
   // time is later.
   CreateSearch();
+  // Allow async callbacks to run.
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(std::string(kRankingNormalAppName) + "," +
                 std::string(kRankingInternalAppName),
             RunQuery(kRankingAppQuery));
@@ -819,12 +908,14 @@ TEST_P(AppSearchProviderWithExtensionInstallType, InstallInernallyRanking) {
   WaitTimeUpdated();
   prefs->SetLastLaunchTime(internal_app_id, base::Time::Now());
   CreateSearch();
+  // Allow async callbacks to run.
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(std::string(kRankingInternalAppName) + "," +
                 std::string(kRankingNormalAppName),
             RunQuery(kRankingAppQuery));
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     ,
     AppSearchProviderWithExtensionInstallType,
     ::testing::ValuesIn({TestExtensionInstallType::CONTROLLED_BY_POLICY,
@@ -915,7 +1006,7 @@ TEST_P(AppSearchProviderWithArcAppInstallType,
             RunQuery(kRankingAppQuery));
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     ,
     AppSearchProviderWithArcAppInstallType,
     ::testing::ValuesIn({TestArcAppInstallType::CONTROLLED_BY_POLICY,

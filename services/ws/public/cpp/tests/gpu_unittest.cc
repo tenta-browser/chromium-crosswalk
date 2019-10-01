@@ -4,6 +4,7 @@
 
 #include "services/ws/public/cpp/gpu/gpu.h"
 
+#include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
@@ -57,8 +58,11 @@ class TestGpuImpl : public mojom::Gpu {
                             gpu::GpuFeatureInfo());
   }
 
+#if defined(OS_CHROMEOS)
   void CreateJpegDecodeAccelerator(
-      media::mojom::JpegDecodeAcceleratorRequest jda_request) override {}
+      chromeos_camera::mojom::MjpegDecodeAcceleratorRequest jda_request)
+      override {}
+#endif  // defined(OS_CHROMEOS)
 
   void CreateVideoEncodeAcceleratorProvider(
       media::mojom::VideoEncodeAcceleratorProviderRequest request) override {}
@@ -133,9 +137,9 @@ class GpuTest : public testing::Test {
   mojom::GpuPtr GetPtr() {
     mojom::GpuPtr ptr;
     io_thread_.task_runner()->PostTask(
-        FROM_HERE,
-        base::Bind(&TestGpuImpl::BindRequest, base::Unretained(gpu_impl_.get()),
-                   base::Passed(MakeRequest(&ptr))));
+        FROM_HERE, base::BindOnce(&TestGpuImpl::BindRequest,
+                                  base::Unretained(gpu_impl_.get()),
+                                  base::Passed(MakeRequest(&ptr))));
     return ptr;
   }
 
@@ -143,13 +147,13 @@ class GpuTest : public testing::Test {
     base::WaitableEvent event(base::WaitableEvent::ResetPolicy::AUTOMATIC,
                               base::WaitableEvent::InitialState::NOT_SIGNALED);
     io_thread_.task_runner()->PostTask(
-        FROM_HERE, base::Bind(
+        FROM_HERE, base::BindOnce(
                        [](std::unique_ptr<TestGpuImpl> gpu_impl,
                           base::WaitableEvent* event) {
                          gpu_impl.reset();
                          event->Signal();
                        },
-                       base::Passed(std::move(gpu_impl_)), &event));
+                       std::move(gpu_impl_), &event));
     event.Wait();
   }
 

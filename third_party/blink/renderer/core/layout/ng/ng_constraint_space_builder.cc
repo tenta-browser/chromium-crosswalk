@@ -15,7 +15,7 @@ NGPercentageStorage GetPercentageStorage(LayoutUnit percentage_size,
   if (percentage_size == available_size)
     return kSameAsAvailable;
 
-  if (percentage_size == NGSizeIndefinite)
+  if (percentage_size == kIndefiniteSize)
     return kIndefinite;
 
   if (percentage_size == LayoutUnit())
@@ -27,7 +27,7 @@ NGPercentageStorage GetPercentageStorage(LayoutUnit percentage_size,
 }  // namespace
 
 NGConstraintSpaceBuilder& NGConstraintSpaceBuilder::SetPercentageResolutionSize(
-    NGLogicalSize percentage_resolution_size) {
+    LogicalSize percentage_resolution_size) {
 #if DCHECK_IS_ON()
   DCHECK(is_available_size_set_);
 #endif
@@ -73,46 +73,38 @@ NGConstraintSpaceBuilder& NGConstraintSpaceBuilder::SetPercentageResolutionSize(
 
 NGConstraintSpaceBuilder&
 NGConstraintSpaceBuilder::SetReplacedPercentageResolutionSize(
-    NGLogicalSize replaced_percentage_resolution_size) {
+    LogicalSize replaced_percentage_resolution_size) {
 #if DCHECK_IS_ON()
   DCHECK(is_available_size_set_);
 #endif
   if (LIKELY(is_in_parallel_flow_)) {
-    space_.bitfields_.replaced_percentage_inline_storage =
-        GetPercentageStorage(replaced_percentage_resolution_size.inline_size,
-                             space_.available_size_.inline_size);
-    if (UNLIKELY(space_.bitfields_.replaced_percentage_inline_storage ==
-                 kRareDataPercentage)) {
-      space_.EnsureRareData()->replaced_percentage_resolution_size.inline_size =
-          replaced_percentage_resolution_size.inline_size;
-    }
+    // We don't store the replaced percentage resolution inline size, so we need
+    // it to be the same as the regular percentage resolution inline size.
+    DCHECK_EQ(replaced_percentage_resolution_size.inline_size,
+              space_.PercentageResolutionInlineSize());
 
     space_.bitfields_.replaced_percentage_block_storage =
         GetPercentageStorage(replaced_percentage_resolution_size.block_size,
                              space_.available_size_.block_size);
     if (space_.bitfields_.replaced_percentage_block_storage ==
         kRareDataPercentage) {
-      space_.EnsureRareData()->replaced_percentage_resolution_size.block_size =
+      space_.EnsureRareData()->replaced_percentage_resolution_block_size =
           replaced_percentage_resolution_size.block_size;
     }
   } else {
     AdjustInlineSizeIfNeeded(&replaced_percentage_resolution_size.block_size);
 
-    space_.bitfields_.replaced_percentage_inline_storage =
-        GetPercentageStorage(replaced_percentage_resolution_size.block_size,
-                             space_.available_size_.inline_size);
-    if (space_.bitfields_.replaced_percentage_inline_storage ==
-        kRareDataPercentage) {
-      space_.EnsureRareData()->replaced_percentage_resolution_size.inline_size =
-          replaced_percentage_resolution_size.block_size;
-    }
+    // We don't store the replaced percentage resolution inline size, so we need
+    // it to be the same as the regular percentage resolution inline size.
+    DCHECK_EQ(replaced_percentage_resolution_size.block_size,
+              space_.PercentageResolutionInlineSize());
 
     space_.bitfields_.replaced_percentage_block_storage =
         GetPercentageStorage(replaced_percentage_resolution_size.inline_size,
                              space_.available_size_.block_size);
     if (space_.bitfields_.replaced_percentage_block_storage ==
         kRareDataPercentage) {
-      space_.EnsureRareData()->replaced_percentage_resolution_size.block_size =
+      space_.EnsureRareData()->replaced_percentage_resolution_block_size =
           replaced_percentage_resolution_size.inline_size;
     }
   }

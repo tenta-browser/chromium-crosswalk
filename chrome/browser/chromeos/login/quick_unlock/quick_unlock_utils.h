@@ -23,7 +23,7 @@ namespace quick_unlock {
 enum class PasswordConfirmationFrequency {
   SIX_HOURS = 0,
   TWELVE_HOURS = 1,
-  DAY = 2,
+  TWO_DAYS = 2,
   WEEK = 3
 };
 
@@ -48,8 +48,8 @@ bool IsFingerprintEnabled(Profile* profile);
 // by cros_config.
 bool IsFingerprintReaderOnKeyboard();
 
-// Forcibly enable all quick-unlock modes for testing.
-void EnableForTesting();
+// Enable or Disable quick-unlock modes for testing
+void EnabledForTesting(bool state);
 
 // Returns true if EnableForTesting() was previously called.
 bool IsEnabledForTesting();

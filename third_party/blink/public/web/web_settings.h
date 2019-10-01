@@ -33,6 +33,7 @@
 
 #include <unicode/uscript.h>
 
+#include "third_party/blink/public/common/css/preferred_color_scheme.h"
 #include "third_party/blink/public/platform/pointer_properties.h"
 #include "third_party/blink/public/platform/web_common.h"
 #include "third_party/blink/public/platform/web_effective_connection_type.h"
@@ -98,7 +99,6 @@ class WebSettings {
   enum class AutoplayPolicy {
     kNoUserGestureRequired = 0,
     kUserGestureRequired,
-    kUserGestureRequiredForCrossOrigin,
     kDocumentUserActivationRequired,
   };
 
@@ -148,6 +148,7 @@ class WebSettings {
   void SetDeferred2dCanvasEnabled(bool) {}  // temporary stub
   virtual void SetDeviceScaleAdjustment(float) = 0;
   virtual void SetDisableReadingFromCanvas(bool) = 0;
+  virtual void SetDontSendKeyEventsToJavascript(bool) = 0;
   virtual void SetDoubleTapToZoomEnabled(bool) = 0;
   virtual void SetDownloadableBinaryFontsEnabled(bool) = 0;
   virtual void SetEditingBehavior(EditingBehavior) = 0;
@@ -163,12 +164,10 @@ class WebSettings {
                                   UScriptCode = USCRIPT_COMMON) = 0;
   virtual void SetNetworkQuietTimeout(double timeout) = 0;
   virtual void SetForceMainWorldInitialization(bool) = 0;
-  virtual void SetForcePreloadNoneForMediaElements(bool) = 0;
   virtual void SetForceZeroLayoutHeight(bool) = 0;
   virtual void SetFullscreenSupported(bool) = 0;
   virtual void SetHideDownloadUI(bool) = 0;
   virtual void SetHighlightAds(bool) = 0;
-  virtual void SetHistoryEntryRequiresUserGesture(bool) = 0;
   virtual void SetHyperlinkAuditingEnabled(bool) = 0;
   virtual void SetIgnoreMainFrameOverflowHiddenQuirk(bool) = 0;
   virtual void SetImageAnimationPolicy(ImageAnimationPolicy) = 0;
@@ -265,7 +264,6 @@ class WebSettings {
   virtual void SetValidationMessageTimerMagnification(int) = 0;
   virtual void SetViewportEnabled(bool) = 0;
   virtual void SetViewportMetaEnabled(bool) = 0;
-  virtual void SetViewportMetaLayoutSizeQuirk(bool) = 0;
   virtual void SetViewportMetaMergeContentQuirk(bool) = 0;
   virtual void SetViewportMetaNonUserScalableQuirk(bool) = 0;
   virtual void SetViewportMetaZeroValuesQuirk(bool) = 0;
@@ -275,7 +273,6 @@ class WebSettings {
   virtual void SetXSSAuditorEnabled(bool) = 0;
   virtual void SetMediaControlsEnabled(bool) = 0;
   virtual void SetDoNotUpdateSelectionOnMutatingSelectionRange(bool) = 0;
-  virtual void SetMediaDownloadInProductHelpEnabled(bool) = 0;
   virtual void SetLowPriorityIframesThreshold(WebEffectiveConnectionType) = 0;
   virtual void SetLazyLoadEnabled(bool) = 0;
   virtual void SetLazyFrameLoadingDistanceThresholdPxUnknown(int) = 0;
@@ -290,6 +287,8 @@ class WebSettings {
   virtual void SetLazyImageLoadingDistanceThresholdPx2G(int) = 0;
   virtual void SetLazyImageLoadingDistanceThresholdPx3G(int) = 0;
   virtual void SetLazyImageLoadingDistanceThresholdPx4G(int) = 0;
+  virtual void SetForceDarkModeEnabled(bool) = 0;
+  virtual void SetPreferredColorScheme(PreferredColorScheme) = 0;
 
  protected:
   ~WebSettings() = default;

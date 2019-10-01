@@ -35,7 +35,7 @@ struct ModelNeutralState;
 class SyncSchedulerImpl : public SyncScheduler {
  public:
   // |name| is a display string to identify the syncer thread.  Takes
-  // |ownership of |syncer| and |delay_provider|.
+  // ownership of |syncer| and |delay_provider|.
   SyncSchedulerImpl(const std::string& name,
                     BackoffDelayProvider* delay_provider,
                     SyncCycleContext* context,
@@ -47,7 +47,6 @@ class SyncSchedulerImpl : public SyncScheduler {
 
   void Start(Mode mode, base::Time last_poll_time) override;
   void ScheduleConfiguration(const ConfigurationParams& params) override;
-  void ScheduleClearServerData(const ClearParams& params) override;
   void Stop() override;
   void ScheduleLocalNudge(ModelTypeSet types,
                           const base::Location& nudge_location) override;
@@ -70,9 +69,7 @@ class SyncSchedulerImpl : public SyncScheduler {
                         const base::TimeDelta& throttle_duration) override;
   void OnTypesBackedOff(ModelTypeSet types) override;
   bool IsAnyThrottleOrBackoff() override;
-  void OnReceivedShortPollIntervalUpdate(
-      const base::TimeDelta& new_interval) override;
-  void OnReceivedLongPollIntervalUpdate(
+  void OnReceivedPollIntervalUpdate(
       const base::TimeDelta& new_interval) override;
   void OnReceivedCustomNudgeDelays(
       const std::map<ModelType, base::TimeDelta>& nudge_delays) override;
@@ -106,7 +103,6 @@ class SyncSchedulerImpl : public SyncScheduler {
   };
 
   friend class SyncSchedulerImplTest;
-  friend class SyncSchedulerWhiteboxTest;
   friend class SyncerTest;
 
   FRIEND_TEST_ALL_PREFIXES(SyncSchedulerTest, TransientPollFailure);
@@ -127,8 +123,6 @@ class SyncSchedulerImpl : public SyncScheduler {
 
   // Invoke the syncer to perform a configuration job.
   void DoConfigurationSyncCycleJob(JobPriority priority);
-
-  void DoClearServerDataSyncCycleJob(JobPriority priority);
 
   // Helper function for Do{Nudge,Configuration,Poll}SyncCycleJob.
   void HandleSuccess();
@@ -229,10 +223,9 @@ class SyncSchedulerImpl : public SyncScheduler {
   // Set in Start(), unset in Stop().
   bool started_;
 
-  // Modifiable versions of kDefaultLongPollIntervalSeconds which can be
+  // Modifiable versions of kDefaultPollIntervalSeconds which can be
   // updated by the server.
-  base::TimeDelta syncer_short_poll_interval_seconds_;
-  base::TimeDelta syncer_long_poll_interval_seconds_;
+  base::TimeDelta syncer_poll_interval_seconds_;
 
   // Timer for polling. Restarted on each successful poll, and when entering
   // normal sync mode or exiting an error state. Not active in configuration
@@ -258,8 +251,6 @@ class SyncSchedulerImpl : public SyncScheduler {
   // that (mode_ != CONFIGURATION_MODE) \implies !pending_configure_params_.
   std::unique_ptr<ConfigurationParams> pending_configure_params_;
 
-  std::unique_ptr<ClearParams> pending_clear_params_;
-
   // Keeps track of work that the syncer needs to handle.
   NudgeTracker nudge_tracker_;
 
@@ -267,10 +258,6 @@ class SyncSchedulerImpl : public SyncScheduler {
   std::unique_ptr<Syncer> syncer_;
 
   SyncCycleContext* cycle_context_;
-
-  // The last time we ran a sync cycle. Null if we haven't ran one since Chrome
-  // startup. Used for metrics.
-  base::TimeTicks last_sync_cycle_start_;
 
   // TryJob might get called for multiple reasons. It should only call
   // DoPollSyncCycleJob after some time since the last attempt.

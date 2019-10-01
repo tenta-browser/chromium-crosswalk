@@ -10,6 +10,7 @@
 #include "base/logging.h"
 #include "base/memory/singleton.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/strings/stringprintf.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chrome/browser/profiles/profile.h"
@@ -175,8 +176,8 @@ DiceResponseHandler::DiceTokenFetcher::DiceTokenFetcher(
   DCHECK(dice_response_handler_);
   account_reconcilor_lock_ =
       std::make_unique<AccountReconcilor::Lock>(account_reconcilor);
-  gaia_auth_fetcher_ = signin_client->CreateGaiaAuthFetcher(
-      this, gaia::GaiaSource::kChrome, signin_client->GetURLLoaderFactory());
+  gaia_auth_fetcher_ =
+      signin_client->CreateGaiaAuthFetcher(this, gaia::GaiaSource::kChrome);
   VLOG(1) << "Start fetching token for account: " << email;
   gaia_auth_fetcher_->StartAuthCodeForOAuth2TokenExchange(authorization_code_);
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
@@ -321,7 +322,7 @@ void DiceResponseHandler::ProcessEnableSyncHeader(
     }
   }
   std::string account_id =
-      identity_manager_->LegacyPickAccountIdForAccount(gaia_id, email);
+      identity_manager_->PickAccountIdForAccount(gaia_id, email);
   delegate->EnableSync(account_id);
 }
 
@@ -333,9 +334,8 @@ void DiceResponseHandler::ProcessDiceSignoutHeader(
   bool primary_account_signed_out = false;
   auto* accounts_mutator = identity_manager_->GetAccountsMutator();
   for (const auto& account_info : account_infos) {
-    std::string signed_out_account =
-        identity_manager_->LegacyPickAccountIdForAccount(account_info.gaia_id,
-                                                         account_info.email);
+    std::string signed_out_account = identity_manager_->PickAccountIdForAccount(
+        account_info.gaia_id, account_info.email);
     if (signed_out_account == primary_account) {
       primary_account_signed_out = true;
       RecordDiceResponseHeader(kSignoutPrimary);
@@ -363,8 +363,8 @@ void DiceResponseHandler::ProcessDiceSignoutHeader(
     // If a token fetch is in flight for the same account, cancel it.
     for (auto it = token_fetchers_.begin(); it != token_fetchers_.end(); ++it) {
       std::string token_fetcher_account_id =
-          identity_manager_->LegacyPickAccountIdForAccount(it->get()->gaia_id(),
-                                                           it->get()->email());
+          identity_manager_->PickAccountIdForAccount(it->get()->gaia_id(),
+                                                     it->get()->email());
       if (token_fetcher_account_id == signed_out_account) {
         token_fetchers_.erase(it);
         break;
@@ -417,7 +417,7 @@ void DiceResponseHandler::OnTokenExchangeFailure(
   const std::string& email = token_fetcher->email();
   const std::string& gaia_id = token_fetcher->gaia_id();
   std::string account_id =
-      identity_manager_->LegacyPickAccountIdForAccount(gaia_id, email);
+      identity_manager_->PickAccountIdForAccount(gaia_id, email);
   about_signin_internals_->OnRefreshTokenReceived(
       base::StringPrintf("Failure (%s)", account_id.c_str()));
   token_fetcher->delegate()->HandleTokenExchangeFailure(email, error);

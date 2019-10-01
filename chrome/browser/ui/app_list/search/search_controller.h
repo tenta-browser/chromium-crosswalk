@@ -18,10 +18,14 @@
 class AppListControllerDelegate;
 class AppListModelUpdater;
 class ChromeSearchResult;
+class Profile;
 
 namespace app_list {
 
+class AppSearchResultRanker;
+class SearchResultRanker;
 class SearchProvider;
+enum class RankingItemType;
 
 // Controller that collects query from given SearchBoxModel, dispatches it
 // to all search providers, then invokes the mixer to mix and to publish the
@@ -29,10 +33,12 @@ class SearchProvider;
 class SearchController {
  public:
   SearchController(AppListModelUpdater* model_updater,
-                   AppListControllerDelegate* list_controller);
+                   AppListControllerDelegate* list_controller,
+                   Profile* profile);
   virtual ~SearchController();
 
   void Start(const base::string16& query);
+  void ViewClosing();
 
   void OpenResult(ChromeSearchResult* result, int event_flags);
   void InvokeResultAction(ChromeSearchResult* result,
@@ -49,7 +55,18 @@ class SearchController {
   ChromeSearchResult* GetResultByTitleForTest(const std::string& title);
 
   // Sends training signal to each |providers_|
-  void Train(const std::string& id);
+  void Train(const std::string& id, RankingItemType type);
+
+  // Gets the search result ranker owned by this object that is used for ranking
+  // apps.
+  AppSearchResultRanker* GetAppSearchResultRanker();
+
+  // Gets the search result ranker owned by the Mixer that is used for all
+  // other ranking.
+  SearchResultRanker* GetNonAppSearchResultRanker();
+
+  // Gets the length of the most recent query.
+  int GetLastQueryLength() const;
 
  private:
   // Invoked when the search results are changed.
@@ -60,9 +77,17 @@ class SearchController {
   // If true, the search results are shown on the launcher start page.
   bool query_for_recommendation_ = false;
 
+  // The query associated with the most recent search.
+  base::string16 last_query_;
+
+  // The ID of the most recently launched app. This is used for app list launch
+  // recording.
+  std::string last_launched_app_id_;
+
+  std::unique_ptr<Mixer> mixer_;
   using Providers = std::vector<std::unique_ptr<SearchProvider>>;
   Providers providers_;
-  std::unique_ptr<Mixer> mixer_;
+  std::unique_ptr<AppSearchResultRanker> app_ranker_;
   AppListControllerDelegate* list_controller_;
 
   DISALLOW_COPY_AND_ASSIGN(SearchController);

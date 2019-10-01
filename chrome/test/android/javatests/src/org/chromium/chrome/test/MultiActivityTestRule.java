@@ -17,9 +17,8 @@ import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.EmptyTabModelSelectorObserver;
-import org.chromium.chrome.browser.tabmodel.document.DocumentTabModelSelector;
 import org.chromium.chrome.test.util.ApplicationTestUtils;
-import org.chromium.chrome.test.util.browser.tabmodel.document.MockStorageDelegate;
+import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.content_public.browser.test.util.Criteria;
 import org.chromium.content_public.browser.test.util.CriteriaHelper;
 
@@ -29,12 +28,7 @@ import java.util.concurrent.TimeoutException;
 public class MultiActivityTestRule implements TestRule {
     private static final String TAG = "MultiActivityTest";
 
-    MockStorageDelegate mStorageDelegate;
     Context mContext;
-
-    public MockStorageDelegate getStorageDelegate() {
-        return mStorageDelegate;
-    }
 
     public Context getContext() {
         return mContext;
@@ -51,7 +45,7 @@ public class MultiActivityTestRule implements TestRule {
         CriteriaHelper.pollUiThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
-                if (!tab.isLoadingAndRenderingDone()) return false;
+                if (!ChromeTabUtils.isLoadingAndRenderingDone(tab)) return false;
                 if (!TextUtils.equals(expectedTitle, tab.getTitle())) return false;
                 return true;
             }
@@ -73,16 +67,10 @@ public class MultiActivityTestRule implements TestRule {
     private void ruleSetUp() throws Exception {
         RecordHistogram.setDisabledForTests(true);
         mContext = InstrumentationRegistry.getTargetContext();
-        ApplicationTestUtils.setUp(mContext, true);
-
-        // Make the DocumentTabModelSelector use a mocked out directory so that test runs don't
-        // interfere with each other.
-        mStorageDelegate = new MockStorageDelegate(mContext.getCacheDir());
-        DocumentTabModelSelector.setStorageDelegateForTests(mStorageDelegate);
+        ApplicationTestUtils.setUp(mContext);
     }
 
     private void ruleTearDown() throws Exception {
-        mStorageDelegate.ensureDirectoryDestroyed();
         ApplicationTestUtils.tearDown(mContext);
         RecordHistogram.setDisabledForTests(false);
     }

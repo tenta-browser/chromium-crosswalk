@@ -9,6 +9,8 @@
 
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
+#include "base/files/file_util.h"
+#include "base/no_destructor.h"
 #include "base/strings/string_split.h"
 #include "base/system/sys_info.h"
 #include "base/time/time.h"
@@ -34,7 +36,6 @@ bool disable_pin_by_policy_for_testing_ = false;
 const char kQuickUnlockWhitelistOptionAll[] = "all";
 const char kQuickUnlockWhitelistOptionPin[] = "PIN";
 const char kQuickUnlockWhitelistOptionFingerprint[] = "FINGERPRINT";
-const base::FilePath kFingerprintSensorPath = base::FilePath("/dev/cros_fp");
 
 // Default minimum PIN length. Policy can increase or decrease this value.
 constexpr int kDefaultMinimumPinLength = 6;
@@ -62,8 +63,8 @@ base::TimeDelta PasswordConfirmationFrequencyToTimeDelta(
       return base::TimeDelta::FromHours(6);
     case PasswordConfirmationFrequency::TWELVE_HOURS:
       return base::TimeDelta::FromHours(12);
-    case PasswordConfirmationFrequency::DAY:
-      return base::TimeDelta::FromDays(1);
+    case PasswordConfirmationFrequency::TWO_DAYS:
+      return base::TimeDelta::FromDays(2);
     case PasswordConfirmationFrequency::WEEK:
       return base::TimeDelta::FromDays(7);
   }
@@ -72,13 +73,14 @@ base::TimeDelta PasswordConfirmationFrequencyToTimeDelta(
 }
 
 void RegisterProfilePrefs(PrefRegistrySimple* registry) {
-  base::ListValue quick_unlock_whitelist_default;
-  quick_unlock_whitelist_default.AppendString(kQuickUnlockWhitelistOptionAll);
-  registry->RegisterListPref(prefs::kQuickUnlockModeWhitelist,
-                             quick_unlock_whitelist_default.CreateDeepCopy());
+  base::Value::ListStorage quick_unlock_whitelist_default;
+  quick_unlock_whitelist_default.emplace_back(kQuickUnlockWhitelistOptionAll);
+  registry->RegisterListPref(
+      prefs::kQuickUnlockModeWhitelist,
+      base::Value(std::move(quick_unlock_whitelist_default)));
   registry->RegisterIntegerPref(
       prefs::kQuickUnlockTimeout,
-      static_cast<int>(PasswordConfirmationFrequency::DAY));
+      static_cast<int>(PasswordConfirmationFrequency::TWO_DAYS));
 
   // Preferences related the lock screen pin unlock.
   registry->RegisterIntegerPref(prefs::kPinUnlockMinimumLength,
@@ -132,7 +134,10 @@ bool IsFingerprintEnabled(Profile* profile) {
   // Disable fingerprint if the device does not have a fingerprint reader
   // TODO(yulunwu): http://crbug.com/922270
   base::ThreadRestrictions::ScopedAllowIO allow_io;
-  if (!base::PathExists(kFingerprintSensorPath))
+
+  static const base::NoDestructor<base::FilePath> kFingerprintSensorPath(
+      base::FilePath("/dev/cros_fp"));
+  if (!base::PathExists(*kFingerprintSensorPath))
     return false;
 
   // Disable fingerprint if the profile does not belong to the primary user.
@@ -147,8 +152,8 @@ bool IsFingerprintEnabled(Profile* profile) {
   return base::FeatureList::IsEnabled(features::kQuickUnlockFingerprint);
 }
 
-void EnableForTesting() {
-  enable_for_testing_ = true;
+void EnabledForTesting(bool state) {
+  enable_for_testing_ = state;
 }
 
 bool IsEnabledForTesting() {

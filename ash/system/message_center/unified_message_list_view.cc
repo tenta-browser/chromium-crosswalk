@@ -4,14 +4,18 @@
 
 #include "ash/system/message_center/unified_message_list_view.h"
 
+#include "ash/public/cpp/ash_features.h"
+#include "ash/system/message_center/message_center_style.h"
 #include "ash/system/message_center/notification_swipe_control_view.h"
 #include "ash/system/message_center/unified_message_center_view.h"
 #include "ash/system/tray/tray_constants.h"
 #include "ash/system/unified/unified_system_tray_model.h"
 #include "base/auto_reset.h"
 #include "ui/gfx/animation/linear_animation.h"
+#include "ui/gfx/canvas.h"
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/views/message_view_factory.h"
+#include "ui/views/background.h"
 #include "ui/views/border.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/layout/fill_layout.h"
@@ -25,7 +29,7 @@ namespace ash {
 namespace {
 
 constexpr base::TimeDelta kClosingAnimationDuration =
-    base::TimeDelta::FromMilliseconds(330);
+    base::TimeDelta::FromMilliseconds(320);
 constexpr base::TimeDelta kClearAllStackedAnimationDuration =
     base::TimeDelta::FromMilliseconds(40);
 constexpr base::TimeDelta kClearAllVisibleAnimationDuration =
@@ -33,14 +37,42 @@ constexpr base::TimeDelta kClearAllVisibleAnimationDuration =
 
 }  // namespace
 
+// The background of the UnifiedMessageListView, which has a strait top and a
+// rounded bottom.
+class UnifiedMessageListView::Background : public views::Background {
+ public:
+  Background() = default;
+  ~Background() override = default;
+
+  // views::Background:
+  void Paint(gfx::Canvas* canvas, View* view) const override {
+    gfx::Rect bounds = view->GetLocalBounds();
+    SkPath background_path;
+    SkScalar radius = SkIntToScalar(kUnifiedTrayCornerRadius);
+    SkScalar radii[8] = {0, 0, 0, 0, radius, radius, radius, radius};
+    background_path.addRoundRect(gfx::RectToSkRect(bounds), radii);
+
+    cc::PaintFlags flags;
+    flags.setColor(message_center_style::kSwipeControlBackgroundColor);
+    flags.setStyle(cc::PaintFlags::kFill_Style);
+    flags.setAntiAlias(true);
+    canvas->DrawPath(background_path, flags);
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(Background);
+};
+
 // Container view of notification and swipe control.
 // All children of UnifiedMessageListView should be MessageViewContainer.
 class UnifiedMessageListView::MessageViewContainer
     : public views::View,
       public MessageView::SlideObserver {
  public:
-  explicit MessageViewContainer(MessageView* message_view)
+  MessageViewContainer(MessageView* message_view,
+                       UnifiedMessageListView* list_view)
       : message_view_(message_view),
+        list_view_(list_view),
         control_view_(new NotificationSwipeControlView(message_view)) {
     message_view_->AddSlideObserver(this);
 
@@ -49,7 +81,7 @@ class UnifiedMessageListView::MessageViewContainer
     AddChildView(message_view_);
   }
 
-  ~MessageViewContainer() override = default;
+  ~MessageViewContainer() override { message_view_->RemoveSlideObserver(this); }
 
   // Update the border and background corners based on if the notification is
   // at the top or the bottom.
@@ -95,6 +127,10 @@ class UnifiedMessageListView::MessageViewContainer
     }
   }
 
+  void SlideOutAndClose() {
+    message_view_->SlideOutAndClose(1 /* direction */);
+  }
+
   std::string GetNotificationId() const {
     return message_view_->notification_id();
   }
@@ -122,9 +158,17 @@ class UnifiedMessageListView::MessageViewContainer
     PreferredSizeChanged();
   }
 
+  const char* GetClassName() const override { return "UnifiedMessageListView"; }
+
   // MessageView::SlideObserver:
   void OnSlideChanged(const std::string& notification_id) override {
     control_view_->UpdateButtonsVisibility();
+  }
+
+  void OnSlideOut(const std::string& notification_id) override {
+    is_slid_out_ = true;
+    set_is_removed();
+    list_view_->OnNotificationSlidOut();
   }
 
   gfx::Rect start_bounds() const { return start_bounds_; }
@@ -141,6 +185,8 @@ class UnifiedMessageListView::MessageViewContainer
 
   void set_is_removed() { is_removed_ = true; }
 
+  bool is_slid_out() { return is_slid_out_; }
+
  private:
   // The bounds that the container starts animating from. If not animating, it's
   // ignored.
@@ -150,11 +196,14 @@ class UnifiedMessageListView::MessageViewContainer
   // actual bounds().
   gfx::Rect ideal_bounds_;
 
-  // True when the notification is removed and during SLIDE_OUT animation.
-  // Unused if |state_| is not SLIDE_OUT.
+  // True when the notification is removed and during slide out animation.
   bool is_removed_ = false;
 
+  // True if the notification is slid out completely.
+  bool is_slid_out_ = false;
+
   MessageView* const message_view_;
+  UnifiedMessageListView* const list_view_;
   NotificationSwipeControlView* const control_view_;
 
   DISALLOW_COPY_AND_ASSIGN(MessageViewContainer);
@@ -168,20 +217,23 @@ UnifiedMessageListView::UnifiedMessageListView(
       animation_(std::make_unique<gfx::LinearAnimation>(this)) {
   MessageCenter::Get()->AddObserver(this);
   animation_->SetCurrentValue(1.0);
+  SetBackground(std::unique_ptr<views::Background>(
+      new UnifiedMessageListView::Background()));
 }
 
 UnifiedMessageListView::~UnifiedMessageListView() {
   MessageCenter::Get()->RemoveObserver(this);
 
   model_->ClearNotificationChanges();
-  for (int i = 0; i < child_count(); ++i)
-    GetContainer(i)->StoreExpandedState(model_);
+  for (auto* view : children())
+    AsMVC(view)->StoreExpandedState(model_);
 }
 
 void UnifiedMessageListView::Init() {
   bool is_latest = true;
   for (auto* notification : MessageCenter::Get()->GetVisibleNotifications()) {
-    auto* view = new MessageViewContainer(CreateMessageView(*notification));
+    auto* view =
+        new MessageViewContainer(CreateMessageView(*notification), this);
     view->LoadExpandedState(model_, is_latest);
     AddChildViewAt(view, 0);
     MessageCenter::Get()->DisplayedNotification(
@@ -211,11 +263,19 @@ void UnifiedMessageListView::ClearAllWithAnimation() {
 }
 
 int UnifiedMessageListView::CountNotificationsAboveY(int y_offset) const {
-  for (int i = 0; i < child_count(); ++i) {
-    if (child_at(i)->bounds().bottom() >= y_offset)
-      return i;
-  }
-  return child_count();
+  const auto it = std::find_if(children().cbegin(), children().cend(),
+                               [y_offset](const views::View* v) {
+                                 return v->bounds().bottom() > y_offset;
+                               });
+  return std::distance(children().cbegin(), it);
+}
+
+int UnifiedMessageListView::GetTotalNotificationCount() const {
+  return int{children().size()};
+}
+
+bool UnifiedMessageListView::IsAnimating() const {
+  return animation_->is_animating();
 }
 
 void UnifiedMessageListView::ChildPreferredSizeChanged(views::View* child) {
@@ -231,8 +291,8 @@ void UnifiedMessageListView::PreferredSizeChanged() {
 }
 
 void UnifiedMessageListView::Layout() {
-  for (int i = 0; i < child_count(); ++i) {
-    auto* view = GetContainer(i);
+  for (auto* child : children()) {
+    auto* view = AsMVC(child);
     view->SetBoundsRect(gfx::Tween::RectValueBetween(
         GetCurrentValue(), view->start_bounds(), view->ideal_bounds()));
   }
@@ -240,28 +300,33 @@ void UnifiedMessageListView::Layout() {
 
 gfx::Rect UnifiedMessageListView::GetNotificationBounds(
     const std::string& notification_id) const {
-  if (!notification_id.empty()) {
-    for (int i = 0; i < child_count(); i++) {
-      if (GetContainer(i)->GetNotificationId() == notification_id)
-        return GetContainer(i)->bounds();
-    }
-  }
-
-  // Fallback to the last notification.
-  return GetLastNotificationBounds();
+  const MessageViewContainer* child = nullptr;
+  if (!notification_id.empty())
+    child = GetNotificationById(notification_id);
+  return child ? child->bounds() : GetLastNotificationBounds();
 }
 
 gfx::Rect UnifiedMessageListView::GetLastNotificationBounds() const {
-  if (child_count() == 0)
-    return gfx::Rect();
+  return children().empty() ? gfx::Rect() : children().back()->bounds();
+}
 
-  return GetContainer(child_count() - 1)->bounds();
+gfx::Rect UnifiedMessageListView::GetNotificationBoundsBelowY(
+    int y_offset) const {
+  const auto it = std::find_if(children().cbegin(), children().cend(),
+                               [y_offset](const views::View* v) {
+                                 return v->bounds().bottom() >= y_offset;
+                               });
+  return (it == children().cend()) ? gfx::Rect() : (*it)->bounds();
 }
 
 gfx::Size UnifiedMessageListView::CalculatePreferredSize() const {
   return gfx::Size(kTrayMenuWidth,
                    gfx::Tween::IntValueBetween(GetCurrentValue(), start_height_,
                                                ideal_height_));
+}
+
+const char* UnifiedMessageListView::GetClassName() const {
+  return "UnifiedMessageListView";
 }
 
 void UnifiedMessageListView::OnNotificationAdded(const std::string& id) {
@@ -277,7 +342,7 @@ void UnifiedMessageListView::OnNotificationAdded(const std::string& id) {
   auto* view = CreateMessageView(*notification);
   // Expand the latest notification.
   view->SetExpanded(view->IsAutoExpandingAllowed());
-  AddChildView(new MessageViewContainer(view));
+  AddChildView(new MessageViewContainer(view, this));
   UpdateBorders();
   ResetBounds();
 }
@@ -286,20 +351,33 @@ void UnifiedMessageListView::OnNotificationRemoved(const std::string& id,
                                                    bool by_user) {
   if (ignore_notification_remove_)
     return;
+
+  // The corresponding MessageView may have already been deleted after being
+  // manually slid out.
+  auto* child = GetNotificationById(id);
+  if (!child)
+    return;
+
   InterruptClearAll();
   ResetBounds();
 
-  for (int i = 0; i < child_count(); ++i) {
-    auto* view = GetContainer(i);
-    if (view->GetNotificationId() == id) {
-      view->set_is_removed();
-      break;
-    }
-  }
+  child->set_is_removed();
 
+  // If the MessageView is slid out, then do nothing here. The MOVE_DOWN
+  // animation will be started in OnNotificationSlidOut().
+  if (!child->is_slid_out())
+    child->SlideOutAndClose();
+}
+
+void UnifiedMessageListView::OnNotificationSlidOut() {
+  DeleteRemovedNotifications();
+
+  // |message_center_view_| can be null in tests.
+  if (message_center_view_)
+    message_center_view_->OnNotificationSlidOut();
+
+  state_ = State::MOVE_DOWN;
   UpdateBounds();
-
-  state_ = State::SLIDE_OUT;
   StartAnimation();
 }
 
@@ -310,14 +388,13 @@ void UnifiedMessageListView::OnNotificationUpdated(const std::string& id) {
 
   InterruptClearAll();
 
-  for (int i = 0; i < child_count(); ++i) {
-    auto* view = GetContainer(i);
-    if (view->GetNotificationId() == id) {
-      view->UpdateWithNotification(*notification);
-      break;
-    }
-  }
+  // The corresponding MessageView may have been slid out and deleted, so just
+  // ignore this update as the notification will soon be deleted.
+  auto* child = GetNotificationById(id);
+  if (!child)
+    return;
 
+  child->UpdateWithNotification(*notification);
   ResetBounds();
 }
 
@@ -325,11 +402,10 @@ void UnifiedMessageListView::OnSlideStarted(
     const std::string& notification_id) {
   // When the swipe control for |notification_id| is shown, hide all other swipe
   // controls.
-  for (int i = 0; i < child_count(); ++i) {
-    auto* view = GetContainer(i);
-    if (view->GetNotificationId() == notification_id)
-      continue;
-    view->CloseSwipeControl();
+  for (auto* child : children()) {
+    auto* view = AsMVC(child);
+    if (view->GetNotificationId() != notification_id)
+      view->CloseSwipeControl();
   }
 }
 
@@ -338,18 +414,15 @@ void UnifiedMessageListView::AnimationEnded(const gfx::Animation* animation) {
   animation_->SetCurrentValue(1.0);
   PreferredSizeChanged();
 
-  if (state_ == State::SLIDE_OUT) {
-    DeleteRemovedNotifications();
-    UpdateBounds();
-
-    state_ = State::MOVE_DOWN;
-  } else if (state_ == State::MOVE_DOWN) {
+  if (state_ == State::MOVE_DOWN) {
     state_ = State::IDLE;
   } else if (state_ == State::CLEAR_ALL_STACKED ||
              state_ == State::CLEAR_ALL_VISIBLE) {
     DeleteRemovedNotifications();
     UpdateClearAllAnimation();
   }
+
+  UpdateBorders();
 
   if (state_ != State::IDLE)
     StartAnimation();
@@ -378,45 +451,56 @@ int UnifiedMessageListView::GetStackedNotificationCount() const {
   return message_center_view_->GetStackedNotificationCount();
 }
 
-UnifiedMessageListView::MessageViewContainer*
-UnifiedMessageListView::GetContainer(int index) {
-  return const_cast<MessageViewContainer*>(
-      const_cast<const UnifiedMessageListView*>(this)->GetContainer(index));
+// static
+const UnifiedMessageListView::MessageViewContainer*
+UnifiedMessageListView::AsMVC(const views::View* v) {
+  return static_cast<const MessageViewContainer*>(v);
+}
+
+// static
+UnifiedMessageListView::MessageViewContainer* UnifiedMessageListView::AsMVC(
+    views::View* v) {
+  return static_cast<MessageViewContainer*>(v);
 }
 
 const UnifiedMessageListView::MessageViewContainer*
-UnifiedMessageListView::GetContainer(int index) const {
-  return static_cast<const MessageViewContainer*>(child_at(index));
+UnifiedMessageListView::GetNotificationById(const std::string& id) const {
+  const auto i = std::find_if(
+      children().cbegin(), children().cend(),
+      [id](const auto* v) { return AsMVC(v)->GetNotificationId() == id; });
+  return (i == children().cend()) ? nullptr : AsMVC(*i);
 }
 
 UnifiedMessageListView::MessageViewContainer*
 UnifiedMessageListView::GetNextRemovableNotification() {
-  for (int i = 0; i < child_count(); ++i) {
-    auto* view = GetContainer(i);
-    if (!view->IsPinned())
-      return view;
-  }
-  return nullptr;
+  const auto i =
+      std::find_if(children().cbegin(), children().cend(),
+                   [](const auto* v) { return !AsMVC(v)->IsPinned(); });
+  return (i == children().cend()) ? nullptr : AsMVC(*i);
 }
 
 void UnifiedMessageListView::CollapseAllNotifications() {
   base::AutoReset<bool> auto_reset(&ignore_size_change_, true);
-  for (int i = 0; i < child_count(); ++i)
-    GetContainer(i)->Collapse();
+  for (auto* child : children())
+    AsMVC(child)->Collapse();
 }
 
 void UnifiedMessageListView::UpdateBorders() {
-  for (int i = 0; i < child_count(); ++i) {
-    const bool is_top = i == 0;
-    const bool is_bottom = i == child_count() - 1;
-    GetContainer(i)->UpdateBorder(is_top, is_bottom);
+  // The top notification is drawn with rounded corners when the stacking bar is
+  // not shown.
+  bool is_top = (!features::IsNotificationStackingBarRedesignEnabled() ||
+                 children().size() == 1) &&
+                state_ != State::MOVE_DOWN;
+  for (auto* child : children()) {
+    AsMVC(child)->UpdateBorder(is_top, child == children().back());
+    is_top = false;
   }
 }
 
 void UnifiedMessageListView::UpdateBounds() {
   int y = 0;
-  for (int i = 0; i < child_count(); ++i) {
-    auto* view = GetContainer(i);
+  for (auto* child : children()) {
+    auto* view = AsMVC(child);
     const int height = view->GetHeightForWidth(kTrayMenuWidth);
     const int direction = view->GetSlideDirection();
     view->set_start_bounds(view->ideal_bounds());
@@ -446,8 +530,8 @@ void UnifiedMessageListView::InterruptClearAll() {
   if (state_ != State::CLEAR_ALL_STACKED && state_ != State::CLEAR_ALL_VISIBLE)
     return;
 
-  for (int i = 0; i < child_count(); ++i) {
-    auto* view = GetContainer(i);
+  for (auto* child : children()) {
+    auto* view = AsMVC(child);
     if (!view->IsPinned())
       view->set_is_removed();
   }
@@ -456,16 +540,17 @@ void UnifiedMessageListView::InterruptClearAll() {
 }
 
 void UnifiedMessageListView::DeleteRemovedNotifications() {
-  std::vector<MessageViewContainer*> removed_views;
-  for (int i = 0; i < child_count(); ++i) {
-    auto* view = GetContainer(i);
-    if (view->is_removed())
-      removed_views.push_back(view);
-  }
+  views::View::Views removed_views;
+  std::copy_if(children().cbegin(), children().cend(),
+               std::back_inserter(removed_views),
+               [](const auto* v) { return AsMVC(v)->is_removed(); });
 
-  for (auto* view : removed_views) {
-    model_->RemoveNotificationExpanded(view->GetNotificationId());
-    delete view;
+  {
+    base::AutoReset<bool> auto_reset(&is_deleting_removed_notifications_, true);
+    for (auto* view : removed_views) {
+      model_->RemoveNotificationExpanded(AsMVC(view)->GetNotificationId());
+      delete view;
+    }
   }
 
   UpdateBorders();
@@ -477,8 +562,6 @@ void UnifiedMessageListView::StartAnimation() {
   switch (state_) {
     case State::IDLE:
       break;
-    case State::SLIDE_OUT:
-      FALLTHROUGH;
     case State::MOVE_DOWN:
       animation_->SetDuration(kClosingAnimationDuration);
       animation_->Start();
@@ -507,8 +590,8 @@ void UnifiedMessageListView::UpdateClearAllAnimation() {
       DeleteRemovedNotifications();
       UpdateBounds();
       start_height_ = ideal_height_;
-      for (int i = 0; i < child_count(); ++i) {
-        auto* view = GetContainer(i);
+      for (auto* child : children()) {
+        auto* view = AsMVC(child);
         view->set_start_bounds(view->ideal_bounds());
       }
 
@@ -531,11 +614,10 @@ void UnifiedMessageListView::UpdateClearAllAnimation() {
 }
 
 double UnifiedMessageListView::GetCurrentValue() const {
-  return gfx::Tween::CalculateValue(
-      state_ == State::SLIDE_OUT || state_ == State::CLEAR_ALL_VISIBLE
-          ? gfx::Tween::EASE_IN
-          : gfx::Tween::FAST_OUT_SLOW_IN,
-      animation_->GetCurrentValue());
+  return gfx::Tween::CalculateValue(state_ == State::CLEAR_ALL_VISIBLE
+                                        ? gfx::Tween::EASE_IN
+                                        : gfx::Tween::FAST_OUT_SLOW_IN,
+                                    animation_->GetCurrentValue());
 }
 
 }  // namespace ash

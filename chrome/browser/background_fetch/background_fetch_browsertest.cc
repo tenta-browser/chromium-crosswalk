@@ -4,8 +4,8 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/callback.h"
-#include "base/command_line.h"
 #include "base/logging.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
@@ -42,6 +42,8 @@
 
 using offline_items_collection::ContentId;
 using offline_items_collection::OfflineContentProvider;
+using GetVisualsOptions =
+    offline_items_collection::OfflineContentProvider::GetVisualsOptions;
 using offline_items_collection::OfflineItem;
 using offline_items_collection::OfflineItemFilter;
 using offline_items_collection::OfflineItemProgressUnit;
@@ -228,19 +230,12 @@ class BackgroundFetchBrowserTest : public InProcessBrowserTest {
             std::make_unique<OfflineContentProviderObserver>()) {}
   ~BackgroundFetchBrowserTest() override = default;
 
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    // Background Fetch is available as an experimental Web Platform feature.
-    command_line->AppendSwitch(
-        switches::kEnableExperimentalWebPlatformFeatures);
-  }
-
   void SetUpOnMainThread() override {
     https_server_ = std::make_unique<net::EmbeddedTestServer>(
         net::EmbeddedTestServer::TYPE_HTTPS);
     https_server_->RegisterRequestHandler(base::BindRepeating(
         &BackgroundFetchBrowserTest::HandleRequest, base::Unretained(this)));
-    https_server_->AddDefaultHandlers(
-        base::FilePath(FILE_PATH_LITERAL("chrome/test/data")));
+    https_server_->AddDefaultHandlers(GetChromeTestDataDir());
     ASSERT_TRUE(https_server_->Start());
 
     Profile* profile = browser()->profile();
@@ -325,9 +320,10 @@ class BackgroundFetchBrowserTest : public InProcessBrowserTest {
     base::RunLoop run_loop;
 
     delegate_->GetVisualsForItem(
-        offline_item_id, base::Bind(&BackgroundFetchBrowserTest::DidGetVisuals,
-                                    base::Unretained(this),
-                                    run_loop.QuitClosure(), out_visuals));
+        offline_item_id, GetVisualsOptions::IconOnly(),
+        base::BindOnce(&BackgroundFetchBrowserTest::DidGetVisuals,
+                       base::Unretained(this), run_loop.QuitClosure(),
+                       out_visuals));
     run_loop.Run();
   }
 

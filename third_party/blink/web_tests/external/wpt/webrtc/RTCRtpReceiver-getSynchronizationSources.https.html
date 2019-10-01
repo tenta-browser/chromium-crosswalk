@@ -26,21 +26,6 @@ async function initiateSingleTrackCallAndReturnReceiver(t, kind) {
   return trackEvent.receiver;
 }
 
-function listenForSSRCs(t, receiver) {
-  return new Promise((resolve) => {
-    function listen() {
-      const ssrcs = receiver.getSynchronizationSources();
-      assert_true(ssrcs != undefined);
-      if (ssrcs.length > 0) {
-        resolve(ssrcs);
-        return;
-      }
-      t.step_timeout(listen, 0);
-    };
-    listen();
-  });
-}
-
 for (const kind of ['audio', 'video']) {
   promise_test(async t => {
     const receiver = await initiateSingleTrackCallAndReturnReceiver(t, kind);
@@ -55,6 +40,15 @@ for (const kind of ['audio', 'video']) {
     assert_equals(typeof ssrc.timestamp, 'number');
     assert_true(ssrc.timestamp >= startTime);
   }, '[' + kind + '] RTCRtpSynchronizationSource.timestamp is a number');
+
+  promise_test(async t => {
+    const receiver = await initiateSingleTrackCallAndReturnReceiver(t, kind);
+    const [ssrc] = await listenForSSRCs(t, receiver);
+    assert_equals(typeof ssrc.rtpTimestamp, 'number');
+    assert_greater_than_equal(ssrc.rtpTimestamp, 0);
+    assert_less_than_equal(ssrc.rtpTimestamp, 0xffffffff);
+  }, '[' + kind + '] RTCRtpSynchronizationSource.rtpTimestamp is a number ' +
+     '[0, 2^32-1]');
 
   promise_test(async t => {
     const receiver = await initiateSingleTrackCallAndReturnReceiver(t, kind);

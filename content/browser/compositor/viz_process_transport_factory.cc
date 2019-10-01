@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/debug/dump_without_crashing.h"
 #include "base/single_thread_task_runner.h"
@@ -97,7 +98,7 @@ bool IsWorkerContextLost(viz::RasterContextProvider* context_provider) {
 // Provided as a callback to crash the GPU process.
 void ReceivedBadMessageFromGpuProcess() {
   GpuProcessHost::CallOnIO(
-      GpuProcessHost::GPU_PROCESS_KIND_SANDBOXED, false /* force_create */,
+      GPU_PROCESS_KIND_SANDBOXED, false /* force_create */,
       base::BindRepeating([](GpuProcessHost* host) {
         // There should always be a GpuProcessHost instance, and GPU process,
         // for running the compositor thread. The exception is during shutdown
@@ -247,6 +248,13 @@ VizProcessTransportFactory::SharedMainThreadContextProvider() {
   return main_context_provider_;
 }
 
+scoped_refptr<viz::RasterContextProvider>
+VizProcessTransportFactory::SharedMainThreadRasterContextProvider() {
+  SharedMainThreadContextProvider();
+  DCHECK(!main_context_provider_ || main_context_provider_->RasterInterface());
+  return main_context_provider_;
+}
+
 void VizProcessTransportFactory::RemoveCompositor(ui::Compositor* compositor) {
   context_factory_private_.UnconfigureCompositor(compositor);
 }
@@ -305,6 +313,20 @@ void VizProcessTransportFactory::OnContextLost() {
 
 void VizProcessTransportFactory::DisableGpuCompositing(
     ui::Compositor* guilty_compositor) {
+#if defined(OS_CHROMEOS)
+  ALLOW_UNUSED_LOCAL(compositing_mode_reporter_);
+  // A fatal error has occurred and we can't fall back to software compositing
+  // on CrOS. These can be unrecoverable hardware errors, or bugs that should
+  // not happen. Crash the browser process to reset everything.
+  LOG(FATAL) << "Software compositing fallback is unavailable. Goodbye.";
+#else
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kDisableSoftwareCompositingFallback)) {
+    // Some tests only want to run with a functional GPU Process. Fail out here
+    // rather than falling back to software compositing and silently passing.
+    LOG(FATAL) << "Software compositing fallback is unavailable. Goodbye.";
+  }
+
   DLOG(ERROR) << "Switching to software compositing.";
 
   // Change the result of IsGpuCompositingDisabled() before notifying anything.
@@ -346,14 +368,12 @@ void VizProcessTransportFactory::DisableGpuCompositing(
   }
 
   GpuDataManagerImpl::GetInstance()->NotifyGpuInfoUpdate();
+#endif
 }
 
 void VizProcessTransportFactory::OnGpuProcessLost() {
   // Reconnect HostFrameSinkManager to new GPU process.
   ConnectHostFrameSinkManager();
-
-  for (auto& observer : observer_list_)
-    observer.OnLostVizProcess();
 }
 
 void VizProcessTransportFactory::OnEstablishedGpuChannel(
@@ -450,8 +470,8 @@ VizProcessTransportFactory::TryCreateContextsForGpuCompositing(
   if (!main_context_provider_) {
     constexpr bool kCompositorContextSupportsLocking = false;
     constexpr bool kCompositorContextSupportsGLES2 = true;
-    constexpr bool kCompositorContextSupportsRaster = false;
-    constexpr bool kCompositorContextSupportsGrContext = true;
+    constexpr bool kCompositorContextSupportsRaster = true;
+    constexpr bool kCompositorContextSupportsGrContext = false;
     constexpr bool kCompositorContextSupportsOOPR = false;
 
     main_context_provider_ = CreateContextProviderImpl(

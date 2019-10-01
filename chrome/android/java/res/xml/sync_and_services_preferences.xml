@@ -3,10 +3,21 @@
      Use of this source code is governed by a BSD-style license that can be
      found in the LICENSE file. -->
 
+<!-- Note: If a synced pref is added/removed from this file, the method
+     |GetSyncedServicePrefNames| in
+     chrome/browser/unified_consent/unified_consent_service_factory.cc has to be
+     updated accordingly. -->
 <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+    <PreferenceCategory
+        android:key="user_category"
+        android:title="@string/user"/>
     <org.chromium.chrome.browser.preferences.SignInPreference
         android:key="sign_in"
         android:title="@string/sign_in_to_chrome"/>
+
+    <org.chromium.chrome.browser.preferences.ChromeBasePreference
+        android:key="manage_your_google_account"
+        android:title="@string/manage_your_google_account"/>
 
     <PreferenceCategory
         android:key="sync_category"
@@ -14,7 +25,7 @@
 
         <Preference
             android:key="sync_error_card"
-            android:icon="@drawable/sync_error"
+            android:layout="@layout/account_management_account_row"
             android:title="@string/sync_error_card_title"/>
         <org.chromium.chrome.browser.preferences.ChromeSwitchPreference
             android:key="sync_requested"
@@ -35,11 +46,6 @@
             android:key="search_suggestions"
             android:title="@string/autocomplete_searches_and_urls_title"
             android:summary="@string/autocomplete_searches_and_urls_summary"
-            android:persistent="false"/>
-        <org.chromium.chrome.browser.preferences.ChromeSwitchPreference
-            android:key="network_predictions"
-            android:title="@string/preload_pages_title"
-            android:summary="@string/preload_pages_summary"
             android:persistent="false"/>
         <org.chromium.chrome.browser.preferences.ChromeSwitchPreference
             android:key="navigation_error"
@@ -70,9 +76,5 @@
             android:key="contextual_search"
             android:title="@string/contextual_search_title"
             android:fragment="org.chromium.chrome.browser.preferences.privacy.ContextualSearchPreferenceFragment"/>
-        <Preference
-            android:key="contextual_suggestions"
-            android:title="@string/prefs_contextual_suggestions"
-            android:fragment="org.chromium.chrome.browser.preferences.ContextualSuggestionsPreference"/>
     </PreferenceCategory>
 </PreferenceScreen>

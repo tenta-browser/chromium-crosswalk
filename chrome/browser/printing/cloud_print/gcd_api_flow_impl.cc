@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/json/json_reader.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
@@ -17,7 +18,6 @@
 #include "chrome/browser/printing/cloud_print/gcd_constants.h"
 #include "chrome/common/cloud_print/cloud_print_constants.h"
 #include "components/cloud_devices/common/cloud_devices_urls.h"
-#include "components/data_use_measurement/core/data_use_user_data.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 #include "net/base/load_flags.h"
 #include "net/base/url_util.h"
@@ -133,10 +133,6 @@ void GCDApiFlowImpl::OnAccessTokenFetchComplete(
   for (const std::string& header : extra_headers)
     request->headers.AddHeaderFromString(header);
 
-  // TODO(https://crbug.com/808498): Re-add data use measurement once
-  // SimpleURLLoader supports it.
-  // ID=data_use_measurement::DataUseUserData::CLOUD_PRINT
-
   url_loader_ = network::SimpleURLLoader::Create(
       std::move(request),
       GetNetworkTrafficAnnotation(request_->GetNetworkTrafficAnnotationType()));
@@ -166,8 +162,7 @@ void GCDApiFlowImpl::OnDownloadedToString(
     return;
   }
 
-  base::JSONReader reader;
-  std::unique_ptr<const base::Value> value(reader.Read(*response_body));
+  base::Optional<base::Value> value = base::JSONReader::Read(*response_body);
   const base::DictionaryValue* dictionary_value = NULL;
 
   if (!value || !value->GetAsDictionary(&dictionary_value)) {

@@ -11,6 +11,7 @@
 #include "ash/login/ui/lock_screen.h"
 #include "ash/public/cpp/ash_constants.h"
 #include "ash/public/cpp/shell_window_ids.h"
+#include "ash/shelf/login_shelf_view.h"
 #include "ash/shelf/shelf_constants.h"
 #include "ash/shelf/shelf_layout_manager.h"
 #include "ash/shelf/shelf_widget.h"
@@ -34,14 +35,14 @@
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/scoped_canvas.h"
 #include "ui/gfx/transform.h"
-#include "ui/views/accessibility/ax_aura_obj_cache.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/animation/flood_fill_ink_drop_ripple.h"
 #include "ui/views/animation/ink_drop_highlight.h"
 #include "ui/views/animation/ink_drop_mask.h"
 #include "ui/views/background.h"
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/painter.h"
-#include "ui/views/view_properties.h"
+#include "ui/views/view_class_properties.h"
 #include "ui/wm/core/window_animations.h"
 
 namespace {
@@ -71,14 +72,13 @@ gfx::Insets GetMirroredBackgroundInsets(bool is_shelf_horizontal) {
   // "Primary" is the same direction as the shelf, "secondary" is orthogonal.
   const int primary_padding = 0;
   const int secondary_padding = -ash::kHitRegionPadding;
-  const int separator_width = ash::TrayConstants::separator_width();
 
   if (is_shelf_horizontal) {
     insets.Set(secondary_padding, primary_padding, secondary_padding,
-               primary_padding + separator_width);
+               primary_padding + ash::kTraySeparatorWidth);
   } else {
     insets.Set(primary_padding, secondary_padding,
-               primary_padding + separator_width, secondary_padding);
+               primary_padding + ash::kTraySeparatorWidth, secondary_padding);
   }
   MirrorInsetsIfNecessary(&insets);
   return insets;
@@ -126,7 +126,7 @@ class TrayBackground : public views::Background {
     cc::PaintFlags background_flags;
     background_flags.setAntiAlias(true);
     int border_radius = kTrayRoundedBorderRadius;
-    background_flags.setColor(kShelfControlPermanentHighlightBackground);
+    background_flags.setColor(tray_background_view_->GetBackgroundColor());
     border_radius = ShelfConstants::control_border_radius();
 
     gfx::Rect bounds = tray_background_view_->GetBackgroundBounds();
@@ -163,7 +163,7 @@ TrayBackgroundView::TrayBackgroundView(Shelf* shelf)
   SetLayoutManager(std::make_unique<views::FillLayout>());
   SetBackground(std::unique_ptr<views::Background>(background_));
   SetInstallFocusRingOnFocus(true);
-  focus_ring()->SetColor(kFocusBorderColor);
+  focus_ring()->SetColor(kShelfFocusBorderColor);
   SetFocusPainter(nullptr);
 
   AddChildView(tray_container_);
@@ -269,15 +269,36 @@ void TrayBackgroundView::AboutToRequestFocusFromTabTraversal(bool reverse) {
       shelf->GetStatusAreaWidget()->status_area_widget_delegate();
   if (!delegate || !delegate->ShouldFocusOut(reverse))
     return;
-  // Focus shelf widget when shift+tab is used and views-based shelf is shown.
-  if (reverse && ShelfWidget::IsUsingViewsShelf()) {
+
+  // At this point, we know we should focus out of the status widget. It
+  // remains to be determined whether we should bring focus to the shelf, or
+  // whether we should delegate to system tray focus observers to decide
+  // where the focus goes next.
+  bool should_focus_shelf = true;
+
+  if (!ShelfWidget::IsUsingViewsShelf()) {
+    // Never bring the focus to the shelf if it's not a views-based shelf as
+    // it is visually not on par with the status widget.
+    return;
+  }
+
+  // If we are using a views-based shelf:
+  // * If we're in an active session, always bring focus to the shelf whether
+  //   we are going in reverse or not.
+  // * Otherwise (login/lock screen, OOBE), bring focus to the shelf only
+  //   if we're going in reverse; if we're going forward, let the system tray
+  //   focus observers focus the lock/login view.
+  if (shelf->shelf_widget()->login_shelf_view()->GetVisible()) {
+    // Login/lock screen or OOBE.
+    should_focus_shelf = reverse;
+  }
+
+  if (should_focus_shelf) {
     shelf->shelf_widget()->set_default_last_focusable_child(reverse);
+    shelf->shelf_widget()->set_activated_from_other_widget(true);
     Shell::Get()->focus_cycler()->FocusWidget(shelf->shelf_widget());
+    shelf->shelf_widget()->FocusFirstOrLastFocusableChild(reverse);
   } else {
-    // Focus should leave the system tray if:
-    // 1) Tab is used, or
-    // 2) Shift+tab is used but views-based shelf is disabled. The shelf is not
-    // part of the system tray in this case.
     Shell::Get()->system_tray_notifier()->NotifyFocusOut(reverse);
   }
 }
@@ -287,16 +308,12 @@ void TrayBackgroundView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
   node_data->SetName(GetAccessibleNameForTray());
 
   if (LockScreen::HasInstance()) {
-    int next_id = views::AXAuraObjCache::GetInstance()->GetID(
-        LockScreen::Get()->widget());
-    node_data->AddIntAttribute(ax::mojom::IntAttribute::kNextFocusId, next_id);
+    GetViewAccessibility().OverrideNextFocus(LockScreen::Get()->widget());
   }
 
   Shelf* shelf = Shelf::ForWindow(GetWidget()->GetNativeWindow());
   ShelfWidget* shelf_widget = shelf->shelf_widget();
-  int previous_id = views::AXAuraObjCache::GetInstance()->GetID(shelf_widget);
-  node_data->AddIntAttribute(ax::mojom::IntAttribute::kPreviousFocusId,
-                             previous_id);
+  GetViewAccessibility().OverridePreviousFocus(shelf_widget);
 }
 
 void TrayBackgroundView::ChildPreferredSizeChanged(views::View* child) {
@@ -398,14 +415,6 @@ void TrayBackgroundView::HideTransformation() {
   layer()->SetTransform(transform);
 }
 
-TrayBubbleView::AnchorAlignment TrayBackgroundView::GetAnchorAlignment() const {
-  if (shelf_->alignment() == SHELF_ALIGNMENT_LEFT)
-    return TrayBubbleView::ANCHOR_ALIGNMENT_LEFT;
-  if (shelf_->alignment() == SHELF_ALIGNMENT_RIGHT)
-    return TrayBubbleView::ANCHOR_ALIGNMENT_RIGHT;
-  return TrayBubbleView::ANCHOR_ALIGNMENT_BOTTOM;
-}
-
 void TrayBackgroundView::SetIsActive(bool is_active) {
   if (is_active_ == is_active)
     return;
@@ -426,7 +435,8 @@ views::View* TrayBackgroundView::GetBubbleAnchor() const {
 gfx::Insets TrayBackgroundView::GetBubbleAnchorInsets() const {
   gfx::Insets anchor_insets = GetBubbleAnchor()->GetInsets();
   gfx::Insets tray_bg_insets = GetInsets();
-  if (GetAnchorAlignment() == TrayBubbleView::ANCHOR_ALIGNMENT_BOTTOM) {
+  if (shelf_->alignment() == SHELF_ALIGNMENT_BOTTOM ||
+      shelf_->alignment() == SHELF_ALIGNMENT_BOTTOM_LOCKED) {
     return gfx::Insets(-tray_bg_insets.top(), anchor_insets.left(),
                        -tray_bg_insets.bottom(), anchor_insets.right());
   } else {
@@ -445,6 +455,12 @@ gfx::Rect TrayBackgroundView::GetBackgroundBounds() const {
   gfx::Rect bounds = GetLocalBounds();
   bounds.Inset(GetBackgroundInsets());
   return bounds;
+}
+
+SkColor TrayBackgroundView::GetBackgroundColor() const {
+  return shelf_->shelf_layout_manager()->IsShowingStatusAreaWithoutShelf()
+             ? kStandaloneStatusAreaBackground
+             : kShelfControlPermanentHighlightBackground;
 }
 
 void TrayBackgroundView::OnBoundsChanged(const gfx::Rect& previous_bounds) {

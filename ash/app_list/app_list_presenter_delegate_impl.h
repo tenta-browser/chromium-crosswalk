@@ -9,11 +9,11 @@
 
 #include "ash/app_list/presenter/app_list_presenter_delegate.h"
 #include "ash/ash_export.h"
+#include "ash/keyboard/ui/keyboard_controller_observer.h"
 #include "base/macros.h"
 #include "base/scoped_observer.h"
 #include "ui/display/display_observer.h"
 #include "ui/events/event_handler.h"
-#include "ui/keyboard/keyboard_controller_observer.h"
 
 namespace app_list {
 class AppListPresenterImpl;
@@ -74,6 +74,7 @@ class ASH_EXPORT AppListPresenterDelegateImpl
   // ui::EventHandler overrides:
   void OnMouseEvent(ui::MouseEvent* event) override;
   void OnGestureEvent(ui::GestureEvent* event) override;
+  void OnKeyEvent(ui::KeyEvent* event) override;
 
   // Snaps the app list window bounds to fit the screen size. (See
   // https://crbug.com/884889).

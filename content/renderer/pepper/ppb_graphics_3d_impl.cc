@@ -186,10 +186,9 @@ int32_t PPB_Graphics3D_Impl::DoSwapBuffers(const gpu::SyncToken& sync_token,
     if (use_image_chromium_)
       target = GL_TEXTURE_RECTANGLE_ARB;
 #endif
-    viz::TransferableResource resource =
-        viz::TransferableResource::MakeGLOverlay(taken_front_buffer_, GL_LINEAR,
-                                                 target, sync_token, size,
-                                                 is_overlay_candidate);
+    viz::TransferableResource resource = viz::TransferableResource::MakeGL(
+        taken_front_buffer_, GL_LINEAR, target, sync_token, size,
+        is_overlay_candidate);
     HostGlobals::Get()
         ->GetInstance(pp_instance())
         ->CommitTransferableResource(resource);
@@ -326,6 +325,11 @@ void PPB_Graphics3D_Impl::OnGpuControlLostContextMaybeReentrant() {
 
 void PPB_Graphics3D_Impl::OnGpuControlSwapBuffersCompleted(
     const gpu::SwapBuffersCompleteParams& params) {}
+
+void PPB_Graphics3D_Impl::OnGpuControlReturnData(
+    base::span<const uint8_t> data) {
+  NOTIMPLEMENTED();
+}
 
 void PPB_Graphics3D_Impl::OnSwapBuffers() {
   if (HasPendingSwap()) {

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "base/version.h"
 #include "chrome/browser/web_applications/system_web_app_manager.h"
 #include "url/gurl.h"
 
@@ -21,13 +22,19 @@ class TestSystemWebAppManager : public SystemWebAppManager {
                           PendingAppManager* pending_app_manager);
   ~TestSystemWebAppManager() override;
 
-  void SetSystemApps(std::vector<GURL> system_apps);
+  void SetSystemApps(base::flat_map<SystemAppType, GURL> system_apps);
 
-  // Overridden from SystemWebAppManager:
-  std::vector<GURL> CreateSystemWebApps() override;
+  void SetUpdatePolicy(SystemWebAppManager::UpdatePolicy policy);
+
+  void set_current_version(const base::Version& version) {
+    current_version_ = version;
+  }
+
+  // SystemWebAppManager:
+  const base::Version& CurrentVersion() const override;
 
  private:
-  std::vector<GURL> system_apps_;
+  base::Version current_version_{"0.0.0.0"};
 
   DISALLOW_COPY_AND_ASSIGN(TestSystemWebAppManager);
 };

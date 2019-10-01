@@ -4,11 +4,11 @@
 
 #include "components/invalidation/impl/fcm_invalidator.h"
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "components/invalidation/impl/fcm_sync_network_channel.h"
-#include "components/invalidation/impl/per_user_topic_invalidation_client.h"
 #include "components/invalidation/public/identity_provider.h"
 #include "components/invalidation/public/object_id_invalidation_map.h"
 
@@ -20,13 +20,13 @@ FCMInvalidator::FCMInvalidator(
     PrefService* pref_service,
     network::mojom::URLLoaderFactory* loader_factory,
     const ParseJSONCallback& parse_json,
-    const std::string& project_id)
+    const std::string& project_id,
+    bool migrate_prefs)
     : invalidation_listener_(std::move(network_channel)) {
   auto registration_manager = std::make_unique<PerUserTopicRegistrationManager>(
-      identity_provider, pref_service, loader_factory, parse_json, project_id);
-  invalidation_listener_.Start(
-      base::BindOnce(&CreatePerUserTopicInvalidationClient), this,
-      std::move(registration_manager));
+      identity_provider, pref_service, loader_factory, parse_json, project_id,
+      migrate_prefs);
+  invalidation_listener_.Start(this, std::move(registration_manager));
 }
 
 FCMInvalidator::~FCMInvalidator() {}
@@ -37,11 +37,11 @@ void FCMInvalidator::RegisterHandler(InvalidationHandler* handler) {
 
 bool FCMInvalidator::UpdateRegisteredIds(InvalidationHandler* handler,
                                          const ObjectIdSet& ids) {
-  return UpdateRegisteredIds(handler, ConvertIdsToTopics(ids));
+  return UpdateRegisteredIds(handler, ConvertIdsToTopics(ids, handler));
 }
 
 bool FCMInvalidator::UpdateRegisteredIds(InvalidationHandler* handler,
-                                         const TopicSet& topics) {
+                                         const Topics& topics) {
   if (!registrar_.UpdateRegisteredTopics(handler, topics))
     return false;
 

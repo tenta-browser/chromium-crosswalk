@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/feature_list.h"
 #include "base/logging.h"
 #include "chrome/browser/profiles/profile.h"
@@ -22,8 +23,8 @@
 #include "chrome/browser/ui/views/payments/profile_list_view_controller.h"
 #include "chrome/browser/ui/views/payments/shipping_address_editor_view_controller.h"
 #include "chrome/browser/ui/views/payments/shipping_option_view_controller.h"
-#include "components/autofill/core/browser/autofill_profile.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/constrained_window/constrained_window_views.h"
 #include "components/payments/content/payment_request.h"
 #include "components/strings/grit/components_strings.h"
@@ -78,10 +79,18 @@ PaymentRequestDialogView::PaymentRequestDialogView(
   AddChildView(view_stack_.get());
 
   SetupSpinnerOverlay();
-  // Show spinner when getting all payment instruments. The spinner will be
-  // hidden in OnGetAllPaymentInstrumentsFinished.
-  if (!request->state()->is_get_all_instruments_finished()) {
-    request->state()->AddObserver(this);
+
+  if (!request->state()->IsInitialized()) {
+    request->state()->AddInitializationObserver(this);
+    ++number_of_initialization_tasks_;
+  }
+
+  if (!request->spec()->IsInitialized()) {
+    request->spec()->AddInitializationObserver(this);
+    ++number_of_initialization_tasks_;
+  }
+
+  if (number_of_initialization_tasks_ > 0) {
     ShowProcessingSpinner();
   } else if (observer_for_testing_) {
     // When testing, signal that the processing spinner events have passed, even
@@ -172,7 +181,7 @@ void PaymentRequestDialogView::ShowProcessingSpinner() {
 }
 
 bool PaymentRequestDialogView::IsInteractive() const {
-  return !throbber_overlay_.visible();
+  return !throbber_overlay_.GetVisible();
 }
 
 void PaymentRequestDialogView::ShowPaymentHandlerScreen(
@@ -184,7 +193,7 @@ void PaymentRequestDialogView::ShowPaymentHandlerScreen(
               request_->spec(), request_->state(), this,
               request_->web_contents(), GetProfile(), url, std::move(callback)),
           &controller_map_),
-      /* animate = */ true);
+      /* animate = */ !request_->skipped_payment_request_ui());
   HideProcessingSpinner();
 }
 
@@ -198,8 +207,10 @@ void PaymentRequestDialogView::RetryDialog() {
     ShowShippingAddressEditor(
         BackNavigationType::kOneStep,
         /*on_edited=*/
-        base::BindOnce(&PaymentRequestState::SetSelectedShippingProfile,
-                       base::Unretained(request_->state()), profile),
+        base::BindOnce(
+            &PaymentRequestState::SetSelectedShippingProfile,
+            base::Unretained(request_->state()), profile,
+            PaymentRequestState::SectionSelectionStatus::kEditedSelected),
         /*on_added=*/
         base::OnceCallback<void(const autofill::AutofillProfile&)>(), profile);
   }
@@ -210,8 +221,10 @@ void PaymentRequestDialogView::RetryDialog() {
     ShowContactInfoEditor(
         BackNavigationType::kOneStep,
         /*on_edited=*/
-        base::BindOnce(&PaymentRequestState::SetSelectedContactProfile,
-                       base::Unretained(request_->state()), profile),
+        base::BindOnce(
+            &PaymentRequestState::SetSelectedContactProfile,
+            base::Unretained(request_->state()), profile,
+            PaymentRequestState::SectionSelectionStatus::kEditedSelected),
         /*on_added=*/
         base::OnceCallback<void(const autofill::AutofillProfile&)>(), profile);
   }
@@ -232,18 +245,17 @@ void PaymentRequestDialogView::OnSpecUpdated() {
     observer_for_testing_->OnSpecDoneUpdating();
 }
 
-void PaymentRequestDialogView::OnGetAllPaymentInstrumentsFinished() {
+void PaymentRequestDialogView::OnInitialized(
+    InitializationTask* initialization_task) {
+  initialization_task->RemoveInitializationObserver(this);
+  if (--number_of_initialization_tasks_ > 0)
+    return;
+
   HideProcessingSpinner();
-  if (request_->state()->are_requested_methods_supported()) {
-    request_->RecordDialogShownEventInJourneyLogger();
-    if (observer_for_testing_) {
-      // The OnGetAllPaymentInstrumentsFinished() method is called if the
-      // payment instruments were retrieved asynchronously. This method hides
-      // the "Processing" spinner, so the UI is now ready for interaction. Any
-      // test that opens UI can now interact with it. The OnDialogOpened() call
-      // notifies the tests of this event.
-      observer_for_testing_->OnDialogOpened();
-    }
+
+  if (request_->state()->are_requested_methods_supported() &&
+      observer_for_testing_) {
+    observer_for_testing_->OnDialogOpened();
   }
 }
 
@@ -418,16 +430,13 @@ void PaymentRequestDialogView::ShowInitialPaymentSheet() {
                             request_->spec(), request_->state(), this),
                         &controller_map_),
                     /* animate = */ false);
-  if (request_->state()->is_get_all_instruments_finished() &&
-      request_->state()->are_requested_methods_supported()) {
-    request_->RecordDialogShownEventInJourneyLogger();
-    if (observer_for_testing_) {
-      // The is_get_all_instruments_finished() method returns true if all
-      // payment instruments were retrieved synchronously. Any test that opens
-      // UI can now interact with it. The OnDialogOpened() call notifies the
-      // tests of this event.
-      observer_for_testing_->OnDialogOpened();
-    }
+
+  if (number_of_initialization_tasks_ > 0)
+    return;
+
+  if (request_->state()->are_requested_methods_supported() &&
+      observer_for_testing_) {
+    observer_for_testing_->OnDialogOpened();
   }
 }
 
@@ -475,7 +484,7 @@ gfx::Size PaymentRequestDialogView::CalculatePreferredSize() const {
 }
 
 void PaymentRequestDialogView::ViewHierarchyChanged(
-    const ViewHierarchyChangedDetails& details) {
+    const views::ViewHierarchyChangedDetails& details) {
   if (being_closed_)
     return;
 

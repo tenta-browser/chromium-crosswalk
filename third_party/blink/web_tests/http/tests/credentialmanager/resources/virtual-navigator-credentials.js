@@ -53,18 +53,20 @@ class VirtualAuthenticator {
 
 class VirtualAuthenticatorManager {
   constructor() {
-    this.virtualAuthenticatorManager_ = new blink.test.mojom.VirtualAuthenticatorManagerPtr();
-    Mojo.bindInterface(blink.test.mojom.VirtualAuthenticatorManager.name,
-      mojo.makeRequest(this.virtualAuthenticatorManager_).handle, "context");
+    const docBrokerProxy = new blink.mojom.DocumentInterfaceBrokerProxy(
+      Mojo.getDocumentInterfaceBrokerHandle());
+    this.virtualAuthenticatorManager_ = new blink.test.mojom.VirtualAuthenticatorManagerProxy;
+    docBrokerProxy.getVirtualAuthenticatorManager(
+      this.virtualAuthenticatorManager_.$.createRequest());
   }
 
-  async createAuthenticator() {
+  async createAuthenticator(options = {}) {
     let createAuthenticatorResponse = await this.virtualAuthenticatorManager_.createAuthenticator({
-      protocol: blink.test.mojom.ClientToAuthenticatorProtocol.U2F,
-      transport: blink.mojom.AuthenticatorTransport.USB,
-      attachment: blink.mojom.AuthenticatorAttachment.CROSS_PLATFORM,
-      hasResidentKey: false,
-      hasUserVerification: false,
+      protocol: options.protocol || blink.test.mojom.ClientToAuthenticatorProtocol.CTAP2,
+      transport: options.transport || blink.mojom.AuthenticatorTransport.USB,
+      attachment: options.attachment || blink.mojom.AuthenticatorAttachment.CROSS_PLATFORM,
+      hasResidentKey: options.hasResidentKey || false,
+      hasUserVerification: options.hasUserVerification || false,
     });
     return new VirtualAuthenticator(createAuthenticatorResponse.authenticator);
   }

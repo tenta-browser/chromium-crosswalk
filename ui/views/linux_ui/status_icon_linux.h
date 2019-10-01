@@ -53,9 +53,9 @@ class VIEWS_EXPORT StatusIconLinux {
   void set_delegate(Delegate* delegate) { delegate_ = delegate; }
 
  private:
-  Delegate* delegate_;
+  Delegate* delegate_ = nullptr;
 };
 
 }  // namespace views
 
-#endif  // UI_LINUX_UI_STATUS_ICON_LINUX_H_
+#endif  // UI_VIEWS_LINUX_UI_STATUS_ICON_LINUX_H_

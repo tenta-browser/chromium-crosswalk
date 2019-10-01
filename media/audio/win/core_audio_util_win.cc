@@ -24,6 +24,7 @@
 #include "base/win/scoped_variant.h"
 #include "base/win/windows_version.h"
 #include "media/audio/audio_device_description.h"
+#include "media/audio/audio_features.h"
 #include "media/base/media_switches.h"
 
 using Microsoft::WRL::ComPtr;
@@ -214,52 +215,65 @@ const char* WaveFormatTagToString(WORD format_tag) {
 // in that order within each block.
 std::string ChannelMaskToString(DWORD channel_mask) {
   std::string ss;
-  if (channel_mask & SPEAKER_FRONT_LEFT)
-    ss += "FRONT_LEFT | ";
-  if (channel_mask & SPEAKER_FRONT_RIGHT)
-    ss += "FRONT_RIGHT | ";
-  if (channel_mask & SPEAKER_FRONT_CENTER)
-    ss += "FRONT_CENTER | ";
-  if (channel_mask & SPEAKER_LOW_FREQUENCY)
-    ss += "LOW_FREQUENCY | ";
-  if (channel_mask & SPEAKER_BACK_LEFT)
-    ss += "BACK_LEFT | ";
-  if (channel_mask & SPEAKER_BACK_RIGHT)
-    ss += "BACK_RIGHT | ";
-  if (channel_mask & SPEAKER_FRONT_LEFT_OF_CENTER)
-    ss += "FRONT_LEFT_OF_CENTER | ";
-  if (channel_mask & SPEAKER_FRONT_RIGHT_OF_CENTER)
-    ss += "RIGHT_OF_CENTER | ";
-  if (channel_mask & SPEAKER_BACK_CENTER)
-    ss += "BACK_CENTER | ";
-  if (channel_mask & SPEAKER_SIDE_LEFT)
-    ss += "SIDE_LEFT | ";
-  if (channel_mask & SPEAKER_SIDE_RIGHT)
-    ss += "SIDE_RIGHT | ";
-  if (channel_mask & SPEAKER_TOP_CENTER)
-    ss += "TOP_CENTER | ";
-  if (channel_mask & SPEAKER_TOP_FRONT_LEFT)
-    ss += "TOP_FRONT_LEFT | ";
-  if (channel_mask & SPEAKER_TOP_FRONT_CENTER)
-    ss += "TOP_FRONT_CENTER | ";
-  if (channel_mask & SPEAKER_TOP_FRONT_RIGHT)
-    ss += "TOP_FRONT_RIGHT | ";
-  if (channel_mask & SPEAKER_TOP_BACK_LEFT)
-    ss += "TOP_BACK_LEFT | ";
-  if (channel_mask & SPEAKER_TOP_BACK_CENTER)
-    ss += "TOP_BACK_CENTER | ";
-  if (channel_mask & SPEAKER_TOP_BACK_RIGHT)
-    ss += "TOP_BACK_RIGHT | ";
+  if (channel_mask == KSAUDIO_SPEAKER_DIRECTOUT)
+    // A very rare channel mask where speaker orientation is "hard coded".
+    // In direct-out mode, the audio device renders the first channel to the
+    // first output connector on the device, the second channel to the second
+    // output on the device, and so on.
+    ss += "DIRECT_OUT";
+  else {
+    if (channel_mask & SPEAKER_FRONT_LEFT)
+      ss += "FRONT_LEFT | ";
+    if (channel_mask & SPEAKER_FRONT_RIGHT)
+      ss += "FRONT_RIGHT | ";
+    if (channel_mask & SPEAKER_FRONT_CENTER)
+      ss += "FRONT_CENTER | ";
+    if (channel_mask & SPEAKER_LOW_FREQUENCY)
+      ss += "LOW_FREQUENCY | ";
+    if (channel_mask & SPEAKER_BACK_LEFT)
+      ss += "BACK_LEFT | ";
+    if (channel_mask & SPEAKER_BACK_RIGHT)
+      ss += "BACK_RIGHT | ";
+    if (channel_mask & SPEAKER_FRONT_LEFT_OF_CENTER)
+      ss += "FRONT_LEFT_OF_CENTER | ";
+    if (channel_mask & SPEAKER_FRONT_RIGHT_OF_CENTER)
+      ss += "RIGHT_OF_CENTER | ";
+    if (channel_mask & SPEAKER_BACK_CENTER)
+      ss += "BACK_CENTER | ";
+    if (channel_mask & SPEAKER_SIDE_LEFT)
+      ss += "SIDE_LEFT | ";
+    if (channel_mask & SPEAKER_SIDE_RIGHT)
+      ss += "SIDE_RIGHT | ";
+    if (channel_mask & SPEAKER_TOP_CENTER)
+      ss += "TOP_CENTER | ";
+    if (channel_mask & SPEAKER_TOP_FRONT_LEFT)
+      ss += "TOP_FRONT_LEFT | ";
+    if (channel_mask & SPEAKER_TOP_FRONT_CENTER)
+      ss += "TOP_FRONT_CENTER | ";
+    if (channel_mask & SPEAKER_TOP_FRONT_RIGHT)
+      ss += "TOP_FRONT_RIGHT | ";
+    if (channel_mask & SPEAKER_TOP_BACK_LEFT)
+      ss += "TOP_BACK_LEFT | ";
+    if (channel_mask & SPEAKER_TOP_BACK_CENTER)
+      ss += "TOP_BACK_CENTER | ";
+    if (channel_mask & SPEAKER_TOP_BACK_RIGHT)
+      ss += "TOP_BACK_RIGHT | ";
 
-  if (!ss.empty()) {
-    // Delete last appended " | " substring.
-    ss.erase(ss.end() - 3, ss.end());
+    if (!ss.empty()) {
+      // Delete last appended " | " substring.
+      ss.erase(ss.end() - 3, ss.end());
+    }
   }
 
-  std::bitset<8 * sizeof(DWORD)> mask(channel_mask);
-  ss += " (";
-  ss += std::to_string(mask.count());
-  ss += ")";
+  // Add number of utilized channels, e.g. "(2)" but exclude this part for
+  // direct output mode since the number of ones in the channel mask does not
+  // reflect the number of channels for this case.
+  if (channel_mask != KSAUDIO_SPEAKER_DIRECTOUT) {
+    std::bitset<8 * sizeof(DWORD)> mask(channel_mask);
+    ss += " (";
+    ss += std::to_string(mask.count());
+    ss += ")";
+  }
   return ss;
 }
 
@@ -300,7 +314,8 @@ ChannelConfig GuessChannelConfig(WORD channels) {
 }
 
 bool IAudioClient3IsSupported() {
-  return CoreAudioUtil::GetIAudioClientVersion() >= 3;
+  return base::FeatureList::IsEnabled(features::kAllowIAudioClient3) &&
+         CoreAudioUtil::GetIAudioClientVersion() >= 3;
 }
 
 std::string GetDeviceID(IMMDevice* device) {
@@ -430,6 +445,27 @@ ComPtr<IMMDevice> CreateDeviceInternal(const std::string& device_id,
                                        ERole role,
                                        const UMALogCallback& uma_log_cb) {
   ComPtr<IMMDevice> endpoint_device;
+  // In loopback mode, a client of WASAPI can capture the audio stream that
+  // is being played by a rendering endpoint device.
+  // See https://crbug.com/956526 for why we use both a DCHECK and then deal
+  // with the error here and below.
+  DCHECK(!(AudioDeviceDescription::IsLoopbackDevice(device_id) &&
+           data_flow != eCapture));
+  if (AudioDeviceDescription::IsLoopbackDevice(device_id) &&
+      data_flow != eCapture) {
+    LOG(WARNING) << "Loopback device must be an input device";
+    return endpoint_device;
+  }
+
+  // Usage of AudioDeviceDescription::kCommunicationsDeviceId as |device_id|
+  // is not allowed. Instead, set |device_id| to kDefaultDeviceId and select
+  // between default device and default communication device by using different
+  // |role| values (eConsole or eCommunications).
+  DCHECK(!AudioDeviceDescription::IsCommunicationsDevice(device_id));
+  if (AudioDeviceDescription::IsCommunicationsDevice(device_id)) {
+    LOG(WARNING) << "Invalid device identifier";
+    return endpoint_device;
+  }
 
   // Create the IMMDeviceEnumerator interface.
   ComPtr<IMMDeviceEnumerator> device_enum(
@@ -439,11 +475,15 @@ ComPtr<IMMDevice> CreateDeviceInternal(const std::string& device_id,
 
   HRESULT hr;
   if (AudioDeviceDescription::IsDefaultDevice(device_id)) {
-    hr = device_enum->GetDefaultAudioEndpoint(data_flow, role,
-                                              endpoint_device.GetAddressOf());
+    hr =
+        device_enum->GetDefaultAudioEndpoint(data_flow, role, &endpoint_device);
+  } else if (AudioDeviceDescription::IsLoopbackDevice(device_id)) {
+    // To open a stream in loopback mode, the client must obtain an IMMDevice
+    // interface for the *rendering* endpoint device.
+    hr = device_enum->GetDefaultAudioEndpoint(eRender, role, &endpoint_device);
   } else {
     hr = device_enum->GetDevice(base::UTF8ToUTF16(device_id).c_str(),
-                                endpoint_device.GetAddressOf());
+                                &endpoint_device);
   }
   DVLOG_IF(1, FAILED(hr)) << "Create Device failed: " << std::hex << hr;
 
@@ -668,11 +708,11 @@ base::TimeDelta CoreAudioUtil::ReferenceTimeToTimeDelta(REFERENCE_TIME time) {
 }
 
 uint32_t CoreAudioUtil::GetIAudioClientVersion() {
-  if (base::win::GetVersion() >= base::win::VERSION_WIN10) {
+  if (base::win::GetVersion() >= base::win::Version::WIN10) {
     // Minimum supported client: Windows 10.
     // Minimum supported server: Windows Server 2016
     return 3;
-  } else if (base::win::GetVersion() >= base::win::VERSION_WIN8) {
+  } else if (base::win::GetVersion() >= base::win::Version::WIN8) {
     // Minimum supported client: Windows 8.
     // Minimum supported server: Windows Server 2012.
     return 2;
@@ -1050,6 +1090,15 @@ HRESULT CoreAudioUtil::GetPreferredAudioParameters(const std::string& device_id,
   UMALogCallback uma_log_cb(
       is_output_device ? base::BindRepeating(&LogUMAPreferredOutputParams)
                        : base::BindRepeating(&LogUMAEmptyCb));
+
+  // Loopback audio streams must be input streams.
+  DCHECK(!(AudioDeviceDescription::IsLoopbackDevice(device_id) &&
+           is_output_device));
+  if (AudioDeviceDescription::IsLoopbackDevice(device_id) && is_output_device) {
+    LOG(WARNING) << "Loopback device must be an input device";
+    return E_FAIL;
+  }
+
   ComPtr<IMMDevice> device(
       CreateDeviceByID(device_id, is_output_device, uma_log_cb));
   if (!device.Get())
@@ -1083,7 +1132,10 @@ HRESULT CoreAudioUtil::GetPreferredAudioParameters(const std::string& device_id,
 
 ChannelConfig CoreAudioUtil::GetChannelConfig(const std::string& device_id,
                                               EDataFlow data_flow) {
-  ComPtr<IAudioClient> client(CreateClient(device_id, data_flow, eConsole));
+  const ERole role = AudioDeviceDescription::IsCommunicationsDevice(device_id)
+                         ? eCommunications
+                         : eConsole;
+  ComPtr<IAudioClient> client(CreateClient(device_id, data_flow, role));
 
   WAVEFORMATEXTENSIBLE mix_format;
   if (!client.Get() ||

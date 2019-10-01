@@ -4,6 +4,7 @@
 
 #include "ui/views/widget/desktop_aura/desktop_window_tree_host_win.h"
 
+#include "base/bind.h"
 #include "base/containers/flat_set.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
@@ -44,7 +45,7 @@
 #include "ui/wm/core/window_animations.h"
 #include "ui/wm/public/scoped_tooltip_disabler.h"
 
-DEFINE_UI_CLASS_PROPERTY_TYPE(views::DesktopWindowTreeHostWin*);
+DEFINE_UI_CLASS_PROPERTY_TYPE(views::DesktopWindowTreeHostWin*)
 
 namespace views {
 
@@ -66,13 +67,13 @@ void InsetBottomRight(gfx::Rect* rect, const gfx::Vector2d& vector) {
 
 }  // namespace
 
-DEFINE_UI_CLASS_PROPERTY_KEY(aura::Window*, kContentWindowForRootWindow, NULL);
+DEFINE_UI_CLASS_PROPERTY_KEY(aura::Window*, kContentWindowForRootWindow, NULL)
 
 // Identifies the DesktopWindowTreeHostWin associated with the
 // WindowEventDispatcher.
 DEFINE_UI_CLASS_PROPERTY_KEY(DesktopWindowTreeHostWin*,
                              kDesktopWindowTreeHostKey,
-                             NULL);
+                             NULL)
 
 ////////////////////////////////////////////////////////////////////////////////
 // DesktopWindowTreeHostWin, public:
@@ -82,15 +83,16 @@ bool DesktopWindowTreeHostWin::is_cursor_visible_ = true;
 DesktopWindowTreeHostWin::DesktopWindowTreeHostWin(
     internal::NativeWidgetDelegate* native_widget_delegate,
     DesktopNativeWidgetAura* desktop_native_widget_aura)
-    : message_handler_(new HWNDMessageHandler(this)),
+    : message_handler_(new HWNDMessageHandler(
+          this,
+          native_widget_delegate->AsWidget()->GetName())),
       native_widget_delegate_(native_widget_delegate),
       desktop_native_widget_aura_(desktop_native_widget_aura),
-      drag_drop_client_(NULL),
+      drag_drop_client_(nullptr),
       should_animate_window_close_(false),
       pending_close_(false),
       has_non_client_view_(false),
-      tooltip_(NULL) {
-}
+      tooltip_(nullptr) {}
 
 DesktopWindowTreeHostWin::~DesktopWindowTreeHostWin() {
   desktop_native_widget_aura_->OnDesktopWindowTreeHostDestroyed(this);
@@ -122,7 +124,7 @@ void DesktopWindowTreeHostWin::Init(const Widget::InitParams& params) {
                         GetWidget()->widget_delegate(),
                         native_widget_delegate_);
 
-  HWND parent_hwnd = NULL;
+  HWND parent_hwnd = nullptr;
   if (params.parent && params.parent->GetHost())
     parent_hwnd = params.parent->GetHost()->GetAcceleratedWidget();
 
@@ -531,14 +533,7 @@ gfx::Rect DesktopWindowTreeHostWin::GetBoundsInPixels() const {
   return without_expansion;
 }
 
-void DesktopWindowTreeHostWin::SetBoundsInPixels(
-    const gfx::Rect& bounds,
-    const viz::LocalSurfaceIdAllocation& local_surface_id_allocation) {
-  // On Windows, the callers of SetBoundsInPixels() shouldn't need to (or be
-  // able to) allocate LocalSurfaceId for the compositor. Aura itself should
-  // allocate the new ids as needed, instead.
-  DCHECK(!local_surface_id_allocation.IsValid());
-
+void DesktopWindowTreeHostWin::SetBoundsInPixels(const gfx::Rect& bounds) {
   // If the window bounds have to be expanded we need to subtract the
   // window_expansion_top_left_delta_ from the origin and add the
   // window_expansion_bottom_right_delta_ to the width and height
@@ -557,6 +552,9 @@ void DesktopWindowTreeHostWin::SetBoundsInPixels(
   window_enlargement_ =
       gfx::Vector2d(new_expanded.width() - expanded.width(),
                     new_expanded.height() - expanded.height());
+  // When |new_expanded| causes the window to be moved to a display with a
+  // different DSF, HWNDMessageHandler::OnDpiChanged() will be called and the
+  // window size will be scaled automatically.
   message_handler_->SetBounds(new_expanded, old_content_size != bounds.size());
 }
 
@@ -661,13 +659,8 @@ void DesktopWindowTreeHostWin::SchedulePaint() {
   GetWidget()->GetRootView()->SchedulePaint();
 }
 
-void DesktopWindowTreeHostWin::SetAlwaysRenderAsActive(
-    bool always_render_as_active) {
-  native_widget_delegate_->SetAlwaysRenderAsActive(always_render_as_active);
-}
-
-bool DesktopWindowTreeHostWin::IsAlwaysRenderAsActive() {
-  return native_widget_delegate_->IsAlwaysRenderAsActive();
+bool DesktopWindowTreeHostWin::ShouldPaintAsActive() const {
+  return GetWidget()->ShouldPaintAsActive();
 }
 
 bool DesktopWindowTreeHostWin::CanResize() const {
@@ -764,10 +757,6 @@ gfx::NativeViewAccessible DesktopWindowTreeHostWin::GetNativeViewAccessible() {
   return GetWidget()->GetRootView()
              ? GetWidget()->GetRootView()->GetNativeViewAccessible()
              : nullptr;
-}
-
-void DesktopWindowTreeHostWin::HandleAppDeactivated() {
-  native_widget_delegate_->SetAlwaysRenderAsActive(false);
 }
 
 void DesktopWindowTreeHostWin::HandleActivationChanged(bool active) {
@@ -931,8 +920,8 @@ void DesktopWindowTreeHostWin::HandleTouchEvent(ui::TouchEvent* event) {
       POINT target_location(event->location().ToPOINT());
       ClientToScreen(GetHWND(), &target_location);
       ScreenToClient(target->GetHWND(), &target_location);
-      ui::TouchEvent target_event(*event, static_cast<View*>(NULL),
-                                  static_cast<View*>(NULL));
+      ui::TouchEvent target_event(*event, static_cast<View*>(nullptr),
+                                  static_cast<View*>(nullptr));
       target_event.set_location(gfx::Point(target_location));
       target_event.set_root_location(target_event.location());
       target->SendEventToSink(&target_event);
@@ -974,7 +963,7 @@ bool DesktopWindowTreeHostWin::HandleTooltipNotify(int w_param,
 
 void DesktopWindowTreeHostWin::HandleMenuLoop(bool in_menu_loop) {
   if (in_menu_loop) {
-    tooltip_disabler_.reset(new wm::ScopedTooltipDisabler(window()));
+    tooltip_disabler_ = std::make_unique<wm::ScopedTooltipDisabler>(window());
   } else {
     tooltip_disabler_.reset();
   }
@@ -1060,15 +1049,12 @@ bool DesktopWindowTreeHostWin::IsModalWindowActive() const {
   if (!dispatcher())
     return false;
 
-  aura::Window::Windows::const_iterator index;
-  for (index = window()->children().begin();
-       index != window()->children().end();
-       ++index) {
-    if ((*index)->GetProperty(aura::client::kModalKey) !=
-        ui:: MODAL_TYPE_NONE && (*index)->TargetVisibility())
-      return true;
-  }
-  return false;
+  const auto is_active = [](const auto* child) {
+    return child->GetProperty(aura::client::kModalKey) != ui::MODAL_TYPE_NONE &&
+           child->TargetVisibility();
+  };
+  return std::any_of(window()->children().cbegin(), window()->children().cend(),
+                     is_active);
 }
 
 void DesktopWindowTreeHostWin::CheckForMonitorChange() {

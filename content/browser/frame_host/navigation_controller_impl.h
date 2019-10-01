@@ -14,6 +14,7 @@
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
+#include "base/optional.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "content/browser/frame_host/back_forward_cache.h"
@@ -91,6 +92,7 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
   void PruneAllButLastCommitted() override;
   void DeleteNavigationEntries(
       const DeletionPredicate& deletionPredicate) override;
+  bool IsEntryMarkedToBeSkipped(int index) override;
 
   // Starts a navigation in a newly created subframe as part of a history
   // navigation. Returns true if the history navigation could start, false
@@ -98,14 +100,21 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
   // navigation to |default_url| should be done instead.
   bool StartHistoryNavigationInNewSubframe(
       RenderFrameHostImpl* render_frame_host,
-      const GURL& default_url);
+      const GURL& default_url,
+      mojom::NavigationClientAssociatedPtrInfo* navigation_client);
+
+  // Navigates to a specified offset from the "current entry". Currently records
+  // a histogram indicating whether the session history navigation would only
+  // affect frames within the subtree of |sandbox_frame_tree_node_id|, which
+  // initiated the navigation.
+  void GoToOffsetInSandboxedFrame(int offset, int sandbox_frame_tree_node_id);
 
   // Called when a document requests a navigation through a
   // RenderFrameProxyHost.
   void NavigateFromFrameProxy(
       RenderFrameHostImpl* render_frame_host,
       const GURL& url,
-      const url::Origin& initiator_origin,
+      const base::Optional<url::Origin>& initiator_origin,
       bool is_renderer_initiated,
       SiteInstance* source_site_instance,
       const Referrer& referrer,
@@ -140,6 +149,21 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
     return delegate_;
   }
 
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
+  enum class NeedsReloadType {
+    kRequestedByClient = 0,
+    kRestoreSession = 1,
+    kCopyStateFrom = 2,
+    kCrashedSubframe = 3,
+    kMaxValue = kCrashedSubframe
+  };
+
+  // Request a reload to happen when activated.  Same as the public
+  // SetNeedsReload(), but takes in a |type| which specifies why the reload is
+  // being requested.
+  void SetNeedsReload(NeedsReloadType type);
+
   // For use by WebContentsImpl ------------------------------------------------
 
   // Allow renderer-initiated navigations to create a pending entry when the
@@ -157,7 +181,7 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
   // In the case that nothing has changed, the details structure is undefined
   // and it will return false.
   //
-  // |previous_page_was_activated| is true if the previous page had user
+  // |previous_document_was_activated| is true if the previous document had user
   // interaction. This is used for a new renderer-initiated navigation to decide
   // if the page that initiated the navigation should be skipped on
   // back/forward button.
@@ -166,7 +190,7 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
       const FrameHostMsg_DidCommitProvisionalLoad_Params& params,
       LoadCommittedDetails* details,
       bool is_same_document_navigation,
-      bool previous_page_was_activated,
+      bool previous_document_was_activated,
       NavigationRequest* navigation_request);
 
   // Notifies us that we just became active. This is used by the WebContentsImpl
@@ -237,6 +261,10 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
       const scoped_refptr<const base::RefCountedString>& data_url_as_string);
 #endif
 
+  // Invoked when a user activation occurs within the page, so that relevant
+  // entries can be updated as needed.
+  void NotifyUserActivation();
+
  private:
   friend class RestoreHelper;
 
@@ -244,15 +272,6 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
   FRIEND_TEST_ALL_PREFIXES(TimeSmoother, SingleDuplicate);
   FRIEND_TEST_ALL_PREFIXES(TimeSmoother, ManyDuplicates);
   FRIEND_TEST_ALL_PREFIXES(TimeSmoother, ClockBackwardsJump);
-
-  // These values are persisted to logs. Entries should not be renumbered and
-  // numeric values should never be reused.
-  enum class NeedsReloadType {
-    kRequestedByClient = 0,
-    kRestoreSession = 1,
-    kCopyStateFrom = 2,
-    kMaxValue = kCopyStateFrom
-  };
 
   // Helper class to smooth out runs of duplicate timestamps while still
   // allowing time to jump backwards.
@@ -268,8 +287,18 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
     base::Time high_water_mark_;
   };
 
+  // Navigates in session history to the given index. If
+  // |sandbox_frame_tree_node_id| is valid, then this request came
+  // from a sandboxed iframe with top level navigation disallowed. This
+  // is currently only used for tracking metrics.
+  void GoToIndex(int index, int sandbox_frame_tree_node_id);
+
   // Starts a navigation to an already existing pending NavigationEntry.
-  void NavigateToExistingPendingEntry(ReloadType reload_type);
+  // Currently records a histogram indicating whether the session history
+  // navigation would only affect frames within the subtree of
+  // |sandbox_frame_tree_node_id|, which initiated the navigation.
+  void NavigateToExistingPendingEntry(ReloadType reload_type,
+                                      int sandboxed_source_frame_tree_node_id);
 
   // Recursively identifies which frames need to be navigated for a navigation
   // to |pending_entry_|, starting at |frame| and exploring its children.
@@ -332,7 +361,7 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
       FrameNavigationEntry* frame_entry,
       ReloadType reload_type,
       bool is_same_document_history_load,
-      bool is_history_navigation_in_new_child);
+      bool is_history_navigation_in_new_child_frame);
 
   // Returns whether there is a pending NavigationEntry whose unique ID matches
   // the given NavigationHandle's pending_nav_entry_id.
@@ -362,14 +391,15 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
       const FrameHostMsg_DidCommitProvisionalLoad_Params& params,
       bool is_same_document,
       bool replace_entry,
-      bool previous_page_was_activated,
+      bool previous_document_was_activated,
       NavigationHandleImpl* handle);
   void RendererDidNavigateToExistingPage(
       RenderFrameHostImpl* rfh,
       const FrameHostMsg_DidCommitProvisionalLoad_Params& params,
       bool is_same_document,
       bool was_restored,
-      NavigationHandleImpl* handle);
+      NavigationHandleImpl* handle,
+      bool keep_pending_entry);
   void RendererDidNavigateToSamePage(
       RenderFrameHostImpl* rfh,
       const FrameHostMsg_DidCommitProvisionalLoad_Params& params,
@@ -379,7 +409,9 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
       RenderFrameHostImpl* rfh,
       const FrameHostMsg_DidCommitProvisionalLoad_Params& params,
       bool is_same_document,
-      bool replace_entry);
+      bool replace_entry,
+      bool previous_document_was_activated,
+      NavigationHandleImpl* handle);
   bool RendererDidNavigateAutoSubframe(
       RenderFrameHostImpl* rfh,
       const FrameHostMsg_DidCommitProvisionalLoad_Params& params);
@@ -412,9 +444,10 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
   // Discards only the transient entry.
   void DiscardTransientEntry();
 
-  // If we have the maximum number of entries, remove the oldest one in
-  // preparation to add another.
-  void PruneOldestEntryIfFull();
+  // If we have the maximum number of entries, remove the oldest entry that is
+  // marked to be skipped on back/forward button, in preparation to add another.
+  // If no entry is skippable, then the oldest entry will be pruned.
+  void PruneOldestSkippableEntryIfFull();
 
   // Removes all entries except the last committed entry.  If there is a new
   // pending navigation it is preserved. In contrast to
@@ -437,6 +470,29 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
   // Notify observers a document was restored from the bfcache.
   // This updates the URL bar and the history buttons.
   void CommitRestoreFromBackForwardCache();
+
+  // History Manipulation intervention:
+  // The previous document that started this navigation needs to be skipped in
+  // subsequent back/forward UI navigations if it never received any user
+  // gesture. This is to intervene against pages that manipulate the history
+  // such that the user is not able to go back to the last site they interacted
+  // with (crbug.com/907167).
+  // Note that this function must be called before the new navigation entry is
+  // inserted in |entries_| to make sure UKM reports the URL of the document
+  // adding the entry.
+  void SetShouldSkipOnBackForwardUIIfNeeded(
+      RenderFrameHostImpl* rfh,
+      bool replace_entry,
+      bool previous_document_was_activated,
+      bool is_renderer_initiated);
+
+  // This function sets all same document entries with the same value
+  // of skippable flag. This is to avoid back button abuse by inserting
+  // multiple history entries and also to help valid cases where a user gesture
+  // on the document should apply to all same document history entries and none
+  // should be skipped. All entries belonging to the same document as the entry
+  // at |reference_index| will get their skippable flag set to |skippable|.
+  void SetSkippableForSameDocumentEntries(int reference_index, bool skippable);
 
   // ---------------------------------------------------------------------------
 

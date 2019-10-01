@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/version.h"
@@ -27,10 +28,15 @@
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/update_client/activity_data_service.h"
+#include "components/update_client/net/network_chromium.h"
+#include "components/update_client/patch/patch_impl.h"
 #include "components/update_client/protocol_handler.h"
+#include "components/update_client/unzip/unzip_impl.h"
+#include "components/update_client/unzipper.h"
 #include "components/update_client/update_query_params.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/service_manager_connection.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/service_manager/public/cpp/connector.h"
 
 #if defined(OS_WIN)
@@ -63,10 +69,10 @@ class ChromeConfigurator : public update_client::Configurator {
   std::string GetOSLongName() const override;
   base::flat_map<std::string, std::string> ExtraRequestParams() const override;
   std::string GetDownloadPreference() const override;
-  scoped_refptr<network::SharedURLLoaderFactory> URLLoaderFactory()
-      const override;
-  std::unique_ptr<service_manager::Connector> CreateServiceManagerConnector()
-      const override;
+  scoped_refptr<update_client::NetworkFetcherFactory> GetNetworkFetcherFactory()
+      override;
+  scoped_refptr<update_client::UnzipperFactory> GetUnzipperFactory() override;
+  scoped_refptr<update_client::PatcherFactory> GetPatcherFactory() override;
   bool EnabledDeltas() const override;
   bool EnabledComponentUpdates() const override;
   bool EnabledBackgroundDownloader() const override;
@@ -85,6 +91,9 @@ class ChromeConfigurator : public update_client::Configurator {
 
   ConfiguratorImpl configurator_impl_;
   PrefService* pref_service_;  // This member is not owned by this class.
+  scoped_refptr<update_client::NetworkFetcherFactory> network_fetcher_factory_;
+  scoped_refptr<update_client::UnzipperFactory> unzip_factory_;
+  scoped_refptr<update_client::PatcherFactory> patch_factory_;
 
   ~ChromeConfigurator() override {}
 };
@@ -168,22 +177,39 @@ std::string ChromeConfigurator::GetDownloadPreference() const {
 #endif
 }
 
-scoped_refptr<network::SharedURLLoaderFactory>
-ChromeConfigurator::URLLoaderFactory() const {
-  SystemNetworkContextManager* system_network_context_manager =
-      g_browser_process->system_network_context_manager();
-  // Manager will be null if called from InitializeForTesting.
-  if (!system_network_context_manager)
-    return nullptr;
-  return system_network_context_manager->GetSharedURLLoaderFactory();
+scoped_refptr<update_client::NetworkFetcherFactory>
+ChromeConfigurator::GetNetworkFetcherFactory() {
+  if (!network_fetcher_factory_) {
+    network_fetcher_factory_ =
+        base::MakeRefCounted<update_client::NetworkFetcherChromiumFactory>(
+            g_browser_process->system_network_context_manager()
+                ->GetSharedURLLoaderFactory());
+  }
+  return network_fetcher_factory_;
 }
 
-std::unique_ptr<service_manager::Connector>
-ChromeConfigurator::CreateServiceManagerConnector() const {
+scoped_refptr<update_client::UnzipperFactory>
+ChromeConfigurator::GetUnzipperFactory() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  return content::ServiceManagerConnection::GetForProcess()
-      ->GetConnector()
-      ->Clone();
+  if (!unzip_factory_) {
+    unzip_factory_ = base::MakeRefCounted<update_client::UnzipChromiumFactory>(
+        content::ServiceManagerConnection::GetForProcess()
+            ->GetConnector()
+            ->Clone());
+  }
+  return unzip_factory_;
+}
+
+scoped_refptr<update_client::PatcherFactory>
+ChromeConfigurator::GetPatcherFactory() {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  if (!patch_factory_) {
+    patch_factory_ = base::MakeRefCounted<update_client::PatchChromiumFactory>(
+        content::ServiceManagerConnection::GetForProcess()
+            ->GetConnector()
+            ->Clone());
+  }
+  return patch_factory_;
 }
 
 bool ChromeConfigurator::EnabledDeltas() const {

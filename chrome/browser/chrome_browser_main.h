@@ -6,10 +6,10 @@
 #define CHROME_BROWSER_CHROME_BROWSER_MAIN_H_
 
 #include <memory>
+#include <vector>
 
 #include "base/macros.h"
 #include "build/build_config.h"
-#include "chrome/browser/chrome_browser_field_trials.h"
 #include "chrome/browser/chrome_process_singleton.h"
 #include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/process_singleton.h"
@@ -19,7 +19,7 @@
 
 class BrowserProcessImpl;
 class ChromeBrowserMainExtraParts;
-class ChromeFeatureListCreator;
+class StartupData;
 class HeapProfilerController;
 class PrefService;
 class Profile;
@@ -28,6 +28,14 @@ class StartupTimeBomb;
 class ShutdownWatcherHelper;
 class ThreadProfiler;
 class WebUsbDetector;
+
+namespace tracing {
+class TraceEventSystemStatsMonitor;
+}
+
+namespace performance_monitor {
+class SystemMonitor;
+}
 
 class ChromeBrowserMainParts : public content::BrowserMainParts {
  public:
@@ -45,7 +53,7 @@ class ChromeBrowserMainParts : public content::BrowserMainParts {
 
  protected:
   ChromeBrowserMainParts(const content::MainFunctionParams& parameters,
-                         ChromeFeatureListCreator* chrome_feature_list_creator);
+                         StartupData* startup_data);
 
   // content::BrowserMainParts overrides.
   // These are called in-order by content::BrowserMainLoop.
@@ -63,7 +71,6 @@ class ChromeBrowserMainParts : public content::BrowserMainParts {
   void PreMainMessageLoopRun() override;
   bool MainMessageLoopRun(int* result_code) override;
   void PostMainMessageLoopRun() override;
-  void PreShutdown() override;
   void PostDestroyThreads() override;
 
   // Additional stages for ChromeBrowserMainExtraParts. These stages are called
@@ -130,8 +137,6 @@ class ChromeBrowserMainParts : public content::BrowserMainParts {
   const base::CommandLine& parsed_command_line_;
   int result_code_;
 
-  ChromeBrowserFieldTrials browser_field_trials_;
-
 #if !defined(OS_ANDROID)
   // Create StartupTimeBomb object for watching jank during startup.
   std::unique_ptr<StartupTimeBomb> startup_watcher_;
@@ -154,6 +159,15 @@ class ChromeBrowserMainParts : public content::BrowserMainParts {
   // The controller schedules UMA heap profiles collections and forwarding down
   // the reporting pipeline.
   std::unique_ptr<HeapProfilerController> heap_profiler_controller_;
+
+  // The system monitor instance, used by some subsystems to collect the system
+  // metrics they need.
+  std::unique_ptr<performance_monitor::SystemMonitor> system_monitor_;
+
+  // The system stats monitor used by chrome://tracing. This doesn't do anything
+  // until tracing of the |system_stats| category is enabled.
+  std::unique_ptr<tracing::TraceEventSystemStatsMonitor>
+      trace_event_system_stats_monitor_;
 
   // Whether PerformPreMainMessageLoopStartup() is called on VariationsService.
   // Initialized to true if |MainFunctionParams::ui_task| is null (meaning not
@@ -190,7 +204,7 @@ class ChromeBrowserMainParts : public content::BrowserMainParts {
 
   base::FilePath user_data_dir_;
 
-  ChromeFeatureListCreator* chrome_feature_list_creator_;
+  StartupData* startup_data_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeBrowserMainParts);
 };

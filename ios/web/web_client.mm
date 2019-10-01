@@ -6,8 +6,8 @@
 
 #import <Foundation/Foundation.h>
 
-#include "ios/web/public/app/web_main_parts.h"
-#include "ios/web/public/features.h"
+#include "ios/web/common/features.h"
+#include "ios/web/public/init/web_main_parts.h"
 #include "services/service_manager/public/cpp/service.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -67,6 +67,10 @@ base::RefCountedMemory* WebClient::GetDataResourceBytes(int resource_id) const {
   return nullptr;
 }
 
+bool WebClient::IsDataResourceGzipped(int resource_id) const {
+  return false;
+}
+
 NSString* WebClient::GetDocumentStartScriptForAllFrames(
     BrowserState* browser_state) const {
   return @"";
@@ -88,6 +92,10 @@ base::Optional<service_manager::Manifest> WebClient::GetServiceManifestOverlay(
   return base::nullopt;
 }
 
+std::vector<service_manager::Manifest> WebClient::GetExtraServiceManifests() {
+  return {};
+}
+
 void WebClient::AllowCertificateError(
     WebState* web_state,
     int cert_error,
@@ -102,12 +110,18 @@ bool WebClient::IsSlimNavigationManagerEnabled() const {
   return base::FeatureList::IsEnabled(web::features::kSlimNavigationManager);
 }
 
-void WebClient::PrepareErrorPage(NSError* error,
+void WebClient::PrepareErrorPage(WebState* web_state,
+                                 const GURL& url,
+                                 NSError* error,
                                  bool is_post,
                                  bool is_off_the_record,
                                  NSString** error_html) {
   DCHECK(error);
   *error_html = error.localizedDescription;
+}
+
+UIView* WebClient::GetWindowedContainer() {
+  return nullptr;
 }
 
 }  // namespace web

@@ -44,12 +44,16 @@ class DeviceActiveDirectoryPolicyManager;
 class DeviceCloudPolicyInitializer;
 class DeviceLocalAccountPolicyService;
 class DeviceNetworkConfigurationUpdater;
+class DeviceWiFiAllowedHandler;
 struct EnrollmentConfig;
 class HostnameHandler;
 class MinimumVersionPolicyHandler;
 class DeviceNativePrintersHandler;
+class DeviceWallpaperImageHandler;
 class ProxyPolicyProvider;
 class ServerBackedStateKeysBroker;
+class DeviceWilcoDtcConfigurationHandler;
+class TPMAutoUpdateModePolicyHandler;
 
 // Extends ChromeBrowserPolicyConnector with the setup specific to Chrome OS.
 class BrowserPolicyConnectorChromeOS
@@ -108,6 +112,9 @@ class BrowserPolicyConnectorChromeOS
   // Returns the cloud directory API ID or an empty string if it is not set.
   std::string GetDirectoryApiID() const;
 
+  // Returns the organization logo URL or an empty string if it is not set.
+  std::string GetCustomerLogoURL() const;
+
   // Returns the device mode. For Chrome OS this function will return the mode
   // stored in the lockbox, or DEVICE_MODE_CONSUMER if the lockbox has been
   // locked empty, or DEVICE_MODE_UNKNOWN if the device has not been owned yet.
@@ -155,6 +162,10 @@ class BrowserPolicyConnectorChromeOS
   DeviceNetworkConfigurationUpdater* GetDeviceNetworkConfigurationUpdater()
       const {
     return device_network_configuration_updater_.get();
+  }
+
+  TPMAutoUpdateModePolicyHandler* GetTPMAutoUpdateModePolicyHandler() const {
+    return tpm_auto_update_mode_policy_handler_.get();
   }
 
   // Returns device's market segment.
@@ -226,6 +237,12 @@ class BrowserPolicyConnectorChromeOS
   std::unique_ptr<HostnameHandler> hostname_handler_;
   std::unique_ptr<MinimumVersionPolicyHandler> minimum_version_policy_handler_;
   std::unique_ptr<DeviceNativePrintersHandler> device_native_printers_handler_;
+  std::unique_ptr<DeviceWallpaperImageHandler> device_wallpaper_image_handler_;
+  std::unique_ptr<DeviceWilcoDtcConfigurationHandler>
+      device_wilco_dtc_configuration_handler_;
+  std::unique_ptr<DeviceWiFiAllowedHandler> device_wifi_allowed_handler_;
+  std::unique_ptr<TPMAutoUpdateModePolicyHandler>
+      tpm_auto_update_mode_policy_handler_;
 
   // This policy provider is used on Chrome OS to feed user policy into the
   // global PolicyService instance. This works by installing the cloud policy

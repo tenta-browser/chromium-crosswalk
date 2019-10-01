@@ -9,6 +9,7 @@
 #include <stdlib.h>
 
 #include <algorithm>
+#include <atomic>
 #include <utility>
 
 #include "base/bind.h"
@@ -17,8 +18,10 @@
 #include "base/numerics/safe_math.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/sequence_local_storage_slot.h"
+#include "base/trace_event/trace_event.h"
 #include "mojo/public/cpp/bindings/associated_group_controller.h"
 #include "mojo/public/cpp/bindings/lib/array_internal.h"
+#include "mojo/public/cpp/bindings/lib/tracing_helper.h"
 #include "mojo/public/cpp/bindings/lib/unserialized_message_context.h"
 
 namespace mojo {
@@ -43,8 +46,22 @@ void AllocateHeaderFromBuffer(internal::Buffer* buffer, HeaderType** header) {
   (*header)->num_bytes = sizeof(HeaderType);
 }
 
+uint32_t GetTraceId(void* object) {
+  // |object| is a pointer to some object, which we are going to use as
+  // a hopefully unique id for this message.
+  // Additionally xor it with a counter to protect against the situations when
+  // a new object is allocated with the same address.
+  // The counter alone is not sufficient because we also have to deal with
+  // different processes, and the counter is only process-unique.
+  static std::atomic<int> counter{0};
+  uint64_t value = reinterpret_cast<intptr_t>(object);
+  return static_cast<uint32_t>(counter.fetch_add(1, std::memory_order_relaxed) ^
+                               (value >> 32) ^ ((value << 32) >> 32));
+}
+
 void WriteMessageHeader(uint32_t name,
                         uint32_t flags,
+                        uint32_t trace_id,
                         size_t payload_interface_id_count,
                         internal::Buffer* payload_buffer) {
   if (payload_interface_id_count > 0) {
@@ -54,6 +71,7 @@ void WriteMessageHeader(uint32_t name,
     header->version = 2;
     header->name = name;
     header->flags = flags;
+    header->trace_id = trace_id;
     // The payload immediately follows the header.
     header->payload.Set(header + 1);
   } else if (flags &
@@ -64,22 +82,29 @@ void WriteMessageHeader(uint32_t name,
     header->version = 1;
     header->name = name;
     header->flags = flags;
+    header->trace_id = trace_id;
   } else {
     internal::MessageHeader* header;
     AllocateHeaderFromBuffer(payload_buffer, &header);
     header->version = 0;
     header->name = name;
     header->flags = flags;
+    header->trace_id = trace_id;
   }
 }
 
 void CreateSerializedMessageObject(uint32_t name,
                                    uint32_t flags,
+                                   uint32_t trace_id,
                                    size_t payload_size,
                                    size_t payload_interface_id_count,
                                    std::vector<ScopedHandle>* handles,
                                    ScopedMessageHandle* out_handle,
                                    internal::Buffer* out_buffer) {
+  TRACE_EVENT_WITH_FLOW0(TRACE_DISABLED_BY_DEFAULT("toplevel.flow"),
+                         "mojo::Message Send", MANGLE_MESSAGE_ID(trace_id),
+                         TRACE_EVENT_FLAG_FLOW_OUT);
+
   ScopedMessageHandle handle;
   MojoResult rv = mojo::CreateMessage(&handle);
   DCHECK_EQ(MOJO_RESULT_OK, rv);
@@ -109,7 +134,8 @@ void CreateSerializedMessageObject(uint32_t name,
 
   // Make sure we zero the memory first!
   memset(payload_buffer.data(), 0, total_size);
-  WriteMessageHeader(name, flags, payload_interface_id_count, &payload_buffer);
+  WriteMessageHeader(name, flags, trace_id, payload_interface_id_count,
+                     &payload_buffer);
 
   *out_handle = std::move(handle);
   *out_buffer = std::move(payload_buffer);
@@ -119,6 +145,12 @@ void SerializeUnserializedContext(MojoMessageHandle message,
                                   uintptr_t context_value) {
   auto* context =
       reinterpret_cast<internal::UnserializedMessageContext*>(context_value);
+  uint32_t trace_id = GetTraceId(context);
+
+  TRACE_EVENT_WITH_FLOW0(TRACE_DISABLED_BY_DEFAULT("toplevel.flow"),
+                         "mojo::Message Send", MANGLE_MESSAGE_ID(trace_id),
+                         TRACE_EVENT_FLAG_FLOW_OUT);
+
   void* buffer;
   uint32_t buffer_size;
   MojoResult attach_result = MojoAppendMessageData(
@@ -129,7 +161,8 @@ void SerializeUnserializedContext(MojoMessageHandle message,
   internal::Buffer payload_buffer(MessageHandle(message), 0, buffer,
                                   buffer_size);
   WriteMessageHeader(context->message_name(), context->message_flags(),
-                     0 /* payload_interface_id_count */, &payload_buffer);
+                     trace_id, 0 /* payload_interface_id_count */,
+                     &payload_buffer);
 
   // We need to copy additional header data which may have been set after
   // message construction, as this codepath may be reached at some arbitrary
@@ -188,6 +221,7 @@ Message::Message(Message&& other)
       serialized_(other.serialized_) {
   other.transferable_ = false;
   other.serialized_ = false;
+  heap_profiler_tag_ = other.heap_profiler_tag_;
 #if defined(ENABLE_IPC_FUZZER)
   interface_name_ = other.interface_name_;
   method_name_ = other.method_name_;
@@ -202,7 +236,7 @@ Message::Message(uint32_t name,
                  size_t payload_size,
                  size_t payload_interface_id_count,
                  std::vector<ScopedHandle>* handles) {
-  CreateSerializedMessageObject(name, flags, payload_size,
+  CreateSerializedMessageObject(name, flags, GetTraceId(this), payload_size,
                                 payload_interface_id_count, handles, &handle_,
                                 &payload_buffer_);
   transferable_ = true;
@@ -269,6 +303,7 @@ Message& Message::operator=(Message&& other) {
   other.transferable_ = false;
   serialized_ = other.serialized_;
   other.serialized_ = false;
+  other.heap_profiler_tag_ = heap_profiler_tag_;
 #if defined(ENABLE_IPC_FUZZER)
   interface_name_ = other.interface_name_;
   method_name_ = other.method_name_;
@@ -283,6 +318,7 @@ void Message::Reset() {
   associated_endpoint_handles_.clear();
   transferable_ = false;
   serialized_ = false;
+  heap_profiler_tag_ = nullptr;
 }
 
 const uint8_t* Message::payload() const {
@@ -483,17 +519,17 @@ bool PassThroughFilter::Accept(Message* message) {
 
 SyncMessageResponseContext::SyncMessageResponseContext()
     : outer_context_(current()) {
-  g_sls_sync_response_context.Get().Set(this);
+  g_sls_sync_response_context.Get().emplace(this);
 }
 
 SyncMessageResponseContext::~SyncMessageResponseContext() {
   DCHECK_EQ(current(), this);
-  g_sls_sync_response_context.Get().Set(outer_context_);
+  g_sls_sync_response_context.Get().emplace(outer_context_);
 }
 
 // static
 SyncMessageResponseContext* SyncMessageResponseContext::current() {
-  return g_sls_sync_response_context.Get().Get();
+  return g_sls_sync_response_context.Get().GetOrCreateValue();
 }
 
 void SyncMessageResponseContext::ReportBadMessage(const std::string& error) {
@@ -525,17 +561,17 @@ MessageHeaderV2::MessageHeaderV2() = default;
 
 MessageDispatchContext::MessageDispatchContext(Message* message)
     : outer_context_(current()), message_(message) {
-  g_sls_message_dispatch_context.Get().Set(this);
+  g_sls_message_dispatch_context.Get().emplace(this);
 }
 
 MessageDispatchContext::~MessageDispatchContext() {
   DCHECK_EQ(current(), this);
-  g_sls_message_dispatch_context.Get().Set(outer_context_);
+  g_sls_message_dispatch_context.Get().emplace(outer_context_);
 }
 
 // static
 MessageDispatchContext* MessageDispatchContext::current() {
-  return g_sls_message_dispatch_context.Get().Get();
+  return g_sls_message_dispatch_context.Get().GetOrCreateValue();
 }
 
 ReportBadMessageCallback MessageDispatchContext::GetBadMessageCallback() {

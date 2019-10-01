@@ -32,6 +32,11 @@
 #include "third_party/blink/renderer/platform/instrumentation/tracing/traced_value.h"
 #include "third_party/blink/renderer/platform/wtf/time.h"
 
+namespace base {
+class Clock;
+class TickClock;
+}  // namespace base
+
 namespace blink {
 
 class DocumentLoader;
@@ -55,7 +60,7 @@ class CORE_EXPORT DocumentLoadTiming final {
   void AddRedirect(const KURL& redirecting_url, const KURL& redirected_url);
   void SetRedirectStart(TimeTicks);
   void SetRedirectEnd(TimeTicks);
-  void SetRedirectCount(short value) { redirect_count_ = value; }
+  void SetRedirectCount(uint16_t value) { redirect_count_ = value; }
   void SetHasCrossOriginRedirect(bool value) {
     has_cross_origin_redirect_ = value;
   }
@@ -81,7 +86,7 @@ class CORE_EXPORT DocumentLoadTiming final {
   TimeTicks UnloadEventEnd() const { return unload_event_end_; }
   TimeTicks RedirectStart() const { return redirect_start_; }
   TimeTicks RedirectEnd() const { return redirect_end_; }
-  short RedirectCount() const { return redirect_count_; }
+  uint16_t RedirectCount() const { return redirect_count_; }
   TimeTicks FetchStart() const { return fetch_start_; }
   TimeTicks ResponseEnd() const { return response_end_; }
   TimeTicks LoadEventStart() const { return load_event_start_; }
@@ -94,6 +99,9 @@ class CORE_EXPORT DocumentLoadTiming final {
   TimeTicks ReferenceMonotonicTime() const { return reference_monotonic_time_; }
 
   void Trace(blink::Visitor*);
+
+  void SetTickClockForTesting(const base::TickClock* tick_clock);
+  void SetClockForTesting(const base::Clock* clock);
 
  private:
   void MarkRedirectEnd();
@@ -110,13 +118,16 @@ class CORE_EXPORT DocumentLoadTiming final {
   TimeTicks unload_event_end_;
   TimeTicks redirect_start_;
   TimeTicks redirect_end_;
-  short redirect_count_;
+  uint16_t redirect_count_;
   TimeTicks fetch_start_;
   TimeTicks response_end_;
   TimeTicks load_event_start_;
   TimeTicks load_event_end_;
   bool has_cross_origin_redirect_;
   bool has_same_origin_as_previous_document_;
+
+  const base::Clock* clock_;
+  const base::TickClock* tick_clock_;
 
   Member<DocumentLoader> document_loader_;
 };

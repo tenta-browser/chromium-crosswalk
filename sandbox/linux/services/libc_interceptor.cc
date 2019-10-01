@@ -188,7 +188,7 @@ static pthread_once_t g_libc_funcs_guard = PTHREAD_ONCE_INIT;
 static PROTECTED_MEMORY_SECTION base::ProtectedMemory<LibcFunctions>
     g_libc_funcs;
 
-static void InitLibcLocaltimeFunctions() {
+static void InitLibcLocaltimeFunctionsImpl() {
   auto writer = base::AutoWritableMemory::Create(g_libc_funcs);
   g_libc_funcs->localtime =
       reinterpret_cast<LocaltimeFunction>(dlsym(RTLD_NEXT, "localtime"));
@@ -200,7 +200,7 @@ static void InitLibcLocaltimeFunctions() {
       reinterpret_cast<LocaltimeRFunction>(dlsym(RTLD_NEXT, "localtime64_r"));
 
   if (!g_libc_funcs->localtime || !g_libc_funcs->localtime_r) {
-    // http://code.google.com/p/chromium/issues/detail?id=16800
+    // https://bugs.chromium.org/p/chromium/issues/detail?id=16800
     //
     // Nvidia's libGL.so overrides dlsym for an unknown reason and replaces
     // it with a version which doesn't work. In this case we'll get a NULL
@@ -208,7 +208,7 @@ static void InitLibcLocaltimeFunctions() {
     LOG(ERROR) << "Your system is broken: dlsym doesn't work! This has been "
                   "reported to be caused by Nvidia's libGL. You should expect"
                   " time related functions to misbehave. "
-                  "http://code.google.com/p/chromium/issues/detail?id=16800";
+                  "https://bugs.chromium.org/p/chromium/issues/detail?id=16800";
   }
 
   if (!g_libc_funcs->localtime)
@@ -238,7 +238,7 @@ __attribute__((__visibility__("default"))) struct tm* localtime_override(
     return &time_struct;
   }
 
-  CHECK_EQ(0, pthread_once(&g_libc_funcs_guard, InitLibcLocaltimeFunctions));
+  InitLibcLocaltimeFunctions();
   struct tm* res =
       base::UnsanitizedCfiCall(g_libc_funcs, &LibcFunctions::localtime)(timep);
 #if defined(MEMORY_SANITIZER)
@@ -264,7 +264,7 @@ __attribute__((__visibility__("default"))) struct tm* localtime64_override(
     return &time_struct;
   }
 
-  CHECK_EQ(0, pthread_once(&g_libc_funcs_guard, InitLibcLocaltimeFunctions));
+  InitLibcLocaltimeFunctions();
   struct tm* res = base::UnsanitizedCfiCall(g_libc_funcs,
                                             &LibcFunctions::localtime64)(timep);
 #if defined(MEMORY_SANITIZER)
@@ -288,7 +288,7 @@ __attribute__((__visibility__("default"))) struct tm* localtime_r_override(
     return result;
   }
 
-  CHECK_EQ(0, pthread_once(&g_libc_funcs_guard, InitLibcLocaltimeFunctions));
+  InitLibcLocaltimeFunctions();
   struct tm* res = base::UnsanitizedCfiCall(
       g_libc_funcs, &LibcFunctions::localtime_r)(timep, result);
 #if defined(MEMORY_SANITIZER)
@@ -312,7 +312,7 @@ __attribute__((__visibility__("default"))) struct tm* localtime64_r_override(
     return result;
   }
 
-  CHECK_EQ(0, pthread_once(&g_libc_funcs_guard, InitLibcLocaltimeFunctions));
+  InitLibcLocaltimeFunctions();
   struct tm* res = base::UnsanitizedCfiCall(
       g_libc_funcs, &LibcFunctions::localtime64_r)(timep, result);
 #if defined(MEMORY_SANITIZER)
@@ -341,6 +341,11 @@ bool HandleInterceptedCall(int kind,
     return false;
 
   return HandleLocalTime(fd, iter, fds);
+}
+
+void InitLibcLocaltimeFunctions() {
+  CHECK_EQ(0,
+           pthread_once(&g_libc_funcs_guard, InitLibcLocaltimeFunctionsImpl));
 }
 
 }  // namespace sandbox

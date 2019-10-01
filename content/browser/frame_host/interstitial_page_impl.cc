@@ -484,7 +484,7 @@ RenderViewHostDelegateView* InterstitialPageImpl::GetDelegateView() {
   return rvh_delegate_view_.get();
 }
 
-WebContents* InterstitialPageImpl::GetWebContents() const {
+WebContents* InterstitialPageImpl::GetWebContents() {
   return web_contents();
 }
 
@@ -561,7 +561,7 @@ bool InterstitialPageImpl::ShowingInterstitialPage() {
   return false;
 }
 
-RendererPreferences InterstitialPageImpl::GetRendererPrefs(
+blink::mojom::RendererPreferences InterstitialPageImpl::GetRendererPrefs(
     BrowserContext* browser_context) const {
   delegate_->OverrideRendererPrefs(&renderer_preferences_);
   return renderer_preferences_;
@@ -762,7 +762,7 @@ RenderWidgetHostView* InterstitialPageImpl::GetView() {
   return render_view_host_->GetWidget()->GetView();
 }
 
-RenderFrameHost* InterstitialPageImpl::GetMainFrame() const {
+RenderFrameHost* InterstitialPageImpl::GetMainFrame() {
   if (!render_view_host_)
     return nullptr;
   return render_view_host_->GetMainFrame();

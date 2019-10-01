@@ -5,6 +5,8 @@
 #ifndef UI_EVENTS_EVENT_SOURCE_H_
 #define UI_EVENTS_EVENT_SOURCE_H_
 
+#include <list>
+#include <memory>
 #include <vector>
 
 #include "base/macros.h"
@@ -49,11 +51,25 @@ class EVENTS_EXPORT EventSource {
       const EventRewriter* rewriter);
 
  private:
-  friend class EventRewriter;
-  friend class EventSourceTestApi;
+  // Implementation of EventRewriterContinuation. No details need to be
+  // visible outside of event_source.cc.
+  class EventRewriterContinuationImpl;
+
+  // It's sufficient to have one EventRewriterContinuationImpl for each
+  // registered EventRewriter, so a list of them also serves as a list
+  // of registered rewriters.
+  typedef std::list<std::unique_ptr<EventRewriterContinuationImpl>>
+      EventRewriterList;
+
+  // Returns the EventRewriterContinuation for a given EventRewriter,
+  // or |rewriter_list_.end()| if the rewriter is not registered.
+  EventRewriterList::iterator FindContinuation(const EventRewriter* rewriter);
 
   typedef std::vector<EventRewriter*> EventRewriterList;
   EventRewriterList rewriter_list_;
+
+  friend class EventRewriter;  // TODO(kpschoedel): Remove along with old API.
+  friend class EventSourceTestApi;
 
   DISALLOW_COPY_AND_ASSIGN(EventSource);
 };

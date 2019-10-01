@@ -19,13 +19,15 @@ class ASH_EXPORT ShelfButton : public views::Button {
   ~ShelfButton() override;
 
   // views::View
+  const char* GetClassName() const override;
   bool OnMousePressed(const ui::MouseEvent& event) override;
   void OnMouseReleased(const ui::MouseEvent& event) override;
   void OnMouseCaptureLost() override;
   bool OnMouseDragged(const ui::MouseEvent& event) override;
+  void AboutToRequestFocusFromTabTraversal(bool reverse) override;
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
-  bool GetTooltipText(const gfx::Point& p,
-                      base::string16* tooltip) const override;
+  void OnFocus() override;
+  void OnBlur() override;
 
  protected:
   ShelfView* shelf_view() { return shelf_view_; }

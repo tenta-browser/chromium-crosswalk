@@ -35,6 +35,7 @@
 #include "components/omnibox/browser/omnibox_view.h"
 #include "components/search/search.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/sync/base/user_selectable_type.h"
 #include "components/sync/driver/sync_service.h"
 #include "components/sync/driver/sync_user_settings.h"
 #include "content/public/browser/navigation_details.h"
@@ -91,17 +92,6 @@ void RecordNewTabLoadTime(content::WebContents* contents) {
     UMA_HISTOGRAM_TIMES("Tab.NewTabOnload.Local", duration);
   }
   core_tab_helper->set_new_tab_start_time(base::TimeTicks());
-}
-
-// Returns true if the user wants to sync history. This function returning true
-// is not a guarantee that history is being synced, but it can be used to
-// disable a feature that should not be shown to users who prefer not to sync
-// their history.
-bool IsHistorySyncEnabled(Profile* profile) {
-  syncer::SyncService* sync =
-      ProfileSyncServiceFactory::GetSyncServiceForProfile(profile);
-  return sync && sync->IsSyncFeatureEnabled() &&
-         sync->GetUserSettings()->GetChosenDataTypes().Has(syncer::TYPED_URLS);
 }
 
 }  // namespace
@@ -174,7 +164,7 @@ void SearchTabHelper::DidStartNavigation(
     return;
   }
 
-  if (search::IsNTPURL(navigation_handle->GetURL(), profile())) {
+  if (search::IsNTPOrRelatedURL(navigation_handle->GetURL(), profile())) {
     // Set the title on any pending entry corresponding to the NTP. This
     // prevents any flickering of the tab title.
     content::NavigationEntry* entry =
@@ -292,6 +282,11 @@ void SearchTabHelper::OnUndoAllMostVisitedDeletions() {
     instant_service_->UndoAllMostVisitedDeletions();
 }
 
+void SearchTabHelper::OnToggleMostVisitedOrCustomLinks() {
+  if (instant_service_)
+    instant_service_->ToggleMostVisitedOrCustomLinks();
+}
+
 bool SearchTabHelper::OnAddCustomLink(const GURL& url,
                                       const std::string& title) {
   DCHECK(!url.is_empty());
@@ -339,6 +334,14 @@ void SearchTabHelper::OnLogEvent(NTPLoggingEventType event,
       ->LogEvent(event, time);
 }
 
+void SearchTabHelper::OnLogSuggestionEventWithValue(
+    NTPSuggestionsLoggingEventType event,
+    int data,
+    base::TimeDelta time) {
+  NTPUserDataLogger::GetOrCreateFromWebContents(web_contents())
+      ->LogSuggestionEventWithValue(event, data, time);
+}
+
 void SearchTabHelper::OnLogMostVisitedImpression(
     const ntp_tiles::NTPTileImpression& impression) {
   NTPUserDataLogger::GetOrCreateFromWebContents(web_contents())
@@ -373,23 +376,6 @@ void SearchTabHelper::PasteIntoOmnibox(const base::string16& text) {
   omnibox_view->model()->OnPaste();
   omnibox_view->SetUserText(text_to_paste);
   omnibox_view->OnAfterPossibleChange(true);
-}
-
-bool SearchTabHelper::ChromeIdentityCheck(const base::string16& identity) {
-  identity::IdentityManager* identity_manager =
-      IdentityManagerFactory::GetForProfile(profile());
-  return identity_manager &&
-         gaia::AreEmailsSame(base::UTF16ToUTF8(identity),
-                             identity_manager->GetPrimaryAccountInfo().email);
-}
-
-bool SearchTabHelper::HistorySyncCheck() {
-  return IsHistorySyncEnabled(profile());
-}
-
-void SearchTabHelper::OnSetCustomBackgroundURL(const GURL& url) {
-  if (instant_service_)
-    instant_service_->SetCustomBackgroundURL(url);
 }
 
 void SearchTabHelper::OnSetCustomBackgroundURLWithAttributions(

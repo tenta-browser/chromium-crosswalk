@@ -18,7 +18,6 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
@@ -27,6 +26,8 @@ import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.UrlConstants;
+import org.chromium.chrome.browser.explore_sites.ExploreSitesBridge;
+import org.chromium.chrome.browser.explore_sites.ExploreSitesCategory;
 import org.chromium.chrome.browser.native_page.ContextMenuManager;
 import org.chromium.chrome.browser.ntp.NewTabPage;
 import org.chromium.chrome.browser.ntp.cards.NewTabPageRecyclerView;
@@ -41,9 +42,13 @@ import org.chromium.chrome.test.util.browser.suggestions.FakeSuggestionsSource;
 import org.chromium.chrome.test.util.browser.suggestions.SuggestionsDependenciesRule;
 import org.chromium.content_public.browser.test.util.Criteria;
 import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.content_public.browser.test.util.TestTouchUtils;
 import org.chromium.net.test.EmbeddedTestServer;
 
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
@@ -81,7 +86,10 @@ public class TileGroupTest {
         mMostVisitedSites.setTileSuggestions(mSiteSuggestionUrls);
 
         mSuggestionsDeps.getFactory().suggestionsSource = new FakeSuggestionsSource();
+        initializeTab();
+    }
 
+    public void initializeTab() throws Exception {
         mActivityTestRule.startMainActivityWithURL(UrlConstants.NTP_URL);
         Tab mTab = mActivityTestRule.getActivity().getActivityTab();
         NewTabPageTestUtils.waitForNtpLoaded(mTab);
@@ -112,15 +120,28 @@ public class TileGroupTest {
 
         // Ensure that the removal is reflected in the ui.
         Assert.assertEquals(3, getTileGridLayout().getChildCount());
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mMostVisitedSites.setTileSuggestions(
-                        mSiteSuggestionUrls[1], mSiteSuggestionUrls[2]);
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            mMostVisitedSites.setTileSuggestions(mSiteSuggestionUrls[1], mSiteSuggestionUrls[2]);
         });
         waitForTileRemoved(siteToDismiss);
         Assert.assertEquals(2, getTileGridLayout().getChildCount());
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"NewTabPage"})
+    public void testDismissExploreTileWithContextMenuFails() throws Exception {
+        SiteSuggestion exploreTile = recreateSuggestionsWithExploreTile();
+        initializeTab();
+
+        Assert.assertEquals(4, getTileGridLayout().getChildCount());
+
+        final View tileView = getTileViewFor(exploreTile);
+        TestTouchUtils.performLongClickOnMainSync(
+                InstrumentationRegistry.getInstrumentation(), tileView);
+        Assert.assertFalse(InstrumentationRegistry.getInstrumentation().invokeContextMenuAction(
+                mActivityTestRule.getActivity(), ContextMenuManager.ContextMenuItemId.REMOVE, 0));
+        Assert.assertEquals(4, getTileGridLayout().getChildCount());
     }
 
     @Test
@@ -136,34 +157,21 @@ public class TileGroupTest {
         invokeContextMenu(tileView, ContextMenuManager.ContextMenuItemId.REMOVE);
 
         // Ensure that the removal update goes through.
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mMostVisitedSites.setTileSuggestions(
-                        mSiteSuggestionUrls[1], mSiteSuggestionUrls[2]);
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            mMostVisitedSites.setTileSuggestions(mSiteSuggestionUrls[1], mSiteSuggestionUrls[2]);
         });
         waitForTileRemoved(siteToDismiss);
         Assert.assertEquals(2, tileContainer.getChildCount());
         final View snackbarButton = waitForSnackbar(mActivityTestRule.getActivity());
 
         Assert.assertTrue(mMostVisitedSites.isUrlBlacklisted(mSiteSuggestionUrls[0]));
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                snackbarButton.callOnClick();
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(() -> { snackbarButton.callOnClick(); });
 
         Assert.assertFalse(mMostVisitedSites.isUrlBlacklisted(mSiteSuggestionUrls[0]));
 
         // Ensure that the removal of the update goes through.
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mMostVisitedSites.setTileSuggestions(mSiteSuggestionUrls);
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> { mMostVisitedSites.setTileSuggestions(mSiteSuggestionUrls); });
         waitForTileAdded(siteToDismiss);
         Assert.assertEquals(3, tileContainer.getChildCount());
     }
@@ -255,5 +263,25 @@ public class TileGroupTest {
         });
         callback.waitForCallback("The expected tile was not added.", 0);
         tileContainer.setOnHierarchyChangeListener(null);
+    }
+
+    private SiteSuggestion recreateSuggestionsWithExploreTile() {
+        // need a copy of the list in order to modify it.
+        final ArrayList<SiteSuggestion> currentSuggestions =
+                new ArrayList<>(mMostVisitedSites.getCurrentSites());
+
+        SiteSuggestion exploreTile = new SiteSuggestion("chrome-native://explore",
+                "chrome-native://explore", "", TileTitleSource.UNKNOWN, TileSource.EXPLORE,
+                TileSectionType.PERSONALIZED, new Date());
+        currentSuggestions.add(exploreTile);
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> mMostVisitedSites.setTileSuggestions(currentSuggestions));
+
+        // Set up ExploreSitesBridge for testing.
+        List<ExploreSitesCategory> category = new ArrayList<>();
+        category.add(new ExploreSitesCategory(0, 1, "foo", 0, 0));
+        ExploreSitesBridge.setCatalogForTesting(category);
+
+        return exploreTile;
     }
 }

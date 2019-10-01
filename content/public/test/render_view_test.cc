@@ -8,6 +8,7 @@
 
 #include <cctype>
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/metrics/field_trial.h"
 #include "base/run_loop.h"
@@ -26,7 +27,6 @@
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/previews_state.h"
-#include "content/public/common/renderer_preferences.h"
 #include "content/public/common/use_zoom_for_dsf_policy.h"
 #include "content/public/renderer/content_renderer_client.h"
 #include "content/public/renderer/render_view_visitor.h"
@@ -44,6 +44,7 @@
 #include "services/service_manager/public/cpp/connector.h"
 #include "third_party/blink/public/common/dom_storage/session_storage_namespace_id.h"
 #include "third_party/blink/public/mojom/leak_detector/leak_detector.mojom.h"
+#include "third_party/blink/public/mojom/renderer_preferences.mojom.h"
 #include "third_party/blink/public/platform/scheduler/web_thread_scheduler.h"
 #include "third_party/blink/public/platform/web_gesture_event.h"
 #include "third_party/blink/public/platform/web_input_event.h"
@@ -171,10 +172,8 @@ void RenderViewTest::RendererBlinkPlatformImplTestOverride::Shutdown() {
 }
 
 RenderViewTest::RenderViewTest() {
-  // Overrides creation of RenderFrameImpl, but does not need to
-  // override behaviour of WebWidgetClient.
-  RenderFrameImpl::InstallCreateHook(&TestRenderFrame::CreateTestRenderFrame,
-                                     nullptr, nullptr);
+  // Overrides creation of RenderFrameImpl.
+  RenderFrameImpl::InstallCreateHook(&TestRenderFrame::CreateTestRenderFrame);
 }
 
 RenderViewTest::~RenderViewTest() {
@@ -320,7 +319,7 @@ void RenderViewTest::SetUp() {
   // Setting flags and really doing anything with WebKit is fairly fragile and
   // hacky, but this is the world we live in...
   std::string flags("--expose-gc");
-  v8::V8::SetFlagsFromString(flags.c_str(), static_cast<int>(flags.size()));
+  v8::V8::SetFlagsFromString(flags.c_str(), flags.size());
 
   // Ensure that we register any necessary schemes when initializing WebKit,
   // since we are using a MockRenderThread.
@@ -344,7 +343,7 @@ void RenderViewTest::SetUp() {
   mojom::CreateViewParamsPtr view_params = mojom::CreateViewParams::New();
   view_params->opener_frame_route_id = MSG_ROUTING_NONE;
   view_params->window_was_created_with_opener = false;
-  view_params->renderer_preferences = RendererPreferences();
+  view_params->renderer_preferences = blink::mojom::RendererPreferences::New();
   view_params->web_preferences = WebPreferences();
   view_params->view_id = render_thread_->GetNextRoutingID();
   view_params->main_frame_widget_routing_id =
@@ -419,7 +418,8 @@ void RenderViewTest::TearDown() {
           EXPECT_EQ(0u, result->number_of_live_nodes);
           EXPECT_EQ(0u, result->number_of_live_layout_objects);
           EXPECT_EQ(0u, result->number_of_live_resources);
-          EXPECT_EQ(0u, result->number_of_live_pausable_objects);
+          EXPECT_EQ(0u,
+                    result->number_of_live_context_lifecycle_state_observers);
           EXPECT_EQ(0u, result->number_of_live_script_promises);
           EXPECT_EQ(0u, result->number_of_live_frames);
           EXPECT_EQ(0u, result->number_of_live_v8_per_context_data);
@@ -506,9 +506,11 @@ gfx::Rect RenderViewTest::GetElementBounds(const std::string& element_id) {
   std::vector<int> coords;
   for (int i = 0; i < 4; ++i) {
     v8::Local<v8::Number> index = v8::Number::New(isolate, i);
-    v8::Local<v8::Value> value = array->Get(index);
-    if (value.IsEmpty() || !value->IsInt32())
+    v8::Local<v8::Value> value;
+    if (!array->Get(isolate->GetCurrentContext(), index).ToLocal(&value) ||
+        !value->IsInt32()) {
       return gfx::Rect();
+    }
     coords.push_back(value.As<v8::Int32>()->Value());
   }
   return gfx::Rect(coords[0], coords[1], coords[2], coords[3]);
@@ -562,7 +564,7 @@ void RenderViewTest::SimulatePointRightClick(const gfx::Point& point) {
 void RenderViewTest::SimulateRectTap(const gfx::Rect& rect) {
   WebGestureEvent gesture_event(
       WebInputEvent::kGestureTap, WebInputEvent::kNoModifiers,
-      ui::EventTimeForNow(), blink::kWebGestureDeviceTouchscreen);
+      ui::EventTimeForNow(), blink::WebGestureDevice::kTouchscreen);
   gesture_event.SetPositionInWidget(gfx::PointF(rect.CenterPoint()));
   gesture_event.data.tap.tap_count = 1;
   gesture_event.data.tap.width = rect.width();
@@ -573,24 +575,25 @@ void RenderViewTest::SimulateRectTap(const gfx::Rect& rect) {
   widget->FocusChangeComplete();
 }
 
-void RenderViewTest::SetFocused(const blink::WebNode& node) {
+void RenderViewTest::SetFocused(const blink::WebElement& element) {
   RenderViewImpl* impl = static_cast<RenderViewImpl*>(view_);
-  impl->FocusedNodeChanged(blink::WebNode(), node);
+  impl->FocusedElementChanged(blink::WebElement(), element);
 }
 
 void RenderViewTest::Reload(const GURL& url) {
   CommonNavigationParams common_params(
       url, base::nullopt, Referrer(), ui::PAGE_TRANSITION_LINK,
-      FrameMsg_Navigate_Type::RELOAD, NavigationDownloadPolicy::kAllow, false,
-      GURL(), GURL(), PREVIEWS_UNSPECIFIED, base::TimeTicks::Now(), "GET",
-      nullptr, base::Optional<SourceLocation>(),
-      false /* started_from_context_menu */, false /* has_user_gesture */,
-      InitiatorCSPInfo(), std::string());
+      FrameMsg_Navigate_Type::RELOAD, NavigationDownloadPolicy(), false, GURL(),
+      GURL(), PREVIEWS_UNSPECIFIED, base::TimeTicks::Now(), "GET", nullptr,
+      base::Optional<SourceLocation>(), false /* started_from_context_menu */,
+      false /* has_user_gesture */, InitiatorCSPInfo(), std::vector<int>(),
+      std::string(), false /* is_history_navigation_in_new_child_frame */);
   RenderViewImpl* impl = static_cast<RenderViewImpl*>(view_);
   TestRenderFrame* frame =
       static_cast<TestRenderFrame*>(impl->GetMainRenderFrame());
+  FrameLoadWaiter waiter(frame);
   frame->Navigate(common_params, CommitNavigationParams());
-  FrameLoadWaiter(frame).Wait();
+  waiter.Wait();
   view_->GetWebView()->MainFrameWidget()->UpdateAllLifecyclePhases(
       blink::WebWidget::LifecycleUpdateReason::kTest);
 }
@@ -726,10 +729,11 @@ void RenderViewTest::GoToOffset(int offset,
   CommonNavigationParams common_params(
       url, base::nullopt, Referrer(), ui::PAGE_TRANSITION_FORWARD_BACK,
       FrameMsg_Navigate_Type::HISTORY_DIFFERENT_DOCUMENT,
-      NavigationDownloadPolicy::kAllow, false, GURL(), GURL(),
-      PREVIEWS_UNSPECIFIED, base::TimeTicks::Now(), "GET", nullptr,
-      base::Optional<SourceLocation>(), false /* started_from_context_menu */,
-      false /* has_user_gesture */, InitiatorCSPInfo(), std::string());
+      NavigationDownloadPolicy(), false, GURL(), GURL(), PREVIEWS_UNSPECIFIED,
+      base::TimeTicks::Now(), "GET", nullptr, base::Optional<SourceLocation>(),
+      false /* started_from_context_menu */, false /* has_user_gesture */,
+      InitiatorCSPInfo(), std::vector<int>(), std::string(),
+      false /* is_history_navigation_in_new_child_frame */);
   CommitNavigationParams commit_params;
   commit_params.page_state = state;
   commit_params.nav_entry_id = pending_offset + 1;
@@ -739,11 +743,11 @@ void RenderViewTest::GoToOffset(int offset,
 
   TestRenderFrame* frame =
       static_cast<TestRenderFrame*>(impl->GetMainRenderFrame());
+  FrameLoadWaiter waiter(frame);
   frame->Navigate(common_params, commit_params);
-
-  // The load actually happens asynchronously, so we pump messages to process
+  // The load may actually happen asynchronously, so we pump messages to process
   // the pending continuation.
-  FrameLoadWaiter(frame).Wait();
+  waiter.Wait();
   view_->GetWebView()->MainFrameWidget()->UpdateAllLifecyclePhases(
       blink::WebWidget::LifecycleUpdateReason::kTest);
 }

@@ -28,7 +28,8 @@ ConsumerStatusReportingServiceFactory::GetInstance() {
 ConsumerStatusReportingServiceFactory::ConsumerStatusReportingServiceFactory()
     : BrowserContextKeyedServiceFactory(
           "ConsumerStatusReportingServiceFactory",
-          BrowserContextDependencyManager::GetInstance()) {}
+          BrowserContextDependencyManager::GetInstance()) {
+}
 
 ConsumerStatusReportingServiceFactory::
     ~ConsumerStatusReportingServiceFactory() = default;

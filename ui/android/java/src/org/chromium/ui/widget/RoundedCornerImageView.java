@@ -18,6 +18,7 @@ import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.shapes.RoundRectShape;
 import android.graphics.drawable.shapes.Shape;
+import android.support.annotation.ColorRes;
 import android.support.annotation.Nullable;
 import android.support.v4.view.ViewCompat;
 import android.util.AttributeSet;
@@ -114,9 +115,21 @@ public class RoundedCornerImageView extends ImageView {
         mShader = null;
         mApplyShader = false;
 
+        // Reset shader in Paint to avoid retaining the old Bitmap.
+        if (mPaint != null) mPaint.setShader(null);
+
         maybeCreateShader();
 
         updateApplyShader();
+    }
+
+    /**
+     * Set the fill color resource.
+     * @param id The color resource id.
+     */
+    public void setRoundedFillColor(@ColorRes int id) {
+        mFillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        mFillPaint.setColor(getContext().getResources().getColor(id));
     }
 
     protected void maybeCreateShader() {
@@ -151,8 +164,7 @@ public class RoundedCornerImageView extends ImageView {
      */
     private void updateApplyShader() {
         Drawable drawable = getDrawable();
-        if ((drawable == null) || !(drawable instanceof BitmapDrawable) || (mShader == null)
-                || (mPaint == null)) {
+        if (!(drawable instanceof BitmapDrawable) || (mShader == null) || (mPaint == null)) {
             // In this state we wouldn't use the shader anyway.
             mApplyShader = false;
             return;
@@ -170,8 +182,8 @@ public class RoundedCornerImageView extends ImageView {
 
         boolean drawFill = mFillPaint != null && localRoundedRect != null
                 && !(drawable instanceof ColorDrawable);
-        boolean drawContent = drawable != null && localPaint != null && localRoundedRect != null
-                && isSupportedDrawable(drawable);
+        boolean drawContent =
+                localPaint != null && localRoundedRect != null && isSupportedDrawable(drawable);
 
         if (drawFill || drawContent) localRoundedRect.resize(getWidth(), getHeight());
 
@@ -191,7 +203,9 @@ public class RoundedCornerImageView extends ImageView {
             localPaint.setColor(colorDrawable.getColor());
         }
 
-        if (mShader != null && mApplyShader) {
+        if (mApplyShader) {
+            assert mShader != null;
+
             // Apply the matrix to the bitmap shader.
             mShader.setLocalMatrix(getImageMatrix());
             localPaint.setShader(mShader);

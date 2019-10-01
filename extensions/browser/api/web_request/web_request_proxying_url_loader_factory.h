@@ -18,7 +18,7 @@
 #include "extensions/browser/api/web_request/web_request_info.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
-#include "net/base/completion_callback.h"
+#include "net/base/completion_once_callback.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/resource_response.h"
@@ -83,14 +83,14 @@ class WebRequestProxyingURLLoaderFactory
     void OnUploadProgress(int64_t current_position,
                           int64_t total_size,
                           OnUploadProgressCallback callback) override;
-    void OnReceiveCachedMetadata(const std::vector<uint8_t>& data) override;
+    void OnReceiveCachedMetadata(mojo_base::BigBuffer data) override;
     void OnTransferSizeUpdated(int32_t transfer_size_diff) override;
     void OnStartLoadingResponseBody(
         mojo::ScopedDataPipeConsumerHandle body) override;
     void OnComplete(const network::URLLoaderCompletionStatus& status) override;
 
     void HandleAuthRequest(
-        net::AuthChallengeInfo* auth_info,
+        const net::AuthChallengeInfo& auth_info,
         scoped_refptr<net::HttpResponseHeaders> response_headers,
         WebRequestAPI::AuthRequestCallback callback);
 
@@ -103,12 +103,18 @@ class WebRequestProxyingURLLoaderFactory
                            OnHeadersReceivedCallback callback) override;
 
    private:
+    // These two methods combined form the implementation of Restart().
+    void UpdateRequestInfo();
+    void RestartInternal();
+
     void ContinueToBeforeSendHeaders(int error_code);
-    void ContinueToSendHeaders(int error_code);
+    void ContinueToSendHeaders(const std::set<std::string>& removed_headers,
+                               const std::set<std::string>& set_headers,
+                               int error_code);
     void ContinueToStartRequest(int error_code);
     void ContinueToHandleOverrideHeaders(int error_code);
     void ContinueToResponseStarted(int error_code);
-    void ContinueAuthRequest(net::AuthChallengeInfo* auth_info,
+    void ContinueAuthRequest(const net::AuthChallengeInfo& auth_info,
                              WebRequestAPI::AuthRequestCallback callback,
                              int error_code);
     void OnAuthRequestHandled(
@@ -117,13 +123,14 @@ class WebRequestProxyingURLLoaderFactory
     void ContinueToBeforeRedirect(const net::RedirectInfo& redirect_info,
                                   int error_code);
     void HandleResponseOrRedirectHeaders(
-        const net::CompletionCallback& continuation);
+        net::CompletionOnceCallback continuation);
     void OnRequestError(const network::URLLoaderCompletionStatus& status);
     bool IsRedirectSafe(const GURL& from_url, const GURL& to_url);
     void HandleBeforeRequestRedirect();
 
     WebRequestProxyingURLLoaderFactory* const factory_;
     network::ResourceRequest request_;
+    const base::Optional<url::Origin> original_initiator_;
     const bool is_download_;
     const uint64_t request_id_;
     const int32_t network_service_request_id_;
@@ -153,10 +160,6 @@ class WebRequestProxyingURLLoaderFactory
     // lifetime.
     base::Optional<net::AuthCredentials> auth_credentials_;
 
-    // TODO(https://crbug.com/882661): Remove this once the bug is fixed.
-    bool on_receive_response_received_ = false;
-    bool on_receive_response_sent_ = false;
-
     bool request_completed_ = false;
 
     // If |has_any_extra_headers_listeners_| is set to true, the request will be
@@ -170,6 +173,21 @@ class WebRequestProxyingURLLoaderFactory
     OnBeforeSendHeadersCallback on_before_send_headers_callback_;
     OnHeadersReceivedCallback on_headers_received_callback_;
     mojo::Binding<network::mojom::TrustedHeaderClient> header_client_binding_;
+
+    // If |has_any_extra_headers_listeners_| is set to false and a redirect is
+    // in progress, this stores the parameters to FollowRedirect that came from
+    // the client. That way we can combine it with any other changes that
+    // extensions made to headers in their callbacks.
+    struct FollowRedirectParams {
+      FollowRedirectParams();
+      ~FollowRedirectParams();
+      std::vector<std::string> removed_headers;
+      net::HttpRequestHeaders modified_headers;
+      base::Optional<GURL> new_url;
+
+      DISALLOW_COPY_AND_ASSIGN(FollowRedirectParams);
+    };
+    std::unique_ptr<FollowRedirectParams> pending_follow_redirect_params_;
 
     base::WeakPtrFactory<InProgressRequest> weak_factory_;
 
@@ -222,7 +240,7 @@ class WebRequestProxyingURLLoaderFactory
 
   // WebRequestAPI::Proxy:
   void HandleAuthRequest(
-      net::AuthChallengeInfo* auth_info,
+      const net::AuthChallengeInfo& auth_info,
       scoped_refptr<net::HttpResponseHeaders> response_headers,
       int32_t request_id,
       WebRequestAPI::AuthRequestCallback callback) override;

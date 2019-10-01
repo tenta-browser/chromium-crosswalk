@@ -70,13 +70,17 @@ class PLATFORM_EXPORT SecurityPolicy {
       const SecurityOrigin& source_origin,
       const String& destination_protocol,
       const String& destination_domain,
-      bool allow_destination_subdomains,
+      const uint16_t port,
+      const network::mojom::CorsDomainMatchMode domain_match_mode,
+      const network::mojom::CorsPortMatchMode port_match_mode,
       const network::mojom::CorsOriginAccessMatchPriority priority);
   static void AddOriginAccessBlockListEntry(
       const SecurityOrigin& source_origin,
       const String& destination_protocol,
       const String& destination_domain,
-      bool allow_destination_subdomains,
+      const uint16_t port,
+      const network::mojom::CorsDomainMatchMode domain_match_mode,
+      const network::mojom::CorsPortMatchMode port_match_mode,
       const network::mojom::CorsOriginAccessMatchPriority priority);
   static void ClearOriginAccessListForOrigin(
       const SecurityOrigin& source_origin);
@@ -87,9 +91,9 @@ class PLATFORM_EXPORT SecurityPolicy {
   static bool IsOriginAccessToURLAllowed(const SecurityOrigin* active_origin,
                                          const KURL&);
 
-  static void AddOriginTrustworthyWhiteList(const String&);
-  static bool IsOriginWhiteListedTrustworthy(const SecurityOrigin&);
-  static bool IsUrlWhiteListedTrustworthy(const KURL&);
+  static void AddOriginToTrustworthySafelist(const String&);
+  static bool IsOriginTrustworthySafelisted(const SecurityOrigin&);
+  static bool IsUrlTrustworthySafelisted(const KURL&);
 
   static bool ReferrerPolicyFromString(const String& policy,
                                        ReferrerPolicyLegacyKeywordsSupport,

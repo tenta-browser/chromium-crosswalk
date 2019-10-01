@@ -16,8 +16,7 @@ using content::WebContents;
 
 TabModalConfirmDialogDelegate::TabModalConfirmDialogDelegate(
     WebContents* web_contents)
-    : close_delegate_(NULL),
-      closing_(false) {
+    : close_delegate_(NULL), closing_(false) {
   NavigationController* controller = &web_contents->GetController();
   registrar_.Add(this, content::NOTIFICATION_LOAD_START,
                  content::Source<NavigationController>(controller));
@@ -100,20 +99,26 @@ const char* TabModalConfirmDialogDelegate::GetCancelButtonIcon() {
   return NULL;
 }
 
-void TabModalConfirmDialogDelegate::OnAccepted() {
-}
+void TabModalConfirmDialogDelegate::OnAccepted() {}
 
-void TabModalConfirmDialogDelegate::OnCanceled() {
-}
+void TabModalConfirmDialogDelegate::OnCanceled() {}
 
 void TabModalConfirmDialogDelegate::OnLinkClicked(
-    WindowOpenDisposition disposition) {
-}
+    WindowOpenDisposition disposition) {}
 
-void TabModalConfirmDialogDelegate::OnClosed() {
-}
+void TabModalConfirmDialogDelegate::OnClosed() {}
 
 void TabModalConfirmDialogDelegate::CloseDialog() {
   if (close_delegate_)
     close_delegate_->CloseDialog();
+}
+
+base::Optional<int> TabModalConfirmDialogDelegate::GetDefaultDialogButton() {
+  // Use the default, don't override.
+  return base::nullopt;
+}
+
+base::Optional<int> TabModalConfirmDialogDelegate::GetInitiallyFocusedButton() {
+  // Use the default, don't override.
+  return base::nullopt;
 }

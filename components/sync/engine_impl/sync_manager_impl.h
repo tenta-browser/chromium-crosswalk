@@ -16,7 +16,6 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/sequence_checker.h"
-#include "components/sync/base/cryptographer.h"
 #include "components/sync/base/time.h"
 #include "components/sync/engine/sync_manager.h"
 #include "components/sync/engine_impl/all_status.h"
@@ -27,9 +26,9 @@
 #include "components/sync/engine_impl/js_sync_manager_observer.h"
 #include "components/sync/engine_impl/net/server_connection_manager.h"
 #include "components/sync/engine_impl/nudge_handler.h"
-#include "components/sync/engine_impl/sync_encryption_handler_impl.h"
 #include "components/sync/engine_impl/sync_engine_event_listener.h"
 #include "components/sync/js/js_backend.h"
+#include "components/sync/nigori/cryptographer.h"
 #include "components/sync/syncable/change_reorder_buffer.h"
 #include "components/sync/syncable/directory_change_delegate.h"
 #include "components/sync/syncable/user_share.h"
@@ -93,10 +92,10 @@ class SyncManagerImpl
   void SaveChanges() override;
   void ShutdownOnSyncThread() override;
   UserShare* GetUserShare() override;
-  ModelTypeConnector* GetModelTypeConnector() override;
   std::unique_ptr<ModelTypeConnector> GetModelTypeConnectorProxy() override;
-  const std::string cache_guid() override;
-  bool ReceivedExperiment(Experiments* experiments) override;
+  std::string cache_guid() override;
+  std::string birthday() override;
+  std::string bag_of_chips() override;
   bool HasUnsyncedItemsForTest() override;
   SyncEncryptionHandler* GetEncryptionHandler() override;
   std::vector<std::unique_ptr<ProtocolEvent>> GetBufferedProtocolEvents()
@@ -108,7 +107,6 @@ class SyncManagerImpl
   bool HasDirectoryTypeDebugInfoObserver(
       TypeDebugInfoObserver* observer) override;
   void RequestEmitDebugInfo() override;
-  void ClearServerData(const base::Closure& callback) override;
   void OnCookieJarChanged(bool account_mismatch, bool empty_jar) override;
   void OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd) override;
   void UpdateInvalidationClientId(const std::string& client_id) override;
@@ -127,8 +125,6 @@ class SyncManagerImpl
   void OnCryptographerStateChanged(Cryptographer* cryptographer) override;
   void OnPassphraseTypeChanged(PassphraseType type,
                                base::Time explicit_passphrase_time) override;
-  void OnLocalSetPassphraseEncryption(
-      const SyncEncryptionHandler::NigoriState& nigori_state) override;
 
   // SyncEngineEventListener implementation.
   void OnSyncCycleEvent(const SyncCycleEvent& event) override;
@@ -177,7 +173,7 @@ class SyncManagerImpl
 
   const SyncScheduler* scheduler() const;
 
-  bool GetHasInvalidAuthTokenForTest() const;
+  static std::string GenerateCacheGUIDForTest();
 
  protected:
   // Helper functions.  Virtual for testing.
@@ -219,8 +215,8 @@ class SyncManagerImpl
   bool VisiblePropertiesDiffer(const syncable::EntryKernelMutation& mutation,
                                Cryptographer* cryptographer) const;
 
-  // Open the directory named with |username|.
-  bool OpenDirectory(const std::string& username);
+  // Opens the directory.
+  bool OpenDirectory(InitArgs* args);
 
   void RequestNudgeForDataTypes(const base::Location& nudge_location,
                                 ModelTypeSet type);
@@ -319,10 +315,11 @@ class SyncManagerImpl
 
   base::Closure report_unrecoverable_error_function_;
 
-  // Sync's encryption handler. It tracks the set of encrypted types, manages
-  // changing passphrases, and in general handles sync-specific interactions
-  // with the cryptographer.
-  std::unique_ptr<SyncEncryptionHandlerImpl> sync_encryption_handler_;
+  // Points to either SyncEncryptionHandlerImpl or NigoriSyncBridgeImpl
+  // depending on whether USS implementation of Nigori is enabled or not.
+  std::unique_ptr<SyncEncryptionHandler> sync_encryption_handler_;
+
+  std::unique_ptr<SyncEncryptionHandler::Observer> encryption_observer_proxy_;
 
   base::WeakPtrFactory<SyncManagerImpl> weak_ptr_factory_;
 

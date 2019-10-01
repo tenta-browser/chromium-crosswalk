@@ -10,7 +10,7 @@
 #include <utility>
 
 #include "base/guid.h"
-#include "base/hash.h"
+#include "base/hash/hash.h"
 #include "base/logging.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
@@ -94,8 +94,8 @@ void VerifyNoWalletDataProgressMarkerExists(
 }
 
 std::string GetTokenFromHashAndTime(int64_t hash, const base::Time& time) {
-  return base::Int64ToString(hash) + " " +
-         base::Int64ToString(time.ToDeltaSinceWindowsEpoch().InMicroseconds());
+  return base::NumberToString(hash) + " " +
+         base::NumberToString(time.ToDeltaSinceWindowsEpoch().InMicroseconds());
 }
 
 int64_t GetHashFromToken(const std::string& token, int64_t default_value) {
@@ -309,6 +309,11 @@ std::string FakeServer::GetTopLevelPermanentItemId(
   return loopback_server_->GetTopLevelPermanentItemId(model_type);
 }
 
+const std::vector<std::string>& FakeServer::GetKeystoreKeys() const {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  return loopback_server_->GetKeystoreKeysForTesting();
+}
+
 void FakeServer::InjectEntity(std::unique_ptr<LoopbackServerEntity> entity) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(entity->GetModelType() != syncer::AUTOFILL_WALLET_DATA)
@@ -451,6 +456,16 @@ void FakeServer::EnableStrongConsistencyWithConflictDetectionModel() {
 void FakeServer::SetMaxGetUpdatesBatchSize(int batch_size) {
   DCHECK(thread_checker_.CalledOnValidThread());
   loopback_server_->SetMaxGetUpdatesBatchSize(batch_size);
+}
+
+void FakeServer::SetBagOfChips(const sync_pb::ChipBag& bag_of_chips) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  loopback_server_->SetBagOfChipsForTesting(bag_of_chips);
+}
+
+void FakeServer::TriggerMigrationDoneError(syncer::ModelTypeSet types) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  loopback_server_->TriggerMigrationForTesting(types);
 }
 
 const std::set<std::string>& FakeServer::GetCommittedHistoryURLs() const {

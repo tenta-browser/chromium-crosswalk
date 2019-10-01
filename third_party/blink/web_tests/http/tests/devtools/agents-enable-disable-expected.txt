@@ -18,6 +18,8 @@ Page.disable finished successfully
 Performance.disable finished successfully
 Profiler.disable finished successfully
 Runtime.disable finished successfully
+WebAudio.disable finished successfully
+WebAuthn.disable finished successfully
 
 Accessibility.enable finished successfully
 Accessibility.disable finished successfully
@@ -72,4 +74,10 @@ Profiler.disable finished successfully
 
 Runtime.enable finished successfully
 Runtime.disable finished successfully
+
+WebAudio.enable finished successfully
+WebAudio.disable finished successfully
+
+WebAuthn.enable finished successfully
+WebAuthn.disable finished successfully
 

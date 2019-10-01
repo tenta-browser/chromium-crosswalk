@@ -16,27 +16,22 @@
 #include "ui/events/event.h"
 #include "ui/gfx/geometry/size.h"
 
-ZoomView::ZoomView(LocationBarView::Delegate* location_bar_delegate,
-                   PageActionIconView::Delegate* delegate)
-    : PageActionIconView(nullptr, 0, delegate),
-      location_bar_delegate_(location_bar_delegate),
-      icon_(&kZoomMinusIcon) {
+ZoomView::ZoomView(PageActionIconView::Delegate* delegate)
+    : PageActionIconView(nullptr, 0, delegate), icon_(&kZoomMinusIcon) {
   SetVisible(false);
 }
 
 ZoomView::~ZoomView() {}
 
 bool ZoomView::Update() {
-  bool was_visible = visible();
+  bool was_visible = GetVisible();
   ZoomChangedForActiveTab(false);
-  return visible() != was_visible;
+  return GetVisible() != was_visible;
 }
 
 bool ZoomView::ShouldBeVisible(bool can_show_bubble) const {
-  if (location_bar_delegate_ &&
-      location_bar_delegate_->GetLocationBarModel()->input_in_progress()) {
+  if (delegate()->IsLocationBarUserInputInProgress())
     return false;
-  }
 
   if (can_show_bubble)
     return true;

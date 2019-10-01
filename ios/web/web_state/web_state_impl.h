@@ -22,7 +22,7 @@
 #import "ios/web/navigation/navigation_manager_impl.h"
 #import "ios/web/public/java_script_dialog_callback.h"
 #include "ios/web/public/java_script_dialog_type.h"
-#include "ios/web/public/web_state/web_frame.h"
+#include "ios/web/public/js_messaging/web_frame.h"
 #import "ios/web/public/web_state/web_state.h"
 #import "ios/web/public/web_state/web_state_delegate.h"
 #import "ios/web/public/web_state/web_state_policy_decider.h"
@@ -131,9 +131,6 @@ class WebStateImpl : public WebState, public NavigationManagerDelegate {
   void ProcessWebUIMessage(const GURL& source_url,
                            const std::string& message,
                            const base::ListValue& args);
-  // Invokes page load for WebUI URL with HTML. URL must have an application
-  // specific scheme.
-  virtual void LoadWebUIHtml(const base::string16& html, const GURL& url);
 
   // Gets the HTTP response headers associated with the current page.
   // NOTE: For a WKWebView-based WebState, these headers are generated via
@@ -188,6 +185,7 @@ class WebStateImpl : public WebState, public NavigationManagerDelegate {
   UIView* GetView() override;
   void WasShown() override;
   void WasHidden() override;
+  void SetKeepRenderProcessAlive(bool keep_alive) override;
   BrowserState* GetBrowserState() const override;
   void OpenURL(const WebState::OpenURLParams& params) override;
   void Stop() override;
@@ -198,6 +196,7 @@ class WebStateImpl : public WebState, public NavigationManagerDelegate {
   SessionCertificatePolicyCache* GetSessionCertificatePolicyCache() override;
   CRWSessionStorage* BuildSessionStorage() override;
   CRWJSInjectionReceiver* GetJSInjectionReceiver() const override;
+  void LoadData(NSData* data, NSString* mime_type, const GURL& url) override;
   void ExecuteJavaScript(const base::string16& javascript) override;
   void ExecuteJavaScript(const base::string16& javascript,
                          JavaScriptResultCallback callback) override;
@@ -214,7 +213,6 @@ class WebStateImpl : public WebState, public NavigationManagerDelegate {
   const GURL& GetVisibleURL() const override;
   const GURL& GetLastCommittedURL() const override;
   GURL GetCurrentURL(URLVerificationTrustLevel* trust_level) const override;
-  void ShowTransientContentView(CRWContentView* content_view) override;
   bool IsShowingWebInterstitial() const override;
   WebInterstitial* GetWebInterstitial() const override;
   void AddScriptCommandCallback(const ScriptCommandCallback& callback,
@@ -277,7 +275,7 @@ class WebStateImpl : public WebState, public NavigationManagerDelegate {
   void OnGoToIndexSameDocumentNavigation(NavigationInitiationType type,
                                          bool has_user_gesture) override;
   void WillChangeUserAgentType() override;
-  void LoadCurrentItem() override;
+  void LoadCurrentItem(NavigationInitiationType type) override;
   void LoadIfNecessary() override;
   void Reload() override;
   void OnNavigationItemsPruned(size_t pruned_item_count) override;
@@ -295,6 +293,7 @@ class WebStateImpl : public WebState, public NavigationManagerDelegate {
                                NavigationInitiationType type,
                                bool has_user_gesture) override;
   void RemoveWebView() override;
+  NavigationItemImpl* GetPendingItem() override;
 
  protected:
   void AddPolicyDecider(WebStatePolicyDecider* decider) override;

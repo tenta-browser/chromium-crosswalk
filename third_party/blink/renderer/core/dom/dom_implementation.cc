@@ -49,12 +49,13 @@
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/loader/frame_loader.h"
 #include "third_party/blink/renderer/core/page/page.h"
+#include "third_party/blink/renderer/core/page/plugin_data.h"
 #include "third_party/blink/renderer/core/svg_names.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/graphics/image.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/network/mime/content_type.h"
 #include "third_party/blink/renderer/platform/network/mime/mime_type_registry.h"
-#include "third_party/blink/renderer/platform/plugins/plugin_data.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 
@@ -90,7 +91,7 @@ XMLDocument* DOMImplementation::createDocument(
     doc = XMLDocument::CreateXHTML(
         init.WithRegistrationContext(document_->RegistrationContext()));
   } else {
-    doc = XMLDocument::Create(init);
+    doc = MakeGarbageCollected<XMLDocument>(init);
   }
 
   doc->SetSecurityOrigin(document_->GetMutableSecurityOrigin());
@@ -206,13 +207,13 @@ Document* DOMImplementation::createHTMLDocument(const String& title) {
       DocumentInit::Create()
           .WithContextDocument(document_->ContextDocument())
           .WithRegistrationContext(document_->RegistrationContext());
-  HTMLDocument* d = HTMLDocument::Create(init);
+  auto* d = MakeGarbageCollected<HTMLDocument>(init);
   d->open();
   d->write("<!doctype html><html><head></head><body></body></html>");
   if (!title.IsNull()) {
     HTMLHeadElement* head_element = d->head();
     DCHECK(head_element);
-    HTMLTitleElement* title_element = HTMLTitleElement::Create(*d);
+    auto* title_element = MakeGarbageCollected<HTMLTitleElement>(*d);
     head_element->AppendChild(title_element);
     title_element->AppendChild(d->createTextNode(title), ASSERT_NO_EXCEPTION);
   }
@@ -225,12 +226,12 @@ Document* DOMImplementation::createDocument(const String& type,
                                             const DocumentInit& init,
                                             bool in_view_source_mode) {
   if (in_view_source_mode)
-    return HTMLViewSourceDocument::Create(init, type);
+    return MakeGarbageCollected<HTMLViewSourceDocument>(init, type);
 
   // Plugins cannot take HTML and XHTML from us, and we don't even need to
   // initialize the plugin database for those.
   if (type == "text/html")
-    return HTMLDocument::Create(init);
+    return MakeGarbageCollected<HTMLDocument>(init);
   if (type == "application/xhtml+xml")
     return XMLDocument::CreateXHTML(init);
 
@@ -254,23 +255,33 @@ Document* DOMImplementation::createDocument(const String& type,
     }
   }
 
+  if (RuntimeEnabledFeatures::MimeHandlerViewInCrossProcessFrameEnabled() &&
+      plugin_data && plugin_data->IsExternalPluginMimeType(type)) {
+    // Plugins handled by MimeHandlerView do not create a PluginDocument. They
+    // are rendered inside cross-process frames and the notion of a PluginView
+    // (which is associated with PluginDocument) is irrelevant here.
+    auto* html_document = MakeGarbageCollected<HTMLDocument>(init);
+    html_document->SetIsForExternalHandler();
+    return html_document;
+  }
+
   // PDF is one image type for which a plugin can override built-in support.
   // We do not want QuickTime to take over all image types, obviously.
   if ((type == "application/pdf" || type == "text/pdf") && plugin_data &&
       plugin_data->SupportsMimeType(type)) {
-    return PluginDocument::Create(
+    return MakeGarbageCollected<PluginDocument>(
         init, plugin_data->PluginBackgroundColorForMimeType(type));
   }
   // multipart/x-mixed-replace is only supported for images.
   if (MIMETypeRegistry::IsSupportedImageResourceMIMEType(type) ||
       type == "multipart/x-mixed-replace") {
-    return ImageDocument::Create(init);
+    return MakeGarbageCollected<ImageDocument>(init);
   }
 
   // Check to see if the type can be played by our media player, if so create a
   // MediaDocument
   if (HTMLMediaElement::GetSupportsType(ContentType(type)))
-    return MediaDocument::Create(init);
+    return MakeGarbageCollected<MediaDocument>(init);
 
   // Everything else except text/plain can be overridden by plugins. In
   // particular, Adobe SVG Viewer should be used for SVG, if installed.
@@ -279,17 +290,17 @@ Document* DOMImplementation::createDocument(const String& type,
   // an optimization to prevent loading the plugin database in the common case.
   if (type != "text/plain" && plugin_data &&
       plugin_data->SupportsMimeType(type)) {
-    return PluginDocument::Create(
+    return MakeGarbageCollected<PluginDocument>(
         init, plugin_data->PluginBackgroundColorForMimeType(type));
   }
   if (IsTextMIMEType(type))
-    return TextDocument::Create(init);
+    return MakeGarbageCollected<TextDocument>(init);
   if (type == "image/svg+xml")
     return XMLDocument::CreateSVG(init);
   if (IsXMLMIMEType(type))
-    return XMLDocument::Create(init);
+    return MakeGarbageCollected<XMLDocument>(init);
 
-  return HTMLDocument::Create(init);
+  return MakeGarbageCollected<HTMLDocument>(init);
 }
 
 void DOMImplementation::Trace(Visitor* visitor) {

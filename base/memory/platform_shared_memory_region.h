@@ -36,7 +36,11 @@ namespace subtle {
 // Helper structs to keep two descriptors on POSIX. It's needed to support
 // ConvertToReadOnly().
 struct BASE_EXPORT FDPair {
+  // The main shared memory descriptor that is used for mapping. May be either
+  // writable or read-only, depending on region's mode.
   int fd;
+  // The read-only descriptor, valid only in kWritable mode. Replaces |fd| when
+  // a region is converted to read-only.
   int readonly_fd;
 };
 
@@ -146,6 +150,15 @@ class BASE_EXPORT PlatformSharedMemoryRegion {
                                          Mode mode,
                                          size_t size,
                                          const UnguessableToken& guid);
+#if defined(OS_POSIX) && !defined(OS_ANDROID) && \
+    !(defined(OS_MACOSX) && !defined(OS_IOS))
+  // Specialized version of Take() for POSIX that takes only one file descriptor
+  // instead of pair. Cannot be used with kWritable |mode|.
+  static PlatformSharedMemoryRegion Take(ScopedFD handle,
+                                         Mode mode,
+                                         size_t size,
+                                         const UnguessableToken& guid);
+#endif
 
   // As Take, above, but from a SharedMemoryHandle. This takes ownership of the
   // handle. |mode| must be kUnsafe or kReadOnly; the latter must be used with a

@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/webui/chromeos/login/fingerprint_setup_screen_handler.h"
 
+#include "base/bind.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/browser/chromeos/login/screens/fingerprint_setup_screen.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
@@ -19,8 +20,6 @@
 #include "ui/base/l10n/l10n_util.h"
 
 namespace {
-
-const char kJsScreenPath[] = "login.FingerprintSetupScreen";
 
 // The max number of fingerprints that can be stored.
 constexpr int kMaxAllowedFingerprints = 3;
@@ -48,9 +47,12 @@ std::string GetDefaultFingerprintName(int enrolled_finger_count) {
 
 namespace chromeos {
 
-FingerprintSetupScreenHandler::FingerprintSetupScreenHandler()
-    : BaseScreenHandler(kScreenId) {
-  set_call_js_prefix(kJsScreenPath);
+constexpr StaticOobeScreenId FingerprintSetupScreenView::kScreenId;
+
+FingerprintSetupScreenHandler::FingerprintSetupScreenHandler(
+    JSCallsContainer* js_calls_container)
+    : BaseScreenHandler(kScreenId, js_calls_container) {
+  set_user_acted_method_path("login.FingerprintSetupScreen.userActed");
 
   service_manager::Connector* connector =
       content::ServiceManagerConnection::GetForProcess()->GetConnector();

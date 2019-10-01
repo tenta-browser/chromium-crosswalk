@@ -8,10 +8,11 @@
 #include <utility>
 
 #include "components/infobars/core/confirm_infobar_delegate.h"
-#include "ios/chrome/browser/experimental_flags.h"
 #include "ios/chrome/browser/infobars/confirm_infobar_controller.h"
 #include "ios/chrome/browser/infobars/infobar.h"
-#import "ios/chrome/browser/ui/infobars/confirm_infobar/confirm_infobar_view_controller.h"
+#import "ios/chrome/browser/infobars/infobar_type.h"
+#import "ios/chrome/browser/ui/infobars/coordinators/infobar_confirm_coordinator.h"
+#import "ios/chrome/browser/ui/infobars/infobar_feature.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -19,11 +20,16 @@
 
 std::unique_ptr<infobars::InfoBar> CreateConfirmInfoBar(
     std::unique_ptr<ConfirmInfoBarDelegate> delegate) {
-  if (experimental_flags::IsInfobarUIRebootEnabled()) {
-    ConfirmInfobarViewController* controller =
-        [[ConfirmInfobarViewController alloc]
-            initWithInfoBarDelegate:delegate.get()];
-    return std::make_unique<InfoBarIOS>(controller, std::move(delegate));
+  // TODO(crbug.com/961343): Temporarily disabling the use of
+  // InfobarConfirmCoordinator until multiple message support has been added.
+  if (IsInfobarUIRebootEnabled() && NO) {
+    // TODO(crbug.com/927064): Coordinators shouldn't be created at this level,
+    // we should probably send only the delegate and have the presenting
+    // Coordinator create the right Coordinator using that delegate.
+    InfobarConfirmCoordinator* coordinator = [[InfobarConfirmCoordinator alloc]
+        initWithInfoBarDelegate:delegate.get()
+                           type:InfobarType::kInfobarTypeConfirm];
+    return std::make_unique<InfoBarIOS>(coordinator, std::move(delegate));
   } else {
     ConfirmInfoBarController* controller = [[ConfirmInfoBarController alloc]
         initWithInfoBarDelegate:delegate.get()];

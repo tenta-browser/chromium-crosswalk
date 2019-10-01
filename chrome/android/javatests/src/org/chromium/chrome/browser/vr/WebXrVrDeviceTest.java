@@ -45,8 +45,9 @@ import java.util.concurrent.Callable;
  */
 @RunWith(ParameterizedRunner.class)
 @UseRunnerDelegate(ChromeJUnit4RunnerDelegate.class)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE, "enable-webvr"})
-@MinAndroidSdkLevel(Build.VERSION_CODES.KITKAT) // WebVR is only supported on K+
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
+        "enable-features=LogJsConsoleMessages", "enable-webvr"})
+@MinAndroidSdkLevel(Build.VERSION_CODES.LOLLIPOP) // WebVR is only supported on L+
 public class WebXrVrDeviceTest {
     @ClassParameter
     private static List<ParameterSet> sClassParams =
@@ -92,7 +93,6 @@ public class WebXrVrDeviceTest {
      */
     @Test
     @MediumTest
-    @CommandLineFlags.Add("enable-features=WebXROrientationSensorDevice")
     @XrActivityRestriction({XrActivityRestriction.SupportedActivity.ALL})
     @Restriction(RESTRICTION_TYPE_SVR)
     public void testGvrlessMagicWindowCapabilities() throws InterruptedException {
@@ -139,8 +139,7 @@ public class WebXrVrDeviceTest {
     @MediumTest
     @CommandLineFlags
             .Remove({"enable-webvr"})
-            @CommandLineFlags.
-            Add({"enable-features=WebXROrientationSensorDevice", "enable-features=WebXR"})
+            @CommandLineFlags.Add({"enable-features=WebXR"})
             @Restriction(RESTRICTION_TYPE_VIEWER_DAYDREAM)
             public void testForNullPosesInInlineVrPostImmersive() throws InterruptedException {
         mWebXrVrTestFramework.loadUrlAndAwaitInitialization(
@@ -175,8 +174,7 @@ public class WebXrVrDeviceTest {
     @MediumTest
     @CommandLineFlags
             .Remove({"enable-webvr"})
-            @CommandLineFlags.
-            Add({"enable-features=WebXROrientationSensorDevice", "enable-features=WebXR"})
+            @CommandLineFlags.Add({"enable-features=WebXR"})
             @Restriction(RESTRICTION_TYPE_VIEWER_DAYDREAM)
             public void testForNullPosesInInlineVrFromNfc() throws InterruptedException {
         mWebXrVrTestFramework.loadUrlAndAwaitInitialization(
@@ -209,8 +207,7 @@ public class WebXrVrDeviceTest {
     @MediumTest
     @CommandLineFlags
             .Remove({"enable-webvr"})
-            @CommandLineFlags.
-            Add({"enable-features=WebXROrientationSensorDevice", "enable-features=WebXR"})
+            @CommandLineFlags.Add({"enable-features=WebXR"})
             @Restriction(RESTRICTION_TYPE_VIEWER_DAYDREAM)
             public void testForNullPosesInInlineVrOnNavigation() throws InterruptedException {
         NfcSimUtils.simNfcScanUntilVrEntry(mTestRule.getActivity());

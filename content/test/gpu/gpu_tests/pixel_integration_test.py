@@ -10,7 +10,6 @@ import sys
 from gpu_tests import gpu_integration_test
 from gpu_tests import cloud_storage_integration_test_base
 from gpu_tests import path_util
-from gpu_tests import pixel_expectations
 from gpu_tests import pixel_test_pages
 from gpu_tests import color_profile_manager
 
@@ -56,6 +55,9 @@ test_harness_script = r"""
 
 class PixelIntegrationTest(
     cloud_storage_integration_test_base.CloudStorageIntegrationTestBase):
+
+  test_base_name = 'Pixel'
+
   @classmethod
   def Name(cls):
     """The name by which this test is invoked on the command line."""
@@ -100,26 +102,28 @@ class PixelIntegrationTest(
       dest='use_skia_gold',
       action='store_true', default=False,
       help='Use the Skia team\'s Gold tool to handle image comparisons')
-
-  @classmethod
-  def _CreateExpectations(cls):
-    return pixel_expectations.PixelExpectations()
+    parser.add_option(
+      '--no-luci-auth',
+      action='store_true', default=False,
+      help='Don\'t use the service account provided by LUCI for authentication '
+           'for Skia Gold, instead relying on gsutil to be pre-authenticated. '
+           'Meant for testing locally instead of on the bots.')
 
   @classmethod
   def GenerateGpuTests(cls, options):
     cls.SetParsedCommandLineOptions(options)
-    name = 'Pixel'
-    pages = pixel_test_pages.DefaultPages(name)
-    pages += pixel_test_pages.GpuRasterizationPages(name)
-    pages += pixel_test_pages.ExperimentalCanvasFeaturesPages(name)
-    # pages += pixel_test_pages.NoGpuProcessPages(name)
+    namespace = pixel_test_pages.PixelTestPages
+    pages = namespace.DefaultPages(cls.test_base_name)
+    pages += namespace.GpuRasterizationPages(cls.test_base_name)
+    pages += namespace.ExperimentalCanvasFeaturesPages(cls.test_base_name)
+    # pages += namespace.NoGpuProcessPages(cls.test_base_name)
     # The following pages should run only on platforms where SwiftShader is
     # enabled. They are skipped on other platforms through test expectations.
-    # pages += pixel_test_pages.SwiftShaderPages(name)
+    # pages += namespace.SwiftShaderPages(cls.test_base_name)
     if sys.platform.startswith('darwin'):
-      pages += pixel_test_pages.MacSpecificPages(name)
+      pages += namespace.MacSpecificPages(cls.test_base_name)
     if sys.platform.startswith('win'):
-      pages += pixel_test_pages.DirectCompositionPages(name)
+      pages += namespace.DirectCompositionPages(cls.test_base_name)
     for p in pages:
       yield(p.name, gpu_relative_path + p.url, (p))
 
@@ -165,7 +169,8 @@ class PixelIntegrationTest(
       if page.expected_colors:
         # Use expected colors instead of ref images for validation.
         self._ValidateScreenshotSamples(
-            tab, page.name, screenshot, page.expected_colors, dpr)
+            tab, page.name, screenshot, page.expected_colors, page.tolerance,
+            dpr)
         return
       image_name = self._UrlToImageName(page.name)
       if self.GetParsedCommandLineOptions().upload_refimg_to_cloud_storage:
@@ -256,7 +261,8 @@ class PixelIntegrationTest(
       if page.expected_colors:
         # Use expected colors instead of ref images for validation.
         self._ValidateScreenshotSamplesWithSkiaGold(
-            tab, page, screenshot, page.expected_colors, dpr, build_id_args)
+            tab, page, screenshot, page.expected_colors, page.tolerance,
+            dpr, build_id_args)
         return
       image_name = self._UrlToImageName(page.name)
       is_local_run = not (parsed_options.upload_refimg_to_cloud_storage or
@@ -281,10 +287,8 @@ class PixelIntegrationTest(
           self._UploadTestResultToSkiaGold(
             image_name, screenshot,
             tab, page,
-            is_check_mode=True,
             build_id_args=build_id_args)
         except CalledProcessError:
-          # TODO(kbr): make a nice link from the failures to gold.skia.org.
           self.fail('Gold said the test failed, so fail.')
     finally:
       if do_page_action:
@@ -349,6 +353,13 @@ class PixelIntegrationTest(
     # solution of provoking the GPU process crash from this renderer
     # process was chosen.
     tab.EvaluateJavaScript('chrome.gpuBenchmarking.crashGpuProcess()')
+
+  @classmethod
+  def ExpectationsFiles(cls):
+    return [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                     'test_expectations',
+                     'pixel_expectations.txt')]
 
 def load_tests(loader, tests, pattern):
   del loader, tests, pattern  # Unused.

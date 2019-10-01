@@ -15,10 +15,11 @@
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/location.h"
-#include "base/message_loop/message_loop.h"
+
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/lock.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread.h"
 #include "base/values.h"
 #include "chrome/test/chromedriver/chrome/status.h"
@@ -140,15 +141,15 @@ TEST(CommandsTest, GetSessions) {
   SessionThreadMap map;
   Session session("id");
   Session session2("id2");
-  map[session.id] = std::make_unique<base::Thread>("1");
-  map[session2.id] = std::make_unique<base::Thread>("2");
+  map[session.id] = std::make_unique<SessionThreadInfo>("1", true);
+  map[session2.id] = std::make_unique<SessionThreadInfo>("2", true);
 
   int count = 0;
 
   Command cmd = base::Bind(&ExecuteStubGetSession, &count);
 
   base::DictionaryValue params;
-  base::MessageLoop loop;
+  base::test::ScopedTaskEnvironment scoped_task_environment;
 
   ExecuteGetSessions(cmd, &map, params, std::string(),
                      base::Bind(&OnGetSessions));
@@ -185,13 +186,13 @@ TEST(CommandsTest, QuitAll) {
   SessionThreadMap map;
   Session session("id");
   Session session2("id2");
-  map[session.id] = std::make_unique<base::Thread>("1");
-  map[session2.id] = std::make_unique<base::Thread>("2");
+  map[session.id] = std::make_unique<SessionThreadInfo>("1", true);
+  map[session2.id] = std::make_unique<SessionThreadInfo>("2", true);
 
   int count = 0;
   Command cmd = base::Bind(&ExecuteStubQuit, &count);
   base::DictionaryValue params;
-  base::MessageLoop loop;
+  base::test::ScopedTaskEnvironment scoped_task_environment;
   ExecuteQuitAll(cmd, &map, params, std::string(), base::Bind(&OnQuitAll));
   ASSERT_EQ(2, count);
 }
@@ -228,13 +229,14 @@ void OnSimpleCommand(base::RunLoop* run_loop,
 
 TEST(CommandsTest, ExecuteSessionCommand) {
   SessionThreadMap map;
-  auto thread = std::make_unique<base::Thread>("1");
+  auto threadInfo = std::make_unique<SessionThreadInfo>("1", true);
+  base::Thread* thread = threadInfo->thread();
   ASSERT_TRUE(thread->Start());
   std::string id("id");
   thread->task_runner()->PostTask(
       FROM_HERE,
       base::BindOnce(&internal::CreateSessionOnSessionThreadForTesting, id));
-  map[id] = std::move(thread);
+  map[id] = std::move(threadInfo);
 
   base::DictionaryValue params;
   params.SetInteger("param", 5);
@@ -242,15 +244,10 @@ TEST(CommandsTest, ExecuteSessionCommand) {
   SessionCommand cmd = base::Bind(
       &ExecuteSimpleCommand, id, &params, &expected_value);
 
-  base::MessageLoop loop;
+  base::test::ScopedTaskEnvironment scoped_task_environment;
   base::RunLoop run_loop;
   ExecuteSessionCommand(
-      &map,
-      "cmd",
-      cmd,
-      false,
-      params,
-      id,
+      &map, "cmd", cmd, true /*w3c_standard_command*/, false, params, id,
       base::Bind(&OnSimpleCommand, &run_loop, id, &expected_value));
   run_loop.Run();
 }
@@ -285,24 +282,16 @@ void OnNoSuchSessionIsOk(const Status& status,
 TEST(CommandsTest, ExecuteSessionCommandOnNoSuchSession) {
   SessionThreadMap map;
   base::DictionaryValue params;
-  ExecuteSessionCommand(&map,
-                        "cmd",
-                        base::Bind(&ShouldNotBeCalled),
-                        false,
-                        params,
-                        "session",
+  ExecuteSessionCommand(&map, "cmd", base::Bind(&ShouldNotBeCalled),
+                        true /*w3c_standard_command*/, false, params, "session",
                         base::Bind(&OnNoSuchSession));
 }
 
 TEST(CommandsTest, ExecuteSessionCommandOnNoSuchSessionWhenItExpectsOk) {
   SessionThreadMap map;
   base::DictionaryValue params;
-  ExecuteSessionCommand(&map,
-                        "cmd",
-                        base::Bind(&ShouldNotBeCalled),
-                        true,
-                        params,
-                        "session",
+  ExecuteSessionCommand(&map, "cmd", base::Bind(&ShouldNotBeCalled),
+                        true /*w3c_standard_command*/, true, params, "session",
                         base::Bind(&OnNoSuchSessionIsOk));
 }
 
@@ -322,19 +311,16 @@ void OnNoSuchSessionAndQuit(base::RunLoop* run_loop,
 
 TEST(CommandsTest, ExecuteSessionCommandOnJustDeletedSession) {
   SessionThreadMap map;
-  auto thread = std::make_unique<base::Thread>("1");
-  ASSERT_TRUE(thread->Start());
+  auto threadInfo = std::make_unique<SessionThreadInfo>("1", true);
+  ASSERT_TRUE(threadInfo->thread()->Start());
   std::string id("id");
-  map[id] = std::move(thread);
+  map[id] = std::move(threadInfo);
 
-  base::MessageLoop loop;
+  base::test::ScopedTaskEnvironment scoped_task_environment;
   base::RunLoop run_loop;
-  ExecuteSessionCommand(&map,
-                        "cmd",
-                        base::Bind(&ShouldNotBeCalled),
-                        false,
-                        base::DictionaryValue(),
-                        "session",
+  ExecuteSessionCommand(&map, "cmd", base::Bind(&ShouldNotBeCalled),
+                        true /*w3c_standard_command*/, false,
+                        base::DictionaryValue(), "session",
                         base::Bind(&OnNoSuchSessionAndQuit, &run_loop));
   run_loop.Run();
 }
@@ -455,14 +441,14 @@ TEST(CommandsTest, SuccessfulFindElement) {
   session.implicit_wait = base::TimeDelta::FromSeconds(1);
   session.SwitchToSubFrame("frame_id1", std::string());
   base::DictionaryValue params;
-  params.SetString("using", "id");
-  params.SetString("value", "a");
+  params.SetString("using", "css selector");
+  params.SetString("value", "#a");
   std::unique_ptr<base::Value> result;
   ASSERT_EQ(kOk,
             ExecuteFindElement(1, &session, &web_view, params, &result,
                                nullptr).code());
   base::DictionaryValue param;
-  param.SetString("id", "a");
+  param.SetString("css selector", "#a");
   base::ListValue expected_args;
   expected_args.Append(param.CreateDeepCopy());
   web_view.Verify("frame_id1", &expected_args, result.get());
@@ -472,8 +458,8 @@ TEST(CommandsTest, FailedFindElement) {
   FindElementWebView web_view(true, kElementNotExistsQueryOnce);
   Session session("id");
   base::DictionaryValue params;
-  params.SetString("using", "id");
-  params.SetString("value", "a");
+  params.SetString("using", "css selector");
+  params.SetString("value", "#a");
   std::unique_ptr<base::Value> result;
   ASSERT_EQ(kNoSuchElement,
             ExecuteFindElement(1, &session, &web_view, params, &result,
@@ -486,14 +472,14 @@ TEST(CommandsTest, SuccessfulFindElements) {
   session.implicit_wait = base::TimeDelta::FromSeconds(1);
   session.SwitchToSubFrame("frame_id2", std::string());
   base::DictionaryValue params;
-  params.SetString("using", "name");
-  params.SetString("value", "b");
+  params.SetString("using", "css selector");
+  params.SetString("value", "*[name='b']");
   std::unique_ptr<base::Value> result;
   ASSERT_EQ(kOk,
             ExecuteFindElements(1, &session, &web_view, params, &result,
                                 nullptr).code());
   base::DictionaryValue param;
-  param.SetString("name", "b");
+  param.SetString("css selector", "*[name='b']");
   base::ListValue expected_args;
   expected_args.Append(param.CreateDeepCopy());
   web_view.Verify("frame_id2", &expected_args, result.get());
@@ -503,8 +489,8 @@ TEST(CommandsTest, FailedFindElements) {
   Session session("id");
   FindElementWebView web_view(false, kElementNotExistsQueryOnce);
   base::DictionaryValue params;
-  params.SetString("using", "id");
-  params.SetString("value", "a");
+  params.SetString("using", "css selector");
+  params.SetString("value", "#a");
   std::unique_ptr<base::Value> result;
   ASSERT_EQ(kOk,
             ExecuteFindElements(1, &session, &web_view, params, &result,
@@ -520,7 +506,7 @@ TEST(CommandsTest, SuccessfulFindChildElement) {
   session.implicit_wait = base::TimeDelta::FromSeconds(1);
   session.SwitchToSubFrame("frame_id3", std::string());
   base::DictionaryValue params;
-  params.SetString("using", "tag name");
+  params.SetString("using", "css selector");
   params.SetString("value", "div");
   std::string element_id = "1";
   std::unique_ptr<base::Value> result;
@@ -529,7 +515,7 @@ TEST(CommandsTest, SuccessfulFindChildElement) {
       ExecuteFindChildElement(
           1, &session, &web_view, element_id, params, &result).code());
   base::DictionaryValue locator_param;
-  locator_param.SetString("tag name", "div");
+  locator_param.SetString("css selector", "div");
   base::DictionaryValue root_element_param;
   root_element_param.SetString("ELEMENT", element_id);
   base::ListValue expected_args;
@@ -542,8 +528,8 @@ TEST(CommandsTest, FailedFindChildElement) {
   Session session("id");
   FindElementWebView web_view(true, kElementNotExistsQueryOnce);
   base::DictionaryValue params;
-  params.SetString("using", "id");
-  params.SetString("value", "a");
+  params.SetString("using", "css selector");
+  params.SetString("value", "#a");
   std::string element_id = "1";
   std::unique_ptr<base::Value> result;
   ASSERT_EQ(
@@ -558,8 +544,8 @@ TEST(CommandsTest, SuccessfulFindChildElements) {
   session.implicit_wait = base::TimeDelta::FromSeconds(1);
   session.SwitchToSubFrame("frame_id4", std::string());
   base::DictionaryValue params;
-  params.SetString("using", "class name");
-  params.SetString("value", "c");
+  params.SetString("using", "css selector");
+  params.SetString("value", ".c");
   std::string element_id = "1";
   std::unique_ptr<base::Value> result;
   ASSERT_EQ(
@@ -567,7 +553,7 @@ TEST(CommandsTest, SuccessfulFindChildElements) {
       ExecuteFindChildElements(
           1, &session, &web_view, element_id, params, &result).code());
   base::DictionaryValue locator_param;
-  locator_param.SetString("class name", "c");
+  locator_param.SetString("css selector", ".c");
   base::DictionaryValue root_element_param;
   root_element_param.SetString("ELEMENT", element_id);
   base::ListValue expected_args;
@@ -580,8 +566,8 @@ TEST(CommandsTest, FailedFindChildElements) {
   Session session("id");
   FindElementWebView web_view(false, kElementNotExistsQueryOnce);
   base::DictionaryValue params;
-  params.SetString("using", "id");
-  params.SetString("value", "a");
+  params.SetString("using", "css selector");
+  params.SetString("value", "#a");
   std::string element_id = "1";
   std::unique_ptr<base::Value> result;
   ASSERT_EQ(
@@ -598,8 +584,8 @@ TEST(CommandsTest, TimeoutInFindElement) {
   FindElementWebView web_view(true, kElementExistsTimeout);
   session.implicit_wait = base::TimeDelta::FromMilliseconds(2);
   base::DictionaryValue params;
-  params.SetString("using", "id");
-  params.SetString("value", "a");
+  params.SetString("using", "css selector");
+  params.SetString("value", "#a");
   params.SetString("id", "1");
   std::unique_ptr<base::Value> result;
   ASSERT_EQ(kNoSuchElement,
@@ -633,8 +619,8 @@ TEST(CommandsTest, ErrorFindElement) {
   Session session("id");
   ErrorCallFunctionWebView web_view(kUnknownError);
   base::DictionaryValue params;
-  params.SetString("using", "id");
-  params.SetString("value", "a");
+  params.SetString("using", "css selector");
+  params.SetString("value", "#a");
   std::unique_ptr<base::Value> value;
   ASSERT_EQ(kUnknownError,
             ExecuteFindElement(1, &session, &web_view, params, &value,
@@ -648,8 +634,8 @@ TEST(CommandsTest, ErrorFindChildElement) {
   Session session("id");
   ErrorCallFunctionWebView web_view(kStaleElementReference);
   base::DictionaryValue params;
-  params.SetString("using", "id");
-  params.SetString("value", "a");
+  params.SetString("using", "css selector");
+  params.SetString("value", "#a");
   std::string element_id = "1";
   std::unique_ptr<base::Value> result;
   ASSERT_EQ(
@@ -716,14 +702,15 @@ void OnSessionCommand(base::RunLoop* run_loop,
 
 TEST(CommandsTest, SuccessNotifyingCommandListeners) {
   SessionThreadMap map;
-  auto thread = std::make_unique<base::Thread>("1");
+  auto threadInfo = std::make_unique<SessionThreadInfo>("1", true);
+  base::Thread* thread = threadInfo->thread();
   ASSERT_TRUE(thread->Start());
   std::string id("id");
   thread->task_runner()->PostTask(
       FROM_HERE,
       base::BindOnce(&internal::CreateSessionOnSessionThreadForTesting, id));
 
-  map[id] = std::move(thread);
+  map[id] = std::move(threadInfo);
 
   base::DictionaryValue params;
   auto listener = std::make_unique<MockCommandListener>();
@@ -733,20 +720,15 @@ TEST(CommandsTest, SuccessNotifyingCommandListeners) {
   // verify the listener was called. The session owns and will destroy |proxy|.
   SessionCommand cmd =
       base::Bind(&ExecuteAddListenerToSessionCommand, base::Passed(&proxy));
-  base::MessageLoop loop;
+  base::test::ScopedTaskEnvironment scoped_task_environment;
   base::RunLoop run_loop_addlistener;
 
   // |CommandListener|s are notified immediately before commands are run.
   // Here, the command adds |listener| to the session, so |listener|
   // should not be notified since it will not have been added yet.
-  ExecuteSessionCommand(
-      &map,
-      "cmd",
-      cmd,
-      false,
-      params,
-      id,
-      base::Bind(&OnSessionCommand, &run_loop_addlistener));
+  ExecuteSessionCommand(&map, "cmd", cmd, true /*w3c_standard_command*/, false,
+                        params, id,
+                        base::Bind(&OnSessionCommand, &run_loop_addlistener));
   run_loop_addlistener.Run();
 
   listener->VerifyNotCalled();
@@ -756,14 +738,9 @@ TEST(CommandsTest, SuccessNotifyingCommandListeners) {
 
   // |listener| was added to |session| by ExecuteAddListenerToSessionCommand
   // and should be notified before the next command, ExecuteQuitSessionCommand.
-  ExecuteSessionCommand(
-      &map,
-      "cmd",
-      cmd,
-      false,
-      params,
-      id,
-      base::Bind(&OnSessionCommand, &run_loop_testlistener));
+  ExecuteSessionCommand(&map, "cmd", cmd, true /*w3c_standard_command*/, false,
+                        params, id,
+                        base::Bind(&OnSessionCommand, &run_loop_testlistener));
   run_loop_testlistener.Run();
 
   listener->VerifyCalled();
@@ -807,39 +784,34 @@ void VerifySessionWasDeleted() {
 
 TEST(CommandsTest, ErrorNotifyingCommandListeners) {
   SessionThreadMap map;
-  auto thread = std::make_unique<base::Thread>("1");
-  base::Thread* thread_ptr = thread.get();
+  auto threadInfo = std::make_unique<SessionThreadInfo>("1", true);
+  base::Thread* thread = threadInfo->thread();
   ASSERT_TRUE(thread->Start());
   std::string id("id");
   thread->task_runner()->PostTask(
       FROM_HERE,
       base::BindOnce(&internal::CreateSessionOnSessionThreadForTesting, id));
-  map[id] = std::move(thread);
+  map[id] = std::move(threadInfo);
 
   // In SuccessNotifyingCommandListenersBeforeCommand, we verified BeforeCommand
   // was called before (as opposed to after) command execution. We don't need to
   // verify this again, so we can just add |listener| with PostTask.
   auto listener = std::make_unique<FailingCommandListener>();
-  thread_ptr->task_runner()->PostTask(
+  thread->task_runner()->PostTask(
       FROM_HERE, base::BindOnce(&AddListenerToSessionIfSessionExists,
                                 std::move(listener)));
 
   base::DictionaryValue params;
   // The command should never be executed if BeforeCommand fails for a listener.
   SessionCommand cmd = base::Bind(&ShouldNotBeCalled);
-  base::MessageLoop loop;
+  base::test::ScopedTaskEnvironment scoped_task_environment;
   base::RunLoop run_loop;
 
   ExecuteSessionCommand(
-      &map,
-      "cmd",
-      cmd,
-      false,
-      params,
-      id,
+      &map, "cmd", cmd, true /*w3c_standard_command*/, false, params, id,
       base::Bind(&OnFailBecauseErrorNotifyingListeners, &run_loop));
   run_loop.Run();
 
-  thread_ptr->task_runner()->PostTask(FROM_HERE,
-                                      base::BindOnce(&VerifySessionWasDeleted));
+  thread->task_runner()->PostTask(FROM_HERE,
+                                  base::BindOnce(&VerifySessionWasDeleted));
 }

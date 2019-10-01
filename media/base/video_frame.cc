@@ -236,6 +236,20 @@ scoped_refptr<VideoFrame> VideoFrame::CreateFrame(VideoPixelFormat format,
 }
 
 // static
+scoped_refptr<VideoFrame> VideoFrame::CreateVideoHoleFrame(
+    const base::UnguessableToken& overlay_plane_id,
+    const gfx::Size& natural_size,
+    base::TimeDelta timestamp) {
+  auto layout = VideoFrameLayout::Create(PIXEL_FORMAT_UNKNOWN, natural_size);
+  scoped_refptr<VideoFrame> frame =
+      new VideoFrame(*layout, StorageType::STORAGE_OPAQUE,
+                     gfx::Rect(natural_size), natural_size, timestamp);
+  frame->metadata()->SetUnguessableToken(VideoFrameMetadata::OVERLAY_PLANE_ID,
+                                         overlay_plane_id);
+  return frame;
+}
+
+// static
 scoped_refptr<VideoFrame> VideoFrame::CreateZeroInitializedFrame(
     VideoPixelFormat format,
     const gfx::Size& coded_size,
@@ -387,14 +401,6 @@ scoped_refptr<VideoFrame> VideoFrame::WrapExternalYuvData(
     uint8_t* u_data,
     uint8_t* v_data,
     base::TimeDelta timestamp) {
-  const StorageType storage = STORAGE_UNOWNED_MEMORY;
-  if (!IsValidConfig(format, storage, coded_size, visible_rect, natural_size)) {
-    DLOG(ERROR) << __func__ << " Invalid config."
-                << ConfigToString(format, storage, coded_size, visible_rect,
-                                  natural_size);
-    return nullptr;
-  }
-
   const size_t height = coded_size.height();
   auto layout = VideoFrameLayout::CreateWithStrides(
       format, coded_size, {y_stride, u_stride, v_stride},
@@ -405,8 +411,36 @@ scoped_refptr<VideoFrame> VideoFrame::WrapExternalYuvData(
     return nullptr;
   }
 
+  return WrapExternalYuvDataWithLayout(*layout, visible_rect, natural_size,
+                                       y_data, u_data, v_data, timestamp);
+}
+
+// static
+scoped_refptr<VideoFrame> VideoFrame::WrapExternalYuvDataWithLayout(
+    const VideoFrameLayout& layout,
+    const gfx::Rect& visible_rect,
+    const gfx::Size& natural_size,
+    uint8_t* y_data,
+    uint8_t* u_data,
+    uint8_t* v_data,
+    base::TimeDelta timestamp) {
+  const StorageType storage = STORAGE_UNOWNED_MEMORY;
+  const VideoPixelFormat format = layout.format();
+  if (!IsValidConfig(format, storage, layout.coded_size(), visible_rect,
+                     natural_size)) {
+    DLOG(ERROR) << __func__ << " Invalid config."
+                << ConfigToString(format, storage, layout.coded_size(),
+                                  visible_rect, natural_size);
+    return nullptr;
+  }
+  if (!IsYuvPlanar(format)) {
+    DLOG(ERROR) << __func__ << " Format is not YUV. " << format;
+    return nullptr;
+  }
+
+  DCHECK_LE(NumPlanes(format), 3u);
   scoped_refptr<VideoFrame> frame(
-      new VideoFrame(*layout, storage, visible_rect, natural_size, timestamp));
+      new VideoFrame(layout, storage, visible_rect, natural_size, timestamp));
   frame->data_[kYPlane] = y_data;
   frame->data_[kUPlane] = u_data;
   frame->data_[kVPlane] = v_data;
@@ -554,48 +588,48 @@ scoped_refptr<VideoFrame> VideoFrame::WrapCVPixelBuffer(
 
 // static
 scoped_refptr<VideoFrame> VideoFrame::WrapVideoFrame(
-    const scoped_refptr<VideoFrame>& frame,
+    const VideoFrame& frame,
     VideoPixelFormat format,
     const gfx::Rect& visible_rect,
     const gfx::Size& natural_size) {
   // Frames with textures need mailbox info propagated, and there's no support
   // for that here yet, see http://crbug/362521.
-  CHECK(!frame->HasTextures());
-  DCHECK(frame->visible_rect().Contains(visible_rect));
+  CHECK(!frame.HasTextures());
+  DCHECK(frame.visible_rect().Contains(visible_rect));
 
-  if (!AreValidPixelFormatsForWrap(frame->format(), format)) {
+  if (!AreValidPixelFormatsForWrap(frame.format(), format)) {
     DLOG(ERROR) << __func__ << " Invalid format conversion."
-                << VideoPixelFormatToString(frame->format()) << " to "
+                << VideoPixelFormatToString(frame.format()) << " to "
                 << VideoPixelFormatToString(format);
     return nullptr;
   }
 
-  if (!IsValidConfig(format, frame->storage_type(), frame->coded_size(),
+  if (!IsValidConfig(format, frame.storage_type(), frame.coded_size(),
                      visible_rect, natural_size)) {
     DLOG(ERROR) << __func__ << " Invalid config."
-                << ConfigToString(format, frame->storage_type(),
-                                  frame->coded_size(), visible_rect,
+                << ConfigToString(format, frame.storage_type(),
+                                  frame.coded_size(), visible_rect,
                                   natural_size);
     return nullptr;
   }
 
   scoped_refptr<VideoFrame> wrapping_frame(
-      new VideoFrame(frame->layout(), frame->storage_type(), visible_rect,
-                     natural_size, frame->timestamp()));
+      new VideoFrame(frame.layout(), frame.storage_type(), visible_rect,
+                     natural_size, frame.timestamp()));
 
   // Copy all metadata to the wrapped frame.
-  wrapping_frame->metadata()->MergeMetadataFrom(frame->metadata());
+  wrapping_frame->metadata()->MergeMetadataFrom(frame.metadata());
 
-  if (frame->IsMappable()) {
+  if (frame.IsMappable()) {
     for (size_t i = 0; i < NumPlanes(format); ++i) {
-      wrapping_frame->data_[i] = frame->data(i);
+      wrapping_frame->data_[i] = frame.data_[i];
     }
   }
 
 #if defined(OS_LINUX)
   // If there are any |dmabuf_fds_| plugged in, we should duplicate them.
-  if (frame->storage_type() == STORAGE_DMABUFS) {
-    wrapping_frame->dmabuf_fds_ = DuplicateFDs(frame->dmabuf_fds_);
+  if (frame.storage_type() == STORAGE_DMABUFS) {
+    wrapping_frame->dmabuf_fds_ = DuplicateFDs(frame.dmabuf_fds_);
     if (wrapping_frame->dmabuf_fds_.empty()) {
       DLOG(ERROR) << __func__ << " Couldn't duplicate fds.";
       return nullptr;
@@ -603,18 +637,18 @@ scoped_refptr<VideoFrame> VideoFrame::WrapVideoFrame(
   }
 #endif
 
-  if (frame->storage_type() == STORAGE_SHMEM) {
-    if (frame->read_only_shared_memory_region_) {
-      DCHECK(frame->read_only_shared_memory_region_->IsValid());
+  if (frame.storage_type() == STORAGE_SHMEM) {
+    if (frame.read_only_shared_memory_region_) {
+      DCHECK(frame.read_only_shared_memory_region_->IsValid());
       wrapping_frame->AddReadOnlySharedMemoryRegion(
-          frame->read_only_shared_memory_region_);
-    } else if (frame->unsafe_shared_memory_region_) {
-      DCHECK(frame->unsafe_shared_memory_region_->IsValid());
+          frame.read_only_shared_memory_region_);
+    } else if (frame.unsafe_shared_memory_region_) {
+      DCHECK(frame.unsafe_shared_memory_region_->IsValid());
       wrapping_frame->AddUnsafeSharedMemoryRegion(
-          frame->unsafe_shared_memory_region_);
+          frame.unsafe_shared_memory_region_);
     } else {
-      DCHECK(frame->shared_memory_handle_.IsValid());
-      wrapping_frame->AddSharedMemoryHandle(frame->shared_memory_handle_);
+      DCHECK(frame.shared_memory_handle_.IsValid());
+      wrapping_frame->AddSharedMemoryHandle(frame.shared_memory_handle_);
     }
   }
 
@@ -808,15 +842,14 @@ size_t VideoFrame::Columns(size_t plane, VideoPixelFormat format, int width) {
 
 // static
 void VideoFrame::HashFrameForTesting(base::MD5Context* context,
-                                     const scoped_refptr<VideoFrame>& frame) {
+                                     const VideoFrame& frame) {
   DCHECK(context);
-  for (size_t plane = 0; plane < NumPlanes(frame->format()); ++plane) {
-    for (int row = 0; row < frame->rows(plane); ++row) {
-      base::MD5Update(
-          context,
-          base::StringPiece(reinterpret_cast<char*>(frame->data(plane) +
-                                                    frame->stride(plane) * row),
-                            frame->row_bytes(plane)));
+  for (size_t plane = 0; plane < NumPlanes(frame.format()); ++plane) {
+    for (int row = 0; row < frame.rows(plane); ++row) {
+      base::MD5Update(context, base::StringPiece(reinterpret_cast<const char*>(
+                                                     frame.data(plane) +
+                                                     frame.stride(plane) * row),
+                                                 frame.row_bytes(plane)));
     }
   }
 }
@@ -985,7 +1018,7 @@ gpu::SyncToken VideoFrame::UpdateReleaseSyncToken(SyncTokenClient* client) {
 }
 
 std::string VideoFrame::AsHumanReadableString() {
-  if (metadata()->IsTrue(media::VideoFrameMetadata::END_OF_STREAM))
+  if (metadata()->IsTrue(VideoFrameMetadata::END_OF_STREAM))
     return "end of stream";
 
   std::ostringstream s;
@@ -996,7 +1029,7 @@ std::string VideoFrame::AsHumanReadableString() {
 }
 
 size_t VideoFrame::BitDepth() const {
-  return ::media::BitDepth(format());
+  return media::BitDepth(format());
 }
 
 // static

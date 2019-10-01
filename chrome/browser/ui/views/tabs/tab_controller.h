@@ -12,6 +12,8 @@
 
 class SkPath;
 class Tab;
+class TabGroupData;
+class TabGroupId;
 
 namespace gfx {
 class Point;
@@ -34,19 +36,14 @@ class TabController {
   // Returns true if multiple selection is supported.
   virtual bool SupportsMultipleSelection() = 0;
 
-  // Returns where the new tab button should be placed. This is needed to
-  // determine which tab separators need to be faded in/out while animating into
-  // position.
-  virtual NewTabButtonPosition GetNewTabButtonPosition() const = 0;
-
   // Returns true if the close button for the given tab is forced to be hidden.
   virtual bool ShouldHideCloseButtonForTab(Tab* tab) const = 0;
 
   // Returns true if ShouldPaintTab() could return a non-empty clip path.
   virtual bool MaySetClip() = 0;
 
-  // Selects the tab.
-  virtual void SelectTab(Tab* tab) = 0;
+  // Selects the tab. |event| is the event that causes |tab| to be selected.
+  virtual void SelectTab(Tab* tab, const ui::Event& event) = 0;
 
   // Extends the selection from the anchor to |tab|.
   virtual void ExtendSelectionTo(Tab* tab) = 0;
@@ -79,9 +76,8 @@ class TabController {
   virtual bool IsFirstVisibleTab(const Tab* tab) const = 0;
   virtual bool IsLastVisibleTab(const Tab* tab) const = 0;
 
-  // Returns whether the strip is painting in single-tab mode.  This is true in
-  // a subset of the cases where ther is exactly one tab.
-  virtual bool SingleTabMode() const = 0;
+  // Returns true if any tab or one of its children has focus.
+  virtual bool IsFocusInTabs() const = 0;
 
   // Potentially starts a drag for the specified Tab.
   virtual void MaybeStartDrag(
@@ -111,6 +107,9 @@ class TabController {
   // Updates hover-card content, anchoring and visibility based on what tab is
   // hovered and whether the card should be shown.
   virtual void UpdateHoverCard(Tab* tab, bool should_show) = 0;
+
+  // Returns true if the hover card is showing for the given tab.
+  virtual bool HoverCardIsShowingForTab(Tab* tab) = 0;
 
   // Returns whether |tab| needs to be painted. When this returns true, |clip|
   // is set to the path which should be clipped out of the current tab's region
@@ -177,6 +176,9 @@ class TabController {
 
   // Returns opacity for use on tab hover radial highlight.
   virtual float GetHoverOpacityForRadialHighlight() const = 0;
+
+  // Returns the TabGroupData instance for the given |group|.
+  virtual const TabGroupData* GetDataForGroup(TabGroupId group) const = 0;
 
  protected:
   virtual ~TabController() {}

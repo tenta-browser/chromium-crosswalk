@@ -5,6 +5,7 @@
 package org.chromium.chrome.browser.omnibox.suggestions.basic;
 
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.text.Spannable;
 import android.text.SpannableString;
 import android.text.TextUtils;
@@ -14,17 +15,21 @@ import android.util.TypedValue;
 import android.view.View;
 
 import org.chromium.base.ApiCompatibilityUtils;
+import org.chromium.base.VisibleForTesting;
+import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeFeatureList;
+import org.chromium.chrome.browser.favicon.LargeIconBridge;
 import org.chromium.chrome.browser.omnibox.MatchClassificationStyle;
 import org.chromium.chrome.browser.omnibox.OmniboxSuggestionType;
 import org.chromium.chrome.browser.omnibox.UrlBarEditingTextStateProvider;
-import org.chromium.chrome.browser.omnibox.suggestions.AutocompleteCoordinator.SuggestionProcessor;
 import org.chromium.chrome.browser.omnibox.suggestions.OmniboxSuggestion;
 import org.chromium.chrome.browser.omnibox.suggestions.OmniboxSuggestionUiType;
 import org.chromium.chrome.browser.omnibox.suggestions.SuggestionCommonProperties;
+import org.chromium.chrome.browser.omnibox.suggestions.SuggestionProcessor;
 import org.chromium.chrome.browser.omnibox.suggestions.basic.SuggestionViewProperties.SuggestionIcon;
 import org.chromium.chrome.browser.omnibox.suggestions.basic.SuggestionViewProperties.SuggestionTextContainer;
+import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.ui.modelutil.PropertyModel;
 
 import java.util.ArrayList;
@@ -35,7 +40,10 @@ public class BasicSuggestionProcessor implements SuggestionProcessor {
     private final Context mContext;
     private final SuggestionHost mSuggestionHost;
     private final UrlBarEditingTextStateProvider mUrlBarEditingTextProvider;
+    private LargeIconBridge mLargeIconBridge;
     private boolean mEnableNewAnswerLayout;
+    private boolean mEnableSuggestionFavicons;
+    private final int mDesiredFaviconWidthPx;
 
     /**
      * @param context An Android context.
@@ -45,6 +53,8 @@ public class BasicSuggestionProcessor implements SuggestionProcessor {
     public BasicSuggestionProcessor(Context context, SuggestionHost suggestionHost,
             UrlBarEditingTextStateProvider editingTextProvider) {
         mContext = context;
+        mDesiredFaviconWidthPx = mContext.getResources().getDimensionPixelSize(
+                R.dimen.omnibox_suggestion_favicon_size);
         mSuggestionHost = suggestionHost;
         mUrlBarEditingTextProvider = editingTextProvider;
     }
@@ -66,8 +76,6 @@ public class BasicSuggestionProcessor implements SuggestionProcessor {
 
     @Override
     public void populateModel(OmniboxSuggestion suggestion, PropertyModel model, int position) {
-        model.set(SuggestionViewProperties.SUGGESTION_ICON_TYPE,
-                SuggestionViewProperties.SuggestionIcon.UNDEFINED);
         model.set(SuggestionViewProperties.DELEGATE,
                 mSuggestionHost.createSuggestionViewDelegate(suggestion, position));
 
@@ -77,6 +85,20 @@ public class BasicSuggestionProcessor implements SuggestionProcessor {
     @Override
     public void onUrlFocusChange(boolean hasFocus) {}
 
+    @Override
+    public void recordSuggestionPresented(OmniboxSuggestion suggestion, PropertyModel model) {
+        RecordHistogram.recordEnumeratedHistogram("Omnibox.IconOrFaviconShown",
+                model.get(SuggestionViewProperties.SUGGESTION_ICON_TYPE),
+                SuggestionIcon.TOTAL_COUNT);
+    }
+
+    @Override
+    public void recordSuggestionUsed(OmniboxSuggestion suggestion, PropertyModel model) {
+        RecordHistogram.recordEnumeratedHistogram("Omnibox.SuggestionUsed.IconOrFaviconType",
+                model.get(SuggestionViewProperties.SUGGESTION_ICON_TYPE),
+                SuggestionIcon.TOTAL_COUNT);
+    }
+
     /**
      * Signals that native initialization has completed.
      */
@@ -85,24 +107,66 @@ public class BasicSuggestionProcessor implements SuggestionProcessor {
         // Experiment: controls presence of certain answer icon types.
         mEnableNewAnswerLayout =
                 ChromeFeatureList.isEnabled(ChromeFeatureList.OMNIBOX_NEW_ANSWER_LAYOUT);
+        mEnableSuggestionFavicons =
+                ChromeFeatureList.isEnabled(ChromeFeatureList.OMNIBOX_SHOW_SUGGESTION_FAVICONS);
+    }
+
+    /**
+     * Updates the profile used for extracting website favicons.
+     * @param profile The profile to be used.
+     */
+    public void setProfile(Profile profile) {
+        if (mEnableSuggestionFavicons) {
+            mLargeIconBridge = new LargeIconBridge(profile);
+        }
+    }
+
+    /**
+     * Returns suggestion icon to be presented for specified omnibox suggestion.
+     *
+     * This method returns the stock icon type to be attached to the Suggestion.
+     * Note that the stock icons do not include Favicon - Favicon is only declared
+     * when we know we have a valid and large enough site favicon to present.
+     */
+    @VisibleForTesting
+    public @SuggestionIcon int getSuggestionIconType(OmniboxSuggestion suggestion) {
+        if (suggestion.isUrlSuggestion()) {
+            if (suggestion.isStarred()) {
+                return SuggestionIcon.BOOKMARK;
+            } else if (suggestion.getType() == OmniboxSuggestionType.HISTORY_URL) {
+                return mEnableSuggestionFavicons ? SuggestionIcon.GLOBE : SuggestionIcon.HISTORY;
+            } else {
+                return SuggestionIcon.GLOBE;
+            }
+        } else /* Search suggestion */ {
+            switch (suggestion.getType()) {
+                case OmniboxSuggestionType.VOICE_SUGGEST:
+                    return SuggestionIcon.VOICE;
+
+                case OmniboxSuggestionType.SEARCH_SUGGEST_PERSONALIZED:
+                case OmniboxSuggestionType.SEARCH_HISTORY:
+                    return mEnableSuggestionFavicons ? SuggestionIcon.MAGNIFIER
+                                                     : SuggestionIcon.HISTORY;
+
+                case OmniboxSuggestionType.CALCULATOR:
+                    return mEnableNewAnswerLayout ? SuggestionIcon.CALCULATOR
+                                                  : SuggestionIcon.MAGNIFIER;
+
+                default:
+                    return SuggestionIcon.MAGNIFIER;
+            }
+        }
     }
 
     private void setStateForSuggestion(PropertyModel model, OmniboxSuggestion suggestion) {
         int suggestionType = suggestion.getType();
-        @SuggestionIcon
-        int suggestionIcon;
         Spannable textLine1;
 
         Spannable textLine2;
         int textLine2Color = 0;
         int textLine2Direction = View.TEXT_DIRECTION_INHERIT;
+
         if (suggestion.isUrlSuggestion()) {
-            suggestionIcon = SuggestionIcon.GLOBE;
-            if (suggestion.isStarred()) {
-                suggestionIcon = SuggestionIcon.BOOKMARK;
-            } else if (suggestionType == OmniboxSuggestionType.HISTORY_URL) {
-                suggestionIcon = SuggestionIcon.HISTORY;
-            }
             boolean urlHighlighted = false;
             if (!TextUtils.isEmpty(suggestion.getUrl())) {
                 Spannable str = SpannableString.valueOf(suggestion.getDisplayText());
@@ -119,24 +183,17 @@ public class BasicSuggestionProcessor implements SuggestionProcessor {
             }
             textLine1 = getSuggestedQuery(suggestion, true, !urlHighlighted);
         } else {
-            suggestionIcon = SuggestionIcon.MAGNIFIER;
-            if (suggestionType == OmniboxSuggestionType.VOICE_SUGGEST) {
-                suggestionIcon = SuggestionIcon.VOICE;
-            } else if ((suggestionType == OmniboxSuggestionType.SEARCH_SUGGEST_PERSONALIZED)
-                    || (suggestionType == OmniboxSuggestionType.SEARCH_HISTORY)) {
-                // Show history icon for suggestions based on user queries.
-                suggestionIcon = SuggestionIcon.HISTORY;
-            }
             textLine1 = getSuggestedQuery(suggestion, false, true);
             if ((suggestionType == OmniboxSuggestionType.SEARCH_SUGGEST_ENTITY)
                     || (suggestionType == OmniboxSuggestionType.SEARCH_SUGGEST_PROFILE)) {
                 textLine2 = SpannableString.valueOf(suggestion.getDescription());
-                textLine2Color = SuggestionViewViewBinder.getStandardFontColor(
-                        mContext, model.get(SuggestionCommonProperties.USE_DARK_COLORS));
+                textLine2Color = ApiCompatibilityUtils.getColor(mContext.getResources(),
+                        model.get(SuggestionCommonProperties.USE_DARK_COLORS)
+                                ? R.color.default_text_color_dark
+                                : R.color.default_text_color_light);
                 textLine2Direction = View.TEXT_DIRECTION_INHERIT;
             } else if (mEnableNewAnswerLayout
                     && suggestionType == OmniboxSuggestionType.CALCULATOR) {
-                suggestionIcon = SuggestionIcon.CALCULATOR;
                 textLine2 = SpannableString.valueOf(
                         mUrlBarEditingTextProvider.getTextWithAutocomplete());
 
@@ -148,6 +205,9 @@ public class BasicSuggestionProcessor implements SuggestionProcessor {
             }
         }
 
+        model.set(SuggestionViewProperties.SUGGESTION_ICON_TYPE, getSuggestionIconType(suggestion));
+        model.set(SuggestionViewProperties.SUGGESTION_ICON_BITMAP, null);
+
         model.set(SuggestionViewProperties.IS_ANSWER, false);
         model.set(SuggestionViewProperties.HAS_ANSWER_IMAGE, false);
         model.set(SuggestionViewProperties.ANSWER_IMAGE, null);
@@ -156,7 +216,7 @@ public class BasicSuggestionProcessor implements SuggestionProcessor {
                 SuggestionViewProperties.TEXT_LINE_1_TEXT, new SuggestionTextContainer(textLine1));
         model.set(SuggestionViewProperties.TEXT_LINE_1_SIZING,
                 Pair.create(TypedValue.COMPLEX_UNIT_PX,
-                        mContext.getResources().getDimension(
+                        (int) mContext.getResources().getDimension(
                                 org.chromium.chrome.R.dimen
                                         .omnibox_suggestion_first_line_text_size)));
 
@@ -166,18 +226,32 @@ public class BasicSuggestionProcessor implements SuggestionProcessor {
         model.set(SuggestionViewProperties.TEXT_LINE_2_TEXT_DIRECTION, textLine2Direction);
         model.set(SuggestionViewProperties.TEXT_LINE_2_SIZING,
                 Pair.create(TypedValue.COMPLEX_UNIT_PX,
-                        mContext.getResources().getDimension(
+                        (int) mContext.getResources().getDimension(
                                 org.chromium.chrome.R.dimen
                                         .omnibox_suggestion_second_line_text_size)));
         model.set(SuggestionViewProperties.TEXT_LINE_1_MAX_LINES, 1);
         model.set(SuggestionViewProperties.TEXT_LINE_2_MAX_LINES, 1);
+
+        // Include site favicon if we are presenting URL and have favicon available.
+        if (mLargeIconBridge != null && suggestion.getUrl() != null) {
+            mLargeIconBridge.getLargeIconForUrl(suggestion.getUrl(), mDesiredFaviconWidthPx,
+                    (Bitmap icon, int fallbackColor, boolean isFallbackColorDefault,
+                            int iconType) -> {
+                        if (!mSuggestionHost.isActiveModel(model)) return;
+                        if (icon != null) {
+                            model.set(SuggestionViewProperties.SUGGESTION_ICON_BITMAP, icon);
+                            model.set(SuggestionViewProperties.SUGGESTION_ICON_TYPE,
+                                    SuggestionIcon.FAVICON);
+                            mSuggestionHost.notifyPropertyModelsChanged();
+                        }
+                    });
+        }
 
         boolean sameAsTyped =
                 mUrlBarEditingTextProvider.getTextWithoutAutocomplete().trim().equalsIgnoreCase(
                         suggestion.getDisplayText());
         model.set(SuggestionViewProperties.REFINABLE, !sameAsTyped);
 
-        model.set(SuggestionViewProperties.SUGGESTION_ICON_TYPE, suggestionIcon);
     }
 
     /**

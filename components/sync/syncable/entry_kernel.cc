@@ -9,7 +9,7 @@
 #include "base/json/string_escape.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/trace_event/memory_usage_estimator.h"
-#include "components/sync/base/cryptographer.h"
+#include "components/sync/nigori/cryptographer.h"
 #include "components/sync/protocol/proto_memory_estimations.h"
 #include "components/sync/protocol/proto_value_conversions.h"
 #include "components/sync/syncable/syncable_columns.h"
@@ -122,7 +122,7 @@ void SetEncryptableProtoValues(const EntryKernel& kernel,
 // Helper functions for SetFieldValues().
 
 std::unique_ptr<base::Value> Int64ToValue(int64_t i) {
-  return std::make_unique<base::Value>(base::Int64ToString(i));
+  return std::make_unique<base::Value>(base::NumberToString(i));
 }
 
 std::unique_ptr<base::Value> TimeToValue(const base::Time& t) {

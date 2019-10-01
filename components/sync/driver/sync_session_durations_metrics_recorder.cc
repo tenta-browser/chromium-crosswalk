@@ -130,13 +130,13 @@ void SyncSessionDurationsMetricsRecorder::OnStateChanged(SyncService* sync) {
 }
 
 void SyncSessionDurationsMetricsRecorder::OnRefreshTokenUpdatedForAccount(
-    const AccountInfo& account_info) {
+    const CoreAccountInfo& account_info) {
   DVLOG(1) << __func__;
   HandleSyncAndAccountChange();
 }
 
 void SyncSessionDurationsMetricsRecorder::OnRefreshTokenRemovedForAccount(
-    const std::string& account_id) {
+    const CoreAccountId& account_id) {
   DVLOG(1) << __func__;
   HandleSyncAndAccountChange();
 }
@@ -148,7 +148,7 @@ void SyncSessionDurationsMetricsRecorder::OnRefreshTokensLoaded() {
 
 void SyncSessionDurationsMetricsRecorder::
     OnErrorStateOfRefreshTokenUpdatedForAccount(
-        const AccountInfo& account_info,
+        const CoreAccountInfo& account_info,
         const GoogleServiceAuthError& error) {
   DVLOG(1) << __func__;
   HandleSyncAndAccountChange();
@@ -188,7 +188,7 @@ void SyncSessionDurationsMetricsRecorder::HandleSyncAndAccountChange() {
     // Sync is enabled, but we have an account issue.
     UpdateSyncAndAccountStatus(FeatureState::ON, FeatureState::OFF);
   } else if (sync_service_->IsSyncFeatureActive() &&
-             sync_service_->GetLastCycleSnapshot().is_initialized()) {
+             sync_service_->HasCompletedSyncCycle()) {
     // Sync is on and running, we must have an account too.
     UpdateSyncAndAccountStatus(FeatureState::ON, FeatureState::ON);
   } else {

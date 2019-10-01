@@ -6,6 +6,7 @@
 #define COMPONENTS_VIZ_SERVICE_DISPLAY_SURFACE_AGGREGATOR_H_
 
 #include <memory>
+#include <string>
 #include <unordered_map>
 
 #include "base/containers/flat_map.h"
@@ -19,6 +20,7 @@
 #include "components/viz/common/surfaces/surface_range.h"
 #include "components/viz/service/viz_service_export.h"
 #include "ui/gfx/color_space.h"
+#include "ui/gfx/overlay_transform.h"
 
 namespace viz {
 class CompositorFrame;
@@ -35,11 +37,13 @@ class VIZ_SERVICE_EXPORT SurfaceAggregator {
 
   SurfaceAggregator(SurfaceManager* manager,
                     DisplayResourceProvider* provider,
-                    bool aggregate_only_damaged);
+                    bool aggregate_only_damaged,
+                    bool needs_surface_occluding_damage_rect);
   ~SurfaceAggregator();
 
   CompositorFrame Aggregate(const SurfaceId& surface_id,
                             base::TimeTicks expected_display_time,
+                            gfx::OverlayTransform display_transform,
                             int64_t display_trace_id = -1);
   void ReleaseResources(const SurfaceId& surface_id);
   const SurfaceIndexMap& previous_contained_surfaces() const {
@@ -64,6 +68,8 @@ class VIZ_SERVICE_EXPORT SurfaceAggregator {
     ClipData(bool is_clipped, const gfx::Rect& rect)
         : is_clipped(is_clipped), rect(rect) {}
 
+    std::string ToString() const;
+
     bool is_clipped;
     gfx::Rect rect;
   };
@@ -84,6 +90,20 @@ class VIZ_SERVICE_EXPORT SurfaceAggregator {
     bool in_use = true;
   };
 
+  struct RoundedCornerInfo {
+    RoundedCornerInfo() : is_fast_rounded_corner(false) {}
+    // |target_transform| is the transform that maps |bounds| from its current
+    // space into the desired target space. It must be a scale+translation
+    // matrix.
+    RoundedCornerInfo(const gfx::RRectF& bounds,
+                      bool is_fast_rounded_corner,
+                      const gfx::Transform target_transform);
+
+    bool IsEmpty() const { return bounds.IsEmpty(); }
+    gfx::RRectF bounds;
+    bool is_fast_rounded_corner;
+  };
+
   ClipData CalculateClipRect(const ClipData& surface_clip,
                              const ClipData& quad_clip,
                              const gfx::Transform& target_transform);
@@ -98,7 +118,8 @@ class VIZ_SERVICE_EXPORT SurfaceAggregator {
                          RenderPass* dest_pass,
                          bool ignore_undamaged,
                          gfx::Rect* damage_rect_in_quad_space,
-                         bool* damage_rect_in_quad_space_valid);
+                         bool* damage_rect_in_quad_space_valid,
+                         const RoundedCornerInfo& rounded_corner_info);
 
   void EmitSurfaceContent(Surface* surface,
                           float parent_device_scale_factor,
@@ -111,12 +132,16 @@ class VIZ_SERVICE_EXPORT SurfaceAggregator {
                           RenderPass* dest_pass,
                           bool ignore_undamaged,
                           gfx::Rect* damage_rect_in_quad_space,
-                          bool* damage_rect_in_quad_space_valid);
+                          bool* damage_rect_in_quad_space_valid,
+                          const RoundedCornerInfo& rounded_corner_info,
+                          bool is_reflection);
 
-  void EmitDefaultBackgroundColorQuad(const SurfaceDrawQuad* surface_quad,
-                                      const gfx::Transform& target_transform,
-                                      const ClipData& clip_rect,
-                                      RenderPass* dest_pass);
+  void EmitDefaultBackgroundColorQuad(
+      const SurfaceDrawQuad* surface_quad,
+      const gfx::Transform& target_transform,
+      const ClipData& clip_rect,
+      RenderPass* dest_pass,
+      const RoundedCornerInfo& rounded_corner_info);
 
   void EmitGutterQuadsIfNecessary(
       const gfx::Rect& primary_rect,
@@ -125,12 +150,17 @@ class VIZ_SERVICE_EXPORT SurfaceAggregator {
       const gfx::Transform& target_transform,
       const ClipData& clip_rect,
       SkColor background_color,
-      RenderPass* dest_pass);
+      RenderPass* dest_pass,
+      const RoundedCornerInfo& rounded_corner_info);
 
-  SharedQuadState* CopySharedQuadState(const SharedQuadState* source_sqs,
-                                       const gfx::Transform& target_transform,
-                                       const ClipData& clip_rect,
-                                       RenderPass* dest_render_pass);
+  SharedQuadState* CopySharedQuadState(
+      const SharedQuadState* source_sqs,
+      const gfx::Transform& target_transform,
+      const ClipData& clip_rect,
+      RenderPass* dest_render_pass,
+      const RoundedCornerInfo& rounded_corner_info,
+      const gfx::Rect& occluding_damage_rect,
+      bool occluding_damage_rect_valid);
 
   SharedQuadState* CopyAndScaleSharedQuadState(
       const SharedQuadState* source_sqs,
@@ -139,7 +169,10 @@ class VIZ_SERVICE_EXPORT SurfaceAggregator {
       const gfx::Rect& quad_layer_rect,
       const gfx::Rect& visible_quad_layer_rect,
       const ClipData& clip_rect,
-      RenderPass* dest_render_pass);
+      RenderPass* dest_render_pass,
+      const RoundedCornerInfo& rounded_corner_info,
+      const gfx::Rect& occluding_damage_rect,
+      bool occluding_damage_rect_valid);
 
   void CopyQuadsToPass(
       const QuadList& source_quad_list,
@@ -149,7 +182,11 @@ class VIZ_SERVICE_EXPORT SurfaceAggregator {
       const gfx::Transform& target_transform,
       const ClipData& clip_rect,
       RenderPass* dest_pass,
-      const SurfaceId& surface_id);
+      const SurfaceId& surface_id,
+      const RoundedCornerInfo& rounded_corner_info,
+      const gfx::Rect& occluding_damage_rect,
+      bool occluding_damage_rect_valid);
+
   gfx::Rect PrewalkTree(Surface* surface,
                         bool in_moved_pixel_surface,
                         int parent_pass,
@@ -158,6 +195,7 @@ class VIZ_SERVICE_EXPORT SurfaceAggregator {
   void CopyUndrawnSurfaces(PrewalkResult* prewalk);
   void CopyPasses(const CompositorFrame& frame, Surface* surface);
   void AddColorConversionPass();
+  void AddDisplayTransformPass();
 
   // Remove Surfaces that were referenced before but aren't currently
   // referenced from the ResourceProvider.
@@ -167,10 +205,29 @@ class VIZ_SERVICE_EXPORT SurfaceAggregator {
 
   void PropagateCopyRequestPasses();
 
+  // Returns true if the quad list from the render pass provided can be merged
+  // with its target render pass based on rounded corners.
+  bool CanMergeRoundedCorner(const RoundedCornerInfo& rounded_corner_info,
+                             const RenderPass& root_render_pass);
+
   int ChildIdForSurface(Surface* surface);
+  bool IsSurfaceFrameIndexSameAsPrevious(const Surface* surface) const;
   gfx::Rect DamageRectForSurface(const Surface* surface,
                                  const RenderPass& source,
                                  const gfx::Rect& full_rect) const;
+  gfx::Rect CalculateOccludingSurfaceDamageRect(
+      const DrawQuad* quad,
+      const gfx::Transform& parent_quad_to_root_target_transform);
+  void UnionSurfaceDamageRectsOnTop(const gfx::Rect& surface_rect,
+                                    const gfx::Transform& target_transform,
+                                    const RenderPass* pass);
+  bool ProcessSurfaceOccludingDamage(const Surface* surface,
+                                     const RenderPassList& render_pass_list,
+                                     const gfx::Transform& target_transform,
+                                     const RenderPass* dest_pass,
+                                     gfx::Rect* occluding_damage_rect);
+  bool RenderPassNeedsFullDamage(const RenderPass* pass) const;
+  bool IsRootSurface(const Surface* surface) const;
 
   static void UnrefResources(base::WeakPtr<SurfaceClient> surface_client,
                              const std::vector<ReturnedResource>& resources);
@@ -197,6 +254,8 @@ class VIZ_SERVICE_EXPORT SurfaceAggregator {
   gfx::ColorSpace blending_color_space_ = gfx::ColorSpace::CreateSRGB();
   // The id for the final color conversion render pass.
   RenderPassId color_conversion_render_pass_id_ = 0;
+  // The id for the optional render pass used to apply the display transform.
+  RenderPassId display_transform_render_pass_id_ = 0;
 
   base::flat_map<SurfaceId, int> surface_id_to_resource_child_id_;
 
@@ -207,6 +266,9 @@ class VIZ_SERVICE_EXPORT SurfaceAggregator {
   // This is the set of surfaces referenced in the aggregation so far, used to
   // detect cycles.
   base::flat_set<SurfaceId> referenced_surfaces_;
+
+  SurfaceId root_surface_id_;
+  gfx::Transform root_surface_transform_;
 
   // For each Surface used in the last aggregation, gives the frame_index at
   // that time.
@@ -243,6 +305,13 @@ class VIZ_SERVICE_EXPORT SurfaceAggregator {
 
   // The root damage rect of the currently-aggregating frame.
   gfx::Rect root_damage_rect_;
+
+  // Occluding damage rect will be calculated for qualified candidates
+  const bool needs_surface_occluding_damage_rect_;
+
+  // This is the union of the damage rects of all surface on top
+  // of the current surface.
+  gfx::Rect damage_rects_union_of_surfaces_on_top_;
 
   // True if the frame that's currently being aggregated has copy requests.
   // This is valid during Aggregate after PrewalkTree is called.

@@ -18,11 +18,9 @@
 #include "net/url_request/url_request_job_factory.h"
 
 class PrefService;
-class PrefRegistrySimple;
 
 namespace net {
 class FileNetLogObserver;
-class HostResolver;
 class HttpAuthHandlerFactory;
 class HttpAuthPreferences;
 class HttpUserAgentSettings;
@@ -39,13 +37,11 @@ class AwURLRequestContextGetter : public net::URLRequestContextGetter {
  public:
   AwURLRequestContextGetter(
       const base::FilePath& cache_path,
-      const base::FilePath& channel_id_path,
       std::unique_ptr<net::ProxyConfigServiceAndroid> config_service,
       PrefService* pref_service,
       net::NetLog* net_log);
 
   static void set_check_cleartext_permitted(bool permitted);
-  static void RegisterPrefs(PrefRegistrySimple* registry);
 
   // net::URLRequestContextGetter implementation.
   net::URLRequestContext* GetURLRequestContext() override;
@@ -79,15 +75,13 @@ class AwURLRequestContextGetter : public net::URLRequestContextGetter {
 
   // This is called to create a HttpAuthHandlerFactory that will handle
   // auth challenges for the new URLRequestContext
-  std::unique_ptr<net::HttpAuthHandlerFactory> CreateAuthHandlerFactory(
-      net::HostResolver* resolver);
+  std::unique_ptr<net::HttpAuthHandlerFactory> CreateAuthHandlerFactory();
 
   // Update methods for the auth related preferences
   void UpdateServerWhitelist();
   void UpdateAndroidAuthNegotiateAccountType();
 
   const base::FilePath cache_path_;
-  const base::FilePath channel_id_path_;
 
   net::NetLog* net_log_;
   std::unique_ptr<net::ProxyConfigServiceAndroid> proxy_config_service_;

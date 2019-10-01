@@ -115,7 +115,7 @@ bool ScrollbarTest::IsScrollbarVisible(
   content::RunAllTasksUntilIdle();
 
   // Check if the vertical scrollbar is visible.
-  return dialog->scroll_view()->vertical_scroll_bar()->visible();
+  return dialog->scroll_view()->vertical_scroll_bar()->GetVisible();
 }
 
 // Tests that a scrollbar _is_ shown for an excessively long extension
@@ -217,7 +217,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionInstallDialogViewTest, InstallButtonDelay) {
   views::DialogDelegateView* delegate_view = CreateAndShowPrompt(&helper);
 
   // Check that dialog is visible.
-  EXPECT_TRUE(delegate_view->visible());
+  EXPECT_TRUE(delegate_view->GetVisible());
 
   // Check initial button states.
   EXPECT_FALSE(delegate_view->IsDialogButtonEnabled(ui::DIALOG_BUTTON_OK));
@@ -445,8 +445,7 @@ void ExtensionInstallDialogRatingsSectionTest::TestRatingsSectionA11y(
               node_data.GetStringAttribute(ax::mojom::StringAttribute::kName));
   }
 
-  for (int i = 0; i < rating_view->child_count(); ++i) {
-    views::View* child = rating_view->child_at(i);
+  for (views::View* child : rating_view->children()) {
     ui::AXNodeData node_data;
     child->GetAccessibleNodeData(&node_data);
     EXPECT_EQ(ax::mojom::Role::kIgnored, node_data.role);

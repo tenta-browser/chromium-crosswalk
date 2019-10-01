@@ -8,7 +8,6 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "net/base/net_errors.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "remoting/base/buffered_socket_writer.h"
@@ -51,7 +50,7 @@ void StreamMessagePipeAdapter::Start(EventHandler* event_handler) {
 }
 
 void StreamMessagePipeAdapter::Send(google::protobuf::MessageLite* message,
-                                    const base::Closure& done) {
+                                    base::OnceClosure done) {
   net::NetworkTrafficAnnotationTag traffic_annotation =
       net::DefineNetworkTrafficAnnotation("stream_message_pipe_adapter", R"(
         semantics {
@@ -78,7 +77,7 @@ void StreamMessagePipeAdapter::Send(google::protobuf::MessageLite* message,
             "approaches to manage this feature."
         })");
   if (writer_)
-    writer_->Write(SerializeAndFrameMessage(*message), done,
+    writer_->Write(SerializeAndFrameMessage(*message), std::move(done),
                    traffic_annotation);
 }
 
@@ -90,7 +89,7 @@ void StreamMessagePipeAdapter::CloseOnError(int error) {
   if (error == 0) {
     event_handler_->OnMessagePipeClosed();
   } else if (error_callback_) {
-    base::ResetAndReturn(&error_callback_).Run(error);
+    std::move(error_callback_).Run(error);
   }
 }
 

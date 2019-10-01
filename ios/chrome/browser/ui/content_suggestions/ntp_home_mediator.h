@@ -11,11 +11,16 @@
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_commands.h"
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_header_view_controller_delegate.h"
 
+namespace identity {
+class IdentityManager;
+}
+
 namespace ntp_snippets {
 class ContentSuggestionsService;
 }
 
 @protocol ApplicationCommands;
+class AuthenticationService;
 @protocol BrowserCommands;
 @class ContentSuggestionsHeaderSynchronizer;
 @class ContentSuggestionsMediator;
@@ -24,9 +29,10 @@ class ContentSuggestionsService;
 @protocol LogoVendor;
 @protocol NTPHomeConsumer;
 @class NTPHomeMetrics;
+@protocol OmniboxFocuser;
 class TemplateURLService;
 @protocol SnackbarCommands;
-@protocol UrlLoader;
+class UrlLoadingService;
 class WebStateList;
 
 // Mediator for the NTP Home panel, handling the interactions with the
@@ -37,16 +43,19 @@ class WebStateList;
                ContentSuggestionsHeaderViewControllerDelegate>
 
 - (nullable instancetype)
-initWithWebStateList:(nonnull WebStateList*)webStateList
-  templateURLService:(nonnull TemplateURLService*)templateURLService
-          logoVendor:(nonnull id<LogoVendor>)logoVendor
+    initWithWebStateList:(nonnull WebStateList*)webStateList
+      templateURLService:(nonnull TemplateURLService*)templateURLService
+       urlLoadingService:(nonnull UrlLoadingService*)urlLoadingService
+             authService:(nonnull AuthenticationService*)authService
+         identityManager:(nonnull identity::IdentityManager*)identityManager
+              logoVendor:(nonnull id<LogoVendor>)logoVendor
     NS_DESIGNATED_INITIALIZER;
 
 - (nullable instancetype)init NS_UNAVAILABLE;
 
 // Dispatcher.
 @property(nonatomic, weak, nullable)
-    id<ApplicationCommands, BrowserCommands, SnackbarCommands, UrlLoader>
+    id<ApplicationCommands, BrowserCommands, OmniboxFocuser, SnackbarCommands>
         dispatcher;
 // Suggestions service used to get the suggestions.
 @property(nonatomic, assign, nonnull)

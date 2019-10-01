@@ -53,11 +53,10 @@ class SuggestionListViewBinder {
         } else if (SuggestionListProperties.EMBEDDER.equals(propertyKey)) {
             view.listView.setEmbedder(model.get(SuggestionListProperties.EMBEDDER));
         } else if (SuggestionListProperties.SUGGESTION_MODELS.equals(propertyKey)) {
-            view.adapter.updateSuggestions(model.get(SuggestionListProperties.SUGGESTION_MODELS));
+            view.adapter.updateModels(model.get(SuggestionListProperties.SUGGESTION_MODELS));
             view.listView.setSelection(0);
-        } else if (SuggestionListProperties.USE_DARK_BACKGROUND.equals(propertyKey)) {
-            view.listView.refreshPopupBackground(
-                    model.get(SuggestionListProperties.USE_DARK_BACKGROUND));
+        } else if (SuggestionListProperties.IS_INCOGNITO.equals(propertyKey)) {
+            view.listView.refreshPopupBackground(model.get(SuggestionListProperties.IS_INCOGNITO));
         }
     }
 }

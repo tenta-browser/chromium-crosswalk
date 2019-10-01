@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/logging.h"
 #include "base/macros.h"
@@ -33,8 +34,12 @@
 #include "chrome/browser/page_load_metrics/page_load_metrics_test_waiter.h"
 #include "chrome/browser/page_load_metrics/page_load_tracker.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
+#include "chrome/browser/prerender/prerender_handle.h"
 #include "chrome/browser/prerender/prerender_histograms.h"
+#include "chrome/browser/prerender/prerender_manager.h"
+#include "chrome/browser/prerender/prerender_manager_factory.h"
 #include "chrome/browser/prerender/prerender_origin.h"
+#include "chrome/browser/prerender/prerender_test_utils.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/session_restore.h"
 #include "chrome/browser/sessions/session_restore_test_helper.h"
@@ -65,6 +70,7 @@
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/download_test_observer.h"
 #include "content/public/test/navigation_handle_observer.h"
+#include "content/public/test/test_navigation_observer.h"
 #include "net/base/net_errors.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/http/failing_http_transaction_factory.h"
@@ -80,14 +86,17 @@
 #include "services/network/public/cpp/features.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/use_counter/css_property_id.mojom.h"
-#include "third_party/blink/public/platform/web_feature.mojom.h"
+#include "third_party/blink/public/mojom/web_feature/web_feature.mojom.h"
+#include "ui/gfx/geometry/size.h"
 #include "url/gurl.h"
 
 using page_load_metrics::PageLoadMetricsTestWaiter;
 using TimingField = page_load_metrics::PageLoadMetricsTestWaiter::TimingField;
 using WebFeature = blink::mojom::WebFeature;
 using testing::UnorderedElementsAre;
+using NoStatePrefetch = ukm::builders::NoStatePrefetch;
 
 namespace {
 
@@ -119,7 +128,8 @@ std::unique_ptr<net::test_server::HttpResponse> HandleCachableRequestHandler(
 class PageLoadMetricsBrowserTest : public InProcessBrowserTest {
  public:
   PageLoadMetricsBrowserTest() {
-    scoped_feature_list_.InitAndEnableFeature(ukm::kUkmFeature);
+    scoped_feature_list_.InitWithFeatures(
+        {ukm::kUkmFeature, blink::features::kPortals}, {});
   }
 
   ~PageLoadMetricsBrowserTest() override {}
@@ -178,6 +188,41 @@ class PageLoadMetricsBrowserTest : public InProcessBrowserTest {
     content::WebContents* web_contents =
         browser()->tab_strip_model()->GetActiveWebContents();
     return std::make_unique<PageLoadMetricsTestWaiter>(web_contents);
+  }
+
+  // Triggers nostate prefetch of |url|.
+  void TriggerNoStatePrefetch(const GURL& url) {
+    prerender::PrerenderManager* prerender_manager =
+        prerender::PrerenderManagerFactory::GetForBrowserContext(
+            browser()->profile());
+    ASSERT_TRUE(prerender_manager);
+
+    prerender::test_utils::TestPrerenderContentsFactory*
+        prerender_contents_factory =
+            new prerender::test_utils::TestPrerenderContentsFactory();
+    prerender_manager->SetPrerenderContentsFactoryForTest(
+        prerender_contents_factory);
+
+    content::SessionStorageNamespace* storage_namespace =
+        browser()
+            ->tab_strip_model()
+            ->GetActiveWebContents()
+            ->GetController()
+            .GetDefaultSessionStorageNamespace();
+    ASSERT_TRUE(storage_namespace);
+
+    std::unique_ptr<prerender::test_utils::TestPrerender> test_prerender =
+        prerender_contents_factory->ExpectPrerenderContents(
+            prerender::FINAL_STATUS_NOSTATE_PREFETCH_FINISHED);
+
+    std::unique_ptr<prerender::PrerenderHandle> prerender_handle =
+        prerender_manager->AddPrerenderFromOmnibox(url, storage_namespace,
+                                                   gfx::Size(640, 480));
+    ASSERT_EQ(prerender_handle->contents(), test_prerender->contents());
+
+    // The final status may be either  FINAL_STATUS_NOSTATE_PREFETCH_FINISHED or
+    // FINAL_STATUS_RECENTLY_VISITED.
+    test_prerender->contents()->set_skip_final_checks(true);
   }
 
   base::test::ScopedFeatureList scoped_feature_list_;
@@ -256,6 +301,54 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest, NewPage) {
     EXPECT_TRUE(test_ukm_recorder_->EntryHasMetric(
         kv.second.get(),
         PageLoad::kMainFrameResource_NavigationStartToRequestStartName));
+    EXPECT_TRUE(test_ukm_recorder_->EntryHasMetric(
+        kv.second.get(), PageLoad::kMainFrameResource_HttpProtocolSchemeName));
+    EXPECT_TRUE(test_ukm_recorder_->EntryHasMetric(
+        kv.second.get(), PageLoad::kSiteEngagementScoreName));
+  }
+
+  const auto& nostate_prefetch_entries =
+      test_ukm_recorder_->GetMergedEntriesByName(NoStatePrefetch::kEntryName);
+  EXPECT_EQ(0u, nostate_prefetch_entries.size());
+
+  // Verify that NoPageLoadMetricsRecorded returns false when PageLoad metrics
+  // have been recorded.
+  EXPECT_FALSE(NoPageLoadMetricsRecorded());
+}
+
+// Triggers nostate prefetch, and verifies that the UKM metrics related to
+// nostate prefetch are recorded correctly.
+IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest, NoStatePrefetchMetrics) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+
+  GURL url = embedded_test_server()->GetURL("/title1.html");
+
+  TriggerNoStatePrefetch(url);
+
+  auto waiter = CreatePageLoadMetricsTestWaiter();
+  waiter->AddPageExpectation(TimingField::kFirstPaint);
+  ui_test_utils::NavigateToURL(browser(), url);
+  waiter->Wait();
+
+  // Force navigation to another page, which should force logging of histograms
+  // persisted at the end of the page load lifetime.
+  NavigateToUntrackedUrl();
+  histogram_tester_.ExpectTotalCount(internal::kHistogramPageLoadTotalBytes, 1);
+  histogram_tester_.ExpectTotalCount(
+      internal::kHistogramPageTimingForegroundDuration, 1);
+
+  const auto& entries =
+      test_ukm_recorder_->GetMergedEntriesByName(NoStatePrefetch::kEntryName);
+  EXPECT_EQ(1u, entries.size());
+  for (const auto& kv : entries) {
+    test_ukm_recorder_->ExpectEntrySourceHasUrl(kv.second.get(), url);
+    // UKM metrics related to attempted nostate prefetch should be recorded.
+    EXPECT_TRUE(test_ukm_recorder_->EntryHasMetric(
+        kv.second.get(), NoStatePrefetch::kPrefetchedRecently_FinalStatusName));
+    EXPECT_TRUE(test_ukm_recorder_->EntryHasMetric(
+        kv.second.get(), NoStatePrefetch::kPrefetchedRecently_OriginName));
+    EXPECT_TRUE(test_ukm_recorder_->EntryHasMetric(
+        kv.second.get(), NoStatePrefetch::kPrefetchedRecently_PrefetchAgeName));
   }
 
   // Verify that NoPageLoadMetricsRecorded returns false when PageLoad metrics
@@ -1033,12 +1126,6 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest,
       static_cast<int32_t>(WebFeature::kNavigatorVibrate), 1);
   histogram_tester_.ExpectBucketCount(
       internal::kFeaturesHistogramName,
-      static_cast<int32_t>(WebFeature::kDataUriHasOctothorpe), 1);
-  histogram_tester_.ExpectBucketCount(
-      internal::kFeaturesHistogramMainFrameName,
-      static_cast<int32_t>(WebFeature::kDataUriHasOctothorpe), 1);
-  histogram_tester_.ExpectBucketCount(
-      internal::kFeaturesHistogramName,
       static_cast<int32_t>(
           WebFeature::kApplicationCacheManifestSelectSecureOrigin),
       1);
@@ -1067,10 +1154,10 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest,
   waiter->Wait();
   NavigateToUntrackedUrl();
 
-  // CSSPropertyFontFamily
+  // CSSPropertyID::kFontFamily
   histogram_tester_.ExpectBucketCount(internal::kCssPropertiesHistogramName, 6,
                                       1);
-  // CSSPropertyFontSize
+  // CSSPropertyID::kFontSize
   histogram_tester_.ExpectBucketCount(internal::kCssPropertiesHistogramName, 7,
                                       1);
   histogram_tester_.ExpectBucketCount(
@@ -1090,10 +1177,10 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest,
   waiter->Wait();
   NavigateToUntrackedUrl();
 
-  // CSSPropertyWidth
+  // CSSPropertyID::kWidth
   histogram_tester_.ExpectBucketCount(
       internal::kAnimatedCssPropertiesHistogramName, 161, 1);
-  // CSSPropertyMarginLeft
+  // CSSPropertyID::kMarginLeft
   histogram_tester_.ExpectBucketCount(
       internal::kAnimatedCssPropertiesHistogramName, 91, 1);
   histogram_tester_.ExpectBucketCount(
@@ -1109,8 +1196,7 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest,
   // subresources. Therefore, this test loads the test file on a real HTTPS
   // server.
   net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
-  https_server.AddDefaultHandlers(
-      base::FilePath(FILE_PATH_LITERAL("chrome/test/data")));
+  https_server.AddDefaultHandlers(GetChromeTestDataDir());
   ASSERT_TRUE(https_server.Start());
 
   auto waiter = CreatePageLoadMetricsTestWaiter();
@@ -1143,8 +1229,7 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest,
   // subresources. Therefore, this test loads the test file on a real HTTPS
   // server.
   net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
-  https_server.AddDefaultHandlers(
-      base::FilePath(FILE_PATH_LITERAL("chrome/test/data")));
+  https_server.AddDefaultHandlers(GetChromeTestDataDir());
   ASSERT_TRUE(https_server.Start());
 
   auto waiter = CreatePageLoadMetricsTestWaiter();
@@ -1155,10 +1240,10 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest,
   waiter->Wait();
   NavigateToUntrackedUrl();
 
-  // CSSPropertyFontFamily
+  // CSSPropertyID::kFontFamily
   histogram_tester_.ExpectBucketCount(internal::kCssPropertiesHistogramName, 6,
                                       1);
-  // CSSPropertyFontSize
+  // CSSPropertyID::kFontSize
   histogram_tester_.ExpectBucketCount(internal::kCssPropertiesHistogramName, 7,
                                       1);
   histogram_tester_.ExpectBucketCount(
@@ -1174,8 +1259,7 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest,
   // subresources. Therefore, this test loads the test file on a real HTTPS
   // server.
   net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
-  https_server.AddDefaultHandlers(
-      base::FilePath(FILE_PATH_LITERAL("chrome/test/data")));
+  https_server.AddDefaultHandlers(GetChromeTestDataDir());
   ASSERT_TRUE(https_server.Start());
 
   auto waiter = CreatePageLoadMetricsTestWaiter();
@@ -1186,10 +1270,10 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest,
   waiter->Wait();
   NavigateToUntrackedUrl();
 
-  // CSSPropertyWidth
+  // CSSPropertyID::kWidth
   histogram_tester_.ExpectBucketCount(
       internal::kAnimatedCssPropertiesHistogramName, 161, 1);
-  // CSSPropertyMarginLeft
+  // CSSPropertyID::kMarginLeft
   histogram_tester_.ExpectBucketCount(
       internal::kAnimatedCssPropertiesHistogramName, 91, 1);
   histogram_tester_.ExpectBucketCount(
@@ -1231,12 +1315,6 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest,
       static_cast<int32_t>(WebFeature::kNavigatorVibrate), 1);
   histogram_tester_.ExpectBucketCount(
       internal::kFeaturesHistogramName,
-      static_cast<int32_t>(WebFeature::kDataUriHasOctothorpe), 1);
-  histogram_tester_.ExpectBucketCount(
-      internal::kFeaturesHistogramMainFrameName,
-      static_cast<int32_t>(WebFeature::kDataUriHasOctothorpe), 1);
-  histogram_tester_.ExpectBucketCount(
-      internal::kFeaturesHistogramName,
       static_cast<int32_t>(WebFeature::kPageVisits), 1);
   histogram_tester_.ExpectBucketCount(
       internal::kFeaturesHistogramMainFrameName,
@@ -1265,7 +1343,7 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest,
 
   const auto& entries = test_ukm_recorder_->GetEntriesByName(
       ukm::builders::Blink_UseCounter::kEntryName);
-  EXPECT_EQ(5u, entries.size());
+  EXPECT_EQ(4u, entries.size());
   std::vector<int64_t> ukm_features;
   for (const auto* entry : entries) {
     test_ukm_recorder_->ExpectEntrySourceHasUrl(entry, url);
@@ -1282,7 +1360,6 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest,
           static_cast<int64_t>(WebFeature::kPageVisits),
           static_cast<int64_t>(WebFeature::kFullscreenSecureOrigin),
           static_cast<int64_t>(WebFeature::kNavigatorVibrate),
-          static_cast<int64_t>(WebFeature::kDataUriHasOctothorpe),
           static_cast<int64_t>(
               WebFeature::kApplicationCacheManifestSelectSecureOrigin)));
 }
@@ -1293,8 +1370,7 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest,
   // As with UseCounterFeaturesMixedContent, load on a real HTTPS server to
   // trigger mixed content.
   net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
-  https_server.AddDefaultHandlers(
-      base::FilePath(FILE_PATH_LITERAL("chrome/test/data")));
+  https_server.AddDefaultHandlers(GetChromeTestDataDir());
   ASSERT_TRUE(https_server.Start());
 
   auto waiter = CreatePageLoadMetricsTestWaiter();
@@ -1308,7 +1384,7 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest,
 
   const auto& entries = test_ukm_recorder_->GetEntriesByName(
       ukm::builders::Blink_UseCounter::kEntryName);
-  EXPECT_EQ(8u, entries.size());
+  EXPECT_EQ(7u, entries.size());
   std::vector<int64_t> ukm_features;
   for (const auto* entry : entries) {
     test_ukm_recorder_->ExpectEntrySourceHasUrl(entry, url);
@@ -1324,7 +1400,6 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest,
                   static_cast<int64_t>(WebFeature::kPageVisits),
                   static_cast<int64_t>(WebFeature::kFullscreenSecureOrigin),
                   static_cast<int64_t>(WebFeature::kNavigatorVibrate),
-                  static_cast<int64_t>(WebFeature::kDataUriHasOctothorpe),
                   static_cast<int64_t>(
                       WebFeature::kApplicationCacheManifestSelectSecureOrigin),
                   static_cast<int64_t>(WebFeature::kMixedContentImage),
@@ -1428,10 +1503,10 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest,
   waiter->Wait();
   NavigateToUntrackedUrl();
 
-  // CSSPropertyFontFamily
+  // CSSPropertyID::kFontFamily
   histogram_tester_.ExpectBucketCount(internal::kCssPropertiesHistogramName, 6,
                                       1);
-  // CSSPropertyFontSize
+  // CSSPropertyID::kFontSize
   histogram_tester_.ExpectBucketCount(internal::kCssPropertiesHistogramName, 7,
                                       1);
   histogram_tester_.ExpectBucketCount(
@@ -1454,10 +1529,10 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest,
   waiter->Wait();
   NavigateToUntrackedUrl();
 
-  // CSSPropertyFontFamily
+  // CSSPropertyID::kFontFamily
   histogram_tester_.ExpectBucketCount(internal::kCssPropertiesHistogramName, 6,
                                       1);
-  // CSSPropertyFontSize
+  // CSSPropertyID::kFontSize
   histogram_tester_.ExpectBucketCount(internal::kCssPropertiesHistogramName, 7,
                                       1);
   histogram_tester_.ExpectBucketCount(
@@ -1479,10 +1554,10 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest,
   waiter->Wait();
   NavigateToUntrackedUrl();
 
-  // CSSPropertyWidth
+  // CSSPropertyID::kWidth
   histogram_tester_.ExpectBucketCount(
       internal::kAnimatedCssPropertiesHistogramName, 161, 1);
-  // CSSPropertyMarginLeft
+  // CSSPropertyID::kMarginLeft
   histogram_tester_.ExpectBucketCount(
       internal::kAnimatedCssPropertiesHistogramName, 91, 1);
   histogram_tester_.ExpectBucketCount(
@@ -1505,10 +1580,10 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest,
   waiter->Wait();
   NavigateToUntrackedUrl();
 
-  // CSSPropertyWidth
+  // CSSPropertyID::kWidth
   histogram_tester_.ExpectBucketCount(
       internal::kAnimatedCssPropertiesHistogramName, 161, 1);
-  // CSSPropertyMarginLeft
+  // CSSPropertyID::kMarginLeft
   histogram_tester_.ExpectBucketCount(
       internal::kAnimatedCssPropertiesHistogramName, 91, 1);
   histogram_tester_.ExpectBucketCount(
@@ -1805,7 +1880,7 @@ IN_PROC_BROWSER_TEST_F(SessionRestorePageLoadMetricsBrowserTest,
   ASSERT_TRUE(tab_strip);
   ASSERT_EQ(2, tab_strip->count());
   ASSERT_EQ(0, tab_strip->active_index());
-  tab_strip->ActivateTabAt(1, true);
+  tab_strip->ActivateTabAt(1, {TabStripModel::GestureType::kOther});
 
   session_restore_paint_waiter.WaitForForegroundTabs(1);
 
@@ -2161,4 +2236,118 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest,
   histogram_tester_.ExpectTotalCount(internal::kHistogramInputToFirstPaint, 1);
   histogram_tester_.ExpectTotalCount(
       internal::kHistogramInputToFirstContentfulPaint, 1);
+}
+
+IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest, FirstInputFromScroll) {
+  embedded_test_server()->ServeFilesFromSourceDirectory("content/test/data");
+  content::SetupCrossSiteRedirector(embedded_test_server());
+  ASSERT_TRUE(embedded_test_server()->Start());
+
+  auto waiter = CreatePageLoadMetricsTestWaiter();
+  waiter->AddPageExpectation(TimingField::kLoadEvent);
+  waiter->AddPageExpectation(TimingField::kFirstContentfulPaint);
+  ui_test_utils::NavigateToURL(
+      browser(),
+      embedded_test_server()->GetURL("/page_load_metrics/scroll.html"));
+  waiter->Wait();
+
+  content::SimulateGestureScrollSequence(
+      browser()->tab_strip_model()->GetActiveWebContents(),
+      gfx::Point(100, 100), gfx::Vector2dF(0, 15));
+  NavigateToUntrackedUrl();
+
+  // First Input Delay should not be reported from a scroll!
+  histogram_tester_.ExpectTotalCount(internal::kHistogramFirstInputDelay, 0);
+  histogram_tester_.ExpectTotalCount(internal::kHistogramFirstInputTimestamp,
+                                     0);
+}
+
+IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest, PortalPageLoad_IsNotLogged) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  ui_test_utils::NavigateToURL(browser(),
+                               embedded_test_server()->GetURL("/title1.html"));
+  content::WebContents* outer_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+
+  GURL portal_url =
+      embedded_test_server()->GetURL("portal.test", "/title2.html");
+  std::string script = R"(
+    var portal = document.createElement('portal');
+    portal.src = '%s';
+    document.body.appendChild(portal);
+  )";
+
+  content::TestNavigationObserver portal_nav_observer(portal_url);
+  portal_nav_observer.StartWatchingNewWebContents();
+  EXPECT_TRUE(
+      ExecJs(outer_contents,
+             base::StringPrintf(script.c_str(), portal_url.spec().c_str())));
+  portal_nav_observer.WaitForNavigationFinished();
+
+  // For simplicity, use the redirect chain length histogram as a proxy for
+  // whether page_load_metrics tracked the navigation, since it is emitted
+  // unconditionally on commit.
+  histogram_tester_.ExpectTotalCount("PageLoad.Navigation.RedirectChainLength",
+                                     1);
+}
+
+// Portals that activate and re-navigate should be treated normally.
+IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest,
+                       NonEmbeddedPortalPageLoad_IsLogged) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  ui_test_utils::NavigateToURL(browser(),
+                               embedded_test_server()->GetURL("/title1.html"));
+  content::WebContents* outer_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+
+  GURL portal_url =
+      embedded_test_server()->GetURL("portal.test", "/title2.html");
+  std::string script = R"(
+    var portal = document.createElement('portal');
+    portal.src = '%s';
+    document.body.appendChild(portal);
+  )";
+
+  content::WebContentsAddedObserver contents_observer;
+  content::TestNavigationObserver portal_nav_observer(portal_url);
+  portal_nav_observer.StartWatchingNewWebContents();
+  EXPECT_TRUE(
+      ExecJs(outer_contents,
+             base::StringPrintf(script.c_str(), portal_url.spec().c_str())));
+  portal_nav_observer.WaitForNavigationFinished();
+
+  // The portal has navigated but is still embedded. Activate it to make it
+  // non-embedded.
+  content::WebContents* portal_contents = contents_observer.GetWebContents();
+  std::string activated_listener = R"(
+    activated = false;
+    window.addEventListener('portalactivate', e => {
+      activated = true;
+    });
+  )";
+  EXPECT_TRUE(ExecJs(portal_contents, activated_listener));
+  EXPECT_TRUE(
+      ExecJs(outer_contents, "document.querySelector('portal').activate()"));
+
+  std::string activated_poll = R"(
+    setInterval(() => {
+      if (activated)
+        window.domAutomationController.send(true);
+    }, 10);
+  )";
+  EXPECT_EQ(true, EvalJsWithManualReply(portal_contents, activated_poll));
+
+  // The activated portal contents should be the currently active contents.
+  // Navigate it again and ensure that page_load_metrics tracks that page load.
+  EXPECT_EQ(portal_contents,
+            browser()->tab_strip_model()->GetActiveWebContents());
+  EXPECT_NE(portal_contents, outer_contents);
+  ui_test_utils::NavigateToURL(browser(),
+                               embedded_test_server()->GetURL("/title3.html"));
+
+  // For simplicity, use the redirect chain length histogram as a proxy for
+  // whether page_load_metrics tracked the navigation, since it is emitted
+  // unconditionally on commit.
+  histogram_tester_.ExpectTotalCount("PageLoad.Navigation.RedirectChainLength",
+                                     2);
 }

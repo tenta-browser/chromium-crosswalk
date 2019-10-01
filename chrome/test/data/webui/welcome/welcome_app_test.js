@@ -76,7 +76,7 @@ cr.define('onboarding_welcome_app_test', function() {
         assertEquals(views.length, 5);
         ['LANDING-VIEW',
          'NUX-GOOGLE-APPS',
-         'NUX-EMAIL',
+         'NUX-NTP-BACKGROUND',
          'NUX-SET-AS-DEFAULT',
          'SIGNIN-VIEW',
         ].forEach((expectedView, ix) => {
@@ -85,7 +85,7 @@ cr.define('onboarding_welcome_app_test', function() {
       });
     });
 
-    test('new user route (canot set default)', function() {
+    test('new user route (cannot set default)', function() {
       simulateCannotSetDefault();
       welcome.navigateTo(welcome.Routes.NEW_USER, 1);
       return test_util.waitForRender(testElement).then(() => {
@@ -93,7 +93,7 @@ cr.define('onboarding_welcome_app_test', function() {
         assertEquals(views.length, 4);
         ['LANDING-VIEW',
          'NUX-GOOGLE-APPS',
-         'NUX-EMAIL',
+         'NUX-NTP-BACKGROUND',
          'SIGNIN-VIEW',
         ].forEach((expectedView, ix) => {
           assertEquals(expectedView, views[ix].tagName);

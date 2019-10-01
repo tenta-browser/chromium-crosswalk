@@ -7,6 +7,7 @@
 #include <dispatch/dispatch.h>
 #import <Foundation/NSPathUtilities.h>
 
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
@@ -29,17 +30,24 @@ const int64_t kMemoryMonitorDelayInSeconds = 30;
 // Checks the values of free RAM and free disk space and updates breakpad with
 // these values.
 void UpdateBreakpadMemoryValues() {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::WILL_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::WILL_BLOCK);
   const int free_memory =
       static_cast<int>(base::SysInfo::AmountOfAvailablePhysicalMemory() / 1024);
   breakpad_helper::SetCurrentFreeMemoryInKB(free_memory);
-  NSArray* paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,
-                                                       NSUserDomainMask, YES);
-  NSString* value = base::mac::ObjCCastStrict<NSString>([paths lastObject]);
-  base::FilePath filePath = base::FilePath(base::SysNSStringToUTF8(value));
-  const int free_disk_space =
-      static_cast<int>(base::SysInfo::AmountOfFreeDiskSpace(filePath) / 1024);
-  breakpad_helper::SetCurrentFreeDiskInKB(free_disk_space);
+
+  NSURL* fileURL = [[NSURL alloc] initFileURLWithPath:@"/"];
+  NSDictionary* results = [fileURL resourceValuesForKeys:@[
+    NSURLVolumeAvailableCapacityForImportantUsageKey
+  ]
+                                                   error:nil];
+  int free_disk_space_kilobytes = -1;
+  if (results) {
+    NSNumber* available_bytes =
+        results[NSURLVolumeAvailableCapacityForImportantUsageKey];
+    free_disk_space_kilobytes = [available_bytes integerValue] / 1024;
+  }
+  breakpad_helper::SetCurrentFreeDiskInKB(free_disk_space_kilobytes);
 }
 
 // Invokes |UpdateBreakpadMemoryValues| and schedules itself to be called

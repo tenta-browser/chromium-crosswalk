@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/null_task_runner.h"
@@ -101,10 +102,13 @@ class StubDisplayClient : public DisplayClient {
                               RenderPassList* render_passes) override {}
   void DisplayDidDrawAndSwap() override {}
   void DisplayDidReceiveCALayerParams(
-      const gfx::CALayerParams& ca_layer_params) override{};
+      const gfx::CALayerParams& ca_layer_params) override {}
   void DisplayDidCompleteSwapWithSize(const gfx::Size& pixel_size) override {}
-  void DidSwapAfterSnapshotRequestReceived(
-      const std::vector<ui::LatencyInfo>& latency_info) override {}
+  void SetPreferredFrameInterval(base::TimeDelta interval) override {}
+  base::TimeDelta GetPreferredFrameIntervalForFrameSinkId(
+      const FrameSinkId& id) override {
+    return BeginFrameArgs::MinInterval();
+  }
 };
 
 void CopyCallback(bool* called, std::unique_ptr<CopyOutputResult> result) {
@@ -790,8 +794,8 @@ TEST_F(DisplayTest, DrawOcclusionWithNonCoveringDrawQuad) {
   // |    |
   // +----+
   {
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
 
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
@@ -815,12 +819,12 @@ TEST_F(DisplayTest, DrawOcclusionWithNonCoveringDrawQuad) {
   // +----+ |
   //   +----+
   {
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
 
-    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, rect2,
-                               is_clipped, are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, gfx::RRectF(),
+                               rect2, is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
 
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
@@ -850,12 +854,12 @@ TEST_F(DisplayTest, DrawOcclusionWithNonCoveringDrawQuad) {
   //   |  |                                    |  |
   //   +--+                                    +--+
   {
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
 
-    shared_quad_state2->SetAll(gfx::Transform(), rect3, rect3, rect3,
-                               is_clipped, are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(gfx::Transform(), rect3, rect3, gfx::RRectF(),
+                               rect3, is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
 
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
@@ -884,12 +888,12 @@ TEST_F(DisplayTest, DrawOcclusionWithNonCoveringDrawQuad) {
   // +----+                                      +----+
   //  +--+                                        +--+
   {
-    shared_quad_state->SetAll(gfx::Transform(), rect7, rect7, rect7, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect7, rect7, gfx::RRectF(),
+                              rect7, is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
 
-    shared_quad_state2->SetAll(gfx::Transform(), rect6, rect6, rect6,
-                               is_clipped, are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(gfx::Transform(), rect6, rect6, gfx::RRectF(),
+                               rect6, is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
 
     quad->SetNew(shared_quad_state, rect7, rect7, SK_ColorBLACK, false);
@@ -917,12 +921,12 @@ TEST_F(DisplayTest, DrawOcclusionWithNonCoveringDrawQuad) {
   // |    |   +--+
   // +----+
   {
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
 
-    shared_quad_state2->SetAll(gfx::Transform(), rect4, rect4, rect4,
-                               is_clipped, are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(gfx::Transform(), rect4, rect4, gfx::RRectF(),
+                               rect4, is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
 
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
@@ -949,12 +953,12 @@ TEST_F(DisplayTest, DrawOcclusionWithNonCoveringDrawQuad) {
   // +-----+|
   // +------+
   {
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
 
-    shared_quad_state2->SetAll(gfx::Transform(), rect5, rect5, rect5,
-                               is_clipped, are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(gfx::Transform(), rect5, rect5, gfx::RRectF(),
+                               rect5, is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
 
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
@@ -1012,11 +1016,11 @@ TEST_F(DisplayTest, CompositorFrameWithOverlapDrawQuad) {
   //                         |     |
   //                         +-----+
   {
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
-    shared_quad_state2->SetAll(gfx::Transform(), rect1, rect1, rect1,
-                               is_clipped, are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                               rect1, is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
 
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
@@ -1037,11 +1041,11 @@ TEST_F(DisplayTest, CompositorFrameWithOverlapDrawQuad) {
   {
     quad2 = frame.render_pass_list.front()
                 ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
-    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, rect2,
-                               is_clipped, are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, gfx::RRectF(),
+                               rect2, is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
 
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
@@ -1063,11 +1067,11 @@ TEST_F(DisplayTest, CompositorFrameWithOverlapDrawQuad) {
   {
     quad2 = frame.render_pass_list.front()
                 ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
-    shared_quad_state2->SetAll(gfx::Transform(), rect3, rect3, rect3,
-                               is_clipped, are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(gfx::Transform(), rect3, rect3, gfx::RRectF(),
+                               rect3, is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
 
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
@@ -1089,12 +1093,12 @@ TEST_F(DisplayTest, CompositorFrameWithOverlapDrawQuad) {
   {
     quad2 = frame.render_pass_list.front()
                 ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
 
-    shared_quad_state2->SetAll(gfx::Transform(), rect4, rect4, rect4,
-                               is_clipped, are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(gfx::Transform(), rect4, rect4, gfx::RRectF(),
+                               rect4, is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
 
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
@@ -1155,13 +1159,13 @@ TEST_F(DisplayTest, DrawOcclusionWithSkipRect) {
   // |        |               |        |
   // +--------+               +--------+
   {
-    shared_quad_state->SetAll(gfx::Transform(), rect, rect, rect, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect, rect, gfx::RRectF(), rect,
+                              is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
-    shared_quad_state2->SetAll(gfx::Transform(), more_then_minimum_size,
-                               more_then_minimum_size, more_then_minimum_size,
-                               is_clipped, are_contents_opaque, opacity,
-                               SkBlendMode::kSrcOver, 0);
+    shared_quad_state2->SetAll(
+        gfx::Transform(), more_then_minimum_size, more_then_minimum_size,
+        gfx::RRectF(), more_then_minimum_size, is_clipped, are_contents_opaque,
+        opacity, SkBlendMode::kSrcOver, 0);
     quad->SetNew(shared_quad_state, rect, rect, SK_ColorBLACK, false);
     quad2->SetNew(shared_quad_state2, more_then_minimum_size,
                   more_then_minimum_size, SK_ColorBLACK, false);
@@ -1179,12 +1183,13 @@ TEST_F(DisplayTest, DrawOcclusionWithSkipRect) {
   }
 
   {
-    shared_quad_state->SetAll(gfx::Transform(), rect, rect, rect, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect, rect, gfx::RRectF(), rect,
+                              is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
     shared_quad_state2->SetAll(gfx::Transform(), minimum_size, minimum_size,
-                               minimum_size, is_clipped, are_contents_opaque,
-                               opacity, SkBlendMode::kSrcOver, 0);
+                               gfx::RRectF(), minimum_size, is_clipped,
+                               are_contents_opaque, opacity,
+                               SkBlendMode::kSrcOver, 0);
     quad2 = frame.render_pass_list.front()
                 ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
     quad->SetNew(shared_quad_state, rect, rect, SK_ColorBLACK, false);
@@ -1207,13 +1212,13 @@ TEST_F(DisplayTest, DrawOcclusionWithSkipRect) {
   }
 
   {
-    shared_quad_state->SetAll(gfx::Transform(), rect, rect, rect, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect, rect, gfx::RRectF(), rect,
+                              is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
-    shared_quad_state2->SetAll(gfx::Transform(), less_than_minimum_size,
-                               less_than_minimum_size, less_than_minimum_size,
-                               is_clipped, are_contents_opaque, opacity,
-                               SkBlendMode::kSrcOver, 0);
+    shared_quad_state2->SetAll(
+        gfx::Transform(), less_than_minimum_size, less_than_minimum_size,
+        gfx::RRectF(), less_than_minimum_size, is_clipped, are_contents_opaque,
+        opacity, SkBlendMode::kSrcOver, 0);
     quad->SetNew(shared_quad_state, rect, rect, SK_ColorBLACK, false);
     quad2->SetNew(shared_quad_state2, less_than_minimum_size,
                   less_than_minimum_size, SK_ColorBLACK, false);
@@ -1266,14 +1271,14 @@ TEST_F(DisplayTest, OcclusionIgnoringSkipRect) {
   auto* quad3 = frame.render_pass_list.front()
                     ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
 
-  shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                            are_contents_opaque, opacity, SkBlendMode::kSrcOver,
-                            0);
-  shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, rect2, is_clipped,
-                             are_contents_opaque, opacity,
+  shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                            rect1, is_clipped, are_contents_opaque, opacity,
+                            SkBlendMode::kSrcOver, 0);
+  shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, gfx::RRectF(),
+                             rect2, is_clipped, are_contents_opaque, opacity,
                              SkBlendMode::kSrcOver, 0);
-  shared_quad_state3->SetAll(gfx::Transform(), rect3, rect3, rect3, is_clipped,
-                             are_contents_opaque, opacity,
+  shared_quad_state3->SetAll(gfx::Transform(), rect3, rect3, gfx::RRectF(),
+                             rect3, is_clipped, are_contents_opaque, opacity,
                              SkBlendMode::kSrcOver, 0);
   quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
   quad2->SetNew(shared_quad_state2, rect2, rect2, SK_ColorBLACK, false);
@@ -1342,11 +1347,11 @@ TEST_F(DisplayTest, CompositorFrameWithTransformer) {
                     ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
 
   {
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
-    shared_quad_state2->SetAll(half_scale, rect2, rect2, rect2, is_clipped,
-                               are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(half_scale, rect2, rect2, gfx::RRectF(), rect2,
+                               is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
 
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
@@ -1365,11 +1370,11 @@ TEST_F(DisplayTest, CompositorFrameWithTransformer) {
   {
     quad2 = frame.render_pass_list.front()
                 ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
-    shared_quad_state2->SetAll(half_scale, rect3, rect3, rect3, is_clipped,
-                               are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(half_scale, rect3, rect3, gfx::RRectF(), rect3,
+                               is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
 
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
@@ -1388,12 +1393,12 @@ TEST_F(DisplayTest, CompositorFrameWithTransformer) {
   {
     quad2 = frame.render_pass_list.front()
                 ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
 
-    shared_quad_state2->SetAll(half_scale, rect4, rect4, rect4, is_clipped,
-                               are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(half_scale, rect4, rect4, gfx::RRectF(), rect4,
+                               is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
 
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
@@ -1411,8 +1416,8 @@ TEST_F(DisplayTest, CompositorFrameWithTransformer) {
   }
 
   {
-    shared_quad_state->SetAll(double_scale, rect1, rect1, rect1, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(double_scale, rect1, rect1, gfx::RRectF(), rect1,
+                              is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
 
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
@@ -1429,12 +1434,12 @@ TEST_F(DisplayTest, CompositorFrameWithTransformer) {
   {
     quad2 = frame.render_pass_list.front()
                 ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
 
-    shared_quad_state2->SetAll(double_scale, rect5, rect5, rect5, is_clipped,
-                               are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(double_scale, rect5, rect5, gfx::RRectF(), rect5,
+                               is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
 
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
@@ -1457,12 +1462,12 @@ TEST_F(DisplayTest, CompositorFrameWithTransformer) {
   }
 
   {
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
 
-    shared_quad_state2->SetAll(double_scale, rect6, rect6, rect6, is_clipped,
-                               are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(double_scale, rect6, rect6, gfx::RRectF(), rect6,
+                               is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
 
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
@@ -1486,12 +1491,12 @@ TEST_F(DisplayTest, CompositorFrameWithTransformer) {
   }
 
   {
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
 
-    shared_quad_state2->SetAll(double_scale, rect7, rect7, rect7, is_clipped,
-                               are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(double_scale, rect7, rect7, gfx::RRectF(), rect7,
+                               is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
 
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
@@ -1514,12 +1519,12 @@ TEST_F(DisplayTest, CompositorFrameWithTransformer) {
   }
 
   {
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
 
-    shared_quad_state2->SetAll(double_scale, rect8, rect8, rect8, is_clipped,
-                               are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(double_scale, rect8, rect8, gfx::RRectF(), rect8,
+                               is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
 
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
@@ -1542,12 +1547,12 @@ TEST_F(DisplayTest, CompositorFrameWithTransformer) {
   }
 
   {
-    shared_quad_state->SetAll(double_scale, rect10, rect10, rect10, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(double_scale, rect10, rect10, gfx::RRectF(),
+                              rect10, is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
 
-    shared_quad_state2->SetAll(double_scale, rect9, rect9, rect9, is_clipped,
-                               are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(double_scale, rect9, rect9, gfx::RRectF(), rect9,
+                               is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
 
     quad->SetNew(shared_quad_state, rect10, rect10, SK_ColorBLACK, false);
@@ -1603,11 +1608,11 @@ TEST_F(DisplayTest, CompositorFrameWithEpsilonScaleTransform) {
   gfx::Transform inverted;
 
   {
-    shared_quad_state->SetAll(gfx::Transform(), rect, rect, rect, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect, rect, gfx::RRectF(), rect,
+                              is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
-    shared_quad_state2->SetAll(zero_scale, rect, rect, rect, is_clipped,
-                               are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(zero_scale, rect, rect, gfx::RRectF(), rect,
+                               is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
 
     quad->SetNew(shared_quad_state, rect, rect, SK_ColorBLACK, false);
@@ -1627,11 +1632,11 @@ TEST_F(DisplayTest, CompositorFrameWithEpsilonScaleTransform) {
   }
 
   {
-    shared_quad_state->SetAll(gfx::Transform(), rect, rect, rect, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect, rect, gfx::RRectF(), rect,
+                              is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
-    shared_quad_state2->SetAll(epsilon_scale, rect, rect, rect, is_clipped,
-                               are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(epsilon_scale, rect, rect, gfx::RRectF(), rect,
+                               is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 1);
 
     quad->SetNew(shared_quad_state, rect, rect, SK_ColorBLACK, false);
@@ -1657,11 +1662,11 @@ TEST_F(DisplayTest, CompositorFrameWithEpsilonScaleTransform) {
   }
 
   {
-    shared_quad_state->SetAll(gfx::Transform(), rect, rect, rect, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect, rect, gfx::RRectF(), rect,
+                              is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
-    shared_quad_state2->SetAll(larger_epsilon_scale, rect, rect, rect,
-                               is_clipped, are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(larger_epsilon_scale, rect, rect, gfx::RRectF(),
+                               rect, is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
 
     quad->SetNew(shared_quad_state, rect, rect, SK_ColorBLACK, false);
@@ -1708,11 +1713,11 @@ TEST_F(DisplayTest, CompositorFrameWithNegativeScaleTransform) {
 
   {
     negative_scale.Scale3d(-1, 1, 1);
-    shared_quad_state->SetAll(gfx::Transform(), rect, rect, rect, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect, rect, gfx::RRectF(), rect,
+                              is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
-    shared_quad_state2->SetAll(negative_scale, rect, rect, rect, is_clipped,
-                               are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(negative_scale, rect, rect, gfx::RRectF(), rect,
+                               is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
 
     quad->SetNew(shared_quad_state, rect, rect, SK_ColorBLACK, false);
@@ -1740,11 +1745,11 @@ TEST_F(DisplayTest, CompositorFrameWithNegativeScaleTransform) {
   {
     negative_scale.MakeIdentity();
     negative_scale.Scale3d(1, -1, 1);
-    shared_quad_state->SetAll(gfx::Transform(), rect, rect, rect, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect, rect, gfx::RRectF(), rect,
+                              is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
-    shared_quad_state2->SetAll(negative_scale, rect, rect, rect, is_clipped,
-                               are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(negative_scale, rect, rect, gfx::RRectF(), rect,
+                               is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
 
     quad->SetNew(shared_quad_state, rect, rect, SK_ColorBLACK, false);
@@ -1772,11 +1777,11 @@ TEST_F(DisplayTest, CompositorFrameWithNegativeScaleTransform) {
   {
     negative_scale.MakeIdentity();
     negative_scale.Scale3d(1, 1, -1);
-    shared_quad_state->SetAll(gfx::Transform(), rect, rect, rect, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect, rect, gfx::RRectF(), rect,
+                              is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
-    shared_quad_state2->SetAll(negative_scale, rect, rect, rect, is_clipped,
-                               are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(negative_scale, rect, rect, gfx::RRectF(), rect,
+                               is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
 
     quad->SetNew(shared_quad_state, rect, rect, SK_ColorBLACK, false);
@@ -1837,11 +1842,11 @@ TEST_F(DisplayTest, CompositorFrameWithRotation) {
                     ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
   {
     // Apply rotation transform on |rect1| only.
-    shared_quad_state->SetAll(rotate, rect1, rect1, rect1, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(rotate, rect1, rect1, gfx::RRectF(), rect1,
+                              is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
-    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, rect2,
-                               is_clipped, are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, gfx::RRectF(),
+                               rect2, is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
     quad2->SetNew(shared_quad_state2, rect2, rect2, SK_ColorBLACK, false);
@@ -1861,11 +1866,11 @@ TEST_F(DisplayTest, CompositorFrameWithRotation) {
 
   {
     // Apply rotation transform on |rect1| and |rect2|.
-    shared_quad_state->SetAll(rotate, rect1, rect1, rect1, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(rotate, rect1, rect1, gfx::RRectF(), rect1,
+                              is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
-    shared_quad_state2->SetAll(rotate, rect2, rect2, rect2, is_clipped,
-                               are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(rotate, rect2, rect2, gfx::RRectF(), rect2,
+                               is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
     quad2->SetNew(shared_quad_state2, rect2, rect2, SK_ColorBLACK, false);
@@ -1883,11 +1888,11 @@ TEST_F(DisplayTest, CompositorFrameWithRotation) {
   {
     quad2 = frame.render_pass_list.front()
                 ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
-    shared_quad_state->SetAll(rotate, rect1, rect1, rect1, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(rotate, rect1, rect1, gfx::RRectF(), rect1,
+                              is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
-    shared_quad_state2->SetAll(gfx::Transform(), rect3, rect3, rect3,
-                               is_clipped, are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(gfx::Transform(), rect3, rect3, gfx::RRectF(),
+                               rect3, is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
     quad2->SetNew(shared_quad_state2, rect3, rect3, SK_ColorBLACK, false);
@@ -1909,11 +1914,11 @@ TEST_F(DisplayTest, CompositorFrameWithRotation) {
     // Since we only support updating |visible_rect| of DrawQuad with scale
     // or translation transform and rotation transform applies to quads,
     // |visible_rect| of |quad2| should not be changed.
-    shared_quad_state->SetAll(rotate, rect1, rect1, rect1, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(rotate, rect1, rect1, gfx::RRectF(), rect1,
+                              is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
-    shared_quad_state2->SetAll(rotate, rect3, rect3, rect3, is_clipped,
-                               are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(rotate, rect3, rect3, gfx::RRectF(), rect3,
+                               is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
     quad2->SetNew(shared_quad_state2, rect3, rect3, SK_ColorBLACK, false);
@@ -1964,11 +1969,11 @@ TEST_F(DisplayTest, CompositorFrameWithPerspective) {
   auto* quad2 = frame.render_pass_list.front()
                     ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
   {
-    shared_quad_state->SetAll(perspective, rect1, rect1, rect1, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(perspective, rect1, rect1, gfx::RRectF(), rect1,
+                              is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
-    shared_quad_state2->SetAll(gfx::Transform(), rect1, rect1, rect1,
-                               is_clipped, are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                               rect1, is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
     quad2->SetNew(shared_quad_state2, rect1, rect1, SK_ColorBLACK, false);
@@ -1988,11 +1993,11 @@ TEST_F(DisplayTest, CompositorFrameWithPerspective) {
   }
 
   {
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
-    shared_quad_state2->SetAll(perspective, rect2, rect2, rect2, is_clipped,
-                               are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(perspective, rect2, rect2, gfx::RRectF(), rect2,
+                               is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 0);
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
     quad2->SetNew(shared_quad_state2, rect2, rect2, SK_ColorBLACK, false);
@@ -2036,11 +2041,11 @@ TEST_F(DisplayTest, CompositorFrameWithOpacityChange) {
   auto* quad2 = frame.render_pass_list.front()
                     ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
   {
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              are_contents_opaque, opacityLess1,
-                              SkBlendMode::kSrcOver, 0);
-    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, rect2,
-                               is_clipped, are_contents_opaque, opacity1,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, are_contents_opaque,
+                              opacityLess1, SkBlendMode::kSrcOver, 0);
+    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, gfx::RRectF(),
+                               rect2, is_clipped, are_contents_opaque, opacity1,
                                SkBlendMode::kSrcOver, 0);
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
     quad2->SetNew(shared_quad_state2, rect2, rect2, SK_ColorBLACK, false);
@@ -2058,11 +2063,11 @@ TEST_F(DisplayTest, CompositorFrameWithOpacityChange) {
   }
 
   {
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              are_contents_opaque, opacity1,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, are_contents_opaque, opacity1,
                               SkBlendMode::kSrcOver, 0);
-    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, rect2,
-                               is_clipped, are_contents_opaque, opacity1,
+    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, gfx::RRectF(),
+                               rect2, is_clipped, are_contents_opaque, opacity1,
                                SkBlendMode::kSrcOver, 0);
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
     quad2->SetNew(shared_quad_state2, rect2, rect2, SK_ColorBLACK, false);
@@ -2103,11 +2108,11 @@ TEST_F(DisplayTest, CompositorFrameWithOpaquenessChange) {
   auto* quad2 = frame.render_pass_list.front()
                     ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
   {
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              transparent_content, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, transparent_content, opacity,
                               SkBlendMode::kSrcOver, 0);
-    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, rect2,
-                               is_clipped, opaque_content, opacity,
+    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, gfx::RRectF(),
+                               rect2, is_clipped, opaque_content, opacity,
                                SkBlendMode::kSrcOver, 0);
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
     quad2->SetNew(shared_quad_state2, rect2, rect2, SK_ColorBLACK, false);
@@ -2125,11 +2130,11 @@ TEST_F(DisplayTest, CompositorFrameWithOpaquenessChange) {
   }
 
   {
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              opaque_content, opacity, SkBlendMode::kSrcOver,
-                              0);
-    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, rect2,
-                               is_clipped, opaque_content, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, opaque_content, opacity,
+                              SkBlendMode::kSrcOver, 0);
+    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, gfx::RRectF(),
+                               rect2, is_clipped, opaque_content, opacity,
                                SkBlendMode::kSrcOver, 0);
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
     quad2->SetNew(shared_quad_state2, rect2, rect2, SK_ColorBLACK, false);
@@ -2177,11 +2182,11 @@ TEST_F(DisplayTest, CompositorFrameZTranslate) {
   //                         |     |
   //                         +-----+
   {
-    shared_quad_state->SetAll(translate_back, rect1, rect1, rect1, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(translate_back, rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 1);
-    shared_quad_state2->SetAll(gfx::Transform(), rect1, rect1, rect1,
-                               is_clipped, are_contents_opaque, opacity,
+    shared_quad_state2->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                               rect1, is_clipped, are_contents_opaque, opacity,
                                SkBlendMode::kSrcOver, 1);
 
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
@@ -2237,11 +2242,11 @@ TEST_F(DisplayTest, CompositorFrameWithTranslateTransformer) {
     //   +----+
     //           +-+
     //           +-+
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              transparent_content, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, transparent_content, opacity,
                               SkBlendMode::kSrcOver, 0);
-    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, rect2,
-                               is_clipped, opaque_content, opacity,
+    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, gfx::RRectF(),
+                               rect2, is_clipped, opaque_content, opacity,
                                SkBlendMode::kSrcOver, 0);
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
     quad2->SetNew(shared_quad_state2, rect2, rect2, SK_ColorBLACK, false);
@@ -2266,11 +2271,11 @@ TEST_F(DisplayTest, CompositorFrameWithTranslateTransformer) {
     //   +----+                       =>                              | +-+ |
     //           +-+                                                  | +-+ |
     //           +-+                                                  +-----+
-    shared_quad_state->SetAll(translate_up, rect1, rect1, rect1, is_clipped,
-                              opaque_content, opacity, SkBlendMode::kSrcOver,
-                              0);
-    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, rect2,
-                               is_clipped, opaque_content, opacity,
+    shared_quad_state->SetAll(translate_up, rect1, rect1, gfx::RRectF(), rect1,
+                              is_clipped, opaque_content, opacity,
+                              SkBlendMode::kSrcOver, 0);
+    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, gfx::RRectF(),
+                               rect2, is_clipped, opaque_content, opacity,
                                SkBlendMode::kSrcOver, 0);
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
     quad2->SetNew(shared_quad_state2, rect2, rect2, SK_ColorBLACK, false);
@@ -2296,11 +2301,11 @@ TEST_F(DisplayTest, CompositorFrameWithTranslateTransformer) {
     //           +---+                                                 +----+
     quad2 = frame.render_pass_list.front()
                 ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
-    shared_quad_state->SetAll(translate_up, rect1, rect1, rect1, is_clipped,
-                              opaque_content, opacity, SkBlendMode::kSrcOver,
-                              0);
-    shared_quad_state2->SetAll(gfx::Transform(), rect3, rect3, rect3,
-                               is_clipped, opaque_content, opacity,
+    shared_quad_state->SetAll(translate_up, rect1, rect1, gfx::RRectF(), rect1,
+                              is_clipped, opaque_content, opacity,
+                              SkBlendMode::kSrcOver, 0);
+    shared_quad_state2->SetAll(gfx::Transform(), rect3, rect3, gfx::RRectF(),
+                               rect3, is_clipped, opaque_content, opacity,
                                SkBlendMode::kSrcOver, 0);
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
     quad2->SetNew(shared_quad_state2, rect3, rect3, SK_ColorBLACK, false);
@@ -2362,14 +2367,14 @@ TEST_F(DisplayTest, CompositorFrameWithCombinedSharedQuadState) {
     //   |    |----+             =>        |    |----+
     //   +----+                            +----+
     //
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              opaque_content, opacity, SkBlendMode::kSrcOver,
-                              0);
-    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, rect2,
-                               is_clipped, opaque_content, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, opaque_content, opacity,
+                              SkBlendMode::kSrcOver, 0);
+    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, gfx::RRectF(),
+                               rect2, is_clipped, opaque_content, opacity,
                                SkBlendMode::kSrcOver, 0);
-    shared_quad_state3->SetAll(gfx::Transform(), rect3, rect3, rect3,
-                               is_clipped, opaque_content, opacity,
+    shared_quad_state3->SetAll(gfx::Transform(), rect3, rect3, gfx::RRectF(),
+                               rect3, is_clipped, opaque_content, opacity,
                                SkBlendMode::kSrcOver, 0);
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
     quad2->SetNew(shared_quad_state2, rect2, rect2, SK_ColorBLACK, false);
@@ -2397,8 +2402,8 @@ TEST_F(DisplayTest, CompositorFrameWithCombinedSharedQuadState) {
     //
     quad3 = frame.render_pass_list.front()
                 ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
-    shared_quad_state3->SetAll(gfx::Transform(), rect4, rect4, rect4,
-                               is_clipped, opaque_content, opacity,
+    shared_quad_state3->SetAll(gfx::Transform(), rect4, rect4, gfx::RRectF(),
+                               rect4, is_clipped, opaque_content, opacity,
                                SkBlendMode::kSrcOver, 0);
     quad3->SetNew(shared_quad_state3, rect4, rect4, SK_ColorBLACK, false);
     EXPECT_EQ(3u, frame.render_pass_list.front()->quad_list.size());
@@ -2426,8 +2431,8 @@ TEST_F(DisplayTest, CompositorFrameWithCombinedSharedQuadState) {
     //   |    |----+           =>          | |  |--|-+
     //   +----+                            +-|--+  |
     //                                       +-----+
-    shared_quad_state3->SetAll(gfx::Transform(), rect5, rect5, rect5,
-                               is_clipped, opaque_content, opacity,
+    shared_quad_state3->SetAll(gfx::Transform(), rect5, rect5, gfx::RRectF(),
+                               rect5, is_clipped, opaque_content, opacity,
                                SkBlendMode::kSrcOver, 0);
     quad3->SetNew(shared_quad_state3, rect5, rect5, SK_ColorBLACK, false);
     EXPECT_EQ(3u, frame.render_pass_list.front()->quad_list.size());
@@ -2493,14 +2498,14 @@ TEST_F(DisplayTest, CompositorFrameWithMultipleRenderPass) {
     //   |    |----+             =>        |    |----+
     //   +----+                            +----+
     //
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              opaque_content, opacity, SkBlendMode::kSrcOver,
-                              0);
-    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, rect2,
-                               is_clipped, opaque_content, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, opaque_content, opacity,
+                              SkBlendMode::kSrcOver, 0);
+    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, gfx::RRectF(),
+                               rect2, is_clipped, opaque_content, opacity,
                                SkBlendMode::kSrcOver, 0);
-    shared_quad_state3->SetAll(gfx::Transform(), rect3, rect3, rect3,
-                               is_clipped, opaque_content, opacity,
+    shared_quad_state3->SetAll(gfx::Transform(), rect3, rect3, gfx::RRectF(),
+                               rect3, is_clipped, opaque_content, opacity,
                                SkBlendMode::kSrcOver, 0);
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
     quad2->SetNew(shared_quad_state2, rect2, rect2, SK_ColorBLACK, false);
@@ -2565,11 +2570,11 @@ TEST_F(DisplayTest, CompositorFrameWithCoveredRenderPass) {
     //   +----+
     //
 
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              opaque_content, opacity, SkBlendMode::kSrcOver,
-                              0);
-    shared_quad_state2->SetAll(gfx::Transform(), rect1, rect1, rect1,
-                               is_clipped, opaque_content, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, opaque_content, opacity,
+                              SkBlendMode::kSrcOver, 0);
+    shared_quad_state2->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                               rect1, is_clipped, opaque_content, opacity,
                                SkBlendMode::kSrcOver, 0);
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
     quad1->SetNew(shared_quad_state2, rect1, rect1, render_pass_id,
@@ -2629,11 +2634,11 @@ TEST_F(DisplayTest, CompositorFrameWithClip) {
     //   |   | ||
     //   +------+
     //
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1,
-                              non_clipped, opaque_content, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, non_clipped, opaque_content, opacity,
                               SkBlendMode::kSrcOver, 0);
-    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, rect2,
-                               non_clipped, opaque_content, opacity,
+    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, gfx::RRectF(),
+                               rect2, non_clipped, opaque_content, opacity,
                                SkBlendMode::kSrcOver, 0);
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
     quad2->SetNew(shared_quad_state2, rect2, rect2, SK_ColorBLACK, false);
@@ -2656,11 +2661,11 @@ TEST_F(DisplayTest, CompositorFrameWithClip) {
     //
     quad2 = frame.render_pass_list.front()
                 ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, clip_rect,
-                              clipped, opaque_content, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              clip_rect, clipped, opaque_content, opacity,
                               SkBlendMode::kSrcOver, 0);
-    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, rect2,
-                               non_clipped, opaque_content, opacity,
+    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, gfx::RRectF(),
+                               rect2, non_clipped, opaque_content, opacity,
                                SkBlendMode::kSrcOver, 0);
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
     quad2->SetNew(shared_quad_state2, rect2, rect2, SK_ColorBLACK, false);
@@ -2685,11 +2690,11 @@ TEST_F(DisplayTest, CompositorFrameWithClip) {
     //   |   +-+|             =>                      +--+++
     //   +------+
     //
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, clip_rect,
-                              clipped, opaque_content, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              clip_rect, clipped, opaque_content, opacity,
                               SkBlendMode::kSrcOver, 0);
-    shared_quad_state2->SetAll(gfx::Transform(), rect3, rect3, rect3,
-                               non_clipped, opaque_content, opacity,
+    shared_quad_state2->SetAll(gfx::Transform(), rect3, rect3, gfx::RRectF(),
+                               rect3, non_clipped, opaque_content, opacity,
                                SkBlendMode::kSrcOver, 0);
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
     quad2->SetNew(shared_quad_state2, rect3, rect3, SK_ColorBLACK, false);
@@ -2736,11 +2741,11 @@ TEST_F(DisplayTest, CompositorFrameWithCopyRequest) {
   auto* quad2 = frame.render_pass_list.front()
                     ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
   {
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              opaque_content, opacity, SkBlendMode::kSrcOver,
-                              0);
-    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, rect2,
-                               is_clipped, opaque_content, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, opaque_content, opacity,
+                              SkBlendMode::kSrcOver, 0);
+    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, gfx::RRectF(),
+                               rect2, is_clipped, opaque_content, opacity,
                                SkBlendMode::kSrcOver, 0);
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
     quad2->SetNew(shared_quad_state2, rect2, rect2, SK_ColorBLACK, false);
@@ -2806,17 +2811,17 @@ TEST_F(DisplayTest, CompositorFrameWithRenderPass) {
     // |       |   |        |
     // |   R1  |   |    R2  |
     // +-------+---+--------+
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              opaque_content, opacity, SkBlendMode::kSrcOver,
-                              0);
-    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, rect2,
-                               is_clipped, opaque_content, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, opaque_content, opacity,
+                              SkBlendMode::kSrcOver, 0);
+    shared_quad_state2->SetAll(gfx::Transform(), rect2, rect2, gfx::RRectF(),
+                               rect2, is_clipped, opaque_content, opacity,
                                SkBlendMode::kSrcOver, 0);
-    shared_quad_state3->SetAll(gfx::Transform(), rect3, rect3, rect3,
-                               is_clipped, opaque_content, opacity,
+    shared_quad_state3->SetAll(gfx::Transform(), rect3, rect3, gfx::RRectF(),
+                               rect3, is_clipped, opaque_content, opacity,
                                SkBlendMode::kSrcOver, 0);
-    shared_quad_state4->SetAll(gfx::Transform(), rect4, rect4, rect4,
-                               is_clipped, opaque_content, opacity,
+    shared_quad_state4->SetAll(gfx::Transform(), rect4, rect4, gfx::RRectF(),
+                               rect4, is_clipped, opaque_content, opacity,
                                SkBlendMode::kSrcOver, 0);
     R1->SetNew(shared_quad_state, rect1, rect1, render_pass_id,
                mask_resource_id, gfx::RectF(), gfx::Size(),
@@ -2854,17 +2859,17 @@ TEST_F(DisplayTest, CompositorFrameWithRenderPass) {
     // |       |           |
     // |   R2  |       R1  |
     // +-------+-----------+
-    shared_quad_state->SetAll(gfx::Transform(), rect5, rect5, rect5, is_clipped,
-                              opaque_content, opacity, SkBlendMode::kSrcOver,
-                              0);
-    shared_quad_state2->SetAll(gfx::Transform(), rect1, rect1, rect1,
-                               is_clipped, opaque_content, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect5, rect5, gfx::RRectF(),
+                              rect5, is_clipped, opaque_content, opacity,
+                              SkBlendMode::kSrcOver, 0);
+    shared_quad_state2->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                               rect1, is_clipped, opaque_content, opacity,
                                SkBlendMode::kSrcOver, 0);
-    shared_quad_state3->SetAll(gfx::Transform(), rect3, rect3, rect3,
-                               is_clipped, opaque_content, opacity,
+    shared_quad_state3->SetAll(gfx::Transform(), rect3, rect3, gfx::RRectF(),
+                               rect3, is_clipped, opaque_content, opacity,
                                SkBlendMode::kSrcOver, 0);
-    shared_quad_state4->SetAll(gfx::Transform(), rect6, rect6, rect6,
-                               is_clipped, opaque_content, opacity,
+    shared_quad_state4->SetAll(gfx::Transform(), rect6, rect6, gfx::RRectF(),
+                               rect6, is_clipped, opaque_content, opacity,
                                SkBlendMode::kSrcOver, 0);
     R1->SetNew(shared_quad_state, rect5, rect5, render_pass_id,
                mask_resource_id, gfx::RectF(), gfx::Size(),
@@ -2901,17 +2906,17 @@ TEST_F(DisplayTest, CompositorFrameWithRenderPass) {
     // |-----+     |       |
     // |   R2      |   R1  |
     // +-----------+-------+
-    shared_quad_state->SetAll(gfx::Transform(), rect5, rect5, rect5, is_clipped,
-                              opaque_content, opacity, SkBlendMode::kSrcOver,
-                              0);
-    shared_quad_state2->SetAll(gfx::Transform(), rect1, rect1, rect1,
-                               is_clipped, opaque_content, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect5, rect5, gfx::RRectF(),
+                              rect5, is_clipped, opaque_content, opacity,
+                              SkBlendMode::kSrcOver, 0);
+    shared_quad_state2->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                               rect1, is_clipped, opaque_content, opacity,
                                SkBlendMode::kSrcOver, 0);
-    shared_quad_state3->SetAll(gfx::Transform(), rect3, rect3, rect3,
-                               is_clipped, opaque_content, opacity,
+    shared_quad_state3->SetAll(gfx::Transform(), rect3, rect3, gfx::RRectF(),
+                               rect3, is_clipped, opaque_content, opacity,
                                SkBlendMode::kSrcOver, 0);
-    shared_quad_state4->SetAll(gfx::Transform(), rect7, rect7, rect7,
-                               is_clipped, opaque_content, opacity,
+    shared_quad_state4->SetAll(gfx::Transform(), rect7, rect7, gfx::RRectF(),
+                               rect7, is_clipped, opaque_content, opacity,
                                SkBlendMode::kSrcOver, 0);
     R1->SetNew(shared_quad_state, rect5, rect5, render_pass_id,
                mask_resource_id, gfx::RectF(), gfx::Size(),
@@ -2992,12 +2997,13 @@ TEST_F(DisplayTest, CompositorFrameWithMultipleDrawQuadInSharedQuadState) {
     // +--+--+
     // |  |  |
     // +--+--+
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              opaque_content, opacity, SkBlendMode::kSrcOver,
-                              0);
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, opaque_content, opacity,
+                              SkBlendMode::kSrcOver, 0);
     shared_quad_state2->SetAll(gfx::Transform(), rect_in_rect1, rect_in_rect1,
-                               rect_in_rect1, is_clipped, opaque_content,
-                               opacity, SkBlendMode::kSrcOver, 0);
+                               gfx::RRectF(), rect_in_rect1, is_clipped,
+                               opaque_content, opacity, SkBlendMode::kSrcOver,
+                               0);
     quad1->SetNew(shared_quad_state, rect1_1, rect1_1, SK_ColorBLACK, false);
     quad2->SetNew(shared_quad_state, rect1_2, rect1_2, SK_ColorBLACK, false);
     quad3->SetNew(shared_quad_state, rect1_3, rect1_3, SK_ColorBLACK, false);
@@ -3033,10 +3039,10 @@ TEST_F(DisplayTest, CompositorFrameWithMultipleDrawQuadInSharedQuadState) {
     // +--+--+
     quad5 = frame.render_pass_list.front()
                 ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
-    shared_quad_state2->SetAll(gfx::Transform(), rect_intersects_rect1,
-                               rect_intersects_rect1, rect_intersects_rect1,
-                               is_clipped, opaque_content, opacity,
-                               SkBlendMode::kSrcOver, 0);
+    shared_quad_state2->SetAll(
+        gfx::Transform(), rect_intersects_rect1, rect_intersects_rect1,
+        gfx::RRectF(), rect_intersects_rect1, is_clipped, opaque_content,
+        opacity, SkBlendMode::kSrcOver, 0);
     quad5->SetNew(shared_quad_state2, rect_intersects_rect1,
                   rect_intersects_rect1, SK_ColorBLACK, false);
     EXPECT_EQ(5u, frame.render_pass_list.front()->quad_list.size());
@@ -3074,11 +3080,11 @@ TEST_F(DisplayTest, CompositorFrameWithMultipleDrawQuadInSharedQuadState) {
 
     auto* quad6 = frame.render_pass_list.front()
                       ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
-    shared_quad_state->SetAll(gfx::Transform(), rect2, rect2, rect2, is_clipped,
-                              opaque_content, opacity, SkBlendMode::kSrcOver,
-                              0);
-    shared_quad_state2->SetAll(gfx::Transform(), rect3, rect3, rect3,
-                               is_clipped, opaque_content, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect2, rect2, gfx::RRectF(),
+                              rect2, is_clipped, opaque_content, opacity,
+                              SkBlendMode::kSrcOver, 0);
+    shared_quad_state2->SetAll(gfx::Transform(), rect3, rect3, gfx::RRectF(),
+                               rect3, is_clipped, opaque_content, opacity,
                                SkBlendMode::kSrcOver, 0);
     quad1->SetNew(shared_quad_state, rect2_1, rect2_1, SK_ColorBLACK, false);
     quad2->SetNew(shared_quad_state, rect2_2, rect2_2, SK_ColorBLACK, false);
@@ -3166,15 +3172,15 @@ TEST_F(DisplayTest, CompositorFrameWithNonInvertibleTransform) {
     // |quad1| forms an occlusion rect; |quad2| follows a invertible transform
     // and is hiding behind quad1; |quad3| follows a non-invertible transform
     // and it is not covered by the occlusion rect.
-    shared_quad_state1->SetAll(invertible, rect1, rect1, rect1, is_clipped,
-                               opaque_content, opacity, SkBlendMode::kSrcOver,
-                               0);
-    shared_quad_state2->SetAll(invertible, rect2, rect2, rect2, is_clipped,
-                               opaque_content, opacity, SkBlendMode::kSrcOver,
-                               0);
-    shared_quad_state3->SetAll(non_invertible, rect3, rect3, rect3, is_clipped,
-                               opaque_content, opacity, SkBlendMode::kSrcOver,
-                               0);
+    shared_quad_state1->SetAll(invertible, rect1, rect1, gfx::RRectF(), rect1,
+                               is_clipped, opaque_content, opacity,
+                               SkBlendMode::kSrcOver, 0);
+    shared_quad_state2->SetAll(invertible, rect2, rect2, gfx::RRectF(), rect2,
+                               is_clipped, opaque_content, opacity,
+                               SkBlendMode::kSrcOver, 0);
+    shared_quad_state3->SetAll(non_invertible, rect3, rect3, gfx::RRectF(),
+                               rect3, is_clipped, opaque_content, opacity,
+                               SkBlendMode::kSrcOver, 0);
     quad1->SetNew(shared_quad_state1, rect1, rect1, SK_ColorBLACK, false);
     quad2->SetNew(shared_quad_state2, rect2, rect2, SK_ColorBLACK, false);
     quad3->SetNew(shared_quad_state3, rect3, rect3, SK_ColorBLACK, false);
@@ -3200,12 +3206,12 @@ TEST_F(DisplayTest, CompositorFrameWithNonInvertibleTransform) {
     // +--------+                 +--------+
     // Verify if draw occlusion can occlude quad with non-invertible
     // transfrom.
-    shared_quad_state1->SetAll(invertible, rect1, rect1, rect1, is_clipped,
-                               opaque_content, opacity, SkBlendMode::kSrcOver,
-                               0);
-    shared_quad_state3->SetAll(non_invertible_miss_z, rect3, rect3, rect3,
+    shared_quad_state1->SetAll(invertible, rect1, rect1, gfx::RRectF(), rect1,
                                is_clipped, opaque_content, opacity,
                                SkBlendMode::kSrcOver, 0);
+    shared_quad_state3->SetAll(non_invertible_miss_z, rect3, rect3,
+                               gfx::RRectF(), rect3, is_clipped, opaque_content,
+                               opacity, SkBlendMode::kSrcOver, 0);
     quad1->SetNew(shared_quad_state1, rect1, rect1, SK_ColorBLACK, false);
     quad3->SetNew(shared_quad_state3, rect3, rect3, SK_ColorBLACK, false);
 
@@ -3245,8 +3251,8 @@ TEST_F(DisplayTest, DrawOcclusionWithLargeDrawQuad) {
   // |    |
   // +----+
   {
-    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, rect1, is_clipped,
-                              are_contents_opaque, opacity,
+    shared_quad_state->SetAll(gfx::Transform(), rect1, rect1, gfx::RRectF(),
+                              rect1, is_clipped, are_contents_opaque, opacity,
                               SkBlendMode::kSrcOver, 0);
 
     quad->SetNew(shared_quad_state, rect1, rect1, SK_ColorBLACK, false);
@@ -3313,7 +3319,8 @@ TEST_F(DisplayTest, CompositorFrameWithPresentationToken) {
     gfx::Rect rect1(display_size);
     shared_quad_state1->SetAll(
         gfx::Transform(), rect1 /* quad_layer_rect */,
-        rect1 /* visible_quad_layer_rect */, rect1 /*clip_rect */,
+        rect1 /* visible_quad_layer_rect */,
+        gfx::RRectF() /* rounded_corner_bounds*/, rect1 /*clip_rect */,
         false /* is_clipped */, false /* are_contents_opaque */,
         0.5f /* opacity */, SkBlendMode::kSrcOver, 0 /* sorting_context_id */);
     auto* quad1 = pass->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
@@ -3325,7 +3332,8 @@ TEST_F(DisplayTest, CompositorFrameWithPresentationToken) {
     gfx::Rect rect2(gfx::Point(20, 20), sub_surface_size);
     shared_quad_state2->SetAll(
         gfx::Transform(), rect2 /* quad_layer_rect */,
-        rect2 /* visible_quad_layer_rect */, rect2 /*clip_rect */,
+        rect2 /* visible_quad_layer_rect */,
+        gfx::RRectF() /* rounded_corner_bounds */, rect2 /*clip_rect */,
         false /* is_clipped */, true /* are_contents_opaque */,
         1.0f /* opacity */, SkBlendMode::kSrcOver, 0 /* sorting_context_id */);
     auto* quad2 = pass->quad_list.AllocateAndConstruct<SurfaceDrawQuad>();
@@ -3356,8 +3364,8 @@ TEST_F(DisplayTest, CompositorFrameWithPresentationToken) {
 
     // Both frames with frame-tokens 1 and 2 requested presentation-feedback.
     ASSERT_EQ(2u, sub_support->presentation_feedbacks().size());
-    EXPECT_TRUE(sub_support->presentation_feedbacks().count(frame_token_1));
-    EXPECT_TRUE(sub_support->presentation_feedbacks().count(frame_token_2));
+    EXPECT_EQ(sub_support->presentation_feedbacks().count(frame_token_1), 1u);
+    EXPECT_EQ(sub_support->presentation_feedbacks().count(frame_token_2), 1u);
   }
 
   {
@@ -3387,6 +3395,19 @@ TEST_F(DisplayTest, BeginFrameThrottling) {
       1.f);
   support_->SetNeedsBeginFrame(true);
 
+  // Helper fn to submit a CF.
+  auto submit_frame = [this](RenderPassList* pass_list) {
+    auto pass = RenderPass::Create();
+    pass->output_rect = gfx::Rect(0, 0, 100, 100);
+    pass->damage_rect = gfx::Rect(10, 10, 1, 1);
+    pass->id = 1u;
+    pass_list->push_back(std::move(pass));
+
+    SubmitCompositorFrame(
+        pass_list,
+        id_allocator_.GetCurrentLocalSurfaceIdAllocation().local_surface_id());
+  };
+
   // BeginFrame should not be throttled when the client has not submitted any
   // compositor frames.
   base::TimeTicks frame_time = base::TimeTicks::Now();
@@ -3396,15 +3417,7 @@ TEST_F(DisplayTest, BeginFrameThrottling) {
   // Submit the first frame for the client. Begin-frame should still not be
   // throttled since it has not been embedded yet.
   RenderPassList pass_list;
-  auto pass = RenderPass::Create();
-  pass->output_rect = gfx::Rect(0, 0, 100, 100);
-  pass->damage_rect = gfx::Rect(10, 10, 1, 1);
-  pass->id = 1u;
-  pass_list.push_back(std::move(pass));
-
-  SubmitCompositorFrame(
-      &pass_list,
-      id_allocator_.GetCurrentLocalSurfaceIdAllocation().local_surface_id());
+  submit_frame(&pass_list);
   frame_time = base::TimeTicks::Now();
   EXPECT_TRUE(ShouldSendBeginFrame(support_.get(), frame_time));
   UpdateBeginFrameTime(support_.get(), frame_time);
@@ -3414,17 +3427,17 @@ TEST_F(DisplayTest, BeginFrameThrottling) {
   EXPECT_TRUE(ShouldSendBeginFrame(support_.get(), frame_time));
   UpdateBeginFrameTime(support_.get(), frame_time);
 
-  // Submit a second frame. This time, begin-frame should be throttled after the
-  // first begin-frame is sent because of presentation-feedbacks, until the next
-  // draw happens.
-  pass = RenderPass::Create();
-  pass->output_rect = gfx::Rect(0, 0, 100, 100);
-  pass->damage_rect = gfx::Rect(10, 10, 1, 1);
-  pass->id = 1u;
-  pass_list.push_back(std::move(pass));
-  SubmitCompositorFrame(
-      &pass_list,
-      id_allocator_.GetCurrentLocalSurfaceIdAllocation().local_surface_id());
+  // Submit a second frame. This frame should not be throttled, even after
+  // presentation-feedbacks, as we allow up to two undrawn frames.
+  submit_frame(&pass_list);
+  frame_time = base::TimeTicks::Now();
+  EXPECT_TRUE(ShouldSendBeginFrame(support_.get(), frame_time));
+  UpdateBeginFrameTime(support_.get(), frame_time);
+  EXPECT_TRUE(ShouldSendBeginFrame(support_.get(), frame_time));
+
+  // Submit a third frame. This frame should be throttled after
+  // presentation-feedbacks, as we throttle at two undrawn frames.
+  submit_frame(&pass_list);
   frame_time = base::TimeTicks::Now();
   EXPECT_TRUE(ShouldSendBeginFrame(support_.get(), frame_time));
   UpdateBeginFrameTime(support_.get(), frame_time);
@@ -3436,16 +3449,13 @@ TEST_F(DisplayTest, BeginFrameThrottling) {
   EXPECT_TRUE(ShouldSendBeginFrame(support_.get(), frame_time));
   UpdateBeginFrameTime(support_.get(), frame_time);
 
-  // Submit a third frame. Again, begin-frame should be throttled after the
+  // Submit two more frames. Begin-frame should be throttled after the
   // begin-frame for presenatation-feedback.
-  pass = RenderPass::Create();
-  pass->output_rect = gfx::Rect(0, 0, 100, 100);
-  pass->damage_rect = gfx::Rect(10, 10, 1, 1);
-  pass->id = 1u;
-  pass_list.push_back(std::move(pass));
-  SubmitCompositorFrame(
-      &pass_list,
-      id_allocator_.GetCurrentLocalSurfaceIdAllocation().local_surface_id());
+  submit_frame(&pass_list);
+  frame_time = base::TimeTicks::Now();
+  EXPECT_TRUE(ShouldSendBeginFrame(support_.get(), frame_time));
+  UpdateBeginFrameTime(support_.get(), frame_time);
+  submit_frame(&pass_list);
   frame_time = base::TimeTicks::Now();
   EXPECT_TRUE(ShouldSendBeginFrame(support_.get(), frame_time));
   UpdateBeginFrameTime(support_.get(), frame_time);
@@ -3535,6 +3545,233 @@ TEST_F(DisplayTest, InvalidPresentationTimestamps) {
     EXPECT_EQ(buckets[0].count, 1);
   }
 
+  TearDownDisplay();
+}
+
+TEST_F(DisplayTest, DrawOcclusionWithRoundedCornerDoesNotOcclude) {
+  SetUpGpuDisplay(RendererSettings());
+
+  StubDisplayClient client;
+  display_->Initialize(&client, manager_.surface_manager());
+
+  CompositorFrame frame = MakeDefaultCompositorFrame();
+
+  // The quad with rounded corner does not completely cover the quad below it.
+  // The corners of the below quad are visiblg through the clipped corners.
+  gfx::Rect quad_rect(10, 10, 100, 100);
+  gfx::RRectF rounded_corner_bounds(gfx::RectF(quad_rect), 10.f);
+
+  bool is_clipped = false;
+  bool are_contents_opaque = true;
+  float opacity = 1.f;
+  SharedQuadState* shared_quad_state_with_rrect =
+      frame.render_pass_list.front()->CreateAndAppendSharedQuadState();
+  SharedQuadState* shared_quad_state_occluded =
+      frame.render_pass_list.front()->CreateAndAppendSharedQuadState();
+
+  auto* rounded_corner_quad =
+      frame.render_pass_list.front()
+          ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
+  auto* occluded_quad =
+      frame.render_pass_list.front()
+          ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
+
+  {
+    shared_quad_state_occluded->SetAll(
+        gfx::Transform(), quad_rect, quad_rect, gfx::RRectF(), quad_rect,
+        is_clipped, are_contents_opaque, opacity, SkBlendMode::kSrcOver, 0);
+    occluded_quad->SetNew(shared_quad_state_occluded, quad_rect, quad_rect,
+                          SK_ColorRED, false);
+
+    shared_quad_state_with_rrect->SetAll(gfx::Transform(), quad_rect, quad_rect,
+                                         rounded_corner_bounds, quad_rect,
+                                         is_clipped, are_contents_opaque,
+                                         opacity, SkBlendMode::kSrcOver, 0);
+    rounded_corner_quad->SetNew(shared_quad_state_with_rrect, quad_rect,
+                                quad_rect, SK_ColorBLUE, false);
+
+    EXPECT_EQ(2u, frame.render_pass_list.front()->quad_list.size());
+    display_->RemoveOverdrawQuads(&frame);
+
+    // Since none of the quads are culled, there should be 2 quads.
+    EXPECT_EQ(2u, frame.render_pass_list.front()->quad_list.size());
+    EXPECT_EQ(quad_rect.ToString(), frame.render_pass_list.front()
+                                        ->quad_list.ElementAt(0)
+                                        ->visible_rect.ToString());
+    EXPECT_EQ(quad_rect.ToString(), frame.render_pass_list.front()
+                                        ->quad_list.ElementAt(1)
+                                        ->visible_rect.ToString());
+  }
+  TearDownDisplay();
+}
+
+TEST_F(DisplayTest, DrawOcclusionWithRoundedCornerDoesOcclude) {
+  SetUpGpuDisplay(RendererSettings());
+
+  StubDisplayClient client;
+  display_->Initialize(&client, manager_.surface_manager());
+
+  // The quad with rounded corner completely covers the quad below it.
+  CompositorFrame frame = MakeDefaultCompositorFrame();
+  gfx::Rect quad_rect(10, 10, 1000, 1000);
+  gfx::RRectF rounded_corner_bounds(gfx::RectF(quad_rect), 10.f);
+  gfx::Rect occluded_quad_rect(13, 13, 994, 994);
+
+  bool is_clipped = false;
+  bool are_contents_opaque = true;
+  float opacity = 1.f;
+  SharedQuadState* shared_quad_state_with_rrect =
+      frame.render_pass_list.front()->CreateAndAppendSharedQuadState();
+  SharedQuadState* shared_quad_state_occluded =
+      frame.render_pass_list.front()->CreateAndAppendSharedQuadState();
+
+  auto* rounded_corner_quad =
+      frame.render_pass_list.front()
+          ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
+  auto* occluded_quad =
+      frame.render_pass_list.front()
+          ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
+
+  {
+    shared_quad_state_occluded->SetAll(
+        gfx::Transform(), occluded_quad_rect, occluded_quad_rect, gfx::RRectF(),
+        occluded_quad_rect, is_clipped, are_contents_opaque, opacity,
+        SkBlendMode::kSrcOver, 0);
+    occluded_quad->SetNew(shared_quad_state_occluded, occluded_quad_rect,
+                          occluded_quad_rect, SK_ColorRED, false);
+
+    shared_quad_state_with_rrect->SetAll(gfx::Transform(), quad_rect, quad_rect,
+                                         rounded_corner_bounds, quad_rect,
+                                         is_clipped, are_contents_opaque,
+                                         opacity, SkBlendMode::kSrcOver, 0);
+    rounded_corner_quad->SetNew(shared_quad_state_with_rrect, quad_rect,
+                                quad_rect, SK_ColorBLUE, false);
+
+    EXPECT_EQ(2u, frame.render_pass_list.front()->quad_list.size());
+    display_->RemoveOverdrawQuads(&frame);
+    // Since the quad with rounded corner completely covers the quad with
+    // no rounded corner, the later quad is culled. We should only have 1 quad
+    // in the final list now.
+    EXPECT_EQ(1u, frame.render_pass_list.front()->quad_list.size());
+    EXPECT_EQ(quad_rect.ToString(), frame.render_pass_list.front()
+                                        ->quad_list.ElementAt(0)
+                                        ->visible_rect.ToString());
+  }
+  TearDownDisplay();
+}
+
+TEST_F(DisplayTest, DrawOcclusionWithRoundedCornerPartialOcclude) {
+  SetUpGpuDisplay(RendererSettings());
+
+  StubDisplayClient client;
+  display_->Initialize(&client, manager_.surface_manager());
+
+  // The quad with rounded corner completely covers the quad below it.
+  CompositorFrame frame = MakeDefaultCompositorFrame();
+
+  //      +----------------------+
+  //      |                      | <- Large occluding Rect
+  //  +---|-  -  -  -  +  -  -  -|-------+
+  //  |***|            .         |*******|
+  //  |***|            .         |*******|
+  //  |***|            .         |*******|
+  //  +---|-  -  -  -  +  -  -  -|-------+
+  //  |***|            .         |*******|
+  //  |***|            .         |*******|
+  //  |***|            .         |*******|
+  //  +---|-  -  -  -  +  -  -  -|-------+
+  //      |                      |
+  //      +----------------------+
+  //
+  // * -> Visiblg rect for the quads.
+  gfx::Rect quad_rect(10, 10, 1000, 1000);
+  gfx::RRectF rounded_corner_bounds(gfx::RectF(quad_rect), 10.f);
+  gfx::Rect occluded_quad_rect_1(0, 20, 600, 490);
+  gfx::Rect occluded_quad_rect_2(600, 20, 600, 490);
+  gfx::Rect occluded_quad_rect_3(0, 510, 600, 490);
+  gfx::Rect occluded_quad_rect_4(600, 510, 600, 490);
+  gfx::Rect occluded_sqs_rect;
+  occluded_sqs_rect.Union(occluded_quad_rect_1);
+  occluded_sqs_rect.Union(occluded_quad_rect_2);
+  occluded_sqs_rect.Union(occluded_quad_rect_3);
+  occluded_sqs_rect.Union(occluded_quad_rect_4);
+
+  bool is_clipped = false;
+  bool are_contents_opaque = true;
+  float opacity = 1.f;
+  SharedQuadState* shared_quad_state_with_rrect =
+      frame.render_pass_list.front()->CreateAndAppendSharedQuadState();
+  SharedQuadState* shared_quad_state_occluded =
+      frame.render_pass_list.front()->CreateAndAppendSharedQuadState();
+
+  auto* rounded_corner_quad =
+      frame.render_pass_list.front()
+          ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
+  auto* occluded_quad_1 =
+      frame.render_pass_list.front()
+          ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
+  auto* occluded_quad_2 =
+      frame.render_pass_list.front()
+          ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
+  auto* occluded_quad_3 =
+      frame.render_pass_list.front()
+          ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
+  auto* occluded_quad_4 =
+      frame.render_pass_list.front()
+          ->quad_list.AllocateAndConstruct<SolidColorDrawQuad>();
+
+  {
+    shared_quad_state_occluded->SetAll(
+        gfx::Transform(), occluded_sqs_rect, occluded_sqs_rect, gfx::RRectF(),
+        occluded_sqs_rect, is_clipped, are_contents_opaque, opacity,
+        SkBlendMode::kSrcOver, 0);
+    occluded_quad_1->SetNew(shared_quad_state_occluded, occluded_quad_rect_1,
+                            occluded_quad_rect_1, SK_ColorRED, false);
+    occluded_quad_2->SetNew(shared_quad_state_occluded, occluded_quad_rect_2,
+                            occluded_quad_rect_2, SK_ColorRED, false);
+    occluded_quad_3->SetNew(shared_quad_state_occluded, occluded_quad_rect_3,
+                            occluded_quad_rect_3, SK_ColorRED, false);
+    occluded_quad_4->SetNew(shared_quad_state_occluded, occluded_quad_rect_4,
+                            occluded_quad_rect_4, SK_ColorRED, false);
+
+    shared_quad_state_with_rrect->SetAll(gfx::Transform(), quad_rect, quad_rect,
+                                         rounded_corner_bounds, quad_rect,
+                                         is_clipped, are_contents_opaque,
+                                         opacity, SkBlendMode::kSrcOver, 0);
+    rounded_corner_quad->SetNew(shared_quad_state_with_rrect, quad_rect,
+                                quad_rect, SK_ColorBLUE, false);
+
+    EXPECT_EQ(5u, frame.render_pass_list.front()->quad_list.size());
+    display_->RemoveOverdrawQuads(&frame);
+    // Since the quad with rounded corner completely covers the quad with
+    // no rounded corner, the later quad is culled. We should only have 1 quad
+    // in the final list now.
+    EXPECT_EQ(5u, frame.render_pass_list.front()->quad_list.size());
+    EXPECT_EQ(quad_rect.ToString(), frame.render_pass_list.front()
+                                        ->quad_list.ElementAt(0)
+                                        ->visible_rect.ToString());
+
+    // For rounded rect of bounds (10, 10, 1000, 1000) and corner radius of 10,
+    // the occluding rect for it would be (13, 13, 994, 994).
+    const gfx::Rect occluding_rect(13, 13, 994, 994);
+
+    // Computed the expe
+    gfx::Rect expected_visible_rect_1 = occluded_quad_rect_1;
+    expected_visible_rect_1.Subtract(occluding_rect);
+    gfx::Rect expected_visible_rect_2 = occluded_quad_rect_2;
+    expected_visible_rect_2.Subtract(occluding_rect);
+    gfx::Rect expected_visible_rect_3 = occluded_quad_rect_3;
+    expected_visible_rect_3.Subtract(occluding_rect);
+    gfx::Rect expected_visible_rect_4 = occluded_quad_rect_4;
+    expected_visible_rect_4.Subtract(occluding_rect);
+
+    const QuadList& quad_list = frame.render_pass_list.front()->quad_list;
+
+    EXPECT_EQ(expected_visible_rect_1, quad_list.ElementAt(1)->visible_rect);
+    EXPECT_EQ(expected_visible_rect_2, quad_list.ElementAt(2)->visible_rect);
+    EXPECT_EQ(expected_visible_rect_3, quad_list.ElementAt(3)->visible_rect);
+    EXPECT_EQ(expected_visible_rect_4, quad_list.ElementAt(4)->visible_rect);
+  }
   TearDownDisplay();
 }
 

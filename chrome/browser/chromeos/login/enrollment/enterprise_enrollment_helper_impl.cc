@@ -72,19 +72,10 @@ void TokenRevoker::OnOAuth2RevokeTokenCompleted(
 
 namespace chromeos {
 
-EnterpriseEnrollmentHelperImpl::EnterpriseEnrollmentHelperImpl(
-    EnrollmentStatusConsumer* status_consumer,
-    ActiveDirectoryJoinDelegate* ad_join_delegate,
-    const policy::EnrollmentConfig& enrollment_config,
-    const std::string& enrolling_user_domain)
-    : EnterpriseEnrollmentHelper(status_consumer),
-      enrollment_config_(enrollment_config),
-      enrolling_user_domain_(enrolling_user_domain),
-      ad_join_delegate_(ad_join_delegate),
-      weak_ptr_factory_(this) {
+EnterpriseEnrollmentHelperImpl::EnterpriseEnrollmentHelperImpl() {
   // Init the TPM if it has not been done until now (in debug build we might
   // have not done that yet).
-  DBusThreadManager::Get()->GetCryptohomeClient()->TpmCanAttemptOwnership(
+  CryptohomeClient::Get()->TpmCanAttemptOwnership(
       EmptyVoidDBusMethodCallback());
 }
 
@@ -95,9 +86,17 @@ EnterpriseEnrollmentHelperImpl::~EnterpriseEnrollmentHelperImpl() {
       (oauth_status_ == OAUTH_FINISHED && (success_ || oauth_data_cleared_)));
 }
 
+void EnterpriseEnrollmentHelperImpl::Setup(
+    ActiveDirectoryJoinDelegate* ad_join_delegate,
+    const policy::EnrollmentConfig& enrollment_config,
+    const std::string& enrolling_user_domain) {
+  ad_join_delegate_ = ad_join_delegate;
+  enrollment_config_ = enrollment_config;
+  enrolling_user_domain_ = enrolling_user_domain;
+}
+
 void EnterpriseEnrollmentHelperImpl::EnrollUsingAuthCode(
-    const std::string& auth_code,
-    bool fetch_additional_token) {
+    const std::string& auth_code) {
   DCHECK(oauth_status_ == OAUTH_NOT_STARTED);
   oauth_status_ = OAUTH_STARTED_WITH_AUTH_CODE;
   oauth_fetcher_ = policy::PolicyOAuth2TokenFetcher::CreateInstance();
@@ -106,8 +105,7 @@ void EnterpriseEnrollmentHelperImpl::EnrollUsingAuthCode(
       g_browser_process->system_network_context_manager()
           ->GetSharedURLLoaderFactory(),
       base::Bind(&EnterpriseEnrollmentHelperImpl::OnTokenFetched,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 fetch_additional_token /* is_additional_token */));
+                 weak_ptr_factory_.GetWeakPtr()));
 }
 
 void EnterpriseEnrollmentHelperImpl::EnrollUsingToken(
@@ -206,13 +204,8 @@ void EnterpriseEnrollmentHelperImpl::OnDeviceAccountClientError(
       FROM_HERE, device_account_initializer_.release());
 }
 
-void EnterpriseEnrollmentHelperImpl::ClearAuth(const base::Closure& callback) {
+void EnterpriseEnrollmentHelperImpl::ClearAuth(base::OnceClosure callback) {
   if (oauth_status_ != OAUTH_NOT_STARTED) {
-    // Do not revoke the additional token if enrollment has finished
-    // successfully.
-    if (!success_ && additional_token_.length())
-      (new TokenRevoker())->Start(additional_token_);
-
     if (oauth_fetcher_) {
       if (!oauth_fetcher_->OAuth2AccessToken().empty())
         (new TokenRevoker())->Start(oauth_fetcher_->OAuth2AccessToken());
@@ -228,8 +221,9 @@ void EnterpriseEnrollmentHelperImpl::ClearAuth(const base::Closure& callback) {
   }
   auth_data_.reset();
   chromeos::ProfileHelper::Get()->ClearSigninProfile(
-      base::Bind(&EnterpriseEnrollmentHelperImpl::OnSigninProfileCleared,
-                 weak_ptr_factory_.GetWeakPtr(), callback));
+      base::AdaptCallbackForRepeating(base::BindOnce(
+          &EnterpriseEnrollmentHelperImpl::OnSigninProfileCleared,
+          weak_ptr_factory_.GetWeakPtr(), std::move(callback))));
 }
 
 bool EnterpriseEnrollmentHelperImpl::ShouldCheckLicenseType() const {
@@ -335,7 +329,6 @@ void EnterpriseEnrollmentHelperImpl::UpdateDeviceAttributes(
 }
 
 void EnterpriseEnrollmentHelperImpl::OnTokenFetched(
-    bool is_additional_token,
     const std::string& token,
     const GoogleServiceAuthError& error) {
   if (error.state() != GoogleServiceAuthError::NONE) {
@@ -345,21 +338,7 @@ void EnterpriseEnrollmentHelperImpl::OnTokenFetched(
     return;
   }
 
-  if (!is_additional_token) {
-    EnrollUsingToken(token);
-    return;
-  }
-
-  additional_token_ = token;
-  std::string refresh_token = oauth_fetcher_->OAuth2RefreshToken();
-  oauth_fetcher_ = policy::PolicyOAuth2TokenFetcher::CreateInstance();
-  oauth_fetcher_->StartWithRefreshToken(
-      refresh_token,
-      g_browser_process->system_network_context_manager()
-          ->GetSharedURLLoaderFactory(),
-      base::Bind(&EnterpriseEnrollmentHelperImpl::OnTokenFetched,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 false /* is_additional_token */));
+  EnrollUsingToken(token);
 }
 
 void EnterpriseEnrollmentHelperImpl::OnEnrollmentFinished(
@@ -601,9 +580,9 @@ void EnterpriseEnrollmentHelperImpl::UMA(policy::MetricEnrollment sample) {
 }
 
 void EnterpriseEnrollmentHelperImpl::OnSigninProfileCleared(
-    const base::Closure& callback) {
+    base::OnceClosure callback) {
   oauth_data_cleared_ = true;
-  callback.Run();
+  std::move(callback).Run();
 }
 
 }  // namespace chromeos

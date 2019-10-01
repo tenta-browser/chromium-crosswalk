@@ -73,6 +73,43 @@ InputMethodEngine::InputMethodEngine()
 
 InputMethodEngine::~InputMethodEngine() {}
 
+void InputMethodEngine::Enable(const std::string& component_id) {
+  InputMethodEngineBase::Enable(component_id);
+  EnableInputView();
+}
+
+bool InputMethodEngine::IsActive() const {
+  return !active_component_id_.empty();
+}
+
+void InputMethodEngine::PropertyActivate(const std::string& property_name) {
+  observer_->OnMenuItemActivated(active_component_id_, property_name);
+}
+
+void InputMethodEngine::CandidateClicked(uint32_t index) {
+  if (index > candidate_ids_.size()) {
+    return;
+  }
+
+  // Only left button click is supported at this moment.
+  observer_->OnCandidateClicked(active_component_id_, candidate_ids_.at(index),
+                                InputMethodEngineBase::MOUSE_BUTTON_LEFT);
+}
+
+void InputMethodEngine::SetMirroringEnabled(bool mirroring_enabled) {
+  if (mirroring_enabled != is_mirroring_) {
+    is_mirroring_ = mirroring_enabled;
+    observer_->OnScreenProjectionChanged(is_mirroring_ || is_casting_);
+  }
+}
+
+void InputMethodEngine::SetCastingEnabled(bool casting_enabled) {
+  if (casting_enabled != is_casting_) {
+    is_casting_ = casting_enabled;
+    observer_->OnScreenProjectionChanged(is_mirroring_ || is_casting_);
+  }
+}
+
 const InputMethodEngine::CandidateWindowProperty&
 InputMethodEngine::GetCandidateWindowProperty() const {
   return candidate_window_property_;
@@ -214,28 +251,83 @@ bool InputMethodEngine::UpdateMenuItems(
   return true;
 }
 
-bool InputMethodEngine::IsActive() const {
-  return !active_component_id_.empty();
-}
-
 void InputMethodEngine::HideInputView() {
   auto* keyboard_client = ChromeKeyboardControllerClient::Get();
   if (keyboard_client->is_keyboard_enabled())
     keyboard_client->HideKeyboard(ash::mojom::HideReason::kUser);
 }
 
-void InputMethodEngine::SetMirroringEnabled(bool mirroring_enabled) {
-  if (mirroring_enabled != is_mirroring_) {
-    is_mirroring_ = mirroring_enabled;
-    observer_->OnScreenProjectionChanged(is_mirroring_ || is_casting_);
+void InputMethodEngine::UpdateComposition(
+    const ui::CompositionText& composition_text,
+    uint32_t cursor_pos,
+    bool is_visible) {
+  ui::IMEInputContextHandlerInterface* input_context =
+      ui::IMEBridge::Get()->GetInputContextHandler();
+  if (input_context)
+    input_context->UpdateCompositionText(composition_text, cursor_pos,
+                                         is_visible);
+}
+
+bool InputMethodEngine::SetCompositionRange(
+    uint32_t before,
+    uint32_t after,
+    const std::vector<ui::ImeTextSpan>& text_spans) {
+  ui::IMEInputContextHandlerInterface* input_context =
+      ui::IMEBridge::Get()->GetInputContextHandler();
+  if (!input_context)
+    return false;
+  return input_context->SetCompositionRange(before, after, text_spans);
+}
+
+void InputMethodEngine::CommitTextToInputContext(int context_id,
+                                                 const std::string& text) {
+  bool committed = false;
+  ui::IMEInputContextHandlerInterface* input_context =
+      ui::IMEBridge::Get()->GetInputContextHandler();
+  if (input_context) {
+    input_context->CommitText(text);
+    committed = true;
+  }
+
+  if (committed && !composition_text_->text.empty()) {
+    // Records histograms for committed characters.
+    base::string16 wtext = base::UTF8ToUTF16(text);
+    UMA_HISTOGRAM_CUSTOM_COUNTS("InputMethod.CommitLength", wtext.length(), 1,
+                                25, 25);
+    composition_text_.reset(new ui::CompositionText());
   }
 }
 
-void InputMethodEngine::SetCastingEnabled(bool casting_enabled) {
-  if (casting_enabled != is_casting_) {
-    is_casting_ = casting_enabled;
-    observer_->OnScreenProjectionChanged(is_mirroring_ || is_casting_);
+void InputMethodEngine::DeleteSurroundingTextToInputContext(
+    int offset,
+    size_t number_of_chars) {
+  ui::IMEInputContextHandlerInterface* input_context =
+      ui::IMEBridge::Get()->GetInputContextHandler();
+  if (input_context)
+    input_context->DeleteSurroundingText(offset, number_of_chars);
+}
+
+bool InputMethodEngine::SendKeyEvent(ui::KeyEvent* event,
+                                     const std::string& code) {
+  DCHECK(event);
+  if (event->key_code() == ui::VKEY_UNKNOWN)
+    event->set_key_code(ui::DomKeycodeToKeyboardCode(code));
+
+  // Marks the simulated key event is from the Virtual Keyboard.
+  ui::Event::Properties properties;
+  properties[ui::kPropertyFromVK] =
+      std::vector<uint8_t>(ui::kPropertyFromVKSize);
+  properties[ui::kPropertyFromVK][ui::kPropertyFromVKIsMirroringIndex] =
+      (uint8_t)is_mirroring_;
+  event->SetProperties(properties);
+
+  ui::IMEInputContextHandlerInterface* input_context =
+      ui::IMEBridge::Get()->GetInputContextHandler();
+  if (input_context) {
+    input_context->SendKeyEvent(event);
+    return true;
   }
+  return false;
 }
 
 void InputMethodEngine::EnableInputView() {
@@ -247,25 +339,6 @@ void InputMethodEngine::EnableInputView() {
     keyboard_client->ReloadKeyboardIfNeeded();
 }
 
-
-void InputMethodEngine::Enable(const std::string& component_id) {
-  InputMethodEngineBase::Enable(component_id);
-  EnableInputView();
-}
-
-void InputMethodEngine::PropertyActivate(const std::string& property_name) {
-  observer_->OnMenuItemActivated(active_component_id_, property_name);
-}
-
-void InputMethodEngine::CandidateClicked(uint32_t index) {
-  if (index > candidate_ids_.size()) {
-    return;
-  }
-
-  // Only left button click is supported at this moment.
-  observer_->OnCandidateClicked(active_component_id_, candidate_ids_.at(index),
-                                InputMethodEngineBase::MOUSE_BUTTON_LEFT);
-}
 
 // TODO(uekawa): rename this method to a more reasonable name.
 void InputMethodEngine::MenuItemToProperty(
@@ -307,50 +380,6 @@ void InputMethodEngine::MenuItemToProperty(
   }
 
   // TODO(nona): Support item.children.
-}
-
-void InputMethodEngine::UpdateComposition(
-    const ui::CompositionText& composition_text,
-    uint32_t cursor_pos,
-    bool is_visible) {
-  ui::IMEInputContextHandlerInterface* input_context =
-      ui::IMEBridge::Get()->GetInputContextHandler();
-  if (input_context)
-    input_context->UpdateCompositionText(composition_text, cursor_pos,
-                                         is_visible);
-}
-
-void InputMethodEngine::CommitTextToInputContext(int context_id,
-                                                 const std::string& text) {
-  ui::IMEBridge::Get()->GetInputContextHandler()->CommitText(text);
-
-  // Records histograms for committed characters.
-  if (!composition_text_->text.empty()) {
-    base::string16 wtext = base::UTF8ToUTF16(text);
-    UMA_HISTOGRAM_CUSTOM_COUNTS("InputMethod.CommitLength", wtext.length(), 1,
-                                25, 25);
-    composition_text_.reset(new ui::CompositionText());
-  }
-}
-
-bool InputMethodEngine::SendKeyEvent(ui::KeyEvent* event,
-                                     const std::string& code) {
-  DCHECK(event);
-  if (event->key_code() == ui::VKEY_UNKNOWN)
-    event->set_key_code(ui::DomKeycodeToKeyboardCode(code));
-
-  ui::IMEInputContextHandlerInterface* input_context =
-      ui::IMEBridge::Get()->GetInputContextHandler();
-  if (!input_context)
-    return false;
-
-  // Marks the simulated key event is from the Virtual Keyboard.
-  ui::Event::Properties properties;
-  properties[ui::kPropertyFromVK] = std::vector<uint8_t>();
-  event->SetProperties(properties);
-
-  input_context->SendKeyEvent(event);
-  return true;
 }
 
 }  // namespace chromeos

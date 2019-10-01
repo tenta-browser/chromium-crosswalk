@@ -6,13 +6,13 @@
 
 #include <stdint.h>
 
-#include "android_webview/common/aw_channel.h"
 #include "android_webview/common/aw_descriptors.h"
 #include "android_webview/common/aw_paths.h"
 #include "android_webview/common/aw_switches.h"
 #include "android_webview/common/crash_reporter/crash_keys.h"
 #include "base/android/build_info.h"
 #include "base/base_paths_android.h"
+#include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
@@ -22,15 +22,17 @@
 #include "build/build_config.h"
 #include "components/crash/content/app/crash_reporter_client.h"
 #include "components/crash/content/app/crashpad.h"
+#include "components/version_info/android/channel_getter.h"
 #include "components/version_info/version_info.h"
 #include "components/version_info/version_info_values.h"
 
 namespace android_webview {
-namespace crash_reporter {
+
+constexpr unsigned int kCrashDumpPercentageForStable = 1;
 
 namespace {
 
-class AwCrashReporterClient : public ::crash_reporter::CrashReporterClient {
+class AwCrashReporterClient : public crash_reporter::CrashReporterClient {
  public:
   AwCrashReporterClient() {}
 
@@ -52,7 +54,7 @@ class AwCrashReporterClient : public ::crash_reporter::CrashReporterClient {
     *product_name = "AndroidWebView";
     *version = PRODUCT_VERSION;
     *channel =
-        version_info::GetChannelString(android_webview::GetChannelOrStable());
+        version_info::GetChannelString(version_info::android::GetChannel());
   }
 
   bool GetCrashDumpLocation(base::FilePath* crash_dir) override {
@@ -77,7 +79,15 @@ class AwCrashReporterClient : public ::crash_reporter::CrashReporterClient {
       return 100;
     }
 
-    return 1;
+    version_info::Channel channel = version_info::android::GetChannel();
+    // Downsample unknown channel as a precaution in case it ends up being
+    // shipped.
+    if (channel == version_info::Channel::STABLE ||
+        channel == version_info::Channel::UNKNOWN) {
+      return kCrashDumpPercentageForStable;
+    }
+
+    return 100;
   }
 
   bool GetBrowserProcessType(std::string* ptype) override {
@@ -152,15 +162,15 @@ bool SafeToUseSignalHandler() {
 }
 #endif
 
+bool g_enabled;
+
 }  // namespace
 
 void EnableCrashReporter(const std::string& process_type) {
-  static bool enabled;
-  if (enabled) {
+  if (g_enabled) {
     NOTREACHED() << "EnableCrashReporter called more than once";
     return;
   }
-  enabled = true;
 
 #if defined(ARCH_CPU_X86_FAMILY)
   if (!SafeToUseSignalHandler()) {
@@ -170,13 +180,13 @@ void EnableCrashReporter(const std::string& process_type) {
 #endif
 
   AwCrashReporterClient* client = g_crash_reporter_client.Pointer();
-  ::crash_reporter::SetCrashReporterClient(client);
-  ::crash_reporter::InitializeCrashpad(process_type.empty(), process_type);
+  crash_reporter::SetCrashReporterClient(client);
+  crash_reporter::InitializeCrashpad(process_type.empty(), process_type);
+  g_enabled = true;
 }
 
-bool GetCrashDumpLocation(base::FilePath* crash_dir) {
-  return g_crash_reporter_client.Get().GetCrashDumpLocation(crash_dir);
+bool CrashReporterEnabled() {
+  return g_enabled;
 }
 
-}  // namespace crash_reporter
 }  // namespace android_webview

@@ -9,9 +9,10 @@
 #include <vector>
 
 #include "base/base64.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "net/socket/socket_test_util.h"
+#include "net/socket/stream_socket.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/libjingle_xmpp/xmllite/xmlelement.h"
@@ -92,13 +93,13 @@ class XmppSocketDataProvider : public net::SocketDataProvider {
 class MockClientSocketFactory : public net::MockClientSocketFactory {
  public:
   std::unique_ptr<net::SSLClientSocket> CreateSSLClientSocket(
-      std::unique_ptr<net::ClientSocketHandle> transport_socket,
+      std::unique_ptr<net::StreamSocket> stream_socket,
       const net::HostPortPair& host_and_port,
       const net::SSLConfig& ssl_config,
       const net::SSLClientSocketContext& context) override {
     ssl_socket_created_ = true;
     return net::MockClientSocketFactory::CreateSSLClientSocket(
-        std::move(transport_socket), host_and_port, ssl_config, context);
+        std::move(stream_socket), host_and_port, ssl_config, context);
   }
 
   bool ssl_socket_created() const { return ssl_socket_created_; }
@@ -116,7 +117,9 @@ const int kDefaultPort = 443;
 class XmppSignalStrategyTest : public testing::Test,
                                public SignalStrategy::Listener {
  public:
-  XmppSignalStrategyTest() : message_loop_(base::MessageLoop::TYPE_IO) {}
+  XmppSignalStrategyTest()
+      : scoped_task_environment_(
+            base::test::ScopedTaskEnvironment::MainThreadType::IO) {}
 
   void SetUp() override {
     auto url_request_context = std::make_unique<net::TestURLRequestContext>(
@@ -124,7 +127,8 @@ class XmppSignalStrategyTest : public testing::Test,
     url_request_context->set_client_socket_factory(&client_socket_factory_);
     url_request_context->Init();
     request_context_getter_ = new net::TestURLRequestContextGetter(
-        message_loop_.task_runner(), std::move(url_request_context));
+        scoped_task_environment_.GetMainThreadTaskRunner(),
+        std::move(url_request_context));
   }
 
   void CreateSignalStrategy(int port) {
@@ -156,7 +160,7 @@ class XmppSignalStrategyTest : public testing::Test,
   void Connect(bool success);
 
  protected:
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   scoped_refptr<net::TestURLRequestContextGetter> request_context_getter_;
   MockClientSocketFactory client_socket_factory_;
   std::unique_ptr<XmppSocketDataProvider> socket_data_provider_;

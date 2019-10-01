@@ -73,6 +73,7 @@ void GCMDriverAndroid::OnMessageReceived(
     const JavaParamRef<jobject>& obj,
     const JavaParamRef<jstring>& j_app_id,
     const JavaParamRef<jstring>& j_sender_id,
+    const JavaParamRef<jstring>& j_message_id,
     const JavaParamRef<jstring>& j_collapse_key,
     const JavaParamRef<jbyteArray>& j_raw_data,
     const JavaParamRef<jobjectArray>& j_data_keys_and_values) {
@@ -82,6 +83,9 @@ void GCMDriverAndroid::OnMessageReceived(
 
   IncomingMessage message;
   message.sender_id = ConvertJavaStringToUTF8(env, j_sender_id);
+
+  if (!j_message_id.is_null())
+    ConvertJavaStringToUTF8(env, j_message_id, &message.message_id);
   if (!j_collapse_key.is_null())
     ConvertJavaStringToUTF8(env, j_collapse_key, &message.collapse_key);
 
@@ -114,13 +118,23 @@ void GCMDriverAndroid::ValidateRegistration(
     const ValidateRegistrationCallback& callback) {
   // gcm_driver doesn't store registration IDs on Android, so assume it's valid.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(callback, true /* is_valid */));
+      FROM_HERE, base::BindOnce(callback, true /* is_valid */));
 }
 
 void GCMDriverAndroid::OnSignedIn() {
 }
 
 void GCMDriverAndroid::OnSignedOut() {
+}
+
+void GCMDriverAndroid::AddAppHandler(const std::string& app_id,
+                                     GCMAppHandler* handler) {
+  GCMDriver::AddAppHandler(app_id, handler);
+  JNIEnv* env = AttachCurrentThread();
+  // TODO(melandory, mamir): check if messages were persisted
+  // and only then go to java.
+  Java_GCMDriver_replayPersistedMessages(env, java_ref_,
+                                         ConvertUTF8ToJavaString(env, app_id));
 }
 
 void GCMDriverAndroid::AddConnectionObserver(GCMConnectionObserver* observer) {

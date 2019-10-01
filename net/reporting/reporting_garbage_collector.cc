@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/time/tick_clock.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
@@ -50,6 +51,8 @@ class ReportingGarbageCollectorImpl : public ReportingGarbageCollector,
   }
 
  private:
+  // TODO(crbug.com/912622): Garbage collect clients, reports with no matching
+  // endpoints.
   void CollectGarbage() {
     base::TimeTicks now = context_->tick_clock()->NowTicks();
     const ReportingPolicy& policy = context_->policy();

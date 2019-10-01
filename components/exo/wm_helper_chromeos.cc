@@ -15,8 +15,8 @@
 #include "ui/display/manager/display_configurator.h"
 #include "ui/display/manager/display_manager.h"
 #include "ui/display/types/display_snapshot.h"
-#include "ui/wm/public/activation_client.h"
 #include "ui/wm/core/capture_controller.h"
+#include "ui/wm/public/activation_client.h"
 
 namespace exo {
 namespace {
@@ -30,10 +30,7 @@ aura::Window* GetPrimaryRoot() {
 ////////////////////////////////////////////////////////////////////////////////
 // WMHelperChromeOS, public:
 
-WMHelperChromeOS::WMHelperChromeOS(aura::Env* env)
-    : vsync_manager_(
-          GetPrimaryRoot()->layer()->GetCompositor()->vsync_manager()),
-      env_(env) {}
+WMHelperChromeOS::WMHelperChromeOS() : vsync_timing_manager_(this) {}
 
 WMHelperChromeOS::~WMHelperChromeOS() {}
 
@@ -59,10 +56,6 @@ void WMHelperChromeOS::AddDisplayConfigurationObserver(
 void WMHelperChromeOS::RemoveDisplayConfigurationObserver(
     ash::WindowTreeHostManager::Observer* observer) {
   ash::Shell::Get()->window_tree_host_manager()->RemoveObserver(observer);
-}
-
-aura::Env* WMHelperChromeOS::env() {
-  return env_;
 }
 
 void WMHelperChromeOS::AddActivationObserver(
@@ -101,14 +94,8 @@ void WMHelperChromeOS::ResetDragDropDelegate(aura::Window* window) {
   aura::client::SetDragDropDelegate(window, nullptr);
 }
 
-void WMHelperChromeOS::AddVSyncObserver(
-    ui::CompositorVSyncManager::Observer* observer) {
-  vsync_manager_->AddObserver(observer);
-}
-
-void WMHelperChromeOS::RemoveVSyncObserver(
-    ui::CompositorVSyncManager::Observer* observer) {
-  vsync_manager_->RemoveObserver(observer);
+VSyncTimingManager& WMHelperChromeOS::GetVSyncTimingManager() {
+  return vsync_timing_manager_;
 }
 
 void WMHelperChromeOS::OnDragEntered(const ui::DropTargetEvent& event) {
@@ -136,6 +123,12 @@ int WMHelperChromeOS::OnPerformDrop(const ui::DropTargetEvent& event) {
   return ui::DragDropTypes::DRAG_MOVE;
 }
 
+void WMHelperChromeOS::AddVSyncParameterObserver(
+    viz::mojom::VSyncParameterObserverPtr observer) {
+  GetPrimaryRoot()->layer()->GetCompositor()->AddVSyncParameterObserver(
+      std::move(observer));
+}
+
 const display::ManagedDisplayInfo& WMHelperChromeOS::GetDisplayInfo(
     int64_t display_id) const {
   return ash::Shell::Get()->display_manager()->GetDisplayInfo(display_id);
@@ -143,10 +136,8 @@ const display::ManagedDisplayInfo& WMHelperChromeOS::GetDisplayInfo(
 
 const std::vector<uint8_t>& WMHelperChromeOS::GetDisplayIdentificationData(
     int64_t display_id) const {
-  const auto& displays = ash::Shell::Get()
-                             ->window_tree_host_manager()
-                             ->display_configurator()
-                             ->cached_displays();
+  const auto& displays =
+      ash::Shell::Get()->display_configurator()->cached_displays();
 
   for (display::DisplaySnapshot* display : displays)
     if (display->display_id() == display_id)

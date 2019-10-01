@@ -75,7 +75,7 @@ class CastCdmContextForTest : public CastCdmContext {
 
   std::unique_ptr<DecryptContextImpl> GetDecryptContext(
       const std::string& key_id,
-      const EncryptionScheme& encryption_scheme) override {
+      EncryptionScheme encryption_scheme) override {
     if (license_installed_) {
       return std::unique_ptr<DecryptContextImpl>(
           new DecryptContextImpl(KEY_SYSTEM_CLEAR_KEY));
@@ -155,7 +155,7 @@ class PipelineHelper {
       video_configs.push_back(::media::VideoDecoderConfig(
           ::media::kCodecH264, ::media::H264PROFILE_MAIN,
           ::media::PIXEL_FORMAT_I420, ::media::VideoColorSpace(),
-          ::media::VIDEO_ROTATION_0, gfx::Size(640, 480),
+          ::media::kNoTransformation, gfx::Size(640, 480),
           gfx::Rect(0, 0, 640, 480), gfx::Size(640, 480),
           ::media::EmptyExtraData(), ::media::EncryptionScheme()));
       VideoPipelineClient client;
@@ -358,10 +358,10 @@ TEST_P(AudioVideoPipelineImplTest, FullCycle) {
       base::BindOnce(&PipelineHelper::Start,
                      base::Unretained(pipeline_helper_.get()), eos_cb));
   base::RunLoop().Run();
-};
+}
 
 // Test all three types of pipeline: audio-only, video-only, audio-video.
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     MediaPipelineImplTests,
     AudioVideoPipelineImplTest,
     ::testing::Values(AudioVideoTuple(true, false),   // Audio only.

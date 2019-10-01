@@ -83,8 +83,7 @@ class UserManagerTest : public testing::Test {
 
     wallpaper_controller_client_ =
         std::make_unique<WallpaperControllerClient>();
-    wallpaper_controller_client_->InitForTesting(
-        test_wallpaper_controller_.CreateInterfacePtr());
+    wallpaper_controller_client_->InitForTesting(&test_wallpaper_controller_);
   }
 
   void TearDown() override {
@@ -218,7 +217,6 @@ TEST_F(UserManagerTest, RemoveAllExceptOwnerFromList) {
   EXPECT_EQ(1U, users->size());
   EXPECT_EQ((*users)[0]->GetAccountId(), owner_account_id_at_invalid_domain_);
   // Verify that the wallpaper is removed when user is removed.
-  wallpaper_controller_client_->FlushForTesting();
   EXPECT_EQ(2, test_wallpaper_controller_.remove_user_wallpaper_count());
 }
 
@@ -265,28 +263,6 @@ TEST_F(UserManagerTest, ScreenLockAvailability) {
   EXPECT_EQ(0U, user_manager::UserManager::Get()->GetUnlockUsers().size());
 
   ResetUserManager();
-}
-
-TEST_F(UserManagerTest, ProfileInitialized) {
-  user_manager::UserManager::Get()->UserLoggedIn(
-      owner_account_id_at_invalid_domain_,
-      owner_account_id_at_invalid_domain_.GetUserEmail(),
-      false /* browser_restart */, false /* is_child */);
-  const user_manager::UserList* users =
-      &user_manager::UserManager::Get()->GetUsers();
-  ASSERT_EQ(1U, users->size());
-  EXPECT_FALSE((*users)[0]->profile_ever_initialized());
-  ResetUserManager();
-  users = &user_manager::UserManager::Get()->GetUsers();
-  ASSERT_EQ(1U, users->size());
-  EXPECT_FALSE((*users)[0]->profile_ever_initialized());
-
-  user_manager::known_user::SetProfileEverInitialized(
-      (*users)[0]->GetAccountId(), true);
-  ResetUserManager();
-  users = &user_manager::UserManager::Get()->GetUsers();
-  ASSERT_EQ(1U, users->size());
-  EXPECT_TRUE((*users)[0]->profile_ever_initialized());
 }
 
 TEST_F(UserManagerTest, ProfileRequiresPolicyUnknown) {

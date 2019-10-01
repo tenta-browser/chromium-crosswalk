@@ -2,8 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-'''The 'grit build' tool along with integration for this tool with the
-SCons build system.
+'''The 'grit build' tool.
 '''
 
 import codecs
@@ -31,10 +30,6 @@ _format_modules = {
   'c_format': 'c_format',
   'chrome_messages_json': 'chrome_messages_json',
   'data_package': 'data_pack',
-  'gzipped_resource_file_map_source': 'resource_map',
-  'gzipped_resource_map_header': 'resource_map',
-  'gzipped_resource_map_source': 'resource_map',
-  'js_map_format': 'js_map_format',
   'policy_templates': 'policy_templates_json',
   'rc_all': 'rc',
   'rc_header': 'rc_header',
@@ -218,12 +213,9 @@ are exported to translation interchange files (e.g. XMB files), etc.
       print 'This tool takes no tool-specific arguments.'
       return 2
     self.SetOptions(opts)
-    if self.scons_targets:
-      self.VerboseOut('Using SCons targets to identify files to output.\n')
-    else:
-      self.VerboseOut('Output directory: %s (absolute path: %s)\n' %
-                      (self.output_directory,
-                       os.path.abspath(self.output_directory)))
+    self.VerboseOut('Output directory: %s (absolute path: %s)\n' %
+                    (self.output_directory,
+                     os.path.abspath(self.output_directory)))
 
     if whitelist_filenames:
       self.whitelist_names = set()
@@ -281,11 +273,6 @@ are exported to translation interchange files (e.g. XMB files), etc.
     # has been called, otherwise None.
     self.res = None
 
-    # Set to a list of filenames for the output nodes that are relative
-    # to the current working directory.  They are in the same order as the
-    # output nodes in the file.
-    self.scons_targets = None
-
     # The set of names that are whitelisted to actually be included in the
     # output.
     self.whitelist_names = None
@@ -337,34 +324,18 @@ are exported to translation interchange files (e.g. XMB files), etc.
     # files (no UTF-8), so we make all RC files UTF-16 to support all
     # character sets.
     if output_type in ('rc_header', 'resource_file_map_source',
-                       'resource_map_header', 'resource_map_source',
-                       'gzipped_resource_file_map_source',
-                       'gzipped_resource_map_header',
-                       'gzipped_resource_map_source',
-                      ):
+                       'resource_map_header', 'resource_map_source'):
       return 'cp1252'
-    if output_type in ('android', 'c_format', 'js_map_format', 'plist',
-                       'plist_strings', 'doc', 'json', 'android_policy',
-                       'chrome_messages_json'):
+    if output_type in ('android', 'c_format',  'plist', 'plist_strings', 'doc',
+                       'json', 'android_policy', 'chrome_messages_json'):
       return 'utf_8'
     # TODO(gfeher) modify here to set utf-8 encoding for admx/adml
     return 'utf_16'
 
   def Process(self):
-    # Update filenames with those provided by SCons if we're being invoked
-    # from SCons.  The list of SCons targets also includes all <structure>
-    # node outputs, but it starts with our output files, in the order they
-    # occur in the .grd
-    if self.scons_targets:
-      assert len(self.scons_targets) >= len(self.res.GetOutputFiles())
-      outfiles = self.res.GetOutputFiles()
-      for ix in range(len(outfiles)):
-        outfiles[ix].output_filename = os.path.abspath(
-          self.scons_targets[ix])
-    else:
-      for output in self.res.GetOutputFiles():
-        output.output_filename = os.path.abspath(os.path.join(
-          self.output_directory, output.GetOutputFilename()))
+    for output in self.res.GetOutputFiles():
+      output.output_filename = os.path.abspath(os.path.join(
+        self.output_directory, output.GetOutputFilename()))
 
     # If there are whitelisted names, tag the tree once up front, this way
     # while looping through the actual output, it is just an attribute check.
@@ -457,8 +428,8 @@ are exported to translation interchange files (e.g. XMB files), etc.
         for i in self.res.GetOutputFiles()])
 
     if asserted != actual:
-      missing = list(set(actual) - set(asserted))
-      extra = list(set(asserted) - set(actual))
+      missing = list(set(asserted) - set(actual))
+      extra = list(set(actual) - set(asserted))
       error = '''Asserted file list does not match.
 
 Expected output files:
@@ -490,7 +461,9 @@ Extra output files:
 
     and we run
 
-      grit -i blah.grd -o ../out/gen --depdir ../out --depfile ../out/gen/blah.rd.d
+      grit -i blah.grd -o ../out/gen \
+           --depdir ../out \
+           --depfile ../out/gen/blah.rd.d
 
     from the directory src/ we will generate a depfile ../out/gen/blah.grd.d
     that has the contents

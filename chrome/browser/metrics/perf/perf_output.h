@@ -38,7 +38,7 @@ class PerfOutputCall {
  private:
   // Internal callbacks.
   void OnIOComplete(base::Optional<std::string> data);
-  void OnGetPerfOutput(bool success);
+  void OnGetPerfOutput(base::Optional<uint64_t> result);
 
   // Used to capture perf data written to a pipe.
   std::unique_ptr<chromeos::PipeReader> perf_data_pipe_reader_;
@@ -48,7 +48,7 @@ class PerfOutputCall {
   std::vector<std::string> perf_args_;
   DoneCallback done_callback_;
 
-  base::ThreadChecker thread_checker_;
+  THREAD_CHECKER(thread_checker_);
 
   // To pass around the "this" pointer across threads safely.
   base::WeakPtrFactory<PerfOutputCall> weak_factory_;

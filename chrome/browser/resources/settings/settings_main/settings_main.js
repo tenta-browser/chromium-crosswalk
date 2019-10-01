@@ -80,7 +80,7 @@ Polymer({
 
     /**
      * Dictionary defining page visibility.
-     * @type {!GuestModePageVisibility}
+     * @type {!PageVisibility}
      */
     pageVisibility: Object,
 
@@ -158,7 +158,7 @@ Polymer({
    * A handler for the 'showing-section' event fired from settings-basic-page,
    * indicating that a section should be scrolled into view as a result of a
    * navigation.
-   * @param {!CustomEvent} e
+   * @param {!CustomEvent<!HTMLElement>} e
    * @private
    */
   onShowingSection_: function(e) {
@@ -237,6 +237,7 @@ Polymer({
    * @private
    */
   showManagedHeader_: function() {
-    return !this.inSearchMode_ && !this.showingSubpage_;
+    return !this.inSearchMode_ && !this.showingSubpage_ &&
+        !this.showPages_.about;
   },
 });

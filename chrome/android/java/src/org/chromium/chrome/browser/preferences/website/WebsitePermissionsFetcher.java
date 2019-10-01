@@ -7,6 +7,7 @@ package org.chromium.chrome.browser.preferences.website;
 import android.util.Pair;
 
 import org.chromium.base.Callback;
+import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.browser.ContentSettingsType;
 
 import java.util.ArrayList;
@@ -20,6 +21,8 @@ import java.util.Map;
  * that the user has set for them.
  */
 public class WebsitePermissionsFetcher {
+    private WebsitePreferenceBridge mWebsitePreferenceBridge;
+
     /**
      * A callback to pass to WebsitePermissionsFetcher. This is run when the
      * website permissions have been fetched.
@@ -44,22 +47,6 @@ public class WebsitePermissionsFetcher {
             return new OriginAndEmbedder(origin, embedder);
         }
 
-        private static boolean isEqual(Object o1, Object o2) {
-            // Returns true iff o1 == o2, handling nulls.
-            return (o1 == o2) || (o1 != null && o1.equals(o2));
-        }
-
-        @Override
-        public boolean equals(Object o) {
-            // Prior to KitKat, android.util.Pair would crash with a NullPointerException in this
-            // method. This override specialises the post-Kitkat implementation to this class, and
-            // correctly handles nulls.
-            if (!(o instanceof OriginAndEmbedder)) return false;
-
-            OriginAndEmbedder p = (OriginAndEmbedder) o;
-            return isEqual(p.first, first) && isEqual(p.second, second);
-        }
-
         @Override
         public int hashCode() {
             // This is the calculation used by Arrays#hashCode().
@@ -82,6 +69,7 @@ public class WebsitePermissionsFetcher {
      */
     public WebsitePermissionsFetcher(boolean fetchSiteImportantInfo) {
         mFetchSiteImportantInfo = fetchSiteImportantInfo;
+        mWebsitePreferenceBridge = new WebsitePreferenceBridge();
     }
 
     /**
@@ -132,7 +120,8 @@ public class WebsitePermissionsFetcher {
         // Autoplay permission is per-origin.
         queue.add(new ExceptionInfoFetcher(ContentSettingsType.CONTENT_SETTINGS_TYPE_AUTOPLAY));
         // USB device permission is per-origin and per-embedder.
-        queue.add(new UsbInfoFetcher());
+        queue.add(new ChooserExceptionInfoFetcher(
+                ContentSettingsType.CONTENT_SETTINGS_TYPE_USB_GUARD));
         // Clipboard info is per-origin.
         queue.add(new PermissionInfoFetcher(PermissionInfo.Type.CLIPBOARD));
         // Sensors permission is per-origin.
@@ -211,7 +200,8 @@ public class WebsitePermissionsFetcher {
             queue.add(new ExceptionInfoFetcher(ContentSettingsType.CONTENT_SETTINGS_TYPE_AUTOPLAY));
         } else if (category.showSites(SiteSettingsCategory.Type.USB)) {
             // USB device permission is per-origin.
-            queue.add(new UsbInfoFetcher());
+            queue.add(new ChooserExceptionInfoFetcher(
+                    ContentSettingsType.CONTENT_SETTINGS_TYPE_USB_GUARD));
         } else if (category.showSites(SiteSettingsCategory.Type.CLIPBOARD)) {
             // Clipboard permission is per-origin.
             queue.add(new PermissionInfoFetcher(PermissionInfo.Type.CLIPBOARD));
@@ -223,11 +213,20 @@ public class WebsitePermissionsFetcher {
         queue.next();
     }
 
-    private Website findOrCreateSite(WebsiteAddress origin, WebsiteAddress embedder) {
-        OriginAndEmbedder key = OriginAndEmbedder.create(origin, embedder);
+    private Website findOrCreateSite(String origin, String embedder) {
+        // Avoid showing multiple entries in "All sites" for the same origin.
+        if (embedder != null && (embedder.equals(origin) || "*".equals(embedder))) {
+            embedder = null;
+        }
+
+        WebsiteAddress permissionOrigin = WebsiteAddress.create(origin);
+        WebsiteAddress permissionEmbedder = WebsiteAddress.create(embedder);
+
+        OriginAndEmbedder key = OriginAndEmbedder.create(permissionOrigin, permissionEmbedder);
+
         Website site = mSites.get(key);
         if (site == null) {
-            site = new Website(origin, embedder);
+            site = new Website(permissionOrigin, permissionEmbedder);
             mSites.put(key, site);
         }
         return site;
@@ -248,10 +247,10 @@ public class WebsitePermissionsFetcher {
                         + contentSettingsType;
 
         for (ContentSettingException exception :
-                WebsitePreferenceBridge.getContentSettingsExceptions(contentSettingsType)) {
+                mWebsitePreferenceBridge.getContentSettingsExceptions(contentSettingsType)) {
             // The pattern "*" represents the default setting, not a specific website.
             if (exception.getPattern().equals("*")) continue;
-            WebsiteAddress address = WebsiteAddress.create(exception.getPattern());
+            String address = exception.getPattern();
             if (address == null) continue;
             Website site = findOrCreateSite(address, null);
             site.setContentSettingException(exceptionType, exception);
@@ -295,26 +294,31 @@ public class WebsitePermissionsFetcher {
 
         @Override
         public void run() {
-            for (PermissionInfo info : WebsitePreferenceBridge.getPermissionInfo(mType)) {
-                WebsiteAddress origin = WebsiteAddress.create(info.getOrigin());
+            for (PermissionInfo info : mWebsitePreferenceBridge.getPermissionInfo(mType)) {
+                String origin = info.getOrigin();
                 if (origin == null) continue;
-                WebsiteAddress embedder = mType == PermissionInfo.Type.SENSORS
-                        ? null
-                        : WebsiteAddress.create(info.getEmbedder());
+                String embedder = mType == PermissionInfo.Type.SENSORS ? null : info.getEmbedder();
                 findOrCreateSite(origin, embedder).setPermissionInfo(info);
             }
         }
     }
 
-    private class UsbInfoFetcher extends Task {
+    private class ChooserExceptionInfoFetcher extends Task {
+        final @ContentSettingsType int mChooserDataType;
+
+        public ChooserExceptionInfoFetcher(@ContentSettingsType int type) {
+            mChooserDataType = SiteSettingsCategory.objectChooserDataTypeFromGuard(type);
+        }
+
         @Override
         public void run() {
-            for (ChosenObjectInfo info : WebsitePreferenceBridge.getChosenObjectInfo(
-                         ContentSettingsType.CONTENT_SETTINGS_TYPE_USB_CHOOSER_DATA)) {
-                WebsiteAddress origin = WebsiteAddress.create(info.getOrigin());
+            if (mChooserDataType == -1) return;
+
+            for (ChosenObjectInfo info :
+                    mWebsitePreferenceBridge.getChosenObjectInfo(mChooserDataType)) {
+                String origin = info.getOrigin();
                 if (origin == null) continue;
-                WebsiteAddress embedder = WebsiteAddress.create(info.getEmbedder());
-                findOrCreateSite(origin, embedder).addChosenObjectInfo(info);
+                findOrCreateSite(origin, info.getEmbedder()).addChosenObjectInfo(info);
             }
         }
     }
@@ -335,14 +339,14 @@ public class WebsitePermissionsFetcher {
     private class LocalStorageInfoFetcher extends Task {
         @Override
         public void runAsync(final TaskQueue queue) {
-            WebsitePreferenceBridge.fetchLocalStorageInfo(new Callback<HashMap>() {
+            mWebsitePreferenceBridge.fetchLocalStorageInfo(new Callback<HashMap>() {
                 @Override
                 public void onResult(HashMap result) {
                     for (Object o : result.entrySet()) {
                         @SuppressWarnings("unchecked")
                         Map.Entry<String, LocalStorageInfo> entry =
                                 (Map.Entry<String, LocalStorageInfo>) o;
-                        WebsiteAddress address = WebsiteAddress.create(entry.getKey());
+                        String address = entry.getKey();
                         if (address == null) continue;
                         findOrCreateSite(address, null).setLocalStorageInfo(entry.getValue());
                     }
@@ -355,14 +359,14 @@ public class WebsitePermissionsFetcher {
     private class WebStorageInfoFetcher extends Task {
         @Override
         public void runAsync(final TaskQueue queue) {
-            WebsitePreferenceBridge.fetchStorageInfo(new Callback<ArrayList>() {
+            mWebsitePreferenceBridge.fetchStorageInfo(new Callback<ArrayList>() {
                 @Override
                 public void onResult(ArrayList result) {
                     @SuppressWarnings("unchecked")
                     ArrayList<StorageInfo> infoArray = result;
 
                     for (StorageInfo info : infoArray) {
-                        WebsiteAddress address = WebsiteAddress.create(info.getHost());
+                        String address = info.getHost();
                         if (address == null) continue;
                         findOrCreateSite(address, null).addStorageInfo(info);
                     }
@@ -383,5 +387,11 @@ public class WebsitePermissionsFetcher {
         public void run() {
             mCallback.onWebsitePermissionsAvailable(mSites.values());
         }
+    }
+
+    @VisibleForTesting
+    public void setWebsitePreferenceBridgeForTesting(
+            WebsitePreferenceBridge websitePreferenceBridge) {
+        mWebsitePreferenceBridge = websitePreferenceBridge;
     }
 }

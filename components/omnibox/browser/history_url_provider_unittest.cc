@@ -1016,46 +1016,48 @@ TEST_F(HistoryURLProviderTest, SuggestExactInput) {
   } test_cases[] = {
     { "http://www.somesite.com", false,
       "http://www.somesite.com", {0, npos, npos}, 0 },
+    { "http://www.somesite.com/", false,
+      "http://www.somesite.com", {0, npos, npos}, 0 },
+    { "http://www.somesite.com/", false,
+      "http://www.somesite.com", {0, npos, npos}, 0 },
     { "www.somesite.com", true,
       "www.somesite.com", {0, npos, npos}, 0 },
-    { "www.somesite.com", false,
-      "http://www.somesite.com", {0, 7, npos}, 1 },
     { "somesite.com", true,
       "somesite.com", {0, npos, npos}, 0 },
-    { "somesite.com", false,
-      "http://somesite.com", {0, 7, npos}, 1 },
     { "w", true,
       "w", {0, npos, npos}, 0 },
-    { "w", false,
-      "http://w", {0, 7, npos}, 1 },
     { "w.com", true,
       "w.com", {0, npos, npos}, 0 },
-    { "w.com", false,
-      "http://w.com", {0, 7, npos}, 1 },
     { "www.w.com", true,
       "www.w.com", {0, npos, npos}, 0 },
-    { "www.w.com", false,
-      "http://www.w.com", {0, 7, npos}, 1 },
     { "view-source:w", true,
       "view-source:w", {0, npos, npos}, 0 },
     { "view-source:www.w.com/", true,
-      "view-source:www.w.com", {0, npos, npos}, npos },
-    { "view-source:www.w.com/", false,
-      "view-source:http://www.w.com", {0, npos, npos}, npos },
+      "view-source:www.w.com", {0, npos, npos}, 0 },
     { "view-source:http://www.w.com/", false,
       "view-source:http://www.w.com", {0, npos, npos}, 0 },
-    { "   view-source:", true,
+    { "view-source:", true,
       "view-source:", {0, npos, npos}, 0 },
-    { "http:////////w.com", false,
-      "http://w.com", {0, npos, npos}, npos },
-    { "    http:////////www.w.com", false,
-      "http://www.w.com", {0, npos, npos}, npos },
-    { "http:a///www.w.com", false,
-      "http://a///www.w.com", {0, npos, npos}, npos },
+    { "http://w.com", false,
+      "http://w.com", {0, npos, npos}, 0 },
+    { "http://www.w.com", false,
+      "http://www.w.com", {0, npos, npos}, 0 },
+    { "http://a///www.w.com", false,
+      "http://a///www.w.com", {0, npos, npos}, 0 },
     { "mailto://a@b.com", true,
       "mailto://a@b.com", {0, npos, npos}, 0 },
     { "mailto://a@b.com", false,
       "mailto://a@b.com", {0, npos, npos}, 0 },
+    { "http://a%20b/x%20y", false,
+      "http://a%20b/x y", {0, npos, npos}, 0 },
+    { "file:///x%20y/a%20b", true,
+      "file:///x y/a b", {0, npos, npos}, 0 },
+    { "file://x%20y/a%20b", true,
+      "file://x%20y/a b", {0, npos, npos}, 0 },
+    { "view-source:x%20y/a%20b", true,
+      "view-source:x%20y/a b", {0, npos, npos}, 0 },
+    { "view-source:http://x%20y/a%20b", false,
+      "view-source:http://x%20y/a b", {0, npos, npos}, 0 },
   };
   for (size_t i = 0; i < base::size(test_cases); ++i) {
     SCOPED_TRACE(testing::Message() << "Index " << i << " input: "
@@ -1117,7 +1119,7 @@ TEST_F(HistoryURLProviderTest, HUPScoringExperiment) {
   max_1100_visit_typed_decays.visited_count_buckets.buckets().push_back(
       std::make_pair(0.0, 50));
 
-  const int kMaxMatches = 3;
+  const int kProviderMaxMatches = 3;
   struct TestCase {
     const char* input;
     HUPScoringParams scoring_params;
@@ -1126,7 +1128,7 @@ TEST_F(HistoryURLProviderTest, HUPScoringExperiment) {
       int control_relevance;
       int experiment_relevance;
     };
-    ExpectedMatch matches[kMaxMatches];
+    ExpectedMatch matches[kProviderMaxMatches];
   } test_cases[] = {
       // Max score 2000 -> no demotion.
       {"7.com/1",
@@ -1164,9 +1166,9 @@ TEST_F(HistoryURLProviderTest, HUPScoringExperiment) {
   };
   for (size_t i = 0; i < base::size(test_cases); ++i) {
     SCOPED_TRACE(test_cases[i].input);
-    UrlAndLegalDefault output[kMaxMatches];
+    UrlAndLegalDefault output[kProviderMaxMatches];
     int max_matches;
-    for (max_matches = 0; max_matches < kMaxMatches; ++max_matches) {
+    for (max_matches = 0; max_matches < kProviderMaxMatches; ++max_matches) {
       if (test_cases[i].matches[max_matches].url == nullptr)
         break;
       output[max_matches].url =

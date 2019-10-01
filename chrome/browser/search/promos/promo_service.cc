@@ -25,48 +25,56 @@ const char kNewTabPromosApiPath[] = "/async/newtab_promos";
 
 const char kXSSIResponsePreamble[] = ")]}'";
 
-// Parses an update proto from |value|. Will return base::nullopt if |value|
-// is not of the form: {"update":{"promos":{"log_url":"","middle":""}}}
+// Parses an update proto from |value|. Will return false if |value|
+// is not of the form: {"update":{"promos":{"middle": "", "log_url": ""}}}, and
+// true otherwise. Additionally |data| will be base::nullopt if at least
+// the top level dictionary with "update" and "promos" keys is not present.
 // Resolves the log_url against the base_url to form a valid GURL.
-base::Optional<PromoData> JsonToPromoData(const base::Value& value,
-                                          const GURL& base_url) {
+bool JsonToPromoData(const base::Value& value,
+                     const GURL& base_url,
+                     base::Optional<PromoData>& data) {
+  data = base::nullopt;
+
   const base::DictionaryValue* dict = nullptr;
   if (!value.GetAsDictionary(&dict)) {
-    DLOG(WARNING) << "Parse error: top-level dictionary not found";
-    return base::nullopt;
+    DVLOG(1) << "Parse error: top-level dictionary not found";
+    return false;
   }
 
   const base::DictionaryValue* update = nullptr;
   if (!dict->GetDictionary("update", &update)) {
-    DLOG(WARNING) << "Parse error: no update";
-    return base::nullopt;
+    DVLOG(1) << "Parse error: no update";
+    return false;
   }
 
   const base::DictionaryValue* promos = nullptr;
   if (!update->GetDictionary("promos", &promos)) {
-    DLOG(WARNING) << "Parse error: no promos";
-    return base::nullopt;
-  }
-
-  std::string middle = std::string();
-  if (!promos->GetString("middle", &middle)) {
-    DLOG(WARNING) << "No middle promo";
-    return base::nullopt;
+    DVLOG(1) << "Parse error: no promos";
+    return false;
   }
 
   PromoData result;
-  result.promo_html = middle;
+  data = result;
+
+  std::string middle = std::string();
+  if (!promos->GetString("middle", &middle)) {
+    DVLOG(1) << "No middle promo";
+    return false;
+  }
 
   std::string log_url = std::string();
   if (!promos->GetString("log_url", &log_url)) {
-    DLOG(WARNING) << "No promo log_url";
-    return base::nullopt;
+    DVLOG(1) << "No promo log_url";
+    return false;
   }
 
   GURL promo_log_url = base_url.Resolve(log_url);
+  result.promo_html = middle;
   result.promo_log_url = promo_log_url;
 
-  return result;
+  data = result;
+
+  return true;
 }
 
 }  // namespace
@@ -122,7 +130,7 @@ void PromoService::Refresh() {
 
   auto resource_request = std::make_unique<network::ResourceRequest>();
   resource_request->url = GetApiUrl();
-  resource_request->load_flags = net::LOAD_DO_NOT_SEND_AUTH_DATA;
+  resource_request->allow_credentials = false;
 
   simple_loader_ = network::SimpleURLLoader::Create(std::move(resource_request),
                                                     traffic_annotation);
@@ -136,8 +144,7 @@ void PromoService::OnLoadDone(std::unique_ptr<std::string> response_body) {
   if (!response_body) {
     // This represents network errors (i.e. the server did not provide a
     // response).
-    DLOG(WARNING) << "Request failed with error: "
-                  << simple_loader_->NetError();
+    DVLOG(1) << "Request failed with error: " << simple_loader_->NetError();
     PromoDataLoaded(Status::TRANSIENT_ERROR, base::nullopt);
     return;
   }
@@ -154,21 +161,28 @@ void PromoService::OnLoadDone(std::unique_ptr<std::string> response_body) {
   data_decoder::SafeJsonParser::Parse(
       content::ServiceManagerConnection::GetForProcess()->GetConnector(),
       response,
-      base::BindRepeating(&PromoService::OnJsonParsed,
-                          weak_ptr_factory_.GetWeakPtr()),
-      base::BindRepeating(&PromoService::OnJsonParseFailed,
-                          weak_ptr_factory_.GetWeakPtr()));
+      base::BindOnce(&PromoService::OnJsonParsed,
+                     weak_ptr_factory_.GetWeakPtr()),
+      base::BindOnce(&PromoService::OnJsonParseFailed,
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
-void PromoService::OnJsonParsed(std::unique_ptr<base::Value> value) {
+void PromoService::OnJsonParsed(base::Value value) {
   const GURL google_base_url = GetGoogleBaseUrl();
-  base::Optional<PromoData> result = JsonToPromoData(*value, google_base_url);
-  PromoDataLoaded(result.has_value() ? Status::OK : Status::FATAL_ERROR,
-                  result);
+  base::Optional<PromoData> result;
+  if (JsonToPromoData(value, google_base_url, result)) {
+    PromoDataLoaded(Status::OK_WITH_PROMO, result);
+  } else {
+    if (result.has_value()) {
+      PromoDataLoaded(Status::OK_WITHOUT_PROMO, result);
+    } else {
+      PromoDataLoaded(Status::FATAL_ERROR, result);
+    }
+  }
 }
 
 void PromoService::OnJsonParseFailed(const std::string& message) {
-  DLOG(WARNING) << "Parsing JSON failed: " << message;
+  DVLOG(1) << "Parsing JSON failed: " << message;
   PromoDataLoaded(Status::FATAL_ERROR, base::nullopt);
 }
 

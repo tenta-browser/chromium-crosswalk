@@ -24,19 +24,19 @@ using content::BrowserThread;
 
 namespace chromeos {
 
-bool IsExternalFileURLType(storage::FileSystemType type, bool allow_drivefs) {
+bool IsExternalFileURLType(storage::FileSystemType type, bool force) {
   return type == storage::kFileSystemTypeDrive ||
          type == storage::kFileSystemTypeDeviceMediaAsFileStorage ||
          type == storage::kFileSystemTypeProvided ||
          type == storage::kFileSystemTypeArcContent ||
-         (allow_drivefs && type == storage::kFileSystemTypeDriveFs);
+         type == storage::kFileSystemTypeArcDocumentsProvider || force;
 }
 
 GURL FileSystemURLToExternalFileURL(
     const storage::FileSystemURL& file_system_url,
-    bool allow_drivefs) {
+    bool force) {
   if (file_system_url.mount_type() != storage::kFileSystemTypeExternal ||
-      !IsExternalFileURLType(file_system_url.type(), allow_drivefs)) {
+      !IsExternalFileURLType(file_system_url.type(), force)) {
     return GURL();
   }
 
@@ -46,9 +46,8 @@ GURL FileSystemURLToExternalFileURL(
 base::FilePath ExternalFileURLToVirtualPath(const GURL& url) {
   if (!url.is_valid() || url.scheme() != content::kExternalFileScheme)
     return base::FilePath();
-  std::string path_string;
-  net::UnescapeBinaryURLComponent(url.path(), &path_string);
-  return base::FilePath::FromUTF8Unsafe(path_string);
+  return base::FilePath::FromUTF8Unsafe(
+      net::UnescapeBinaryURLComponent(url.path_piece()));
 }
 
 GURL VirtualPathToExternalFileURL(const base::FilePath& virtual_path) {
@@ -59,7 +58,7 @@ GURL VirtualPathToExternalFileURL(const base::FilePath& virtual_path) {
 
 GURL CreateExternalFileURLFromPath(Profile* profile,
                                    const base::FilePath& path,
-                                   bool allow_drivefs) {
+                                   bool force) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   GURL raw_file_system_url;
@@ -78,7 +77,7 @@ GURL CreateExternalFileURLFromPath(Profile* profile,
   if (!file_system_url.is_valid())
     return GURL();
 
-  return FileSystemURLToExternalFileURL(file_system_url, allow_drivefs);
+  return FileSystemURLToExternalFileURL(file_system_url, force);
 }
 
 }  // namespace chromeos

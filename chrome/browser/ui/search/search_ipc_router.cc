@@ -189,6 +189,16 @@ void SearchIPCRouter::UndoAllMostVisitedDeletions(int page_seq_no) {
   delegate_->OnUndoAllMostVisitedDeletions();
 }
 
+void SearchIPCRouter::ToggleMostVisitedOrCustomLinks(int page_seq_no) {
+  if (page_seq_no != commit_counter_)
+    return;
+
+  if (!policy_->ShouldProcessToggleMostVisitedOrCustomLinks())
+    return;
+
+  delegate_->OnToggleMostVisitedOrCustomLinks();
+}
+
 void SearchIPCRouter::AddCustomLink(int page_seq_no,
                                     const GURL& url,
                                     const std::string& title,
@@ -271,6 +281,20 @@ void SearchIPCRouter::LogEvent(int page_seq_no,
   delegate_->OnLogEvent(event, time);
 }
 
+void SearchIPCRouter::LogSuggestionEventWithValue(
+    int page_seq_no,
+    NTPSuggestionsLoggingEventType event,
+    int data,
+    base::TimeDelta time) {
+  if (page_seq_no != commit_counter_)
+    return;
+
+  if (!policy_->ShouldProcessLogSuggestionEventWithValue())
+    return;
+
+  delegate_->OnLogSuggestionEventWithValue(event, data, time);
+}
+
 void SearchIPCRouter::LogMostVisitedImpression(
     int page_seq_no,
     const ntp_tiles::NTPTileImpression& impression) {
@@ -306,37 +330,6 @@ void SearchIPCRouter::PasteAndOpenDropdown(int page_seq_no,
     return;
 
   delegate_->PasteIntoOmnibox(text);
-}
-
-void SearchIPCRouter::ChromeIdentityCheck(
-    int page_seq_no,
-    const base::string16& identity,
-    ChromeIdentityCheckCallback callback) {
-  bool result = false;
-  if (page_seq_no == commit_counter_ &&
-      policy_->ShouldProcessChromeIdentityCheck()) {
-    result = delegate_->ChromeIdentityCheck(identity);
-  }
-
-  std::move(callback).Run(result);
-}
-
-void SearchIPCRouter::HistorySyncCheck(int page_seq_no,
-                                       HistorySyncCheckCallback callback) {
-  bool result = false;
-  if (page_seq_no == commit_counter_ &&
-      policy_->ShouldProcessHistorySyncCheck()) {
-    result = delegate_->HistorySyncCheck();
-  }
-
-  std::move(callback).Run(result);
-}
-
-void SearchIPCRouter::SetCustomBackgroundURL(const GURL& url) {
-  if (!policy_->ShouldProcessSetCustomBackgroundURL())
-    return;
-
-  delegate_->OnSetCustomBackgroundURL(url);
 }
 
 void SearchIPCRouter::SetCustomBackgroundURLWithAttributions(

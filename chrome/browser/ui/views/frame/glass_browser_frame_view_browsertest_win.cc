@@ -4,7 +4,6 @@
 
 #include "chrome/browser/ui/views/frame/glass_browser_frame_view.h"
 
-#include "base/test/scoped_feature_list.h"
 #include "chrome/browser/extensions/browsertest_util.h"
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/ui/browser.h"
@@ -12,8 +11,7 @@
 #include "chrome/browser/ui/views/frame/app_menu_button.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/hosted_app_button_container.h"
-#include "chrome/browser/ui/views/page_action/page_action_icon_container_view.h"
-#include "chrome/common/chrome_features.h"
+#include "chrome/browser/ui/views/page_action/omnibox_page_action_icon_container_view.h"
 #include "chrome/common/web_application_info.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "content/public/test/test_navigation_observer.h"
@@ -28,7 +26,6 @@ class HostedAppGlassBrowserFrameViewTest : public InProcessBrowserTest {
   void SetUpOnMainThread() override {
     InProcessBrowserTest::SetUpOnMainThread();
 
-    scoped_feature_list_.InitAndEnableFeature(features::kDesktopPWAWindowing);
     HostedAppButtonContainer::DisableAnimationForTesting();
   }
 
@@ -63,7 +60,7 @@ class HostedAppGlassBrowserFrameViewTest : public InProcessBrowserTest {
     hosted_app_button_container_ =
         glass_frame_view_->hosted_app_button_container_for_testing();
     DCHECK(hosted_app_button_container_);
-    DCHECK(hosted_app_button_container_->visible());
+    DCHECK(hosted_app_button_container_->GetVisible());
     return true;
   }
 
@@ -74,8 +71,6 @@ class HostedAppGlassBrowserFrameViewTest : public InProcessBrowserTest {
   HostedAppButtonContainer* hosted_app_button_container_ = nullptr;
 
  private:
-  base::test::ScopedFeatureList scoped_feature_list_;
-
   DISALLOW_COPY_AND_ASSIGN(HostedAppGlassBrowserFrameViewTest);
 };
 
@@ -101,10 +96,11 @@ IN_PROC_BROWSER_TEST_F(HostedAppGlassBrowserFrameViewTest, SpaceConstrained) {
   if (!InstallAndLaunchHostedApp())
     return;
 
-  views::View* page_action_icon_container =
+  views::View* omnibox_page_action_icon_container =
       browser_view_->toolbar_button_provider()
-          ->GetPageActionIconContainerView();
-  EXPECT_EQ(page_action_icon_container->parent(), hosted_app_button_container_);
+          ->GetOmniboxPageActionIconContainerView();
+  EXPECT_EQ(omnibox_page_action_icon_container->parent(),
+            hosted_app_button_container_);
 
   views::View* menu_button =
       browser_view_->toolbar_button_provider()->GetAppMenuButton();
@@ -112,7 +108,7 @@ IN_PROC_BROWSER_TEST_F(HostedAppGlassBrowserFrameViewTest, SpaceConstrained) {
 
   // Initially the page action icons are not visible, just the menu button has
   // width.
-  EXPECT_EQ(page_action_icon_container->width(), 0);
+  EXPECT_EQ(omnibox_page_action_icon_container->width(), 0);
   int original_menu_button_width = menu_button->width();
   EXPECT_GT(original_menu_button_width, 0);
 
@@ -120,20 +116,20 @@ IN_PROC_BROWSER_TEST_F(HostedAppGlassBrowserFrameViewTest, SpaceConstrained) {
   chrome::Zoom(app_browser_, content::PAGE_ZOOM_IN);
 
   // The page action icons should now take up width.
-  EXPECT_GT(page_action_icon_container->width(), 0);
+  EXPECT_GT(omnibox_page_action_icon_container->width(), 0);
   EXPECT_EQ(menu_button->width(), original_menu_button_width);
 
   // Resize the HostedAppButtonContainer just enough to clip out the page action
   // icons.
   hosted_app_button_container_->SetSize(
       gfx::Size(hosted_app_button_container_->width() -
-                    page_action_icon_container->bounds().right(),
+                    omnibox_page_action_icon_container->bounds().right(),
                 hosted_app_button_container_->height()));
   hosted_app_button_container_->Layout();
 
   // The page action icons should be clipped to 0 width while the app menu
   // button retains its full width.
-  EXPECT_EQ(page_action_icon_container->width(), 0);
+  EXPECT_EQ(omnibox_page_action_icon_container->width(), 0);
   EXPECT_EQ(menu_button->width(), original_menu_button_width);
 }
 

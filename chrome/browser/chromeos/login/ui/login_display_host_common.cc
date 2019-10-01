@@ -4,6 +4,7 @@
 
 #include "chrome/browser/chromeos/login/ui/login_display_host_common.h"
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -17,6 +18,7 @@
 #include "chrome/browser/chromeos/system/device_disabling_manager.h"
 #include "chrome/browser/ui/ash/wallpaper_controller_client.h"
 #include "chrome/browser/ui/webui/chromeos/internet_detail_dialog.h"
+#include "chrome/browser/ui/webui/chromeos/login/gaia_screen_handler.h"
 #include "components/keep_alive_registry/keep_alive_types.h"
 #include "components/keep_alive_registry/scoped_keep_alive.h"
 #include "ui/base/ui_base_features.h"
@@ -264,6 +266,30 @@ void LoginDisplayHostCommon::ShutdownDisplayHost() {
   shutting_down_ = true;
   registrar_.RemoveAll();
   base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, this);
+}
+
+void LoginDisplayHostCommon::OnStartSignInScreenCommon() {
+  kiosk_app_menu_controller_.SendKioskApps();
+}
+
+void LoginDisplayHostCommon::ShowGaiaDialogCommon(
+    const AccountId& prefilled_account) {
+  DCHECK(GetOobeUI());
+
+  if (prefilled_account.is_valid()) {
+    // Make sure gaia displays |account| if requested.
+    if (!GetLoginDisplay()->delegate()->IsSigninInProgress()) {
+      GetOobeUI()->GetView<GaiaScreenHandler>()->ShowGaiaAsync(
+          prefilled_account);
+    }
+    LoadWallpaper(prefilled_account);
+  } else {
+    if (GetOobeUI()->current_screen() != GaiaView::kScreenId) {
+      GetOobeUI()->GetView<GaiaScreenHandler>()->ShowGaiaAsync(
+          EmptyAccountId());
+    }
+    LoadSigninWallpaper();
+  }
 }
 
 }  // namespace chromeos

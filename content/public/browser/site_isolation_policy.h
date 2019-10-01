@@ -41,12 +41,21 @@ class CONTENT_EXPORT SiteIsolationPolicy {
   // Returns true if isolated origins feature is enabled.
   static bool AreIsolatedOriginsEnabled();
 
+  // Returns true if strict origin isolation is enabled. Controls whether site
+  // isolation uses origins instead of scheme and eTLD+1.
+  static bool IsStrictOriginIsolationEnabled();
+
   // Returns true if error page isolation is enabled.
   static bool IsErrorPageIsolationEnabled(bool in_main_frame);
 
   // Returns true if the PDF compositor should be enabled to allow out-of-
   // process iframes (OOPIF's) to print properly.
   static bool ShouldPdfCompositorBeEnabledForOopifs();
+
+  // Returns true if isolated origins may be added at runtime in response
+  // to hints such as users typing in a password or (in the future) an origin
+  // opting itself into isolation via a header.
+  static bool AreDynamicIsolatedOriginsEnabled();
 
   // Returns the origins to isolate.  See also AreIsolatedOriginsEnabled.
   // This list applies globally to the whole browser in all profiles.
@@ -57,12 +66,11 @@ class CONTENT_EXPORT SiteIsolationPolicy {
   // called once on browser startup.
   static void StartRecordingSiteIsolationFlagUsage();
 
- private:
-  SiteIsolationPolicy();  // Not instantiable.
-
   // Parses |arg| into a list of origins.
   static std::vector<url::Origin> ParseIsolatedOrigins(base::StringPiece arg);
-  FRIEND_TEST_ALL_PREFIXES(SiteIsolationPolicyTest, ParseIsolatedOrigins);
+
+ private:
+  SiteIsolationPolicy();  // Not instantiable.
 
   // Gets isolated origins from cmdline and/or from field trial param.
   static std::vector<url::Origin> GetIsolatedOriginsFromEnvironment();

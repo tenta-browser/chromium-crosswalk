@@ -4,6 +4,7 @@
 
 #include <set>
 
+#include "base/bind.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
@@ -261,8 +262,8 @@ IN_PROC_BROWSER_TEST_F(IndependentOTRProfileManagerTest,
 #if defined(OS_CHROMEOS)
   EnableProfileHelperTestSettings();
 #endif
-  auto original_profile = base::WrapUnique(Profile::CreateProfile(
-      temp_dir.GetPath(), nullptr, Profile::CREATE_MODE_SYNCHRONOUS));
+  auto original_profile = Profile::CreateProfile(
+      temp_dir.GetPath(), nullptr, Profile::CREATE_MODE_SYNCHRONOUS);
   ASSERT_TRUE(original_profile);
   auto profile_owner = RegistrationOwner(manager_, original_profile.get());
   auto* otr_profile = profile_owner.profile();
@@ -293,8 +294,8 @@ IN_PROC_BROWSER_TEST_F(IndependentOTRProfileManagerTest,
 #if defined(OS_CHROMEOS)
   EnableProfileHelperTestSettings();
 #endif
-  auto original_profile = base::WrapUnique(Profile::CreateProfile(
-      temp_dir.GetPath(), nullptr, Profile::CREATE_MODE_SYNCHRONOUS));
+  auto original_profile = Profile::CreateProfile(
+      temp_dir.GetPath(), nullptr, Profile::CREATE_MODE_SYNCHRONOUS);
   ASSERT_TRUE(original_profile);
   auto profile_owner1 = RegistrationOwner(manager_, original_profile.get());
   auto* otr_profile1 = profile_owner1.profile();
@@ -330,8 +331,8 @@ IN_PROC_BROWSER_TEST_F(IndependentOTRProfileManagerTest,
 #if defined(OS_CHROMEOS)
   EnableProfileHelperTestSettings();
 #endif
-  auto original_profile = base::WrapUnique(Profile::CreateProfile(
-      temp_dir.GetPath(), nullptr, Profile::CREATE_MODE_SYNCHRONOUS));
+  auto original_profile = Profile::CreateProfile(
+      temp_dir.GetPath(), nullptr, Profile::CREATE_MODE_SYNCHRONOUS);
   ASSERT_TRUE(original_profile);
   auto profile_owner1 = RegistrationOwner(manager_, original_profile.get());
   auto* otr_profile1 = profile_owner1.profile();

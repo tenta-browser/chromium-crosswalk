@@ -42,6 +42,7 @@ void MockVideoCaptureClient::OnIncomingCapturedData(
     const uint8_t* data,
     int length,
     const VideoCaptureFormat& format,
+    const gfx::ColorSpace& color_space,
     int rotation,
     base::TimeTicks reference_time,
     base::TimeDelta timestamp,
@@ -90,6 +91,7 @@ void MockVideoCaptureClient::OnIncomingCapturedBuffer(
 void MockVideoCaptureClient::OnIncomingCapturedBufferExt(
     Buffer buffer,
     const VideoCaptureFormat& format,
+    const gfx::ColorSpace& color_space,
     base::TimeTicks reference_time,
     base::TimeDelta timestamp,
     gfx::Rect visible_rect,

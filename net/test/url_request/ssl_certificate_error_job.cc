@@ -47,8 +47,8 @@ SSLCertificateErrorJob::SSLCertificateErrorJob(
 
 void SSLCertificateErrorJob::Start() {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&SSLCertificateErrorJob::NotifyError,
-                            weak_factory_.GetWeakPtr()));
+      FROM_HERE, base::BindOnce(&SSLCertificateErrorJob::NotifyError,
+                                weak_factory_.GetWeakPtr()));
 }
 
 void SSLCertificateErrorJob::AddUrlHandler() {
@@ -67,7 +67,7 @@ SSLCertificateErrorJob::~SSLCertificateErrorJob() = default;
 void SSLCertificateErrorJob::NotifyError() {
   SSLInfo info;
   info.cert_status = CERT_STATUS_DATE_INVALID;
-  NotifySSLCertificateError(info, true);
+  NotifySSLCertificateError(net::ERR_CERT_DATE_INVALID, info, true);
 }
 
 }  // namespace net

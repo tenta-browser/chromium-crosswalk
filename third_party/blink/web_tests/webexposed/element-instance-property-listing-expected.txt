@@ -106,6 +106,7 @@ namespace http://www.w3.org/1999/xhtml
     property dir
     property dispatchEvent
     property draggable
+    property enterKeyHint
     property firstChild
     property firstElementChild
     property focus
@@ -215,6 +216,7 @@ namespace http://www.w3.org/1999/xhtml
     property onmouseover
     property onmouseup
     property onmousewheel
+    property onoverscroll
     property onpaste
     property onpause
     property onplay
@@ -226,13 +228,14 @@ namespace http://www.w3.org/1999/xhtml
     property onpointermove
     property onpointerout
     property onpointerover
-    property onpointerrawmove
+    property onpointerrawupdate
     property onpointerup
     property onprogress
     property onratechange
     property onreset
     property onresize
     property onscroll
+    property onscrollend
     property onsearch
     property onseeked
     property onseeking
@@ -564,6 +567,7 @@ html element form
     property name
     property noValidate
     property reportValidity
+    property requestSubmit
     property reset
     property submit
     property target
@@ -877,6 +881,9 @@ html element picture
 html element plaintext
 html element portal
     property activate
+    property onmessage
+    property onmessageerror
+    property postMessage
     property src
 html element pre
     property width
@@ -1146,13 +1153,13 @@ html element video
     property onencrypted
     property onenterpictureinpicture
     property onleavepictureinpicture
-    property onpictureinpicturecontrolclick
     property onwaitingforkey
     property pause
     property paused
     property play
     property playbackRate
     property played
+    property playsInline
     property poster
     property preload
     property readyState
@@ -1161,7 +1168,6 @@ html element video
     property seekable
     property seeking
     property setMediaKeys
-    property setPictureInPictureControls
     property setSinkId
     property sinkId
     property src
@@ -1380,6 +1386,7 @@ namespace http://www.w3.org/2000/svg
     property onmouseover
     property onmouseup
     property onmousewheel
+    property onoverscroll
     property onpaste
     property onpause
     property onplay
@@ -1391,13 +1398,14 @@ namespace http://www.w3.org/2000/svg
     property onpointermove
     property onpointerout
     property onpointerover
-    property onpointerrawmove
+    property onpointerrawupdate
     property onpointerup
     property onprogress
     property onratechange
     property onreset
     property onresize
     property onscroll
+    property onscrollend
     property onsearch
     property onseeked
     property onseeking

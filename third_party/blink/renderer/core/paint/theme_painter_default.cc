@@ -124,15 +124,15 @@ IntRect ProgressValueRectFor(const LayoutProgress& layout_progress,
 
 IntRect ConvertToPaintingRect(const LayoutObject& input_layout_object,
                               const LayoutObject& part_layout_object,
-                              LayoutRect part_rect,
+                              PhysicalRect part_rect,
                               const IntRect& local_offset) {
   // Compute an offset between the partLayoutObject and the inputLayoutObject.
-  LayoutSize offset_from_input_layout_object =
+  PhysicalOffset offset_from_input_layout_object =
       -part_layout_object.OffsetFromAncestor(&input_layout_object);
   // Move the rect into partLayoutObject's coords.
   part_rect.Move(offset_from_input_layout_object);
   // Account for the local drawing offset.
-  part_rect.Move(local_offset.X(), local_offset.Y());
+  part_rect.Move(PhysicalOffset(local_offset.Location()));
 
   return PixelSnappedIntRect(part_rect);
 }
@@ -212,6 +212,15 @@ bool ThemePainterDefault::PaintTextField(const Node* node,
   // WebThemeEngine does not handle border rounded corner and background image
   // so return true to draw CSS border and background.
   if (style.HasBorderRadius() || style.HasBackgroundImage())
+    return true;
+
+  // Don't use the theme painter if dark mode is enabled. It has a separate
+  // graphics pipeline that doesn't go through GraphicsContext and so does not
+  // currently know how to handle Dark Mode, causing elements to be rendered
+  // incorrectly (e.g. https://crbug.com/937872).
+  // TODO(gilmanmh): Implement a more permanent solution that allows use of
+  // native dark themes.
+  if (paint_info.context.dark_mode_settings().mode != DarkMode::kOff)
     return true;
 
   ControlPart part = style.Appearance();
@@ -455,19 +464,18 @@ bool ThemePainterDefault::PaintSearchFieldCancelButton(
   if (!base_layout_object.IsBox())
     return false;
   const LayoutBox& input_layout_box = ToLayoutBox(base_layout_object);
-  LayoutRect input_content_box = input_layout_box.PhysicalContentBoxRect();
+  PhysicalRect input_content_box = input_layout_box.PhysicalContentBoxRect();
 
   // Make sure the scaled button stays square and will fit in its parent's box.
   LayoutUnit cancel_button_size =
-      std::min(input_content_box.Width(),
-               std::min(input_content_box.Height(), LayoutUnit(r.Height())));
+      std::min(input_content_box.size.width,
+               std::min(input_content_box.size.height, LayoutUnit(r.Height())));
   // Calculate cancel button's coordinates relative to the input element.
   // Center the button vertically.  Round up though, so if it has to be one
   // pixel off-center, it will be one pixel closer to the bottom of the field.
   // This tends to look better with the text.
-  LayoutRect cancel_button_rect(
-      cancel_button_object.OffsetFromAncestor(&input_layout_box)
-          .Width(),
+  PhysicalRect cancel_button_rect(
+      cancel_button_object.OffsetFromAncestor(&input_layout_box).left,
       input_content_box.Y() +
           (input_content_box.Height() - cancel_button_size + 1) / 2,
       cancel_button_size, cancel_button_size);

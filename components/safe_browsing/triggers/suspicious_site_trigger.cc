@@ -4,6 +4,7 @@
 
 #include "components/safe_browsing/triggers/suspicious_site_trigger.h"
 
+#include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/task/post_task.h"
@@ -93,7 +94,7 @@ bool SuspiciousSiteTrigger::MaybeStartReport() {
 
   security_interstitials::UnsafeResource resource;
   resource.threat_type = SB_THREAT_TYPE_SUSPICIOUS_SITE;
-  resource.url = web_contents()->GetURL();
+  resource.url = web_contents()->GetLastCommittedURL();
   resource.web_contents_getter = resource.GetWebContentsGetter(
       web_contents()->GetMainFrame()->GetProcess()->GetID(),
       web_contents()->GetMainFrame()->GetRoutingID());

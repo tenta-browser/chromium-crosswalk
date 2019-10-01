@@ -27,6 +27,16 @@ class CancellationHelper;
 // and Reset() does not need to wait for |reset_cb| to return.
 class MEDIA_EXPORT OffloadableVideoDecoder : public VideoDecoder {
  public:
+  enum class OffloadState {
+    kOffloaded,  // Indicates the VideoDecoder is being used with
+                 // OffloadingVideoDecoder and that callbacks provided to
+                 // VideoDecoder methods should not be bound to the current
+                 // loop.
+
+    kNormal,  // Indicates the VideoDecoder is being used as a normal
+              // VideoDecoder, meaning callbacks should always be asynchronous.
+  };
+
   ~OffloadableVideoDecoder() override {}
 
   // Called by the OffloadingVideoDecoder when closing the decoder and switching
@@ -82,12 +92,11 @@ class MEDIA_EXPORT OffloadingVideoDecoder : public VideoDecoder {
   void Initialize(const VideoDecoderConfig& config,
                   bool low_delay,
                   CdmContext* cdm_context,
-                  const InitCB& init_cb,
+                  InitCB init_cb,
                   const OutputCB& output_cb,
                   const WaitingCB& waiting_cb) override;
-  void Decode(scoped_refptr<DecoderBuffer> buffer,
-              const DecodeCB& decode_cb) override;
-  void Reset(const base::Closure& reset_cb) override;
+  void Decode(scoped_refptr<DecoderBuffer> buffer, DecodeCB decode_cb) override;
+  void Reset(base::OnceClosure reset_cb) override;
   int GetMaxDecodeRequests() const override;
 
  private:

@@ -83,11 +83,17 @@ TestWebContents::~TestWebContents() {
 }
 
 TestRenderFrameHost* TestWebContents::GetMainFrame() {
-  return static_cast<TestRenderFrameHost*>(WebContentsImpl::GetMainFrame());
+  auto* instance = WebContentsImpl::GetMainFrame();
+  DCHECK(instance->IsTestRenderFrameHost())
+      << "You may want to instantiate RenderViewHostTestEnabler.";
+  return static_cast<TestRenderFrameHost*>(instance);
 }
 
 TestRenderViewHost* TestWebContents::GetRenderViewHost() {
-  return static_cast<TestRenderViewHost*>(WebContentsImpl::GetRenderViewHost());
+  auto* instance = WebContentsImpl::GetRenderViewHost();
+  DCHECK(instance->IsTestRenderViewHost())
+      << "You may want to instantiate RenderViewHostTestEnabler.";
+  return static_cast<TestRenderViewHost*>(instance);
 }
 
 TestRenderFrameHost* TestWebContents::GetPendingMainFrame() {
@@ -250,8 +256,7 @@ void TestWebContents::TestDidFailLoadWithError(
     const GURL& url,
     int error_code,
     const base::string16& error_description) {
-  FrameHostMsg_DidFailLoadWithError msg(0, url, error_code, error_description);
-  frame_tree_.root()->current_frame_host()->OnMessageReceived(msg);
+  GetMainFrame()->DidFailLoadWithError(url, error_code, error_description);
 }
 
 bool TestWebContents::CrossProcessNavigationPending() {
@@ -278,7 +283,8 @@ std::unique_ptr<WebContents> TestWebContents::Clone() {
   return contents;
 }
 
-void TestWebContents::NavigateAndCommit(const GURL& url) {
+void TestWebContents::NavigateAndCommit(const GURL& url,
+                                        ui::PageTransition transition) {
   std::unique_ptr<NavigationSimulator> navigation =
       NavigationSimulator::CreateBrowserInitiated(url, this);
   // TODO(clamy): Browser-initiated navigations should not have a transition of
@@ -286,7 +292,8 @@ void TestWebContents::NavigateAndCommit(const GURL& url) {
   // should be rewritten to simulate renderer-initiated navigations in these
   // cases. Once that's done, the transtion can be set to
   // ui::PAGE_TRANSITION_TYPED which makes more sense in this context.
-  navigation->SetTransition(ui::PAGE_TRANSITION_LINK);
+  // ui::PAGE_TRANSITION_TYPED is the default value for transition
+  navigation->SetTransition(transition);
   navigation->Commit();
 }
 
@@ -322,41 +329,8 @@ void TestWebContents::CommitPendingNavigation() {
   NavigationEntry* entry = GetController().GetPendingEntry();
   DCHECK(entry);
 
-  TestRenderFrameHost* old_rfh = GetMainFrame();
-  NavigationRequest* request = old_rfh->frame_tree_node()->navigation_request();
-
-  // PlzNavigate: the pending RenderFrameHost is not created before the
-  // navigation commit, so it is necessary to simulate the IO thread response
-  // here to commit in the proper renderer. It is necessary to call
-  // PrepareForCommit before getting the main and the pending frame because when
-  // we are trying to navigate to a webui from a new tab, a RenderFrameHost is
-  // created to display it that is committed immediately (since it is a new
-  // tab). Therefore the main frame is replaced without a pending frame being
-  // created, and we don't get the right values for the RenderFrameHost to
-  // navigate: we try to use the old one that has been deleted in the meantime.
-  // Note that for some synchronous navigations (about:blank, javascript urls,
-  // etc.), no simulation of the network stack is required.
-  old_rfh->PrepareForCommitIfNecessary();
-
-  TestRenderFrameHost* rfh = GetPendingMainFrame();
-  if (!rfh)
-    rfh = old_rfh;
-  CHECK(rfh->is_loading() || IsRendererDebugURL(entry->GetURL()));
-  CHECK(!rfh->frame_tree_node()->navigation_request());
-
-  if (request && !request->navigation_handle()->IsSameDocument()) {
-    rfh->SimulateCommitProcessed(
-        request->navigation_handle()->GetNavigationId(),
-        true /* was successful */);
-  }
-
-  rfh->SendNavigateWithTransition(entry->GetUniqueID(),
-                                  GetController().GetPendingEntryIndex() == -1,
-                                  entry->GetURL(), entry->GetTransitionType());
-  // Simulate the SwapOut_ACK. This is needed when cross-site navigation
-  // happens.
-  if (old_rfh != rfh)
-    old_rfh->OnSwappedOut();
+  auto navigation = NavigationSimulator::CreateFromPending(this);
+  navigation->Commit();
 }
 
 RenderViewHostDelegateView* TestWebContents::GetDelegateView() {

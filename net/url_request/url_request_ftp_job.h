@@ -11,11 +11,10 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "net/base/auth.h"
+#include "net/base/ip_endpoint.h"
 #include "net/base/net_export.h"
 #include "net/ftp/ftp_request_info.h"
 #include "net/ftp/ftp_transaction.h"
-#include "net/http/http_request_info.h"
-#include "net/http/http_transaction.h"
 #include "net/proxy_resolution/proxy_info.h"
 #include "net/proxy_resolution/proxy_resolution_service.h"
 #include "net/url_request/url_request_job.h"
@@ -41,13 +40,9 @@ class NET_EXPORT_PRIVATE URLRequestFtpJob : public URLRequestJob {
   // Overridden from URLRequestJob:
   bool IsSafeRedirect(const GURL& location) override;
   bool GetMimeType(std::string* mime_type) const override;
-  void GetResponseInfo(HttpResponseInfo* info) override;
-  HostPortPair GetSocketAddress() const override;
-  void SetPriority(RequestPriority priority) override;
+  IPEndPoint GetResponseRemoteEndpoint() const override;
   void Start() override;
   void Kill() override;
-
-  RequestPriority priority() const { return priority_; }
 
  private:
   class AuthData;
@@ -55,7 +50,6 @@ class NET_EXPORT_PRIVATE URLRequestFtpJob : public URLRequestJob {
   void OnResolveProxyComplete(int result);
 
   void StartFtpTransaction();
-  void StartHttpTransaction();
 
   void OnStartCompleted(int result);
   void OnStartCompletedAsync(int result);
@@ -63,13 +57,10 @@ class NET_EXPORT_PRIVATE URLRequestFtpJob : public URLRequestJob {
 
   void RestartTransactionWithAuth();
 
-  void LogFtpServerType(char server_type);
-
   // Overridden from URLRequestJob:
   LoadState GetLoadState() const override;
   bool NeedsAuth() override;
-  void GetAuthChallengeInfo(
-      scoped_refptr<AuthChallengeInfo>* auth_info) override;
+  std::unique_ptr<AuthChallengeInfo> GetAuthChallengeInfo() override;
   void SetAuth(const AuthCredentials& credentials) override;
   void CancelAuth() override;
 
@@ -77,18 +68,12 @@ class NET_EXPORT_PRIVATE URLRequestFtpJob : public URLRequestJob {
 
   void HandleAuthNeededResponse();
 
-  RequestPriority priority_;
-
   ProxyResolutionService* proxy_resolution_service_;
   ProxyInfo proxy_info_;
   std::unique_ptr<ProxyResolutionService::Request> proxy_resolve_request_;
 
   FtpRequestInfo ftp_request_info_;
   std::unique_ptr<FtpTransaction> ftp_transaction_;
-
-  HttpRequestInfo http_request_info_;
-  std::unique_ptr<HttpTransaction> http_transaction_;
-  const HttpResponseInfo* http_response_info_;
 
   bool read_in_progress_;
 

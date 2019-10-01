@@ -24,7 +24,7 @@ namespace {
 using ui_controls::UIControlsAura;
 using ui_controls::MouseButton;
 
-DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(UIControlsAura, kUIControlsKey, NULL);
+DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(UIControlsAura, kUIControlsKey, NULL)
 
 // Returns the UIControls object for RootWindow.
 // kUIControlsKey is owned property and UIControls object
@@ -107,7 +107,7 @@ class UIControlsAsh : public UIControlsAura {
                                      int button_state,
                                      base::OnceClosure closure,
                                      int accelerator_state) override {
-    gfx::Point p(Shell::Get()->aura_env()->last_mouse_location());
+    gfx::Point p(aura::Env::GetInstance()->last_mouse_location());
     UIControlsAura* ui_controls = GetUIControlsAt(p);
     return ui_controls &&
            ui_controls->SendMouseEventsNotifyWhenDone(

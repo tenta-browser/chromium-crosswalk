@@ -13,10 +13,13 @@
 #include "components/autofill_assistant/browser/actions/action.h"
 
 namespace autofill_assistant {
-// An action to perform a mouse left button click on a given element on Web,
-// which is implemented as a touch tap on Mobile.
+class ClientStatus;
+
+// This action performs a click on a given element.
 class ClickAction : public Action {
  public:
+  enum ClickType { TAP = 0, JAVASCRIPT = 1, CLICK = 2 };
+
   explicit ClickAction(const ActionProto& proto);
   ~ClickAction() override;
 
@@ -27,9 +30,11 @@ class ClickAction : public Action {
 
   void OnWaitForElement(ActionDelegate* delegate,
                         ProcessActionCallback callback,
+                        const Selector& selector,
                         bool element_found);
-  void OnClick(ProcessActionCallback callback, bool status);
+  void OnClick(ProcessActionCallback callback, const ClientStatus& status);
 
+  ClickType click_type_;
   base::WeakPtrFactory<ClickAction> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ClickAction);

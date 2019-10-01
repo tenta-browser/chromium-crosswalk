@@ -4,7 +4,6 @@
 
 package org.chromium.chrome.browser.media.ui;
 
-import android.app.Notification;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.BroadcastReceiver;
@@ -41,11 +40,14 @@ import org.chromium.base.Log;
 import org.chromium.base.SysUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.AppHooks;
-import org.chromium.chrome.browser.ChromeFeatureList;
+import org.chromium.chrome.browser.notifications.ChromeNotification;
 import org.chromium.chrome.browser.notifications.ChromeNotificationBuilder;
+import org.chromium.chrome.browser.notifications.ForegroundServiceUtils;
 import org.chromium.chrome.browser.notifications.NotificationBuilderFactory;
 import org.chromium.chrome.browser.notifications.NotificationConstants;
+import org.chromium.chrome.browser.notifications.NotificationManagerProxy;
+import org.chromium.chrome.browser.notifications.NotificationManagerProxyImpl;
+import org.chromium.chrome.browser.notifications.NotificationMetadata;
 import org.chromium.chrome.browser.notifications.NotificationUmaTracker;
 import org.chromium.chrome.browser.notifications.channels.ChannelDefinitions;
 import org.chromium.media_session.mojom.MediaSessionAction;
@@ -66,9 +68,6 @@ public class MediaNotificationManager {
     private static final String TAG = "MediaNotification";
 
     static final int MINIMAL_MEDIA_IMAGE_SIZE_PX = 114;
-
-    @VisibleForTesting
-    static final int CUSTOM_MEDIA_SESSION_ACTION_STOP = MediaSessionAction.MAX_VALUE + 1;
 
     // The media artwork image resolution on high-end devices.
     private static final int HIGH_IMAGE_SIZE_PX = 512;
@@ -286,10 +285,15 @@ public class MediaNotificationManager {
     // responsible for hiding it afterwards.
     private static void finishStartingForegroundService(ListenerService s) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+        NotificationMetadata metadata =
+                new NotificationMetadata(NotificationUmaTracker.SystemNotificationType.MEDIA,
+                        null /* notificationTag */, s.getNotificationId());
         ChromeNotificationBuilder builder =
-                NotificationBuilderFactory.createChromeNotificationBuilder(
-                        true /* preferCompat */, ChannelDefinitions.ChannelId.MEDIA);
-        s.startForeground(s.getNotificationId(), builder.build());
+                NotificationBuilderFactory.createChromeNotificationBuilder(true /* preferCompat */,
+                        ChannelDefinitions.ChannelId.MEDIA, null /* remoteAppPackageName */,
+                        metadata);
+        ForegroundServiceUtils.getInstance().startForeground(s, s.getNotificationId(),
+                builder.buildChromeNotification().getNotification(), 0 /* foregroundServiceType */);
     }
 
     /**
@@ -746,7 +750,7 @@ public class MediaNotificationManager {
         mActionToButtonInfo.put(MediaSessionAction.PAUSE,
                 new MediaButtonInfo(R.drawable.ic_pause_white_36dp, R.string.accessibility_pause,
                         ListenerService.ACTION_PAUSE));
-        mActionToButtonInfo.put(CUSTOM_MEDIA_SESSION_ACTION_STOP,
+        mActionToButtonInfo.put(MediaSessionAction.STOP,
                 new MediaButtonInfo(R.drawable.ic_stop_white_36dp, R.string.accessibility_stop,
                         ListenerService.ACTION_STOP));
         mActionToButtonInfo.put(MediaSessionAction.PREVIOUS_TRACK,
@@ -811,11 +815,21 @@ public class MediaNotificationManager {
 
     @VisibleForTesting
     void onStop(int actionSource) {
+        // MediaSessionCompat calls this sometimes when `mMediaNotificationInfo`
+        // is no longer available. It's unclear if it is a Support Library issue
+        // or something that isn't properly cleaned up but given that the
+        // crashes are rare and the fix is simple, null check was enough.
+        if (mMediaNotificationInfo == null) return;
         mMediaNotificationInfo.listener.onStop(actionSource);
     }
 
     @VisibleForTesting
     void onMediaSessionAction(int action) {
+        // MediaSessionCompat calls this sometimes when `mMediaNotificationInfo`
+        // is no longer available. It's unclear if it is a Support Library issue
+        // or something that isn't properly cleaned up but given that the
+        // crashes are rare and the fix is simple, null check was enough.
+        if (mMediaNotificationInfo == null) return;
         mMediaNotificationInfo.listener.onMediaSessionAction(action);
     }
 
@@ -836,7 +850,7 @@ public class MediaNotificationManager {
         if (mService == null) {
             updateMediaSession();
             updateNotificationBuilder();
-            AppHooks.get().startForegroundService(createIntent());
+            ForegroundServiceUtils.getInstance().startForegroundService(createIntent());
         } else {
             updateNotification(false, false);
         }
@@ -918,13 +932,15 @@ public class MediaNotificationManager {
         updateMediaSession();
         updateNotificationBuilder();
 
-        Notification notification = mNotificationBuilder.build();
+        ChromeNotification notification = mNotificationBuilder.buildChromeNotification();
 
         // On O, finish starting the foreground service nevertheless, or Android will
         // crash Chrome.
         boolean foregroundedService = false;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && serviceStarting) {
-            mService.startForeground(mMediaNotificationInfo.id, notification);
+            ForegroundServiceUtils.getInstance().startForeground(mService,
+                    mMediaNotificationInfo.id, notification.getNotification(),
+                    0 /*foregroundServiceType*/);
             foregroundedService = true;
         }
 
@@ -935,21 +951,29 @@ public class MediaNotificationManager {
         if (mMediaNotificationInfo.supportsSwipeAway() && mMediaNotificationInfo.isPaused) {
             mService.stopForeground(false /* removeNotification */);
 
-            NotificationManagerCompat manager = NotificationManagerCompat.from(getContext());
-            manager.notify(mMediaNotificationInfo.id, notification);
+            NotificationManagerProxy manager = new NotificationManagerProxyImpl(getContext());
+            manager.notify(notification);
         } else if (!foregroundedService) {
-            mService.startForeground(mMediaNotificationInfo.id, notification);
+            ForegroundServiceUtils.getInstance().startForeground(mService,
+                    mMediaNotificationInfo.id, notification.getNotification(),
+                    0 /*foregroundServiceType*/);
         }
         if (shouldLogNotification) {
             mNotificationUmaTracker.onNotificationShown(
-                    NotificationUmaTracker.SystemNotificationType.MEDIA, notification);
+                    NotificationUmaTracker.SystemNotificationType.MEDIA,
+                    notification.getNotification());
         }
     }
 
     @VisibleForTesting
     void updateNotificationBuilder() {
+        assert (mMediaNotificationInfo != null);
+        NotificationMetadata metadata =
+                new NotificationMetadata(NotificationUmaTracker.SystemNotificationType.MEDIA,
+                        null /* notificationTag */, mMediaNotificationInfo.id);
         mNotificationBuilder = NotificationBuilderFactory.createChromeNotificationBuilder(
-                true /* preferCompat */, ChannelDefinitions.ChannelId.MEDIA);
+                true /* preferCompat */, ChannelDefinitions.ChannelId.MEDIA,
+                null /* remoteAppPackageName*/, metadata);
         setMediaStyleLayoutForNotificationBuilder(mNotificationBuilder);
 
         // TODO(zqzhang): It's weird that setShowWhen() doesn't work on K. Calling setWhen() to
@@ -1070,15 +1094,13 @@ public class MediaNotificationManager {
 
     private void setMediaStyleLayoutForNotificationBuilder(ChromeNotificationBuilder builder) {
         setMediaStyleNotificationText(builder);
-        // Notifications in incognito shouldn't show an icon to avoid leaking information.
-        boolean hideUserData = mMediaNotificationInfo.isPrivate
-                && ChromeFeatureList.isEnabled(
-                           ChromeFeatureList.HIDE_USER_DATA_FROM_INCOGNITO_NOTIFICATIONS);
         if (!mMediaNotificationInfo.supportsPlayPause()) {
             // Non-playback (Cast) notification will not use MediaStyle, so not
             // setting the large icon is fine.
             builder.setLargeIcon(null);
-        } else if (mMediaNotificationInfo.notificationLargeIcon != null && !hideUserData) {
+            // Notifications in incognito shouldn't show an icon to avoid leaking information.
+        } else if (mMediaNotificationInfo.notificationLargeIcon != null
+                && !mMediaNotificationInfo.isPrivate) {
             builder.setLargeIcon(mMediaNotificationInfo.notificationLargeIcon);
         } else if (!isRunningAtLeastN()) {
             if (mDefaultNotificationLargeIcon == null
@@ -1110,7 +1132,9 @@ public class MediaNotificationManager {
         }
 
         if (mMediaNotificationInfo.supportsStop()) {
-            actions.add(CUSTOM_MEDIA_SESSION_ACTION_STOP);
+            actions.add(MediaSessionAction.STOP);
+        } else {
+            actions.remove(MediaSessionAction.STOP);
         }
 
         List<Integer> bigViewActions = computeBigViewActions(actions);
@@ -1137,10 +1161,7 @@ public class MediaNotificationManager {
     }
 
     private void setMediaStyleNotificationText(ChromeNotificationBuilder builder) {
-        boolean hideUserData = mMediaNotificationInfo.isPrivate
-                && ChromeFeatureList.isEnabled(
-                           ChromeFeatureList.HIDE_USER_DATA_FROM_INCOGNITO_NOTIFICATIONS);
-        if (hideUserData) {
+        if (mMediaNotificationInfo.isPrivate) {
             // Notifications in incognito shouldn't show what is playing to avoid leaking
             // information.
             if (isRunningAtLeastN()) {
@@ -1186,7 +1207,7 @@ public class MediaNotificationManager {
      */
     private List<Integer> computeBigViewActions(Set<Integer> actions) {
         // STOP cannot coexist with switch track actions and seeking actions.
-        assert !actions.contains(CUSTOM_MEDIA_SESSION_ACTION_STOP)
+        assert !actions.contains(MediaSessionAction.STOP)
                 || !(actions.contains(MediaSessionAction.PREVIOUS_TRACK)
                         && actions.contains(MediaSessionAction.NEXT_TRACK)
                         && actions.contains(MediaSessionAction.SEEK_BACKWARD)
@@ -1194,8 +1215,6 @@ public class MediaNotificationManager {
         // PLAY and PAUSE cannot coexist.
         assert !actions.contains(MediaSessionAction.PLAY)
                 || !actions.contains(MediaSessionAction.PAUSE);
-        // There can't be move actions than BIG_VIEW_ACTIONS_COUNT.
-        assert actions.size() <= BIG_VIEW_ACTIONS_COUNT;
 
         int[] actionByOrder = {
                 MediaSessionAction.PREVIOUS_TRACK,
@@ -1204,7 +1223,7 @@ public class MediaNotificationManager {
                 MediaSessionAction.PAUSE,
                 MediaSessionAction.SEEK_FORWARD,
                 MediaSessionAction.NEXT_TRACK,
-                CUSTOM_MEDIA_SESSION_ACTION_STOP,
+                MediaSessionAction.STOP,
         };
 
         // Sort the actions based on the expected ordering in the UI.
@@ -1212,6 +1231,10 @@ public class MediaNotificationManager {
         for (int action : actionByOrder) {
             if (actions.contains(action)) sortedActions.add(action);
         }
+
+        // There can't be move actions than BIG_VIEW_ACTIONS_COUNT. We do this check after we have
+        // sorted the actions since there may be more actions that we do not support.
+        assert sortedActions.size() <= BIG_VIEW_ACTIONS_COUNT;
 
         return sortedActions;
     }
@@ -1227,7 +1250,7 @@ public class MediaNotificationManager {
     @VisibleForTesting
     static int[] computeCompactViewActionIndices(List<Integer> actions) {
         // STOP cannot coexist with switch track actions and seeking actions.
-        assert !actions.contains(CUSTOM_MEDIA_SESSION_ACTION_STOP)
+        assert !actions.contains(MediaSessionAction.STOP)
                 || !(actions.contains(MediaSessionAction.PREVIOUS_TRACK)
                         && actions.contains(MediaSessionAction.NEXT_TRACK)
                         && actions.contains(MediaSessionAction.SEEK_BACKWARD)
@@ -1244,12 +1267,12 @@ public class MediaNotificationManager {
             return actionsArray;
         }
 
-        if (actions.contains(CUSTOM_MEDIA_SESSION_ACTION_STOP)) {
+        if (actions.contains(MediaSessionAction.STOP)) {
             List<Integer> compactActions = new ArrayList<>();
             if (actions.contains(MediaSessionAction.PLAY)) {
                 compactActions.add(actions.indexOf(MediaSessionAction.PLAY));
             }
-            compactActions.add(actions.indexOf(CUSTOM_MEDIA_SESSION_ACTION_STOP));
+            compactActions.add(actions.indexOf(MediaSessionAction.STOP));
             return CollectionUtil.integerListToIntArray(compactActions);
         }
 

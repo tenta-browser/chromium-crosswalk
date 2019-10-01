@@ -10,6 +10,7 @@
 #include "third_party/blink/renderer/modules/push_messaging/push_error.h"
 #include "third_party/blink/renderer/modules/push_messaging/push_subscription_options_init.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
@@ -71,7 +72,7 @@ ScriptPromise PushMessagingBridge::GetPermissionState(
                                mojo::MakeRequest(&permission_service_));
   }
 
-  ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   ScriptPromise promise = resolver->Promise();
 
   // The `userVisibleOnly` flag on |options| must be set, as it's intended to be
@@ -80,8 +81,8 @@ ScriptPromise PushMessagingBridge::GetPermissionState(
   //
   // TODO(peter): Would it be better to resolve DENIED rather than rejecting?
   if (!options->hasUserVisibleOnly() || !options->userVisibleOnly()) {
-    resolver->Reject(DOMException::Create(DOMExceptionCode::kNotSupportedError,
-                                          kUserVisibleOnlyRequired));
+    resolver->Reject(MakeGarbageCollected<DOMException>(
+        DOMExceptionCode::kNotSupportedError, kUserVisibleOnlyRequired));
     return promise;
   }
 

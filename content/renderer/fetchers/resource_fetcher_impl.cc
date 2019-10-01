@@ -6,6 +6,11 @@
 
 #include <stdint.h>
 
+#include <memory>
+#include <string>
+#include <utility>
+
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/single_thread_task_runner.h"
@@ -30,7 +35,6 @@
 namespace {
 
 constexpr int32_t kRoutingId = 0;
-const char kAccessControlAllowOriginHeader[] = "Access-Control-Allow-Origin";
 
 }  // namespace
 
@@ -48,7 +52,7 @@ std::unique_ptr<ResourceFetcher> ResourceFetcher::Create(const GURL& url) {
 class ResourceFetcherImpl::ClientImpl : public network::mojom::URLLoaderClient {
  public:
   ClientImpl(ResourceFetcherImpl* parent,
-             Callback callback,
+             StartCallback callback,
              size_t maximum_download_size,
              scoped_refptr<base::SingleThreadTaskRunner> task_runner)
       : parent_(parent),
@@ -62,7 +66,7 @@ class ResourceFetcherImpl::ClientImpl : public network::mojom::URLLoaderClient {
         callback_(std::move(callback)) {}
 
   ~ClientImpl() override {
-    callback_ = Callback();
+    callback_.Reset();
     Cancel();
   }
 
@@ -180,7 +184,7 @@ class ResourceFetcherImpl::ClientImpl : public network::mojom::URLLoaderClient {
     // Existing callers need URL and HTTP status code. URL is already set in
     // Start().
     if (response_head.headers)
-      response_.SetHTTPStatusCode(response_head.headers->response_code());
+      response_.SetHttpStatusCode(response_head.headers->response_code());
   }
   void OnReceiveRedirect(
       const net::RedirectInfo& redirect_info,
@@ -192,7 +196,7 @@ class ResourceFetcherImpl::ClientImpl : public network::mojom::URLLoaderClient {
   void OnUploadProgress(int64_t current_position,
                         int64_t total_size,
                         OnUploadProgressCallback ack_callback) override {}
-  void OnReceiveCachedMetadata(const std::vector<uint8_t>& data) override {}
+  void OnReceiveCachedMetadata(mojo_base::BigBuffer data) override {}
   void OnTransferSizeUpdated(int32_t transfer_size_diff) override {}
   void OnStartLoadingResponseBody(
       mojo::ScopedDataPipeConsumerHandle body) override {
@@ -246,7 +250,7 @@ class ResourceFetcherImpl::ClientImpl : public network::mojom::URLLoaderClient {
   blink::WebURLResponse response_;
 
   // Callback when we're done.
-  Callback callback_;
+  StartCallback callback_;
 
   DISALLOW_COPY_AND_ASSIGN(ClientImpl);
 };
@@ -283,12 +287,17 @@ void ResourceFetcherImpl::SetHeader(const std::string& header,
   }
 }
 
+void ResourceFetcherImpl::SetFetchRequestMode(
+    network::mojom::FetchRequestMode fetch_request_mode) {
+  request_.fetch_request_mode = fetch_request_mode;
+}
+
 void ResourceFetcherImpl::Start(
     blink::WebLocalFrame* frame,
     blink::mojom::RequestContextType request_context,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     const net::NetworkTrafficAnnotationTag& annotation_tag,
-    Callback callback,
+    StartCallback callback,
     size_t maximum_download_size) {
   DCHECK(!client_);
   DCHECK(frame);
@@ -307,10 +316,11 @@ void ResourceFetcherImpl::Start(
   if (!frame->GetDocument().GetSecurityOrigin().IsNull()) {
     request_.request_initiator =
         static_cast<url::Origin>(frame->GetDocument().GetSecurityOrigin());
-    SetHeader(kAccessControlAllowOriginHeader,
+    SetHeader(net::HttpRequestHeaders::kOrigin,
               blink::WebSecurityOrigin::CreateUnique().ToString().Ascii());
   }
-  request_.resource_type = RequestContextToResourceType(request_context);
+  request_.resource_type =
+      static_cast<int>(RequestContextToResourceType(request_context));
 
   client_ = std::make_unique<ClientImpl>(
       this, std::move(callback), maximum_download_size,

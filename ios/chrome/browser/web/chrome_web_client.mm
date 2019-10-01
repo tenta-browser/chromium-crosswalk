@@ -10,6 +10,8 @@
 #include "base/mac/bundle_locations.h"
 #include "base/strings/sys_string_conversions.h"
 #include "components/dom_distiller/core/url_constants.h"
+#include "components/services/patch/patch_service.h"
+#include "components/services/patch/public/interfaces/constants.mojom.h"
 #include "components/services/unzip/public/interfaces/constants.mojom.h"
 #include "components/services/unzip/unzip_service.h"
 #include "components/strings/grit/components_strings.h"
@@ -21,7 +23,10 @@
 #include "ios/chrome/browser/chrome_url_constants.h"
 #include "ios/chrome/browser/ios_chrome_main_parts.h"
 #include "ios/chrome/browser/passwords/password_manager_features.h"
+#include "ios/chrome/browser/reading_list/features.h"
+#import "ios/chrome/browser/reading_list/offline_page_tab_helper.h"
 #include "ios/chrome/browser/ssl/ios_ssl_error_handler.h"
+#import "ios/chrome/browser/ui/elements/windowed_container_view.h"
 #include "ios/chrome/browser/web/chrome_overlay_manifests.h"
 #import "ios/chrome/browser/web/error_page_util.h"
 #include "ios/public/provider/chrome/browser/browser_url_rewriter_provider.h"
@@ -146,13 +151,20 @@ base::RefCountedMemory* ChromeWebClient::GetDataResourceBytes(
       resource_id);
 }
 
+bool ChromeWebClient::IsDataResourceGzipped(int resource_id) const {
+  return ui::ResourceBundle::GetSharedInstance().IsGzipped(resource_id);
+}
+
 base::Optional<service_manager::Manifest>
 ChromeWebClient::GetServiceManifestOverlay(base::StringPiece name) {
   if (name == web::mojom::kBrowserServiceName)
     return GetChromeWebBrowserOverlayManifest();
-  if (name == web::mojom::kPackagedServicesServiceName)
-    return GetChromeWebPackagedServicesOverlayManifest();
   return base::nullopt;
+}
+
+std::vector<service_manager::Manifest>
+ChromeWebClient::GetExtraServiceManifests() {
+  return GetChromeWebPackagedServicesOverlayManifest().packaged_services;
 }
 
 void ChromeWebClient::GetAdditionalWebUISchemes(
@@ -203,12 +215,28 @@ void ChromeWebClient::AllowCertificateError(
                                      overridable, callback);
 }
 
-void ChromeWebClient::PrepareErrorPage(NSError* error,
+void ChromeWebClient::PrepareErrorPage(web::WebState* web_state,
+                                       const GURL& url,
+                                       NSError* error,
                                        bool is_post,
                                        bool is_off_the_record,
                                        NSString** error_html) {
+  if (reading_list::IsOfflinePageWithoutNativeContentEnabled()) {
+    OfflinePageTabHelper* offline_page_tab_helper =
+        OfflinePageTabHelper::FromWebState(web_state);
+    // WebState that are not attached to a tab may not have a
+    // OfflinePageTabHelper.
+    if (offline_page_tab_helper &&
+        offline_page_tab_helper->HasDistilledVersionForOnlineUrl(url)) {
+      // An offline version of the page will be displayed to replace this error
+      // page. Return an empty error page to avoid having the error page
+      // flash vefore the offline version is loaded.
+      *error_html = @"";
+      return;
+    }
+  }
   DCHECK(error);
-  *error_html = GetErrorPage(error, is_post, is_off_the_record);
+  *error_html = GetErrorPage(url, error, is_post, is_off_the_record);
 }
 
 std::unique_ptr<service_manager::Service> ChromeWebClient::HandleServiceRequest(
@@ -218,8 +246,19 @@ std::unique_ptr<service_manager::Service> ChromeWebClient::HandleServiceRequest(
     // The Unzip service is used by the component updater.
     return std::make_unique<unzip::UnzipService>(std::move(request));
   }
+  if (service_name == patch::mojom::kServiceName) {
+    // The Patch service is used by the component updater.
+    return std::make_unique<patch::PatchService>(std::move(request));
+  }
 
   return nullptr;
+}
+
+UIView* ChromeWebClient::GetWindowedContainer() {
+  if (!windowed_container_) {
+    windowed_container_ = [[WindowedContainerView alloc] init];
+  }
+  return windowed_container_;
 }
 
 std::string ChromeWebClient::GetProduct() const {

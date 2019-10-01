@@ -33,6 +33,8 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_PAGE_CHROME_CLIENT_IMPL_H_
 
 #include <memory>
+
+#include "cc/input/overscroll_behavior.h"
 #include "third_party/blink/public/web/web_navigation_policy.h"
 #include "third_party/blink/public/web/web_window_features.h"
 #include "third_party/blink/renderer/core/core_export.h"
@@ -60,13 +62,14 @@ class CORE_EXPORT ChromeClientImpl final : public ChromeClient {
   // ChromeClient methods:
   void ChromeDestroyed() override;
   void SetWindowRect(const IntRect&, LocalFrame&) override;
-  IntRect RootWindowRect() override;
-  IntRect PageRect() override;
+  IntRect RootWindowRect(LocalFrame&) override;
   void Focus(LocalFrame*) override;
   bool CanTakeFocus(WebFocusType) override;
   void TakeFocus(WebFocusType) override;
-  void FocusedNodeChanged(Node* from_node, Node* to_node) override;
+  void FocusedElementChanged(Element* from_node, Element* to_node) override;
   void BeginLifecycleUpdates() override;
+  void StartDeferringCommits(base::TimeDelta timeout) override;
+  void StopDeferringCommits(cc::PaintHoldingCommitTrigger) override;
   bool HadFormInteraction() const override;
   void StartDragging(LocalFrame*,
                      const WebDragData&,
@@ -76,21 +79,29 @@ class CORE_EXPORT ChromeClientImpl final : public ChromeClient {
   bool AcceptsLoadDrops() const override;
   Page* CreateWindowDelegate(LocalFrame*,
                              const FrameLoadRequest&,
+                             const AtomicString& name,
                              const WebWindowFeatures&,
-                             NavigationPolicy,
-                             SandboxFlags,
+                             WebSandboxFlags,
+                             const FeaturePolicy::FeatureState&,
                              const SessionStorageNamespaceId&) override;
   void Show(NavigationPolicy) override;
   void DidOverscroll(const FloatSize& overscroll_delta,
                      const FloatSize& accumulated_overscroll,
                      const FloatPoint& position_in_viewport,
-                     const FloatSize& velocity_in_viewport,
-                     const cc::OverscrollBehavior&) override;
+                     const FloatSize& velocity_in_viewport) override;
+  void SetOverscrollBehavior(LocalFrame& main_frame,
+                             const cc::OverscrollBehavior&) override;
+  void InjectGestureScrollEvent(LocalFrame& local_frame,
+                                WebGestureDevice device,
+                                const WebFloatSize& delta,
+                                ScrollGranularity granularity,
+                                CompositorElementId scrollable_area_element_id,
+                                WebInputEvent::Type injected_type) override;
   bool ShouldReportDetailedMessageForSource(LocalFrame&,
                                             const String&) override;
   void AddMessageToConsole(LocalFrame*,
-                           MessageSource,
-                           MessageLevel,
+                           mojom::ConsoleMessageSource,
+                           mojom::ConsoleMessageLevel,
                            const String& message,
                            unsigned line_number,
                            const String& source_id,
@@ -112,7 +123,8 @@ class CORE_EXPORT ChromeClientImpl final : public ChromeClient {
                            const LocalFrameView*) const override;
   float WindowToViewportScalar(const float) const override;
   WebScreenInfo GetScreenInfo() const override;
-  base::Optional<IntRect> VisibleContentRectForPainting() const override;
+  void OverrideVisibleRectForMainFrame(LocalFrame& frame,
+                                       IntRect* paint_rect) const override;
   float InputEventsScaleForEmulation() const override;
   void ContentsSizeChanged(LocalFrame*, const IntSize&) const override;
   bool DoubleTapToZoomEnabled() const override;
@@ -130,8 +142,10 @@ class CORE_EXPORT ChromeClientImpl final : public ChromeClient {
                                  ColorChooserClient*,
                                  const Color&) override;
   DateTimeChooser* OpenDateTimeChooser(
+      LocalFrame* frame,
       DateTimeChooserClient*,
       const DateTimeChooserParameters&) override;
+  ExternalDateTimeChooser* GetExternalDateTimeChooserForTesting() override;
   void OpenFileChooser(LocalFrame*, scoped_refptr<FileChooser>) override;
   void SetCursor(const Cursor&, LocalFrame*) override;
   void SetCursorOverridden(bool) override;
@@ -227,7 +241,6 @@ class CORE_EXPORT ChromeClientImpl final : public ChromeClient {
 
   void OnMouseDown(Node&) override;
   void DidUpdateBrowserControls() const override;
-  void SetOverscrollBehavior(const cc::OverscrollBehavior&) override;
 
   FloatSize ElasticOverscroll() const override;
 
@@ -240,6 +253,17 @@ class CORE_EXPORT ChromeClientImpl final : public ChromeClient {
   void RequestDecode(LocalFrame*,
                      const PaintImage&,
                      base::OnceCallback<void(bool)>) override;
+
+  void NotifySwapTime(LocalFrame& frame, ReportTimeCallback callback) override;
+
+  void FallbackCursorModeLockCursor(LocalFrame* frame,
+                                    bool left,
+                                    bool right,
+                                    bool up,
+                                    bool down) override;
+
+  void FallbackCursorModeSetCursorVisibility(LocalFrame* frame,
+                                             bool visible) override;
 
  private:
   bool IsChromeClientImpl() const override { return true; }
@@ -255,6 +279,7 @@ class CORE_EXPORT ChromeClientImpl final : public ChromeClient {
   Vector<scoped_refptr<FileChooser>> file_chooser_queue_;
   Cursor last_set_mouse_cursor_for_testing_;
   bool cursor_overridden_;
+  Member<ExternalDateTimeChooser> external_date_time_chooser_;
   bool did_request_non_empty_tool_tip_;
 
   FRIEND_TEST_ALL_PREFIXES(FileChooserQueueTest, DerefQueuedChooser);

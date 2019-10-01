@@ -23,7 +23,6 @@
 #include "chrome/browser/metrics/chrome_metrics_service_accessor.h"
 #include "chrome/browser/metrics/chrome_metrics_service_client.h"
 #include "chrome/browser/metrics/chrome_metrics_services_manager_client.h"
-#include "chrome/browser/metrics/persistent_histograms.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_paths.h"
@@ -33,6 +32,7 @@
 #include "components/metrics/metrics_pref_names.h"
 #include "components/metrics/metrics_reporting_default_state.h"
 #include "components/metrics/metrics_switches.h"
+#include "components/metrics/persistent_histograms.h"
 #include "components/prefs/json_pref_store.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/test/browser_test_utils.h"
@@ -80,9 +80,17 @@ void VerifyRendererExitCodeIsSignal(
 // clear to me how to test that.
 class MetricsServiceBrowserTest : public InProcessBrowserTest {
  public:
+  MetricsServiceBrowserTest() {}
+
   void SetUpCommandLine(base::CommandLine* command_line) override {
     // Enable the metrics service for testing (in recording-only mode).
     command_line->AppendSwitch(metrics::switches::kMetricsRecordingOnly);
+  }
+
+  void SetUp() override {
+    ChromeMetricsServiceAccessor::SetMetricsAndCrashReportingForTesting(
+        &metrics_consent_);
+    InProcessBrowserTest::SetUp();
   }
 
   // Open three tabs then navigate to |crashy_url| and wait for the renderer to
@@ -135,6 +143,11 @@ class MetricsServiceBrowserTest : public InProcessBrowserTest {
         browser(), net::FilePathToFileURL(page2_path),
         WindowOpenDisposition::NEW_FOREGROUND_TAB, kBrowserTestFlags);
   }
+
+ private:
+  bool metrics_consent_ = true;
+
+  DISALLOW_COPY_AND_ASSIGN(MetricsServiceBrowserTest);
 };
 
 IN_PROC_BROWSER_TEST_F(MetricsServiceBrowserTest, CloseRenderersNormally) {

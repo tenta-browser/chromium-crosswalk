@@ -10,12 +10,15 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "base/memory/ref_counted.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
 #include "net/http/http_status_code.h"
 #include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/mojom/url_loader.mojom.h"
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
 
 namespace network {
+class WeakWrapperSharedURLLoaderFactory;
 
 // A helper class to ease testing code that uses URLLoader interface. A test
 // would pass this factory instead of the production factory to code, and
@@ -73,10 +76,11 @@ class TestURLLoaderFactory : public mojom::URLLoaderFactory {
                    net::HttpStatusCode status = net::HTTP_OK);
 
   // Returns true if there is a request for a given URL with a living client
-  // that did not produce a response yet. If |load_flags_out| is non-null,
-  // it will reports load flags used for the request
+  // that did not produce a response yet. If |request_out| is non-null,
+  // it will give a const pointer to the request.
   // WARNING: This does RunUntilIdle() first.
-  bool IsPending(const std::string& url, int* load_flags_out = nullptr);
+  bool IsPending(const std::string& url,
+                 const ResourceRequest** request_out = nullptr);
 
   // Returns the total # of pending requests.
   // WARNING: This does RunUntilIdle() first.
@@ -145,6 +149,19 @@ class TestURLLoaderFactory : public mojom::URLLoaderFactory {
                                 traffic_annotation) override;
   void Clone(mojom::URLLoaderFactoryRequest request) override;
 
+  // Returns a 'safe' ref-counted weak wrapper around this TestURLLoaderFactory
+  // instance.
+  //
+  // Because this is a weak wrapper, it is possible for the underlying
+  // TestURLLoaderFactory instance to be destroyed while other code still holds
+  // a reference to it.
+  //
+  // The weak wrapper returned by this method is guaranteed to have had
+  // Detach() called before this is destructed, so that any future calls become
+  // no-ops, rather than a crash.
+  scoped_refptr<network::WeakWrapperSharedURLLoaderFactory>
+  GetSafeWeakWrapper();
+
  private:
   bool CreateLoaderAndStartInternal(const GURL& url,
                                     mojom::URLLoaderClient* client);
@@ -170,6 +187,8 @@ class TestURLLoaderFactory : public mojom::URLLoaderFactory {
   std::map<GURL, Response> responses_;
 
   std::vector<PendingRequest> pending_requests_;
+
+  scoped_refptr<network::WeakWrapperSharedURLLoaderFactory> weak_wrapper_;
 
   Interceptor interceptor_;
   mojo::BindingSet<network::mojom::URLLoaderFactory> bindings_;

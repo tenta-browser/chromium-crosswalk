@@ -59,7 +59,7 @@ class ClientUsageTracker : public SpecialStoragePolicy::Observer,
   using UsageMap = std::map<url::Origin, int64_t>;
 
   struct AccumulateInfo {
-    int pending_jobs = 0;
+    size_t pending_jobs = 0;
     int64_t limited_usage = 0;
     int64_t unlimited_usage = 0;
   };
@@ -104,7 +104,6 @@ class ClientUsageTracker : public SpecialStoragePolicy::Observer,
 
   bool IsStorageUnlimited(const url::Origin& origin) const;
 
-  UsageTracker* tracker_;
   QuotaClient* client_;
   const blink::mojom::StorageType type_;
   StorageMonitor* storage_monitor_;

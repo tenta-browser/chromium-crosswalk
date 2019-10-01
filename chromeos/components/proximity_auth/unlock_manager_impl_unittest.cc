@@ -23,7 +23,6 @@
 #include "chromeos/components/proximity_auth/remote_device_life_cycle.h"
 #include "chromeos/components/proximity_auth/remote_status_update.h"
 #include "chromeos/constants/chromeos_features.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/services/secure_channel/public/cpp/client/fake_client_channel.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
 #include "device/bluetooth/test/mock_bluetooth_adapter.h"
@@ -75,7 +74,7 @@ class MockMessenger : public Messenger {
 
 class MockProximityMonitor : public ProximityMonitor {
  public:
-  MockProximityMonitor(base::OnceClosure destroy_callback)
+  explicit MockProximityMonitor(base::OnceClosure destroy_callback)
       : destroy_callback_(std::move(destroy_callback)), started_(false) {
     ON_CALL(*this, IsUnlockAllowed()).WillByDefault(Return(true));
   }
@@ -99,7 +98,7 @@ class TestUnlockManager : public UnlockManagerImpl {
  public:
   TestUnlockManager(ProximityAuthSystem::ScreenlockType screenlock_type,
                     ProximityAuthClient* proximity_auth_client)
-      : UnlockManagerImpl(screenlock_type, proximity_auth_client, nullptr) {}
+      : UnlockManagerImpl(screenlock_type, proximity_auth_client) {}
   ~TestUnlockManager() override {}
 
   using UnlockManager::OnAuthAttempted;
@@ -114,8 +113,7 @@ class TestUnlockManager : public UnlockManagerImpl {
 
  private:
   std::unique_ptr<ProximityMonitor> CreateProximityMonitor(
-      RemoteDeviceLifeCycle* life_cycle,
-      ProximityAuthPrefManager* pref_manager) override {
+      RemoteDeviceLifeCycle* life_cycle) override {
     std::unique_ptr<MockProximityMonitor> proximity_monitor(
         new NiceMock<MockProximityMonitor>(
             base::BindOnce(&TestUnlockManager::OnProximityMonitorDestroyed,
@@ -159,21 +157,7 @@ class ProximityAuthUnlockManagerImplTest : public testing::Test {
         task_runner_(new base::TestSimpleTaskRunner()),
         thread_task_runner_handle_(task_runner_) {}
 
-  ~ProximityAuthUnlockManagerImplTest() override {
-    // Make sure to verify the mock prior to the destruction of the unlock
-    // manager, as otherwise it's impossible to tell whether calls to Stop()
-    // occur as a side-effect of the destruction or from the code intended to be
-    // under test.
-    if (proximity_monitor())
-      testing::Mock::VerifyAndClearExpectations(proximity_monitor());
-
-    // The UnlockManager must be destroyed before calling
-    // chromeos::DBusThreadManager::Shutdown(), as the UnlockManager's
-    // destructor references the DBusThreadManager.
-    unlock_manager_.reset();
-
-    chromeos::DBusThreadManager::Shutdown();
-  }
+  ~ProximityAuthUnlockManagerImplTest() override = default;
 
   void SetUp() override {
     ON_CALL(*bluetooth_adapter_, IsPresent()).WillByDefault(Return(true));
@@ -185,7 +169,20 @@ class ProximityAuthUnlockManagerImplTest : public testing::Test {
     life_cycle_.set_messenger(&messenger_);
     life_cycle_.set_channel(fake_client_channel_.get());
 
-    chromeos::DBusThreadManager::Initialize();
+    chromeos::PowerManagerClient::InitializeFake();
+  }
+
+  void TearDown() override {
+    // Make sure to verify the mock prior to the destruction of the unlock
+    // manager, as otherwise it's impossible to tell whether calls to Stop()
+    // occur as a side-effect of the destruction or from the code intended to be
+    // under test.
+    if (proximity_monitor())
+      testing::Mock::VerifyAndClearExpectations(proximity_monitor());
+
+    unlock_manager_.reset();
+
+    chromeos::PowerManagerClient::Shutdown();
   }
 
   void CreateUnlockManager(

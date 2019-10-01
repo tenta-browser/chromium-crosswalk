@@ -26,6 +26,10 @@ class MutatorHostClient;
 class LayerTreeMutator;
 class ScrollTree;
 
+// Used as the return value of GetAnimationScales() to indicate that there is
+// no active scale animation or the scale cannot be computed.
+const float kNotScaled = 0;
+
 // A MutatorHost owns all the animation and mutation effects.
 // There is just one MutatorHost for LayerTreeHost on main renderer thread
 // and just one MutatorHost for LayerTreeHostImpl on the impl thread.
@@ -42,10 +46,13 @@ class MutatorHost {
 
   virtual void ClearMutators() = 0;
 
-  virtual void RegisterElement(ElementId element_id,
-                               ElementListType list_type) = 0;
-  virtual void UnregisterElement(ElementId element_id,
+  virtual void UpdateRegisteredElementIds(ElementListType changed_list) = 0;
+  virtual void InitClientAnimationState() = 0;
+
+  virtual void RegisterElementId(ElementId element_id,
                                  ElementListType list_type) = 0;
+  virtual void UnregisterElementId(ElementId element_id,
+                                   ElementListType list_type) = 0;
 
   virtual void SetMutatorHostClient(MutatorHostClient* client) = 0;
 
@@ -55,9 +62,11 @@ class MutatorHost {
   virtual void PushPropertiesTo(MutatorHost* host_impl) = 0;
 
   virtual void SetSupportsScrollAnimations(bool supports_scroll_animations) = 0;
+  virtual void SetScrollAnimationDurationForTesting(
+      base::TimeDelta duration) = 0;
   virtual bool NeedsTickAnimations() const = 0;
 
-  virtual bool ActivateAnimations() = 0;
+  virtual bool ActivateAnimations(MutatorEvents* events) = 0;
   // TODO(smcgruer): Once we only tick scroll-based animations on scroll, we
   // don't need to pass the scroll tree in here.
   virtual bool TickAnimations(base::TimeTicks monotonic_time,
@@ -66,6 +75,7 @@ class MutatorHost {
   // Tick animations that depends on scroll offset.
   virtual void TickScrollAnimations(base::TimeTicks monotonic_time,
                                     const ScrollTree& scroll_tree) = 0;
+  virtual void TickWorkletAnimations() = 0;
   virtual bool UpdateAnimationState(bool start_ready_animations,
                                     MutatorEvents* events) = 0;
   virtual void PromoteScrollTimelinesPendingToActive() = 0;
@@ -78,6 +88,9 @@ class MutatorHost {
 
   virtual bool IsAnimatingFilterProperty(ElementId element_id,
                                          ElementListType list_type) const = 0;
+  virtual bool IsAnimatingBackdropFilterProperty(
+      ElementId element_id,
+      ElementListType list_type) const = 0;
   virtual bool IsAnimatingOpacityProperty(ElementId element_id,
                                           ElementListType list_type) const = 0;
   virtual bool IsAnimatingTransformProperty(
@@ -85,6 +98,9 @@ class MutatorHost {
       ElementListType list_type) const = 0;
 
   virtual bool HasPotentiallyRunningFilterAnimation(
+      ElementId element_id,
+      ElementListType list_type) const = 0;
+  virtual bool HasPotentiallyRunningBackdropFilterAnimation(
       ElementId element_id,
       ElementListType list_type) const = 0;
   virtual bool HasPotentiallyRunningOpacityAnimation(
@@ -98,17 +114,18 @@ class MutatorHost {
       ElementId element_id,
       TargetProperty::Type property) const = 0;
 
-  virtual bool HasOnlyTranslationTransforms(
-      ElementId element_id,
-      ElementListType list_type) const = 0;
   virtual bool AnimationsPreserveAxisAlignment(ElementId element_id) const = 0;
 
-  virtual bool MaximumTargetScale(ElementId element_id,
+  // Gets scales transform animations. On return, |maximum_scale| is the maximum
+  // scale along any dimension at any destination in active scale animations,
+  // and |starting_scale| is the maximum of starting animation scale along any
+  // dimension at any destination in active scale animations. They are set to
+  // kNotScaled if there is no active scale animation or the scales cannot be
+  // computed.
+  virtual void GetAnimationScales(ElementId element_id,
                                   ElementListType list_type,
-                                  float* max_scale) const = 0;
-  virtual bool AnimationStartScale(ElementId element_id,
-                                   ElementListType list_type,
-                                   float* start_scale) const = 0;
+                                  float* maximum_scale,
+                                  float* starting_scale) const = 0;
 
   virtual bool IsElementAnimating(ElementId element_id) const = 0;
   virtual bool HasTickingKeyframeModelForTesting(
@@ -128,6 +145,9 @@ class MutatorHost {
       base::TimeDelta delayed_by) = 0;
 
   virtual void ScrollAnimationAbort() = 0;
+
+  // True when there is an ongoing scroll animation on Impl.
+  virtual bool IsImplOnlyScrollAnimating() const = 0;
 
   virtual size_t CompositedAnimationsCount() const = 0;
   virtual size_t MainThreadAnimationsCount() const = 0;

@@ -25,6 +25,7 @@
 #include "cc/paint/display_item_list.h"
 #include "cc/tiles/tile_manager.h"
 #include "cc/tiles/tiling_set_raster_queue_all.h"
+#include "cc/trees/effect_node.h"
 #include "cc/trees/layer_tree_impl.h"
 #include "cc/trees/occlusion.h"
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
@@ -285,11 +286,13 @@ void PictureLayerImpl::AppendQuads(viz::RenderPass* render_pass,
     if (mask_type_ == Layer::LayerMaskType::NOT_MASK) {
       occlusion = draw_properties().occlusion_in_content_space;
     }
+
+    EffectNode* effect_node = GetEffectTree().Node(effect_tree_index());
     SolidColorLayerImpl::AppendSolidQuads(
         render_pass, occlusion, shared_quad_state, scaled_visible_layer_rect,
         raster_source_->GetSolidColor(),
         !layer_tree_impl()->settings().enable_edge_anti_aliasing,
-        append_quads_data);
+        effect_node->blend_mode, append_quads_data);
     return;
   }
 
@@ -481,8 +484,8 @@ void PictureLayerImpl::AppendQuads(viz::RenderPass* render_pass,
               shared_quad_state, offset_geometry_rect,
               offset_visible_geometry_rect, needs_blending,
               draw_info.resource_id_for_export(), texture_rect,
-              draw_info.resource_size(), draw_info.contents_swizzled(),
-              draw_info.is_premultiplied(), nearest_neighbor_,
+              draw_info.resource_size(), draw_info.is_premultiplied(),
+              nearest_neighbor_,
               !layer_tree_impl()->settings().enable_edge_anti_aliasing);
           ValidateQuadResources(quad);
           has_draw_quad = true;
@@ -516,7 +519,7 @@ void PictureLayerImpl::AppendQuads(viz::RenderPass* render_pass,
       if (mask_type_ == Layer::LayerMaskType::NOT_MASK &&
           ShowDebugBorders(DebugBorderType::LAYER)) {
         // Fill the whole tile with the missing tile color.
-        color = DebugColors::OOMTileBorderColor();
+        color = DebugColors::DefaultCheckerboardColor();
       }
       auto* quad =
           render_pass->CreateAndAppendDrawQuad<viz::SolidColorDrawQuad>();
@@ -1306,7 +1309,7 @@ void PictureLayerImpl::RecalculateRasterScales() {
             transform_tree_index(), layer_tree_impl());
     float maximum_scale = animation_scales.maximum_animation_scale;
     float starting_scale = animation_scales.starting_animation_scale;
-    if (maximum_scale) {
+    if (maximum_scale != kNotScaled) {
       gfx::Size bounds_at_maximum_scale =
           gfx::ScaleToCeiledSize(raster_source_->GetSize(), maximum_scale);
       int64_t maximum_area =
@@ -1325,7 +1328,7 @@ void PictureLayerImpl::RecalculateRasterScales() {
       if (maximum_area <= squared_viewport_area)
         can_raster_at_maximum_scale = true;
     }
-    if (starting_scale && starting_scale > maximum_scale) {
+    if (starting_scale != kNotScaled && starting_scale > maximum_scale) {
       gfx::Size bounds_at_starting_scale =
           gfx::ScaleToCeiledSize(raster_source_->GetSize(), starting_scale);
       int64_t start_area =

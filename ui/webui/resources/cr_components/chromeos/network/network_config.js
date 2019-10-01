@@ -50,13 +50,12 @@ Polymer({
     /**
      * The GUID when an existing network is being configured. This will be
      * empty when configuring a new network.
-     * @private
      */
     guid: String,
 
     /**
      * The type of network being configured.
-     * @private {!chrome.networkingPrivate.NetworkType}
+     * @type {!chrome.networkingPrivate.NetworkType}
      */
     type: String,
 
@@ -66,17 +65,25 @@ Polymer({
     /** The default shared state. */
     shareDefault: Boolean,
 
-    /** @private */
     enableConnect: {
       type: Boolean,
       notify: true,
       value: false,
     },
 
-    /** @private */
     enableSave: {
       type: Boolean,
       notify: true,
+      value: false,
+    },
+
+    /**
+     * Whether pressing the "Enter" key within the password field should start a
+     * connection attempt. If this field is false, pressing "Enter" saves the
+     * current configuration but does not connect.
+     */
+    connectOnEnter: {
+      type: Boolean,
       value: false,
     },
 
@@ -90,7 +97,7 @@ Polymer({
      * The managed properties of an existing network.
      * This is used for determination of managed fields.
      * This will be undefined when configuring a new network.
-     * @private {!chrome.networkingPrivate.ManagedProperties|undefined}
+     * @type {!chrome.networkingPrivate.ManagedProperties|undefined}
      */
     managedProperties: {
       type: Object,
@@ -106,8 +113,17 @@ Polymer({
       value: null,
     },
 
-    /** Set if |guid| is not empty once managedProperties are received. */
-    propertiesReceived_: Boolean,
+    /**
+     * Whether this element is waiting for additional properties of the network
+     * to configure. If a network GUID is supplied, an asynchronous request is
+     * required to fetch these properties; otherwise, there is no need to wait
+     * for more properties to arrive.
+     * @private
+     */
+    waitingForProperties_: {
+      type: Boolean,
+      value: true,
+    },
 
     /** Set once managedProperties have been sent; prevents multiple saves. */
     propertiesSent_: Boolean,
@@ -273,8 +289,10 @@ Polymer({
     eapOuterItems_: {
       type: Array,
       readOnly: true,
-      computed: 'computeEapOuterItems_(' +
-          'guid, shareNetwork_, shareAllowEnable, shareDefault)',
+      value: [
+        CrOnc.EAPType.LEAP, CrOnc.EAPType.PEAP, CrOnc.EAPType.EAP_TLS,
+        CrOnc.EAPType.EAP_TTLS
+      ],
     },
 
     /**
@@ -318,11 +336,20 @@ Polymer({
       ],
     },
 
+    /**
+     * Whether the current network configuration allows only device-wide
+     * certificates (e.g. shared EAP TLS networks).
+     * @private
+     */
+    deviceCertsOnly_: {
+      type: Boolean,
+      value: false,
+    },
   },
 
   observers: [
     'setEnableConnect_(isConfigured_, propertiesSent_)',
-    'setEnableSave_(isConfigured_, propertiesReceived_)',
+    'setEnableSave_(isConfigured_, waitingForProperties_)',
     'updateConfigProperties_(managedProperties)',
     'updateSecurity_(configProperties_, security_)',
     'updateEapOuter_(eapProperties_.Outer)',
@@ -371,20 +398,22 @@ Polymer({
     this.selectedUserCertHash_ = undefined;
     this.guid = this.managedProperties.GUID;
     this.type = this.managedProperties.Type;
+    this.waitingForProperties_ = !!this.guid;
+
     if (this.guid) {
       this.networkingPrivate.getManagedProperties(
           this.guid, (managedProperties) => {
             this.getManagedPropertiesCallback_(managedProperties);
-            this.focusFirstInput_();
           });
     } else {
-      this.async(() => {
+      setTimeout(() => {
         this.focusFirstInput_();
       });
     }
     this.onCertificateListsChanged_();
     this.updateIsConfigured_();
     this.setShareNetwork_();
+    this.updateDeviceCertsOnly_();
   },
 
   save: function() {
@@ -407,7 +436,8 @@ Polymer({
     this.error = '';
 
     const propertiesToSet = this.getPropertiesToSet_();
-    if (this.getSource_() == CrOnc.Source.NONE) {
+    if (this.getSource_(this.guid, this.managedProperties) ==
+        CrOnc.Source.NONE) {
       // Set 'AutoConnect' to false for VPN or if prohibited by policy.
       // Note: Do not set AutoConnect to true, the connection manager will do
       // that on a successful connection (unless set to false here).
@@ -440,11 +470,16 @@ Polymer({
   },
 
   /** @private */
-  connectIfConfigured_: function() {
+  onEnterPressedInPasswordInput_: function() {
     if (!this.isConfigured_) {
       return;
     }
-    this.connect();
+
+    if (this.connectOnEnter) {
+      this.connect();
+    } else {
+      this.save();
+    }
   },
 
   /** @private */
@@ -462,14 +497,17 @@ Polymer({
 
   /**
    * Returns a valid CrOnc.Source.
+   * @param {string} guid
+   * @param {!chrome.networkingPrivate.ManagedProperties|undefined}
+   *     managedProperties
    * @private
    * @return {!CrOnc.Source}
    */
-  getSource_: function() {
-    if (!this.guid) {
+  getSource_: function(guid, managedProperties) {
+    if (!guid) {
       return CrOnc.Source.NONE;
     }
-    const source = this.managedProperties.Source;
+    const source = managedProperties.Source;
     return source ? /** @type {!CrOnc.Source} */ (source) : CrOnc.Source.NONE;
   },
 
@@ -521,7 +559,14 @@ Polymer({
    * @private
    */
   getDefaultCert_: function(desc, hash) {
-    return {hardwareBacked: false, hash: hash, issuedBy: desc, issuedTo: ''};
+    return {
+      hardwareBacked: false,
+      hash: hash,
+      issuedBy: desc,
+      issuedTo: '',
+      isDefault: true,
+      deviceWide: false
+    };
   },
 
   /**
@@ -571,11 +616,13 @@ Polymer({
    * @private
    */
   setManagedProperties_: function(managedProperties) {
-    this.propertiesReceived_ = true;
     this.managedProperties = managedProperties;
     this.managedEapProperties_ = this.getManagedEap_(managedProperties);
     this.setError_(managedProperties.ErrorState);
     this.updateCertError_();
+
+    this.waitingForProperties_ = false;
+    this.focusFirstInput_();
 
     // Set the current shareNetwork_ value when properties are received.
     this.setShareNetwork_();
@@ -633,14 +680,14 @@ Polymer({
 
   /** @private */
   setShareNetwork_: function() {
-    const source = this.getSource_();
+    const source = this.getSource_(this.guid, this.managedProperties);
     if (source != CrOnc.Source.NONE) {
       // Configured networks can not change whether they are shared.
       this.shareNetwork_ =
           source == CrOnc.Source.DEVICE || source == CrOnc.Source.DEVICE_POLICY;
       return;
     }
-    if (!this.shareIsVisible_()) {
+    if (!this.shareIsVisible_(this.guid, this.type, this.managedProperties)) {
       this.shareNetwork_ = false;
       return;
     }
@@ -651,14 +698,13 @@ Polymer({
         this.shareNetwork_ = true;
         return;
       }
-      // Networks requiring a user certificate cannot be shared.
-      const eap = this.eapProperties_;
-      if (eap && eap.Outer == CrOnc.EAPType.EAP_TLS) {
-        this.shareNetwork_ = false;
-        return;
-      }
     }
     this.shareNetwork_ = this.shareDefault;
+  },
+
+  /** @private */
+  onShareChanged_: function(event) {
+    this.updateDeviceCertsOnly_();
   },
 
   /**
@@ -1164,7 +1210,7 @@ Polymer({
       if (!this.get('WiFi.SSID', this.configProperties_)) {
         return false;
       }
-      if (this.configRequiresPassphrase_()) {
+      if (this.configRequiresPassphrase_(this.type, this.security_)) {
         const passphrase = this.get('WiFi.Passphrase', this.configProperties_);
         if (!passphrase || passphrase.length < this.MIN_PASSPHRASE_LENGTH) {
           return false;
@@ -1182,6 +1228,27 @@ Polymer({
     this.isConfigured_ = this.getIsConfigured_();
   },
 
+  /** @private */
+  updateDeviceCertsOnly_: function() {
+    // Only device-wide certificates can be used for networks that require a
+    // certificate and are shared.
+    const eap = this.eapProperties_;
+    if (!this.shareNetwork_ || !eap || eap.Outer != CrOnc.EAPType.EAP_TLS) {
+      this.deviceCertsOnly_ = false;
+      return;
+    }
+    // Clear selection if certificate is not device-wide.
+    let cert = this.findCert_(this.userCerts_, this.selectedUserCertHash_);
+    if (cert && !cert.deviceWide) {
+      this.selectedUserCertHash_ = undefined;
+    }
+    cert = this.findCert_(this.serverCaCerts_, this.selectedServerCaHash_);
+    if (cert && !(cert.deviceWide || cert.isDefault)) {
+      this.selectedServerCaHash_ = undefined;
+    }
+    this.deviceCertsOnly_ = true;
+  },
+
   /**
    * @param {CrOnc.Type} type The type to compare against.
    * @param {CrOnc.Type} networkType The current network type.
@@ -1194,7 +1261,7 @@ Polymer({
 
   /** @private */
   setEnableSave_: function() {
-    this.enableSave = this.isConfigured_ && this.propertiesReceived_;
+    this.enableSave = this.isConfigured_ && !this.waitingForProperties_;
   },
 
   /** @private */
@@ -1203,35 +1270,12 @@ Polymer({
   },
 
   /**
-   * @param {string} guid
-   * @param {boolean} shareNetwork
-   * @param {boolean} shareAllowEnable
-   * @param {boolean} shareDefault
-   * @return {!Array<string>}
-   * @private
-   */
-  computeEapOuterItems_: function(
-      guid, shareNetwork, shareAllowEnable, shareDefault) {
-    // If a network must be shared, hide the TLS option. Otherwise selecting
-    // TLS will turn off and disable the shared state. NOTE: Ethernet EAP may
-    // be set at the Device level, but will be saved as a User configuration.
-    if (this.type != CrOnc.Type.ETHERNET &&
-        ((this.getSource_() != CrOnc.Source.NONE && shareNetwork) ||
-         (!shareAllowEnable && shareDefault))) {
-      return [CrOnc.EAPType.LEAP, CrOnc.EAPType.PEAP, CrOnc.EAPType.EAP_TTLS];
-    }
-    return [
-      CrOnc.EAPType.LEAP, CrOnc.EAPType.PEAP, CrOnc.EAPType.EAP_TLS,
-      CrOnc.EAPType.EAP_TTLS
-    ];
-  },
-
-  /**
+   * @param {string} type
    * @return {boolean}
    * @private
    */
-  securityIsVisible_: function() {
-    return this.type == CrOnc.Type.WI_FI || this.type == CrOnc.Type.ETHERNET;
+  securityIsVisible_: function(type) {
+    return type == CrOnc.Type.WI_FI || type == CrOnc.Type.ETHERNET;
   },
 
   /**
@@ -1244,12 +1288,16 @@ Polymer({
   },
 
   /**
+   * @param {string} guid
+   * @param {string} type
+   * @param {!chrome.networkingPrivate.ManagedProperties|undefined}
+   *     managedProperties
    * @return {boolean}
    * @private
    */
-  shareIsVisible_: function() {
-    return this.getSource_() == CrOnc.Source.NONE &&
-        (this.type == CrOnc.Type.WI_FI || this.type == CrOnc.Type.WI_MAX);
+  shareIsVisible_: function(guid, type, managedProperties) {
+    return this.getSource_(guid, managedProperties) == CrOnc.Source.NONE &&
+        (type == CrOnc.Type.WI_FI || type == CrOnc.Type.WI_MAX);
   },
 
   /**
@@ -1257,15 +1305,10 @@ Polymer({
    * @private
    */
   shareIsEnabled_: function() {
-    if (!this.shareAllowEnable || this.getSource_() != CrOnc.Source.NONE) {
+    if (!this.shareAllowEnable ||
+        this.getSource_(this.guid, this.managedProperties) !=
+            CrOnc.Source.NONE) {
       return false;
-    }
-
-    if (this.security_ == CrOnc.Security.WPA_EAP) {
-      const eap = this.getEap_(this.configProperties_);
-      if (eap && eap.Outer == CrOnc.EAPType.EAP_TLS) {
-        return false;
-      }
     }
 
     if (this.type == CrOnc.Type.WI_FI) {
@@ -1298,6 +1341,18 @@ Polymer({
     if (eap.Outer != CrOnc.EAPType.EAP_TLS) {
       return true;
     }
+    // EAP TLS networks can be shared only for device-wide certificates.
+    if (this.deviceCertsOnly_) {  // network is shared
+      let cert = this.findCert_(this.userCerts_, this.selectedUserCertHash_);
+      if (!cert || !cert.deviceWide) {
+        return false;
+      }
+      cert = this.findCert_(this.serverCaCerts_, this.selectedServerCaHash_);
+      if (!cert.deviceWide || !cert.isDefault) {
+        return false;
+      }
+    }
+
     return this.selectedUserCertHashIsValid_();
   },
 
@@ -1455,20 +1510,13 @@ Polymer({
    * @private
    */
   setPropertiesCallback_: function(connect) {
-    this.setError_(this.getRuntimeError_());
-    if (this.error) {
-      console.error('setProperties error: ' + this.guid + ': ' + this.error);
-      this.propertiesSent_ = false;
-      return;
-    }
+    // Only attempt a connection if the network is not yet connected.
     const connectState = this.managedProperties.ConnectionState;
-    if (connect &&
-        (!connectState ||
-         connectState == CrOnc.ConnectionState.NOT_CONNECTED)) {
-      this.startConnect_(this.guid);
-      return;
-    }
-    this.close_();
+    const shouldConnect = connect &&
+        (!connectState || connectState == CrOnc.ConnectionState.NOT_CONNECTED);
+
+    this.handleNetworkConfigurationResponse_(
+        shouldConnect, this.guid, 'setProperties() error');
   },
 
   /**
@@ -1477,17 +1525,30 @@ Polymer({
    * @private
    */
   createNetworkCallback_: function(connect, guid) {
+    this.handleNetworkConfigurationResponse_(
+        connect, guid,
+        'createNetworkError() error; type: ' + this.managedProperties.Type);
+  },
+
+  /**
+   * @param {boolean} connect If true, connect after save.
+   * @param {string} guid
+   * @param {string} errorMessage The message to use in the case of an error.
+   * @private
+   */
+  handleNetworkConfigurationResponse_: function(connect, guid, errorMessage) {
     this.setError_(this.getRuntimeError_());
     if (this.error) {
       console.error(
-          'createNetworkError, type: ' + this.managedProperties.Type + ': ' +
-          'error: ' + this.error);
+          errorMessage + ', GUID: ' + guid + ', error: ' + this.error);
       this.propertiesSent_ = false;
       return;
     }
     if (connect) {
       this.startConnect_(guid);
+      return;
     }
+    this.close_();
   },
 
   /**
@@ -1510,15 +1571,17 @@ Polymer({
   },
 
   /**
+   * @param {string} type
+   * @param {string} security
    * @return {boolean}
    * @private
    */
-  configRequiresPassphrase_: function() {
+  configRequiresPassphrase_: function(type, security) {
     // Note: 'Passphrase' is only used by WiFi; Ethernet and WiMAX use
     // EAP.Password.
-    return this.type == CrOnc.Type.WI_FI &&
-        (this.security_ == CrOnc.Security.WEP_PSK ||
-         this.security_ == CrOnc.Security.WPA_PSK);
+    return type == CrOnc.Type.WI_FI &&
+        (security == CrOnc.Security.WEP_PSK ||
+         security == CrOnc.Security.WPA_PSK);
   },
 
   /**

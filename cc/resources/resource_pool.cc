@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "base/atomic_sequence_num.h"
+#include "base/bind.h"
 #include "base/format_macros.h"
 #include "base/memory/shared_memory_handle.h"
 #include "base/single_thread_task_runner.h"
@@ -320,7 +321,7 @@ bool ResourcePool::PrepareForExport(const InUsePoolResource& in_use_resource) {
       resource->mark_avoid_reuse();
       return false;
     }
-    transferable = viz::TransferableResource::MakeGLOverlay(
+    transferable = viz::TransferableResource::MakeGL(
         gpu_backing->mailbox, GL_LINEAR, gpu_backing->texture_target,
         gpu_backing->mailbox_sync_token, resource->size(),
         gpu_backing->overlay_candidate);

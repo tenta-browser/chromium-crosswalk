@@ -15,7 +15,6 @@
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "components/sync/base/unrecoverable_error_handler.h"
 #include "components/sync/driver/sync_api_component_factory.h"
-#include "components/sync/driver/sync_client.h"
 #include "components/sync/model/local_change_observer.h"
 #include "components/sync/model/sync_change.h"
 #include "components/sync/model/sync_error.h"
@@ -39,6 +38,10 @@ void SetNodeSpecifics(const sync_pb::EntitySpecifics& entity_specifics,
   if (GetModelTypeFromSpecifics(entity_specifics) == PASSWORDS) {
     write_node->SetPasswordSpecifics(
         entity_specifics.password().client_only_encrypted_data());
+  } else if (GetModelTypeFromSpecifics(entity_specifics) ==
+             WIFI_CONFIGURATIONS) {
+    write_node->SetWifiConfigurationSpecifics(
+        entity_specifics.wifi_configuration().client_only_encrypted_data());
   } else {
     write_node->SetEntitySpecifics(entity_specifics);
   }
@@ -54,6 +57,15 @@ SyncData BuildRemoteSyncData(int64_t sync_id, const ReadNode& read_node) {
           ->mutable_client_only_encrypted_data()
           ->CopyFrom(read_node.GetPasswordSpecifics());
       return SyncData::CreateRemoteData(sync_id, password_holder);
+    }
+    case WIFI_CONFIGURATIONS: {
+      // Wifi configs must be accessed differently, to account for their
+      // encryption, and stored into a temporary EntitySpecifics.
+      sync_pb::EntitySpecifics wifi_configuration_holder;
+      wifi_configuration_holder.mutable_wifi_configuration()
+          ->mutable_client_only_encrypted_data()
+          ->CopyFrom(read_node.GetWifiConfigurationSpecifics());
+      return SyncData::CreateRemoteData(sync_id, wifi_configuration_holder);
     }
     case SESSIONS:
       // Include tag hashes for sessions data type to allow discarding during
@@ -80,8 +92,7 @@ GenericChangeProcessor::GenericChangeProcessor(
     std::unique_ptr<DataTypeErrorHandler> error_handler,
     const base::WeakPtr<SyncableService>& local_service,
     const base::WeakPtr<SyncMergeResult>& merge_result,
-    UserShare* user_share,
-    SyncClient* sync_client)
+    UserShare* user_share)
     : ChangeProcessor(std::move(error_handler)),
       type_(type),
       local_service_(local_service),
@@ -125,7 +136,7 @@ void GenericChangeProcessor::ApplyChangesFromSyncModel(
       if (read_node.InitByIdLookup(it->id) != BaseNode::INIT_OK) {
         SyncError error(FROM_HERE, SyncError::DATATYPE_ERROR,
                         "Failed to look up data for received change with id " +
-                            base::Int64ToString(it->id),
+                            base::NumberToString(it->id),
                         GetModelTypeFromSpecifics(it->specifics));
         error_handler()->OnUnrecoverableError(error);
         return;

@@ -9,7 +9,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "components/autofill/core/browser/autofill_metrics.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/payments/payments_util.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/autofill/core/common/autofill_clock.h"
@@ -69,8 +69,7 @@ void FullCardRequest::GetFullCard(const CreditCard& card,
   if (should_unmask_card_) {
     payments_client_->Prepare();
     request_->billing_customer_number = GetBillingCustomerId(
-        personal_data_manager_, payments_client_->GetPrefService(),
-        /*should_log_validity=*/true);
+        personal_data_manager_, /*should_log_validity=*/true);
   }
 
   ui_delegate_->ShowUnmaskPrompt(request_->card, reason,

@@ -8,7 +8,7 @@
 #include <utility>
 
 #include "ash/public/cpp/shell_window_ids.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "base/bind.h"
@@ -33,12 +33,14 @@ AcceleratorConfirmationDialog::AcceleratorConfirmationDialog(
   SetBorder(views::CreateEmptyBorder(
       views::LayoutProvider::Get()->GetDialogInsetsForContentType(
           views::TEXT, views::TEXT)));
-  AddChildView(new views::Label(l10n_util::GetStringUTF16(dialog_text_id)));
+  AddChildView(std::make_unique<views::Label>(
+      l10n_util::GetStringUTF16(dialog_text_id)));
 
   // Parent the dialog widget to the LockSystemModalContainer, or
   // OverlayContainer to ensure that it will get displayed on respective
   // lock/signin or OOBE screen.
-  SessionController* session_controller = Shell::Get()->session_controller();
+  SessionControllerImpl* session_controller =
+      Shell::Get()->session_controller();
   int container_id = kShellWindowId_SystemModalContainer;
   if (session_controller->GetSessionState() ==
       session_manager::SessionState::OOBE) {

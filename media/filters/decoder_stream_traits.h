@@ -5,7 +5,7 @@
 #ifndef MEDIA_FILTERS_DECODER_STREAM_TRAITS_H_
 #define MEDIA_FILTERS_DECODER_STREAM_TRAITS_H_
 
-#include "base/containers/flat_set.h"
+#include "base/containers/flat_map.h"
 #include "base/time/time.h"
 #include "media/base/audio_decoder.h"
 #include "media/base/audio_decoder_config.h"
@@ -50,12 +50,12 @@ class MEDIA_EXPORT DecoderStreamTraits<DemuxerStream::AUDIO> {
                          const DecoderConfigType& config,
                          bool low_delay,
                          CdmContext* cdm_context,
-                         const InitCB& init_cb,
+                         InitCB init_cb,
                          const OutputCB& output_cb,
                          const WaitingCB& waiting_cb);
   DecoderConfigType GetDecoderConfig(DemuxerStream* stream);
   void OnDecode(const DecoderBuffer& buffer);
-  PostDecodeAction OnDecodeDone(const scoped_refptr<OutputType>& buffer);
+  PostDecodeAction OnDecodeDone(OutputType* buffer);
   void OnStreamReset(DemuxerStream* stream);
 
  private:
@@ -94,17 +94,24 @@ class MEDIA_EXPORT DecoderStreamTraits<DemuxerStream::VIDEO> {
                          const DecoderConfigType& config,
                          bool low_delay,
                          CdmContext* cdm_context,
-                         const InitCB& init_cb,
+                         InitCB init_cb,
                          const OutputCB& output_cb,
                          const WaitingCB& waiting_cb);
   void OnDecode(const DecoderBuffer& buffer);
-  PostDecodeAction OnDecodeDone(const scoped_refptr<OutputType>& buffer);
+  PostDecodeAction OnDecodeDone(OutputType* buffer);
   void OnStreamReset(DemuxerStream* stream);
 
  private:
   base::TimeDelta last_keyframe_timestamp_;
   MovingAverage keyframe_distance_average_;
-  base::flat_set<base::TimeDelta> frames_to_drop_;
+
+  // Tracks the duration of incoming packets over time.
+  struct FrameMetadata {
+    bool should_drop = false;
+    base::TimeDelta duration = kNoTimestamp;
+  };
+  base::flat_map<base::TimeDelta, FrameMetadata> frame_metadata_;
+
   PipelineStatistics stats_;
 };
 

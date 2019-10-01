@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/task/post_task.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -29,6 +30,7 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/resource_request_info.h"
 #include "extensions/browser/api/web_request/web_request_api.h"
+#include "extensions/browser/api/web_request/web_request_info.h"
 #include "extensions/browser/extension_navigation_ui_data.h"
 #include "extensions/browser/info_map.h"
 #include "extensions/browser/process_manager.h"
@@ -75,7 +77,7 @@ void NotifyEPMRequestStatus(RequestStatus status,
 
 void ForwardRequestStatus(
     RequestStatus status, net::URLRequest* request, void* profile_id) {
-  const ResourceRequestInfo* info = ResourceRequestInfo::ForRequest(request);
+  ResourceRequestInfo* info = ResourceRequestInfo::ForRequest(request);
   if (!info)
     return;
 
@@ -196,13 +198,22 @@ int ChromeExtensionsNetworkDelegateImpl::OnBeforeURLRequest(
   return result;
 }
 
+namespace {
+void OnHeadersReceivedAdapter(net::CompletionOnceCallback callback,
+                              const std::set<std::string>& removed_headers,
+                              const std::set<std::string>& set_headers,
+                              int error_code) {
+  std::move(callback).Run(error_code);
+}
+}  // namespace
+
 int ChromeExtensionsNetworkDelegateImpl::OnBeforeStartTransaction(
     net::URLRequest* request,
     net::CompletionOnceCallback callback,
     net::HttpRequestHeaders* headers) {
   return ExtensionWebRequestEventRouter::GetInstance()->OnBeforeSendHeaders(
       profile_, extension_info_map_.get(), GetWebRequestInfo(request),
-      std::move(callback), headers);
+      base::BindOnce(OnHeadersReceivedAdapter, std::move(callback)), headers);
 }
 
 void ChromeExtensionsNetworkDelegateImpl::OnStartTransaction(

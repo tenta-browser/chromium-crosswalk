@@ -20,6 +20,8 @@
 #include "build/build_config.h"
 #include "chrome/browser/metrics/tab_stats_data_store.h"
 #include "chrome/browser/metrics/tab_stats_tracker_delegate.h"
+#include "chrome/browser/resource_coordinator/lifecycle_unit_state.mojom-forward.h"
+#include "chrome/browser/resource_coordinator/tab_lifecycle_observer.h"
 #include "chrome/browser/ui/browser_list_observer.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 #include "components/metrics/daily_event.h"
@@ -41,7 +43,8 @@ FORWARD_DECLARE_TEST(TabStatsTrackerBrowserTest,
 //         std::make_unique<TabStatsTracker>(g_browser_process->local_state()));
 class TabStatsTracker : public TabStripModelObserver,
                         public BrowserListObserver,
-                        public base::PowerObserver {
+                        public base::PowerObserver,
+                        public resource_coordinator::TabLifecycleObserver {
  public:
   // Constructor. |pref_service| must outlive this object.
   explicit TabStatsTracker(PrefService* pref_service);
@@ -63,6 +66,7 @@ class TabStatsTracker : public TabStripModelObserver,
   const TabStatsDataStore::TabsStats& tab_stats() const;
 
  protected:
+  FRIEND_TEST_ALL_PREFIXES(TabStatsTrackerBrowserTest, FrozenTabPercentage);
   FRIEND_TEST_ALL_PREFIXES(TabStatsTrackerBrowserTest,
                            TabDeletionGetsHandledProperly);
 #if defined(OS_WIN)
@@ -147,6 +151,14 @@ class TabStatsTracker : public TabStripModelObserver,
   // base::PowerObserver:
   void OnResume() override;
 
+  // resource_coordinator::TabLifecycleObserver:
+  void OnDiscardedStateChange(content::WebContents* contents,
+                              ::mojom::LifecycleUnitDiscardReason reason,
+                              bool is_discarded) override;
+
+  void OnAutoDiscardableStateChange(content::WebContents* contents,
+                                    bool is_auto_discardable) override;
+
   // Callback when an interval timer triggers.
   void OnInterval(base::TimeDelta interval,
                   TabStatsDataStore::TabsStateDuringIntervalMap* interval_map);
@@ -203,9 +215,16 @@ class TabStatsTracker : public TabStripModelObserver,
   // The timer used to report the heartbeat metrics at regular interval.
   base::RepeatingTimer heartbeat_timer_;
 
+  // The timer used to report tab discard and reload count histograms at regular
+  // interval.
+  base::RepeatingTimer tab_discard_reload_stats_timer_;
+
   // The observers that track how the tabs are used.
   std::map<content::WebContents*, std::unique_ptr<WebContentsUsageObserver>>
       web_contents_usage_observers_;
+
+  // Called at regular time intervals to report tab discard count histograms.
+  void OnTabDiscardCountReportInterval();
 
   SEQUENCE_CHECKER(sequence_checker_);
 
@@ -243,6 +262,13 @@ class TabStatsTracker::UmaStatsReportingDelegate {
   static const char kTabCountHistogramName[];
   static const char kWindowCountHistogramName[];
 
+  // The name of the histogram that records the percentage of hidden tabs that
+  // are frozen. Separated into buckets based on the number of hidden tabs.
+  static const char kFrozenTabPercentageHistogramNameBase[];
+  static const char kFrozenTabPercentage1To5HiddenTabsHistogramName[];
+  static const char kFrozenTabPercentage6To20HiddenTabsHistogramName[];
+  static const char kFrozenTabPercentageMoreThan20HiddenTabsHistogramName[];
+
   UmaStatsReportingDelegate() {}
   virtual ~UmaStatsReportingDelegate() {}
 
@@ -278,6 +304,9 @@ class TabStatsTracker::UmaStatsReportingDelegate {
   virtual bool IsChromeBackgroundedWithoutWindows();
 
  private:
+  // Report the percentage of hidden tabs that are frozen.
+  void ReportFrozenTabPercentage();
+
   DISALLOW_COPY_AND_ASSIGN(UmaStatsReportingDelegate);
 };
 

@@ -16,21 +16,20 @@
 #include "components/password_manager/core/browser/password_store.h"
 #include "components/password_manager/core/browser/password_store_consumer.h"
 #include "ios/chrome/browser/passwords/ios_chrome_password_store_factory.h"
+#import "ios/chrome/browser/ui/autofill/manual_fill/all_password_coordinator.h"
 #import "ios/chrome/browser/ui/autofill/manual_fill/manual_fill_accessory_view_controller.h"
-#import "ios/chrome/browser/ui/autofill/manual_fill/password_coordinator.h"
 #import "ios/chrome/browser/ui/autofill/manual_fill/password_mediator.h"
 #import "ios/chrome/browser/ui/autofill/manual_fill/password_view_controller.h"
-#import "ios/chrome/browser/ui/settings/passwords_table_view_controller.h"
+#import "ios/chrome/browser/ui/settings/password/passwords_table_view_controller.h"
 #import "ios/chrome/browser/ui/util/ui_util.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_actions.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
+#import "ios/chrome/test/earl_grey/chrome_error_util.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
-#include "ios/web/public/features.h"
 #import "ios/web/public/test/earl_grey/web_view_matchers.h"
 #include "ios/web/public/test/element_selector.h"
-#import "ios/web/public/test/web_view_interaction_test_util.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "url/gurl.h"
 
@@ -87,7 +86,7 @@ id<GREYMatcher> OtherPasswordsMatcher() {
 
 id<GREYMatcher> OtherPasswordsDismissMatcher() {
   return grey_accessibilityID(
-      manual_fill::PasswordDoneButtonAccessibilityIdentifier);
+      manual_fill::kPasswordDoneButtonAccessibilityIdentifier);
 }
 
 // Returns a matcher for the example username in the list.
@@ -137,17 +136,11 @@ class TestStoreConsumer : public password_manager::PasswordStoreConsumer {
   const std::vector<autofill::PasswordForm>& GetStoreResults() {
     results_.clear();
     ResetObtained();
-    GetPasswordStore()->GetAutofillableLogins(this);
+    GetPasswordStore()->GetAllLogins(this);
     bool responded = base::test::ios::WaitUntilConditionOrTimeout(1.0, ^bool {
       return !AreObtainedReset();
     });
     GREYAssert(responded, @"Obtaining fillable items took too long.");
-    AppendObtainedToResults();
-    GetPasswordStore()->GetBlacklistLogins(this);
-    responded = base::test::ios::WaitUntilConditionOrTimeout(1.0, ^bool {
-      return !AreObtainedReset();
-    });
-    GREYAssert(responded, @"Obtaining blacklisted items took too long.");
     AppendObtainedToResults();
     return results_;
   }
@@ -200,14 +193,14 @@ void SaveExamplePasswordForm() {
   SaveToPasswordStore(example);
 }
 
-// Saves an example form in the store.
-void SaveLocalPasswordForm() {
-  autofill::PasswordForm example;
-  example.username_value = base::ASCIIToUTF16(kExampleUsername);
-  example.password_value = base::ASCIIToUTF16(kExamplePassword);
-  example.origin = GURL("http://127.0.0.1:55264");
-  example.signon_realm = example.origin.spec();
-  SaveToPasswordStore(example);
+// Saves an example form in the storefor the passed URL.
+void SaveLocalPasswordForm(const GURL& url) {
+  autofill::PasswordForm localForm;
+  localForm.username_value = base::ASCIIToUTF16(kExampleUsername);
+  localForm.password_value = base::ASCIIToUTF16(kExamplePassword);
+  localForm.origin = url;
+  localForm.signon_realm = localForm.origin.spec();
+  SaveToPasswordStore(localForm);
 }
 
 // Removes all credentials stored.
@@ -248,8 +241,9 @@ BOOL WaitForJavaScriptCondition(NSString* java_script_condition) {
              @"Manual Fallback must be enabled for this Test Case");
   GREYAssertTrue(self.testServer->Start(), @"Test server failed to start.");
   const GURL URL = self.testServer->GetURL(kFormHTMLFile);
-  [ChromeEarlGrey loadURL:URL];
-  [ChromeEarlGrey waitForWebViewContainingText:"hello!"];
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:URL]);
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey waitForWebStateContainingText:"hello!"]);
   SaveExamplePasswordForm();
 }
 
@@ -579,14 +573,12 @@ BOOL WaitForJavaScriptCondition(NSString* java_script_condition) {
   if (!base::ios::IsRunningOnOrLater(11, 3, 0)) {
     EARL_GREY_TEST_SKIPPED(@"Skipped for iOS < 11.3");
   }
-  GREYAssert(base::FeatureList::IsEnabled(web::features::kWebFrameMessaging),
-             @"Frame Messaging must be enabled for this Test Case");
 
   const GURL URL = self.testServer->GetURL(kIFrameHTMLFile);
-  [ChromeEarlGrey loadURL:URL];
-  [ChromeEarlGrey waitForWebViewContainingText:"iFrame"];
-
-  SaveLocalPasswordForm();
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:URL]);
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey waitForWebStateContainingText:"iFrame"]);
+  SaveLocalPasswordForm(URL);
 
   // Bring up the keyboard.
   [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]

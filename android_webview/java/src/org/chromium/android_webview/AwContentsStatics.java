@@ -11,6 +11,8 @@ import org.chromium.base.Callback;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.base.task.PostTask;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 
 import java.util.List;
 
@@ -105,7 +107,7 @@ public class AwContentsStatics {
         // API.
         Callback<Boolean> wrapperCallback = b -> {
             if (callback != null) {
-                ThreadUtils.runOnUiThread(() -> callback.onResult(b));
+                PostTask.runOrPostTask(UiThreadTaskTraits.DEFAULT, () -> callback.onResult(b));
             }
         };
 
@@ -119,6 +121,10 @@ public class AwContentsStatics {
 
     public static void setCheckClearTextPermitted(boolean permitted) {
         nativeSetCheckClearTextPermitted(permitted);
+    }
+
+    public static void logCommandLineForDebugging() {
+        nativeLogCommandLineForDebugging();
     }
 
     /**
@@ -135,9 +141,17 @@ public class AwContentsStatics {
         return FindAddress.findAddress(addr);
     }
 
+    /**
+     * Returns true if WebView is running in multi process mode.
+     */
+    public static boolean isMultiProcessEnabled() {
+        return nativeIsMultiProcessEnabled();
+    }
+
     //--------------------------------------------------------------------------------------------
     //  Native methods
     //--------------------------------------------------------------------------------------------
+    private static native void nativeLogCommandLineForDebugging();
     private static native String nativeGetSafeBrowsingPrivacyPolicyUrl();
     private static native void nativeClearClientCertPreferences(Runnable callback);
     private static native String nativeGetUnreachableWebDataUrl();
@@ -147,4 +161,5 @@ public class AwContentsStatics {
     private static native void nativeSetSafeBrowsingWhitelist(
             String[] urls, Callback<Boolean> callback);
     private static native void nativeSetCheckClearTextPermitted(boolean permitted);
+    private static native boolean nativeIsMultiProcessEnabled();
 }

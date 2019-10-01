@@ -177,7 +177,7 @@ BPF_TEST_C(ParameterRestrictions,
   base::Thread getparam_thread("sched_getparam_thread");
   BPF_ASSERT(getparam_thread.Start());
   getparam_thread.task_runner()->PostTask(
-      FROM_HERE, base::Bind(&SchedGetParamThread, &thread_run));
+      FROM_HERE, base::BindOnce(&SchedGetParamThread, &thread_run));
   BPF_ASSERT(thread_run.TimedWait(base::TimeDelta::FromMilliseconds(5000)));
   getparam_thread.Stop();
 }
@@ -415,8 +415,10 @@ class PtraceTestHarness {
   DISALLOW_COPY_AND_ASSIGN(PtraceTestHarness);
 };
 
+// Fails on Android L and M.
+// See https://crbug.com/934930
 BPF_TEST_C(ParameterRestrictions,
-           ptrace_getregs_allowed,
+           DISABLED_ptrace_getregs_allowed,
            RestrictPtracePolicy) {
   auto tracer = [](pid_t pid) {
 #if defined(__arm__)
@@ -435,8 +437,10 @@ BPF_TEST_C(ParameterRestrictions,
   PtraceTestHarness(tracer, false).Run();
 }
 
+// Fails on Android L and M.
+// See https://crbug.com/934930
 BPF_TEST_C(ParameterRestrictions,
-           ptrace_syscall_blocked,
+           DISABLED_ptrace_syscall_blocked,
            RestrictPtracePolicy) {
   auto tracer = [](pid_t pid) {
     // The tracer is about to die. Make sure the tracee is not stopped so it
@@ -449,7 +453,7 @@ BPF_TEST_C(ParameterRestrictions,
 }
 
 BPF_TEST_C(ParameterRestrictions,
-           ptrace_setregs_blocked,
+           DISABLED_ptrace_setregs_blocked,
            RestrictPtracePolicy) {
   auto tracer = [](pid_t pid) {
 #if defined(__arm__)

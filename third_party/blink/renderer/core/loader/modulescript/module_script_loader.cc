@@ -9,8 +9,8 @@
 #include "third_party/blink/renderer/core/loader/modulescript/module_script_fetcher.h"
 #include "third_party/blink/renderer/core/loader/modulescript/module_script_loader_client.h"
 #include "third_party/blink/renderer/core/loader/modulescript/module_script_loader_registry.h"
+#include "third_party/blink/renderer/core/script/js_module_script.h"
 #include "third_party/blink/renderer/core/script/modulator.h"
-#include "third_party/blink/renderer/core/script/module_script.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_client_settings_object_snapshot.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
@@ -93,7 +93,7 @@ void ModuleScriptLoader::Fetch(
                         level, custom_fetch_type);
 }
 
-// https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script
+// https://html.spec.whatwg.org/C/#fetch-a-single-module-script
 void ModuleScriptLoader::FetchInternal(
     const ModuleScriptFetchRequest& module_request,
     ResourceFetcher* fetch_client_settings_object_fetcher,
@@ -128,7 +128,7 @@ void ModuleScriptLoader::FetchInternal(
   // Step 6. "Set up the module script request given request and options."
   // [spec text]
   // [SMSR]
-  // https://html.spec.whatwg.org/multipage/webappapis.html#set-up-the-module-script-request
+  // https://html.spec.whatwg.org/C/#set-up-the-module-script-request
 
   // [SMSR] "... its parser metadata to options's parser metadata, ..."
   // [spec text]
@@ -159,7 +159,7 @@ void ModuleScriptLoader::FetchInternal(
   fetch_params.SetContentSecurityPolicyNonce(options_.Nonce());
 
   // [SMSR] "... its referrer policy to options's referrer policy." [spec text]
-  // Note: For now this is done below with SetHTTPReferrer()
+  // Note: For now this is done below with SetHttpReferrer()
   network::mojom::ReferrerPolicy referrer_policy =
       module_request.Options().GetReferrerPolicy();
   if (referrer_policy == network::mojom::ReferrerPolicy::kDefault)
@@ -173,14 +173,14 @@ void ModuleScriptLoader::FetchInternal(
       options_.CredentialsMode());
 
   // Step 5. "... referrer is referrer, ..." [spec text]
-  // Note: For now this is done below with SetHTTPReferrer()
+  // Note: For now this is done below with SetHttpReferrer()
   String referrer_string = module_request.ReferrerString();
   if (referrer_string == Referrer::ClientReferrerString())
     referrer_string = fetch_client_settings_object.GetOutgoingReferrer();
 
   // TODO(domfarolino): Stop storing ResourceRequest's referrer as a
   // blink::Referrer (https://crbug.com/850813).
-  fetch_params.MutableResourceRequest().SetHTTPReferrer(
+  fetch_params.MutableResourceRequest().SetHttpReferrer(
       SecurityPolicy::GenerateReferrer(referrer_policy,
                                        fetch_params.GetResourceRequest().Url(),
                                        referrer_string));
@@ -195,7 +195,7 @@ void ModuleScriptLoader::FetchInternal(
   // -> set by ResourceFetcher
 
   // Note: The fetch request's "origin" isn't specified in
-  // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script
+  // https://html.spec.whatwg.org/C/#fetch-a-single-module-script
   // Thus, the "origin" is "client" per
   // https://fetch.spec.whatwg.org/#concept-request-origin
 
@@ -222,7 +222,7 @@ void ModuleScriptLoader::FetchInternal(
   // [spec text]
   module_fetcher_ = modulator_->CreateModuleScriptFetcher(custom_fetch_type);
   module_fetcher_->Fetch(fetch_params, fetch_client_settings_object_fetcher,
-                         level, this);
+                         modulator_, level, this);
 }
 
 void ModuleScriptLoader::NotifyFetchFinished(
@@ -253,9 +253,10 @@ void ModuleScriptLoader::NotifyFetchFinished(
   // Step 10. "Let module script be the result of creating a module script given
   // source text, module map settings object, response's url, and options."
   // [spec text]
-  module_script_ = ModuleScript::Create(params->GetSourceText(), modulator_,
-                                        params->GetResponseUrl(),
-                                        params->GetResponseUrl(), options_);
+  module_script_ = JSModuleScript::Create(
+      params->GetSourceText(), params->CacheHandler(),
+      ScriptSourceLocationType::kExternalFile, modulator_,
+      params->GetResponseUrl(), params->GetResponseUrl(), options_);
 
   AdvanceState(State::kFinished);
 }

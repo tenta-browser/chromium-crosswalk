@@ -51,15 +51,8 @@ void FakeAppInstance::InitDeprecated(mojom::AppHostPtr host_ptr) {
 }
 
 void FakeAppInstance::Init(mojom::AppHostPtr host_ptr, InitCallback callback) {
-  // ARC app instance calls RefreshAppList after Init() successfully. Call
-  // RefreshAppList() here to keep the same behavior.
-  RefreshAppList();
   host_ = std::move(host_ptr);
   std::move(callback).Run();
-}
-
-void FakeAppInstance::RefreshAppList() {
-  ++refresh_app_list_count_;
 }
 
 void FakeAppInstance::LaunchAppDeprecated(
@@ -330,6 +323,10 @@ void FakeAppInstance::InstallPackage(mojom::ArcPackageInfoPtr arcPackageInfo) {
   app_host_->OnPackageAdded(std::move(arcPackageInfo));
 }
 
+void FakeAppInstance::GetAndroidId(GetAndroidIdCallback callback) {
+  std::move(callback).Run(android_id_);
+}
+
 void FakeAppInstance::GetRecentAndSuggestedAppsFromPlayStore(
     const std::string& query,
     int32_t max_results,
@@ -467,6 +464,17 @@ void FakeAppInstance::StartPaiFlow(StartPaiFlowCallback callback) {
   std::move(callback).Run(pai_state_response_);
 }
 
+void FakeAppInstance::GetAppReinstallCandidates(
+    GetAppReinstallCandidatesCallback callback) {
+  ++get_app_reinstall_callback_count_;
+  std::vector<arc::mojom::AppReinstallCandidatePtr> candidates;
+  for (const auto& candidate : app_reinstall_candidates_)
+    candidates.emplace_back(candidate.Clone());
+
+  std::move(callback).Run(arc::mojom::AppReinstallState::REQUEST_SUCCESS,
+                          std::move(candidates));
+}
+
 void FakeAppInstance::StartFastAppReinstallFlow(
     const std::vector<std::string>& package_names) {
   ++start_fast_app_reinstall_request_count_;
@@ -475,6 +483,11 @@ void FakeAppInstance::StartFastAppReinstallFlow(
 void FakeAppInstance::RequestAssistStructure(
     RequestAssistStructureCallback callback) {
   std::move(callback).Run(nullptr, nullptr);
+}
+
+void FakeAppInstance::IsInstallable(const std::string& package_name,
+                                    IsInstallableCallback callback) {
+  std::move(callback).Run(false);
 }
 
 void FakeAppInstance::LaunchIntentDeprecated(
@@ -515,5 +528,12 @@ void FakeAppInstance::RequestPackageIcon(const std::string& package_name,
 }
 
 void FakeAppInstance::RemoveCachedIcon(const std::string& icon_resource_id) {}
+
+void FakeAppInstance::SetAppReinstallCandidates(
+    const std::vector<arc::mojom::AppReinstallCandidatePtr>& candidates) {
+  app_reinstall_candidates_.clear();
+  for (const auto& candidate : candidates)
+    app_reinstall_candidates_.emplace_back(candidate.Clone());
+}
 
 }  // namespace arc

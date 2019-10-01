@@ -98,7 +98,6 @@ Event::Event(const AtomicString& event_type,
       default_handled_(false),
       was_initialized_(true),
       is_trusted_(false),
-      executed_listener_or_default_action_(false),
       prevent_default_called_on_uncancelable_event_(false),
       legacy_did_listeners_throw_flag_(false),
       fire_only_capture_listeners_at_target_(false),
@@ -165,11 +164,14 @@ void Event::setLegacyReturnValue(ScriptState* script_state, bool return_value) {
   if (return_value) {
     UseCounter::Count(ExecutionContext::From(script_state),
                       WebFeature::kEventSetReturnValueTrue);
+    // Don't allow already prevented events to be reset.
+    if (!defaultPrevented())
+      default_prevented_ = false;
   } else {
     UseCounter::Count(ExecutionContext::From(script_state),
                       WebFeature::kEventSetReturnValueFalse);
+    preventDefault();
   }
-  SetDefaultPrevented(!return_value);
 }
 
 const AtomicString& Event::InterfaceName() const {
@@ -224,10 +226,6 @@ bool Event::IsCompositionEvent() const {
   return false;
 }
 
-bool Event::IsActivateInvisibleEvent() const {
-  return false;
-}
-
 bool Event::IsClipboardEvent() const {
   return false;
 }
@@ -271,10 +269,6 @@ void Event::SetTarget(EventTarget* target) {
   target_ = target;
   if (target_)
     ReceivedTarget();
-}
-
-void Event::DoneDispatchingEventAtCurrentTarget() {
-  SetExecutedListenerOrDefaultAction();
 }
 
 void Event::SetRelatedTargetIfExists(EventTarget* related_target) {
@@ -365,9 +359,9 @@ HeapVector<Member<EventTarget>> Event::PathInternal(ScriptState* script_state,
 EventTarget* Event::currentTarget() const {
   if (!current_target_)
     return nullptr;
-  Node* node = current_target_->ToNode();
-  if (node && node->IsSVGElement()) {
-    if (SVGElement* svg_element = ToSVGElement(node)->CorrespondingElement())
+  if (auto* curr_svg_element =
+          DynamicTo<SVGElement>(current_target_->ToNode())) {
+    if (SVGElement* svg_element = curr_svg_element->CorrespondingElement())
       return svg_element;
   }
   return current_target_.Get();

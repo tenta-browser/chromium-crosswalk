@@ -4,6 +4,8 @@
 
 #include "content/public/test/test_storage_partition.h"
 
+#include "services/network/public/mojom/cookie_manager.mojom.h"
+
 namespace content {
 
 TestStoragePartition::TestStoragePartition() {}
@@ -49,6 +51,10 @@ AppCacheService* TestStoragePartition::GetAppCacheService() {
   return app_cache_service_;
 }
 
+BackgroundSyncContext* TestStoragePartition::GetBackgroundSyncContext() {
+  return background_sync_context_;
+}
+
 storage::FileSystemContext* TestStoragePartition::GetFileSystemContext() {
   return file_system_context_;
 }
@@ -84,6 +90,11 @@ TestStoragePartition::GetGeneratedCodeCacheContext() {
 
 PlatformNotificationContext*
 TestStoragePartition::GetPlatformNotificationContext() {
+  return nullptr;
+}
+
+DevToolsBackgroundServicesContext*
+TestStoragePartition::GetDevToolsBackgroundServicesContext() {
   return nullptr;
 }
 
@@ -130,7 +141,11 @@ void TestStoragePartition::ClearHttpAndMediaCaches(
     const base::Callback<bool(const GURL&)>& url_matcher,
     base::OnceClosure callback) {}
 
-void TestStoragePartition::ClearCodeCaches(base::OnceClosure callback) {}
+void TestStoragePartition::ClearCodeCaches(
+    const base::Time begin,
+    const base::Time end,
+    const base::RepeatingCallback<bool(const GURL&)>& url_matcher,
+    base::OnceClosure callback) {}
 
 void TestStoragePartition::Flush() {}
 

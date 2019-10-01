@@ -21,6 +21,7 @@
 #include "base/values.h"
 #include "chrome/common/content_restriction.h"
 #include "net/base/escape.h"
+#include "net/base/filename_util.h"
 #include "pdf/accessibility.h"
 #include "pdf/pdf.h"
 #include "pdf/pdf_features.h"
@@ -91,6 +92,7 @@ constexpr char kJSPreviewLoadedType[] = "printPreviewLoaded";
 constexpr char kJSMetadataType[] = "metadata";
 constexpr char kJSBookmarks[] = "bookmarks";
 constexpr char kJSTitle[] = "title";
+constexpr char kJSCanSerializeDocument[] = "canSerializeDocument";
 // Get password (Plugin -> Page)
 constexpr char kJSGetPasswordType[] = "getPassword";
 // Get password complete arguments (Page -> Plugin)
@@ -106,6 +108,7 @@ constexpr char kJSForce[] = "force";
 constexpr char kJSSaveDataType[] = "saveData";
 constexpr char kJSFileName[] = "fileName";
 constexpr char kJSDataToSave[] = "dataToSave";
+constexpr char kJSHasUnsavedChanges[] = "hasUnsavedChanges";
 // Consume save token (Plugin -> Page)
 constexpr char kJSConsumeSaveTokenType[] = "consumeSaveToken";
 // Go to page (Plugin -> Page)
@@ -116,6 +119,9 @@ constexpr char kJSResetPrintPreviewModeType[] = "resetPrintPreviewMode";
 constexpr char kJSPrintPreviewUrl[] = "url";
 constexpr char kJSPrintPreviewGrayscale[] = "grayscale";
 constexpr char kJSPrintPreviewPageCount[] = "pageCount";
+// Background color changed (Page -> Plugin)
+constexpr char kJSBackgroundColorChangedType[] = "backgroundColorChanged";
+constexpr char kJSBackgroundColor[] = "backgroundColor";
 // Load preview page (Page -> Plugin)
 constexpr char kJSLoadPreviewPageType[] = "loadPreviewPage";
 constexpr char kJSPreviewPageUrl[] = "url";
@@ -193,7 +199,7 @@ enum PDFFeatures {
 };
 
 // Used for UMA. Do not delete entries, and keep in sync with histograms.xml
-// and pdfium/public/fpdf_annot.h.
+// and third_party/pdfium/public/fpdf_annot.h.
 constexpr int kAnnotationTypesCount = 28;
 
 PP_Var GetLinkAtPosition(PP_Instance instance, PP_Point point) {
@@ -398,6 +404,10 @@ void ScaleRect(float scale, pp::Rect* rect) {
   int right = static_cast<int>(ceilf((rect->x() + rect->width()) * scale));
   int bottom = static_cast<int>(ceilf((rect->y() + rect->height()) * scale));
   rect->SetRect(left, top, right - left, bottom - top);
+}
+
+bool IsSaveDataSizeValid(size_t size) {
+  return size > 0 && size <= kMaximumSavedFileSize;
 }
 
 }  // namespace
@@ -673,6 +683,10 @@ void OutOfProcessInstance::HandleMessage(const pp::Var& message) {
     }
     const bool force = dict.Get(pp::Var(kJSForce)).AsBool();
     if (force) {
+      // |force| being true means the user has entered annotation mode. In which
+      // case, assume the user will make edits and prefer saving using the
+      // plugin data.
+      pp::PDF::SetPluginCanSave(this, true);
       SaveToBuffer(dict.Get(pp::Var(kJSToken)).AsString());
     } else {
       SaveToFile(dict.Get(pp::Var(kJSToken)).AsString());
@@ -683,6 +697,13 @@ void OutOfProcessInstance::HandleMessage(const pp::Var& message) {
     RotateCounterclockwise();
   } else if (type == kJSSelectAllType) {
     engine_->SelectAll();
+  } else if (type == kJSBackgroundColorChangedType) {
+    if (!dict.Get(pp::Var(kJSBackgroundColor)).is_string()) {
+      NOTREACHED();
+      return;
+    }
+    base::HexStringToUInt(dict.Get(pp::Var(kJSBackgroundColor)).AsString(),
+                          &background_color_);
   } else if (type == kJSResetPrintPreviewModeType) {
     if (!(dict.Get(pp::Var(kJSPrintPreviewUrl)).is_string() &&
           dict.Get(pp::Var(kJSPrintPreviewGrayscale)).is_bool() &&
@@ -1403,16 +1424,15 @@ void OutOfProcessInstance::NotifyPageBecameVisible(
   }
 
   for (const int annotation_type : page_features->annotation_types) {
-    DCHECK_GE(annotation_type, 0);
-    DCHECK_LT(annotation_type, kAnnotationTypesCount);
-    if (annotation_type < 0 || annotation_type >= kAnnotationTypesCount)
+    if (annotation_type < 0 || annotation_type >= kAnnotationTypesCount) {
+      NOTREACHED();
       continue;
+    }
 
-    if (annotation_types_counted_.find(annotation_type) ==
-        annotation_types_counted_.end()) {
+    bool inserted = annotation_types_counted_.insert(annotation_type).second;
+    if (inserted) {
       HistogramEnumeration("PDF.AnnotationType", annotation_type,
                            kAnnotationTypesCount);
-      annotation_types_counted_.insert(annotation_type);
     }
   }
   page_is_processed_[page_features->index] = true;
@@ -1440,20 +1460,19 @@ bool OutOfProcessInstance::ShouldSaveEdits() const {
 void OutOfProcessInstance::SaveToBuffer(const std::string& token) {
   engine_->KillFormFocus();
 
-  GURL url(url_);
-  std::string file_name = url.ExtractFileName();
-  file_name = net::UnescapeURLComponent(file_name, net::UnescapeRule::SPACES);
-
   pp::VarDictionary message;
   message.Set(kType, kJSSaveDataType);
   message.Set(kJSToken, pp::Var(token));
-  message.Set(kJSFileName, pp::Var(file_name));
+  message.Set(kJSFileName, pp::Var(GetFileNameFromUrl(url_)));
   // This will be overwritten if the save is successful.
   message.Set(kJSDataToSave, pp::Var(pp::Var::Null()));
+  const bool has_unsaved_changes =
+      edit_mode_ && !base::FeatureList::IsEnabled(features::kSaveEditedPDFForm);
+  message.Set(kJSHasUnsavedChanges, pp::Var(has_unsaved_changes));
 
   if (ShouldSaveEdits()) {
     std::vector<uint8_t> data = engine_->GetSaveData();
-    if (data.size() > 0 && data.size() <= kMaximumSavedFileSize) {
+    if (IsSaveDataSizeValid(data.size())) {
       pp::VarArrayBuffer buffer(data.size());
       std::copy(data.begin(), data.end(),
                 reinterpret_cast<char*>(buffer.Map()));
@@ -1462,7 +1481,7 @@ void OutOfProcessInstance::SaveToBuffer(const std::string& token) {
   } else {
     DCHECK(base::FeatureList::IsEnabled(features::kPDFAnnotations));
     uint32_t length = engine_->GetLoadedByteSize();
-    if (length > 0 && length <= kMaximumSavedFileSize) {
+    if (IsSaveDataSizeValid(length)) {
       pp::VarArrayBuffer buffer(length);
       if (engine_->ReadLoadedBytes(length, buffer.Map())) {
         message.Set(kJSDataToSave, buffer);
@@ -1647,6 +1666,9 @@ void OutOfProcessInstance::DocumentLoadComplete(
     metadata_message.Set(pp::Var(kJSTitle), pp::Var(title));
     HistogramEnumeration("PDF.DocumentFeature", HAS_TITLE, FEATURES_COUNT);
   }
+  metadata_message.Set(
+      pp::Var(kJSCanSerializeDocument),
+      pp::Var(IsSaveDataSizeValid(engine_->GetLoadedByteSize())));
 
   pp::VarArray bookmarks = engine_->GetBookmarks();
   metadata_message.Set(pp::Var(kJSBookmarks), bookmarks);
@@ -1704,6 +1726,16 @@ void OutOfProcessInstance::RotateClockwise() {
 void OutOfProcessInstance::RotateCounterclockwise() {
   PrintPreviewHistogramEnumeration(ROTATE);
   engine_->RotateCounterclockwise();
+}
+
+std::string OutOfProcessInstance::GetFileNameFromUrl(const std::string& url) {
+  // Generate a file name. Unfortunately, MIME type can't be provided, since it
+  // requires IO.
+  base::string16 file_name = net::GetSuggestedFilename(
+      GURL(url), std::string() /* content_disposition */,
+      std::string() /* referrer_charset */, std::string() /* suggested_name */,
+      std::string() /* mime_type */, std::string() /* default_name */);
+  return base::UTF16ToUTF8(file_name);
 }
 
 void OutOfProcessInstance::PreviewDocumentLoadComplete() {
@@ -1928,6 +1960,7 @@ void OutOfProcessInstance::IsSelectingChanged(bool is_selecting) {
 
 void OutOfProcessInstance::IsEditModeChanged(bool is_edit_mode) {
   edit_mode_ = is_edit_mode;
+  pp::PDF::SetPluginCanSave(this, ShouldSaveEdits());
 }
 
 float OutOfProcessInstance::GetToolbarHeightInScreenCoords() {

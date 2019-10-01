@@ -2,7 +2,6 @@ alexmos@chromium.org
 avi@chromium.org
 clamy@chromium.org
 creis@chromium.org
-darin@chromium.org
 dgozman@chromium.org
 jam@chromium.org
 jochen@chromium.org
@@ -16,7 +15,7 @@ piman@chromium.org
 # structural changes, please get a review from a reviewer in this file.
 per-file BUILD.gn=*
 
-# For threading (BrowserThread, BrowserMainLoop, TaskScheduler, etc.)
+# For threading (BrowserThread, BrowserMainLoop, ThreadPool, etc.)
 per-file *browser_main_loop*=gab@chromium.org
 per-file *browser_thread*=gab@chromium.org
 

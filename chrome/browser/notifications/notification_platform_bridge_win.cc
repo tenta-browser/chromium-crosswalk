@@ -14,12 +14,13 @@
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/feature_list.h"
-#include "base/hash.h"
+#include "base/hash/hash.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/post_task.h"
 #include "base/win/core_winrt_util.h"
@@ -149,7 +150,7 @@ class NotificationPlatformBridgeWinImpl
     // Delete any remaining temp files in the image folder from the previous
     // sessions.
     DCHECK(notification_task_runner_);
-    content::BrowserThread::PostAfterStartupTask(
+    content::BrowserThread::PostBestEffortTask(
         FROM_HERE, notification_task_runner_,
         image_retainer_->GetCleanupTask());
   }
@@ -519,7 +520,7 @@ class NotificationPlatformBridgeWinImpl
         notifications;
     for (uint32_t index = 0; index < size; ++index) {
       mswr::ComPtr<winui::Notifications::IToastNotification> tn;
-      hr = list->GetAt(0U, &tn);
+      hr = list->GetAt(index, &tn);
       if (FAILED(hr)) {
         status = GetDisplayedStatus::SUCCESS_WITH_GET_AT_FAILURE;
         DLOG(ERROR) << "Failed to get notification " << index << " of " << size
@@ -549,7 +550,7 @@ class NotificationPlatformBridgeWinImpl
     std::vector<mswr::ComPtr<winui::Notifications::IToastNotification>>
         notifications = GetNotifications(profile_id, incognito);
 
-    auto displayed_notifications = std::make_unique<std::set<std::string>>();
+    std::set<std::string> displayed_notifications;
     for (const auto& notification : notifications) {
       NotificationLaunchId launch_id(
           GetNotificationLaunchId(notification.Get()));
@@ -564,7 +565,7 @@ class NotificationPlatformBridgeWinImpl
         continue;
       }
       LogGetDisplayedLaunchIdStatus(GetDisplayedLaunchIdStatus::SUCCESS);
-      displayed_notifications->insert(launch_id.notification_id());
+      displayed_notifications.insert(launch_id.notification_id());
     }
 
     base::PostTaskWithTraits(
@@ -678,7 +679,7 @@ class NotificationPlatformBridgeWinImpl
                         bool incognito) {
     std::string payload = base::StringPrintf(
         "%s|%s|%d", notification_id.c_str(), profile_id.c_str(), incognito);
-    return base::UintToString16(base::Hash(payload));
+    return base::NumberToString16(base::Hash(payload));
   }
 
   HRESULT OnDismissed(
@@ -850,20 +851,19 @@ bool NotificationPlatformBridgeWin::HandleActivation(
     return false;
   }
 
-  if (launch_id.is_for_dismiss_button()) {
-    LogActivationStatus(ActivationStatus::SUCCESS);
-    return true;  // We're done! The toast has already dismissed.
-  }
-
   base::Optional<base::string16> reply;
   base::string16 inline_reply =
       command_line.GetSwitchValueNative(switches::kNotificationInlineReply);
   if (!inline_reply.empty())
     reply = inline_reply;
 
-  NotificationCommon::Operation operation =
-      launch_id.is_for_context_menu() ? NotificationCommon::OPERATION_SETTINGS
-                                      : NotificationCommon::OPERATION_CLICK;
+  NotificationCommon::Operation operation;
+  if (launch_id.is_for_dismiss_button())
+    operation = NotificationCommon::OPERATION_CLOSE;
+  else if (launch_id.is_for_context_menu())
+    operation = NotificationCommon::OPERATION_SETTINGS;
+  else
+    operation = NotificationCommon::OPERATION_CLICK;
 
   base::Optional<int> action_index;
   if (launch_id.button_index() != -1)
@@ -881,11 +881,11 @@ bool NotificationPlatformBridgeWin::HandleActivation(
 // static
 bool NotificationPlatformBridgeWin::NativeNotificationEnabled() {
   // There was a Microsoft bug in Windows 10 prior to build 17134 (i.e.,
-  // VERSION_WIN10_RS4), causing endless loops in displaying notifications. It
-  // significantly amplified the memory and CPU usage. Therefore, we enable
-  // Windows 10 native notification only for build 17134 and later. See
-  // crbug.com/882622 and crbug.com/878823 for more details.
-  return base::win::GetVersion() >= base::win::VERSION_WIN10_RS4 &&
+  // Version::WIN10_RS4), causing endless loops in displaying
+  // notifications. It significantly amplified the memory and CPU usage.
+  // Therefore, we enable Windows 10 native notification only for build 17134
+  // and later. See crbug.com/882622 and crbug.com/878823 for more details.
+  return base::win::GetVersion() >= base::win::Version::WIN10_RS4 &&
          base::FeatureList::IsEnabled(features::kNativeNotifications);
 }
 

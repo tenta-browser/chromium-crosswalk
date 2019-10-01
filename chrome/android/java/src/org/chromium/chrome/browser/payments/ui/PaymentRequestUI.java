@@ -258,9 +258,6 @@ public class PaymentRequestUI implements DialogInterface.OnDismissListener, View
      */
     private static final int DIALOG_ENTER_ANIMATION_MS = 225;
 
-    /** Length of the animation to hide the bottom sheet UI. */
-    private static final int DIALOG_EXIT_ANIMATION_MS = 195;
-
     private static PaymentRequestObserverForTest sPaymentRequestObserverForTest;
     private static EditorObserverForTest sEditorObserverForTest;
 
@@ -383,7 +380,8 @@ public class PaymentRequestUI implements DialogInterface.OnDismissListener, View
                     updateSection(DataType.CONTACT_DETAILS, result.getContactDetails());
                 }
                 updateSection(DataType.PAYMENT_METHODS, result.getPaymentMethods());
-                if (mShippingAddressSectionInformation.getSelectedItem() == null) {
+                if (mShippingAddressSectionInformation != null
+                        && mShippingAddressSectionInformation.getSelectedItem() == null) {
                     expand(mShippingAddressSection);
                 } else {
                     expand(null);
@@ -620,6 +618,17 @@ public class PaymentRequestUI implements DialogInterface.OnDismissListener, View
     }
 
     /**
+     * Sets the retry error message. This is used to display error message on the header UI when
+     * retry() is called on merchant side. The error message may be reset when users click 'Pay'
+     * button or expand any section.
+     *
+     * @param error The error message to display on the header.
+     */
+    public void setRetryErrorMessage(String error) {
+        ((PaymentRequestHeader) mRequestView.findViewById(R.id.header)).setRetryErrorMessage(error);
+    }
+
+    /**
      * Updates the line items in response to a changed shipping address or option.
      *
      * @param cart The shopping cart, including the line items and the total.
@@ -699,7 +708,8 @@ public class PaymentRequestUI implements DialogInterface.OnDismissListener, View
                     DataType.SHIPPING_OPTIONS, option, mUpdateSectionsCallback);
         } else if (section == mContactDetailsSection) {
             mContactDetailsSectionInformation.setSelectedItem(option);
-            result = mClient.onSectionOptionSelected(DataType.CONTACT_DETAILS, option, null);
+            result = mClient.onSectionOptionSelected(
+                    DataType.CONTACT_DETAILS, option, mUpdateSectionsCallback);
         } else if (section == mPaymentMethodSection) {
             mPaymentMethodSectionInformation.setSelectedItem(option);
             result = mClient.onSectionOptionSelected(DataType.PAYMENT_METHODS, option, null);
@@ -822,6 +832,8 @@ public class PaymentRequestUI implements DialogInterface.OnDismissListener, View
                 expand(mOrderSummarySection);
             }
         }
+
+        setRetryErrorMessage(null);
 
         updatePayButtonEnabled();
     }
@@ -1021,8 +1033,8 @@ public class PaymentRequestUI implements DialogInterface.OnDismissListener, View
             message = mContext.getString(R.string.payments_card_and_address_settings_signed_out);
         }
 
-        NoUnderlineClickableSpan settingsSpan =
-                new NoUnderlineClickableSpan((widget) -> mClient.onCardAndAddressSettingsClicked());
+        NoUnderlineClickableSpan settingsSpan = new NoUnderlineClickableSpan(
+                mContext.getResources(), (widget) -> mClient.onCardAndAddressSettingsClicked());
         SpannableString spannableMessage = SpanApplier.applySpans(
                 message, new SpanInfo("BEGIN_LINK", "END_LINK", settingsSpan));
 
@@ -1276,6 +1288,11 @@ public class PaymentRequestUI implements DialogInterface.OnDismissListener, View
     @VisibleForTesting
     public TextView getOrderSummaryTotalTextViewForTest() {
         return mOrderSummarySection.getSummaryRightTextView();
+    }
+
+    @VisibleForTesting
+    public LineItemBreakdownSection getOrderSummarySectionForTest() {
+        return mOrderSummarySection;
     }
 
     @VisibleForTesting

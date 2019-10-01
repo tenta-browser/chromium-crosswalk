@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/memory/ptr_util.h"
 #include "base/synchronization/waitable_event.h"
@@ -60,9 +61,13 @@ void InProcessReceiver::Start() {
                               FROM_HERE,
                               base::Bind(&InProcessReceiver::StartOnMainThread,
                                          base::Unretained(this)));
+  stopped_ = false;
 }
 
 void InProcessReceiver::Stop() {
+  if (stopped_) {
+    return;
+  }
   base::WaitableEvent event(base::WaitableEvent::ResetPolicy::AUTOMATIC,
                             base::WaitableEvent::InitialState::NOT_SIGNALED);
   if (cast_environment_->CurrentlyOn(CastEnvironment::MAIN)) {
@@ -75,6 +80,7 @@ void InProcessReceiver::Stop() {
                                            &event));
     event.Wait();
   }
+  stopped_ = true;
 }
 
 void InProcessReceiver::StopOnMainThread(base::WaitableEvent* event) {
@@ -100,7 +106,7 @@ void InProcessReceiver::StartOnMainThread() {
       cast_environment_->Clock(), base::TimeDelta(),
       base::WrapUnique(new InProcessReceiver::TransportClient(this)),
       std::make_unique<UdpTransportImpl>(
-          nullptr, cast_environment_->GetTaskRunner(CastEnvironment::MAIN),
+          cast_environment_->GetTaskRunner(CastEnvironment::MAIN),
           local_end_point_, remote_end_point_,
           base::Bind(&InProcessReceiver::UpdateCastTransportStatus,
                      base::Unretained(this))),
@@ -114,7 +120,7 @@ void InProcessReceiver::StartOnMainThread() {
 }
 
 void InProcessReceiver::GotAudioFrame(std::unique_ptr<AudioBus> audio_frame,
-                                      const base::TimeTicks& playout_time,
+                                      base::TimeTicks playout_time,
                                       bool is_continuous) {
   DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));
   if (audio_frame.get())
@@ -122,13 +128,12 @@ void InProcessReceiver::GotAudioFrame(std::unique_ptr<AudioBus> audio_frame,
   PullNextAudioFrame();
 }
 
-void InProcessReceiver::GotVideoFrame(
-    const scoped_refptr<VideoFrame>& video_frame,
-    const base::TimeTicks& playout_time,
-    bool is_continuous) {
+void InProcessReceiver::GotVideoFrame(scoped_refptr<VideoFrame> video_frame,
+                                      base::TimeTicks playout_time,
+                                      bool is_continuous) {
   DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));
-  if (video_frame.get())
-    OnVideoFrame(video_frame, playout_time, is_continuous);
+  if (video_frame)
+    OnVideoFrame(std::move(video_frame), playout_time, is_continuous);
   PullNextVideoFrame();
 }
 

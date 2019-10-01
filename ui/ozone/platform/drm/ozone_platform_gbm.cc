@@ -7,7 +7,6 @@
 #include <gbm.h>
 #include <stdlib.h>
 #include <xf86drm.h>
-
 #include <memory>
 #include <utility>
 
@@ -18,6 +17,8 @@
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
+#include "services/viz/public/interfaces/constants.mojom.h"
+#include "services/ws/public/mojom/constants.mojom.h"
 #include "ui/base/buildflags.h"
 #include "ui/base/cursor/ozone/bitmap_cursor_factory_ozone.h"
 #include "ui/events/ozone/device/device_manager.h"
@@ -29,6 +30,7 @@
 #include "ui/ozone/platform/drm/gpu/drm_device_manager.h"
 #include "ui/ozone/platform/drm/gpu/drm_framebuffer.h"
 #include "ui/ozone/platform/drm/gpu/drm_gpu_display_manager.h"
+#include "ui/ozone/platform/drm/gpu/drm_overlay_manager_gpu.h"
 #include "ui/ozone/platform/drm/gpu/drm_thread_message_proxy.h"
 #include "ui/ozone/platform/drm/gpu/drm_thread_proxy.h"
 #include "ui/ozone/platform/drm/gpu/gbm_surface_factory.h"
@@ -39,7 +41,7 @@
 #include "ui/ozone/platform/drm/host/drm_display_host_manager.h"
 #include "ui/ozone/platform/drm/host/drm_gpu_platform_support_host.h"
 #include "ui/ozone/platform/drm/host/drm_native_display_delegate.h"
-#include "ui/ozone/platform/drm/host/drm_overlay_manager.h"
+#include "ui/ozone/platform/drm/host/drm_overlay_manager_host.h"
 #include "ui/ozone/platform/drm/host/drm_window_host.h"
 #include "ui/ozone/platform/drm/host/drm_window_host_manager.h"
 #include "ui/ozone/platform/drm/host/host_drm_device.h"
@@ -160,10 +162,10 @@ class OzonePlatformGbm : public OzonePlatform {
       adapter = host_drm_device_.get();
     }
 
-    std::unique_ptr<DrmWindowHost> platform_window(new DrmWindowHost(
+    auto platform_window = std::make_unique<DrmWindowHost>(
         delegate, properties.bounds, adapter, event_factory_ozone_.get(),
         cursor_.get(), window_manager_.get(), display_manager_.get(),
-        overlay_manager_.get()));
+        overlay_manager_.get());
     platform_window->Initialize();
     return std::move(platform_window);
   }
@@ -222,9 +224,12 @@ class OzonePlatformGbm : public OzonePlatform {
     GpuThreadAdapter* adapter;
 
     if (using_mojo_) {
+      const std::string& service_name = single_process_
+                                            ? ws::mojom::kServiceName
+                                            : viz::mojom::kVizServiceName;
       host_drm_device_ = base::MakeRefCounted<HostDrmDevice>(cursor_.get());
       drm_device_connector_ = std::make_unique<DrmDeviceConnector>(
-          args.connector, host_drm_device_);
+          args.connector, service_name, host_drm_device_);
       adapter = host_drm_device_.get();
     } else {
       gpu_platform_support_host_.reset(
@@ -232,18 +237,24 @@ class OzonePlatformGbm : public OzonePlatform {
       adapter = gpu_platform_support_host_.get();
     }
 
-    overlay_manager_.reset(
-        new DrmOverlayManager(adapter, window_manager_.get()));
-    display_manager_.reset(new DrmDisplayHostManager(
-        adapter, device_manager_.get(), overlay_manager_.get(),
-        event_factory_ozone_->input_controller()));
+    std::unique_ptr<DrmOverlayManagerHost> overlay_manager_host;
+    if (!args.viz_display_compositor) {
+      overlay_manager_host = std::make_unique<DrmOverlayManagerHost>(
+          adapter, window_manager_.get());
+    }
+
+    display_manager_ = std::make_unique<DrmDisplayHostManager>(
+        adapter, device_manager_.get(), &host_properties_,
+        overlay_manager_host.get(), event_factory_ozone_->input_controller());
     cursor_factory_ozone_.reset(new BitmapCursorFactoryOzone);
 
     if (using_mojo_) {
       host_drm_device_->ProvideManagers(display_manager_.get(),
-                                        overlay_manager_.get());
+                                        overlay_manager_host.get());
       host_drm_device_->AsyncStartDrmDevice(*drm_device_connector_);
     }
+
+    overlay_manager_ = std::move(overlay_manager_host);
   }
 
   void InitializeGPU(const InitParams& args) override {
@@ -267,6 +278,11 @@ class OzonePlatformGbm : public OzonePlatform {
       drm_thread_proxy_->BindThreadIntoMessagingProxy(itmp);
     }
 
+    if (args.viz_display_compositor) {
+      overlay_manager_ =
+          std::make_unique<DrmOverlayManagerGpu>(drm_thread_proxy_.get());
+    }
+
     // If InitializeGPU and InitializeUI are invoked on the same thread, startup
     // sequencing is complicated because tasks are queued on the unbound mojo
     // pipe connecting the UI (the host) to the DRM thread before the DRM thread
@@ -285,17 +301,33 @@ class OzonePlatformGbm : public OzonePlatform {
     }
   }
 
+  const InitializedHostProperties& GetInitializedHostProperties() override {
+    DCHECK(has_initialized_ui());
+    return host_properties_;
+  }
+
   // The DRM thread needs to be started late because we need to wait for the
   // sandbox to start. This entry point in the Ozne API gives platforms
   // flexibility in handing this requirement.
   void AfterSandboxEntry() override {
     CHECK(drm_thread_proxy_) << "AfterSandboxEntry before InitializeForGPU is "
                                 "invalid startup order.\n";
-    // Defer the actual startup of the DRM thread to here.
-    auto safe_binding_resquest_drainer = CreateSafeOnceCallback(base::BindOnce(
-        &OzonePlatformGbm::DrainBindingRequests, weak_factory_.GetWeakPtr()));
-
-    drm_thread_proxy_->StartDrmThread(std::move(safe_binding_resquest_drainer));
+    if (using_mojo_ && single_process_) {
+      // In single process/mojo mode we need to make sure DrainBindingRequest
+      // is executed on this thread before we start the drm device.
+      base::WaitableEvent done_event;
+      drm_thread_proxy_->StartDrmThread(base::BindOnce(
+          &base::WaitableEvent::Signal, base::Unretained(&done_event)));
+      done_event.Wait();
+      DrainBindingRequests();
+    } else {
+      // Defer the actual startup of the DRM thread to here.
+      auto safe_binding_resquest_drainer = CreateSafeOnceCallback(
+          base::BindOnce(&OzonePlatformGbm::DrainBindingRequests,
+                         weak_factory_.GetWeakPtr()));
+      drm_thread_proxy_->StartDrmThread(
+          std::move(safe_binding_resquest_drainer));
+    }
   }
 
  private:
@@ -336,6 +368,7 @@ class OzonePlatformGbm : public OzonePlatform {
   std::unique_ptr<EventFactoryEvdev> event_factory_ozone_;
   std::unique_ptr<DrmDisplayHostManager> display_manager_;
   std::unique_ptr<DrmOverlayManager> overlay_manager_;
+  InitializedHostProperties host_properties_;
 
 #if BUILDFLAG(USE_XKBCOMMON)
   XkbEvdevCodes xkb_evdev_code_converter_;

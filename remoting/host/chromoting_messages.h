@@ -8,7 +8,7 @@
 #include <stdint.h>
 
 #include "base/files/file_path.h"
-#include "base/memory/shared_memory_handle.h"
+#include "base/memory/unsafe_shared_memory_region.h"
 #include "base/time/time.h"
 #include "ipc/ipc_channel_handle.h"
 #include "ipc/ipc_platform_file.h"
@@ -124,6 +124,11 @@ IPC_MESSAGE_CONTROL(ChromotingNetworkDaemonMsg_HostStarted,
 
 IPC_MESSAGE_CONTROL(ChromotingNetworkDaemonMsg_HostShutdown)
 
+// Instructs the daemon process to update the config file, replacing the current
+// OAuth refresh token with the one provided.
+IPC_MESSAGE_CONTROL(ChromotingNetworkDaemonMsg_UpdateConfigRefreshToken,
+                    std::string /* token */)
+
 //-----------------------------------------------------------------------------
 // Chromoting messages sent from the desktop to the daemon process.
 
@@ -143,7 +148,7 @@ IPC_MESSAGE_CONTROL(ChromotingDesktopDaemonMsg_InjectSas)
 // Notifies the network process that a shared buffer has been created.
 IPC_MESSAGE_CONTROL(ChromotingDesktopNetworkMsg_CreateSharedBuffer,
                     int /* id */,
-                    base::SharedMemoryHandle /* handle */,
+                    base::ReadOnlySharedMemoryRegion /* region */,
                     uint32_t /* size */)
 
 // Request the network process to stop using a shared buffer.
@@ -218,6 +223,22 @@ IPC_MESSAGE_CONTROL(
     uint64_t /* file_id */,
     remoting::protocol::FileTransferResult<remoting::Monostate> /* result */)
 
+// Carries the result of a read-file operation on the file identified by
+// |file_id|. |result| is the filename and size of the selected file. If
+// |result| is an error, the file ID is no longer valid.
+IPC_MESSAGE_CONTROL(ChromotingDesktopNetworkMsg_FileInfoResult,
+                    uint64_t /* file_id */,
+                    remoting::protocol::FileTransferResult<
+                        std::tuple<base::FilePath, uint64_t>> /* result */)
+
+// Carries the result of a file read-chunk operation on the file identified by
+// |file_id|. |result| holds the read data. If |result| is an error, the file ID
+// is no longer valid.
+IPC_MESSAGE_CONTROL(
+    ChromotingDesktopNetworkMsg_FileDataResult,
+    uint64_t /* file_id */,
+    remoting::protocol::FileTransferResult<std::string> /* result */)
+
 //-----------------------------------------------------------------------------
 // Chromoting messages sent from the network to the desktop process.
 
@@ -267,24 +288,41 @@ IPC_MESSAGE_CONTROL(ChromotingNetworkDesktopMsg_ExecuteActionRequest,
                     remoting::protocol::ActionRequest /* request */)
 
 // Requests that the desktop process create a new file for writing with the
-// provided file name, which will be identified by the provided ID.
+// provided file name, which will be identified by |file_id|. The desktop
+// process will respond with a FileResult message.
 IPC_MESSAGE_CONTROL(ChromotingNetworkDesktopMsg_WriteFile,
                     uint64_t /* file_id */,
                     base::FilePath /* filename */)
 
 // Requests that the desktop process append the provided data chunk to the
-// previously created file identified by |file_id|.
+// previously created file identified by |file_id|. The desktop process will
+// respond with a FileResult message.
 IPC_MESSAGE_CONTROL(ChromotingNetworkDesktopMsg_WriteFileChunk,
                     uint64_t /* file_id */,
                     std::string /* data */)
 
+// Prompt the user to select a file for reading, which will be identified by
+// |file_id|. The desktop process will respond with a FileInfoResult message.
+IPC_MESSAGE_CONTROL(ChromotingNetworkDesktopMsg_ReadFile,
+                    uint64_t /* file_id */)
+
+// Requests that the desktop process read a data chunk from the file identified
+// by |file_id|. The desktop process will respond with a FileDataResult message.
+IPC_MESSAGE_CONTROL(ChromotingNetworkDesktopMsg_ReadFileChunk,
+                    uint64_t /* file_id */,
+                    uint64_t /* size */)
+
 // Requests that the desktop process close the file identified by |file_id|.
-// If the file is being written, it will be finalized.
+// If the file is being written, it will be finalized, and the desktop process
+// will respond with a FileResult message. If the file is being read, there is
+// no response message.
 IPC_MESSAGE_CONTROL(ChromotingNetworkDesktopMsg_CloseFile,
                     uint64_t /* file_id */)
 
 // Requests that the desktop process cancel the file identified by |file_id|.
-// If the file is being written, it will be deleted.
+// If the file is being written, the partial file will be deleted. If the file
+// is being read, it will be closed. In either case, there is no response
+// message.
 IPC_MESSAGE_CONTROL(ChromotingNetworkDesktopMsg_CancelFile,
                     uint64_t /* file_id */)
 

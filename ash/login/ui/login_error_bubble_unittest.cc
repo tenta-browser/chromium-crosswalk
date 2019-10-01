@@ -27,31 +27,32 @@ TEST_F(LoginErrorBubbleTest, PersistentEventHandling) {
                                  views::style::STYLE_PRIMARY);
 
   auto* bubble = new LoginErrorBubble(label /*content*/, anchor_view,
-                                      widget()->GetNativeView() /*container*/,
                                       true /*is_persistent*/);
-  EXPECT_FALSE(bubble->IsVisible());
+  container->AddChildView(bubble);
+
+  EXPECT_FALSE(bubble->GetVisible());
 
   bubble->Show();
-  EXPECT_TRUE(bubble->IsVisible());
+  EXPECT_TRUE(bubble->GetVisible());
 
   ui::test::EventGenerator* generator = GetEventGenerator();
 
   generator->MoveMouseTo(anchor_view->GetBoundsInScreen().CenterPoint());
   generator->ClickLeftButton();
-  EXPECT_TRUE(bubble->IsVisible());
+  EXPECT_TRUE(bubble->GetVisible());
 
   generator->MoveMouseTo(bubble->GetBoundsInScreen().CenterPoint());
   generator->ClickLeftButton();
-  EXPECT_TRUE(bubble->IsVisible());
+  EXPECT_TRUE(bubble->GetVisible());
 
   generator->GestureTapAt(anchor_view->GetBoundsInScreen().CenterPoint());
-  EXPECT_TRUE(bubble->IsVisible());
+  EXPECT_TRUE(bubble->GetVisible());
 
   generator->GestureTapAt(bubble->GetBoundsInScreen().CenterPoint());
-  EXPECT_TRUE(bubble->IsVisible());
+  EXPECT_TRUE(bubble->GetVisible());
 
   generator->PressKey(ui::KeyboardCode::VKEY_A, ui::EF_NONE);
-  EXPECT_TRUE(bubble->IsVisible());
+  EXPECT_TRUE(bubble->GetVisible());
 }
 
 }  // namespace ash

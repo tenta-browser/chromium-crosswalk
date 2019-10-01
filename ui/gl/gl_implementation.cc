@@ -38,6 +38,7 @@ const struct {
 #endif
     {kGLImplementationEGLName, kGLImplementationEGLGLES2},
     {kGLImplementationMockName, kGLImplementationMockGL},
+    {kGLImplementationStubName, kGLImplementationStubGL},
     {kGLImplementationDisabledName, kGLImplementationDisabled}};
 
 typedef std::vector<base::NativeLibrary> LibraryArray;
@@ -220,8 +221,8 @@ DisableNullDrawGLBindings::~DisableNullDrawGLBindings() {
   SetNullDrawGLBindingsEnabled(initial_enabled_);
 }
 
-GLWindowSystemBindingInfo::GLWindowSystemBindingInfo()
-    : direct_rendering(true) {}
+GLWindowSystemBindingInfo::GLWindowSystemBindingInfo() {}
+GLWindowSystemBindingInfo::~GLWindowSystemBindingInfo() {}
 
 std::string GetGLExtensionsFromCurrentContext() {
   return GetGLExtensionsFromCurrentContext(g_current_gl_context);

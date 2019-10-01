@@ -7,10 +7,12 @@ package org.chromium.chrome.browser.payments;
 import android.graphics.drawable.Drawable;
 import android.support.annotation.Nullable;
 
-import org.chromium.base.ThreadUtils;
+import org.chromium.base.task.PostTask;
 import org.chromium.chrome.browser.widget.prefeditor.EditableOption;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 import org.chromium.payments.mojom.PaymentDetailsModifier;
 import org.chromium.payments.mojom.PaymentItem;
+import org.chromium.payments.mojom.PaymentMethodChangeResponse;
 import org.chromium.payments.mojom.PaymentMethodData;
 
 import java.util.List;
@@ -119,7 +121,7 @@ public abstract class PaymentInstrument extends EditableOption {
      *         supported card types and networks in the data should be verified for 'basic-card'
      *         payment method.
      */
-    public boolean isValidForPaymentMethodData(String method, PaymentMethodData data) {
+    public boolean isValidForPaymentMethodData(String method, @Nullable PaymentMethodData data) {
         return getInstrumentMethodNames().contains(method);
     }
 
@@ -173,12 +175,30 @@ public abstract class PaymentInstrument extends EditableOption {
             InstrumentDetailsCallback callback);
 
     /**
+     * Update the payment information in response to payment method change event.
+     *
+     * @param response The merchant's response to the payment method change event.
+     */
+    public void updateWith(PaymentMethodChangeResponse response) {}
+
+    /** Called when the merchant ignored the payment method change event. */
+    public void noUpdatedPaymentDetails() {}
+
+    /**
+     * @return True after changePaymentMethodFromInvokedApp(), before update updateWith() or
+     * noUpdatedPaymentDetails().
+     */
+    public boolean isChangingPaymentMethod() {
+        return false;
+    }
+
+    /**
      * Abort invocation of the payment app.
      *
      * @param callback The callback to return abort result.
      */
     public void abortPaymentApp(AbortCallback callback) {
-        ThreadUtils.postOnUiThread(new Runnable() {
+        PostTask.postTask(UiThreadTaskTraits.DEFAULT, new Runnable() {
             @Override
             public void run() {
                 callback.onInstrumentAbortResult(false);

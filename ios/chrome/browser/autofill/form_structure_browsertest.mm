@@ -11,7 +11,7 @@
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task/task_scheduler/task_scheduler.h"
+#include "base/task/thread_pool/thread_pool.h"
 #import "base/test/ios/wait_util.h"
 #include "base/test/scoped_feature_list.h"
 #include "components/autofill/core/browser/autofill_manager.h"
@@ -29,9 +29,9 @@
 #import "ios/chrome/browser/ui/autofill/chrome_autofill_client_ios.h"
 #include "ios/chrome/browser/web/chrome_web_client.h"
 #import "ios/chrome/browser/web/chrome_web_test.h"
-#include "ios/web/public/web_state/web_frame.h"
-#include "ios/web/public/web_state/web_frame_util.h"
-#import "ios/web/public/web_state/web_frames_manager.h"
+#include "ios/web/public/js_messaging/web_frame.h"
+#include "ios/web/public/js_messaging/web_frame_util.h"
+#import "ios/web/public/js_messaging/web_frames_manager.h"
 #import "ios/web/public/web_state/web_state.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -172,7 +172,7 @@ void FormStructureBrowserTest::TearDown() {
 void FormStructureBrowserTest::GenerateResults(const std::string& input,
                                                std::string* output) {
   ASSERT_TRUE(LoadHtmlWithoutSubresources(input));
-  base::TaskScheduler::GetInstance()->FlushForTesting();
+  base::ThreadPoolInstance::Get()->FlushForTesting();
   web::WebFrame* frame = web::GetMainWebFrame(web_state());
   AutofillManager* autofill_manager =
       AutofillDriverIOS::FromWebStateAndWebFrame(web_state(), frame)
@@ -247,8 +247,8 @@ TEST_P(FormStructureBrowserTest, DataDrivenHeuristics) {
                        is_expected_to_pass);
 }
 
-INSTANTIATE_TEST_CASE_P(AllForms,
-                        FormStructureBrowserTest,
-                        testing::ValuesIn(GetTestFiles()));
+INSTANTIATE_TEST_SUITE_P(AllForms,
+                         FormStructureBrowserTest,
+                         testing::ValuesIn(GetTestFiles()));
 
 }  // namespace autofill

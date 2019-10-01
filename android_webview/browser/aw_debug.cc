@@ -2,7 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "android_webview/common/aw_channel.h"
+#include <string.h>
+
+#include <memory>
+
 #include "android_webview/common/crash_reporter/aw_crash_reporter_client.h"
 #include "android_webview/common/crash_reporter/crash_keys.h"
 #include "base/android/jni_android.h"
@@ -17,14 +20,13 @@
 #include "components/crash/content/app/crashpad.h"
 #include "components/crash/core/common/crash_key.h"
 #include "components/minidump_uploader/rewrite_minidumps_as_mimes.h"
+#include "components/version_info/android/channel_getter.h"
 #include "components/version_info/version_info.h"
 #include "components/version_info/version_info_values.h"
 #include "jni/AwDebug_jni.h"
 #include "third_party/crashpad/crashpad/client/crash_report_database.h"
 #include "third_party/crashpad/crashpad/util/net/http_body.h"
 #include "third_party/crashpad/crashpad/util/net/http_multipart_builder.h"
-
-#include <memory>
 
 using base::android::ConvertJavaStringToUTF16;
 using base::android::ConvertUTF8ToJavaString;
@@ -47,7 +49,7 @@ class AwDebugCrashReporterClient
     *product_name = "AndroidWebView";
     *version = PRODUCT_VERSION;
     *channel =
-        version_info::GetChannelString(android_webview::GetChannelOrStable());
+        version_info::GetChannelString(version_info::android::GetChannel());
   }
 
   bool GetCrashDumpLocation(base::FilePath* debug_dir) override {
@@ -137,6 +139,12 @@ static jboolean JNI_AwDebug_DumpWithoutCrashing(
                         base::File::FLAG_WRITE);
   if (!target.IsValid())
     return false;
+
+  if (!CrashReporterEnabled()) {
+    static constexpr char kMessage[] = "WebView isn't initialized";
+    return static_cast<size_t>(target.WriteAtCurrentPos(
+               kMessage, strlen(kMessage))) == strlen(kMessage);
+  }
 
   AwDebugCrashReporterClient client;
   base::FilePath database_path;

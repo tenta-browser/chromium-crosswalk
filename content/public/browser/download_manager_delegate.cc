@@ -4,6 +4,7 @@
 
 #include "content/public/browser/download_manager_delegate.h"
 
+#include "base/bind.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/download/public/common/download_item.h"
 
@@ -38,8 +39,12 @@ bool DownloadManagerDelegate::ShouldOpenDownload(
 
 bool DownloadManagerDelegate::InterceptDownloadIfApplicable(
     const GURL& url,
+    const std::string& user_agent,
+    const std::string& content_disposition,
     const std::string& mime_type,
     const std::string& request_origin,
+    int64_t content_length,
+    bool is_transient,
     WebContents* web_contents) {
   return false;
 }
@@ -47,15 +52,6 @@ bool DownloadManagerDelegate::InterceptDownloadIfApplicable(
 bool DownloadManagerDelegate::IsMostRecentDownloadItemAtFilePath(
     download::DownloadItem* download) {
   return true;
-}
-
-bool DownloadManagerDelegate::IsMostRecentDownloadItemAtFilePath(
-    DownloadItem* download) {
-  return true;
-}
-
-bool DownloadManagerDelegate::GenerateFileHash() {
-  return false;
 }
 
 std::string

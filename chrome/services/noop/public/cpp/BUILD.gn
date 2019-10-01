@@ -14,3 +14,17 @@ source_set("cpp") {
     "//services/service_manager/public/cpp",
   ]
 }
+
+source_set("manifest") {
+  sources = [
+    "manifest.cc",
+    "manifest.h",
+  ]
+
+  deps = [
+    "//base",
+    "//chrome:strings",
+    "//chrome/services/noop/public/mojom",
+    "//services/service_manager/public/cpp",
+  ]
+}

@@ -7,8 +7,11 @@
 #include "ash/test/ash_test_base.h"
 #include "ash/wm/window_positioning_utils.h"
 #include "ash/wm/window_state.h"
+#include "ash/wm/wm_event.h"
+#include "ui/aura/test/test_windows.h"
 #include "ui/aura/window.h"
 #include "ui/display/screen.h"
+#include "ui/events/base_event_utils.h"
 #include "ui/wm/core/window_util.h"
 
 namespace ash {
@@ -21,6 +24,29 @@ std::string GetAdjustedBounds(const gfx::Rect& visible,
   AdjustBoundsToEnsureMinimumWindowVisibility(visible, &to_be_adjusted);
   return to_be_adjusted.ToString();
 }
+
+class FakeWindowState : public WindowState::State {
+ public:
+  explicit FakeWindowState() = default;
+  ~FakeWindowState() override = default;
+
+  // WindowState::State overrides:
+  void OnWMEvent(WindowState* window_state, const WMEvent* event) override {
+    if (event->type() == WM_EVENT_MINIMIZE)
+      was_visible_on_minimize_ = window_state->window()->IsVisible();
+  }
+  WindowStateType GetType() const override { return WindowStateType::kNormal; }
+  void AttachState(WindowState* window_state,
+                   WindowState::State* previous_state) override {}
+  void DetachState(WindowState* window_state) override {}
+
+  bool was_visible_on_minimize() { return was_visible_on_minimize_; }
+
+ private:
+  bool was_visible_on_minimize_ = true;
+
+  DISALLOW_COPY_AND_ASSIGN(FakeWindowState);
+};
 
 }  // namespace
 
@@ -174,6 +200,51 @@ TEST_F(WindowUtilTest, RemoveTransientDescendants) {
   window_list.push_back(descendant3.get());
   RemoveTransientDescendants(&window_list);
   EXPECT_EQ(3u, window_list.size());
+}
+
+TEST_F(WindowUtilTest,
+       HideAndMaybeMinimizeWithoutAnimationMinimizesArcWindowsBeforeHiding) {
+  auto window = CreateTestWindow();
+  auto* state = new FakeWindowState();
+  GetWindowState(window.get())
+      ->SetStateObject(std::unique_ptr<WindowState::State>(state));
+
+  std::vector<aura::Window*> windows = {window.get()};
+  HideAndMaybeMinimizeWithoutAnimation(windows, /*minimize=*/true);
+
+  EXPECT_FALSE(window->IsVisible());
+  EXPECT_TRUE(state->was_visible_on_minimize());
+}
+
+TEST_F(WindowUtilTest, InteriorTargeter) {
+  auto window = CreateTestWindow();
+  window->SetBounds(gfx::Rect(0, 0, 100, 100));
+
+  wm::GetWindowState(window.get())->Maximize();
+  InstallResizeHandleWindowTargeterForWindow(window.get());
+
+  auto* child = aura::test::CreateTestWindowWithDelegateAndType(
+      aura::test::TestWindowDelegate::CreateSelfDestroyingDelegate(),
+      aura::client::WINDOW_TYPE_UNKNOWN, 1, gfx::Rect(window->bounds().size()),
+      window.get(),
+      /*show_on_creation=*/true);
+
+  ui::EventTarget* root_target = window->GetRootWindow();
+  auto* targeter = root_target->GetEventTargeter();
+  {
+    ui::MouseEvent mouse(ui::ET_MOUSE_MOVED, gfx::Point(0, 0), gfx::Point(0, 0),
+                         ui::EventTimeForNow(), ui::EF_NONE, ui::EF_NONE);
+    EXPECT_EQ(child, targeter->FindTargetForEvent(root_target, &mouse));
+  }
+
+  // InteriorEventTargeter is now active and should pass an event at the edge to
+  // its parent.
+  wm::GetWindowState(window.get())->Restore();
+  {
+    ui::MouseEvent mouse(ui::ET_MOUSE_MOVED, gfx::Point(0, 0), gfx::Point(0, 0),
+                         ui::EventTimeForNow(), ui::EF_NONE, ui::EF_NONE);
+    EXPECT_EQ(window.get(), targeter->FindTargetForEvent(root_target, &mouse));
+  }
 }
 
 }  // namespace wm

@@ -15,15 +15,15 @@
 #include "chrome/browser/chromeos/login/configuration_keys.h"
 #include "chrome/browser/chromeos/login/enrollment/enrollment_uma.h"
 #include "chrome/browser/chromeos/login/screen_manager.h"
-#include "chrome/browser/chromeos/login/screens/base_screen_delegate.h"
 #include "chrome/browser/chromeos/login/startup_utils.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/chromeos/policy/enrollment_status_chromeos.h"
+#include "chrome/browser/chromeos/policy/tpm_auto_update_mode_policy_handler.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/lifetime/browser_shutdown.h"
-#include "chromeos/dbus/cryptohome_client.h"
+#include "chromeos/dbus/cryptohome/cryptohome_client.h"
 #include "chromeos/dbus/dbus_method_call_status.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
@@ -90,13 +90,14 @@ namespace chromeos {
 // static
 EnrollmentScreen* EnrollmentScreen::Get(ScreenManager* manager) {
   return static_cast<EnrollmentScreen*>(
-      manager->GetScreen(OobeScreen::SCREEN_OOBE_ENROLLMENT));
+      manager->GetScreen(EnrollmentScreenView::kScreenId));
 }
 
-EnrollmentScreen::EnrollmentScreen(BaseScreenDelegate* base_screen_delegate,
-                                   EnrollmentScreenView* view)
-    : BaseScreen(base_screen_delegate, OobeScreen::SCREEN_OOBE_ENROLLMENT),
+EnrollmentScreen::EnrollmentScreen(EnrollmentScreenView* view,
+                                   const ScreenExitCallback& exit_callback)
+    : BaseScreen(EnrollmentScreenView::kScreenId),
       view_(view),
+      exit_callback_(exit_callback),
       weak_ptr_factory_(this) {
   retry_policy_.num_errors_to_ignore = 0;
   retry_policy_.initial_delay_ms = kInitialDelayMS;
@@ -252,8 +253,7 @@ void EnrollmentScreen::OnLoginDone(const std::string& user,
 
   view_->ShowEnrollmentSpinnerScreen();
   CreateEnrollmentHelper();
-  enrollment_helper_->EnrollUsingAuthCode(auth_code,
-                                          false /* fetch_additional_token */);
+  enrollment_helper_->EnrollUsingAuthCode(auth_code);
 }
 
 void EnrollmentScreen::OnLicenseTypeSelected(const std::string& license_type) {
@@ -308,16 +308,19 @@ void EnrollmentScreen::OnCancel() {
   if (authpolicy_login_helper_)
     authpolicy_login_helper_->CancelRequestsAndRestart();
 
-  const ScreenExitCode exit_code =
-      config_.is_forced() ? ScreenExitCode::ENTERPRISE_ENROLLMENT_BACK
-                          : ScreenExitCode::ENTERPRISE_ENROLLMENT_COMPLETED;
-  ClearAuth(
-      base::Bind(&EnrollmentScreen::Finish, base::Unretained(this), exit_code));
+  // The callback passed to ClearAuth is called either immediately or gets
+  // wrapped in a callback bound to a weak pointer from |weak_factory_| - in
+  // either case, passing exit_callback_ directly should be safe.
+  ClearAuth(base::BindRepeating(
+      exit_callback_, config_.is_forced() ? Result::BACK : Result::COMPLETED));
 }
 
 void EnrollmentScreen::OnConfirmationClosed() {
-  ClearAuth(base::Bind(&EnrollmentScreen::Finish, base::Unretained(this),
-                       ScreenExitCode::ENTERPRISE_ENROLLMENT_COMPLETED));
+  // The callback passed to ClearAuth is called either immediately or gets
+  // wrapped in a callback bound to a weak pointer from |weak_factory_| - in
+  // either case, passing exit_callback_ directly should be safe.
+  ClearAuth(base::BindRepeating(exit_callback_, Result::COMPLETED));
+
   // Restart browser to switch from DeviceCloudPolicyManagerChromeOS to
   // DeviceActiveDirectoryPolicyManager.
   if (g_browser_process->platform_part()
@@ -389,6 +392,13 @@ void EnrollmentScreen::OnOtherError(
 void EnrollmentScreen::OnDeviceEnrolled() {
   enrollment_succeeded_ = true;
   enrollment_helper_->GetDeviceAttributeUpdatePermission();
+
+  // Evaluates device policy TPMFirmwareUpdateSettings and updates the TPM if
+  // the policy is set to auto-update vulnerable TPM firmware at enrollment.
+  g_browser_process->platform_part()
+      ->browser_policy_connector_chromeos()
+      ->GetTPMAutoUpdateModePolicyHandler()
+      ->UpdateOnEnrollmentIfNeeded();
 }
 
 void EnrollmentScreen::OnActiveDirectoryCredsProvided(
@@ -526,7 +536,7 @@ void EnrollmentScreen::JoinDomain(const std::string& dm_token,
                                   const std::string& domain_join_config,
                                   OnDomainJoinedCallback on_joined_callback) {
   if (!authpolicy_login_helper_)
-    authpolicy_login_helper_ = std::make_unique<AuthPolicyLoginHelper>();
+    authpolicy_login_helper_ = std::make_unique<AuthPolicyHelper>();
   authpolicy_login_helper_->set_dm_token(dm_token);
   on_joined_callback_ = std::move(on_joined_callback);
   view_->ShowActiveDirectoryScreen(

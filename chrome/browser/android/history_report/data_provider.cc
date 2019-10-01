@@ -51,25 +51,21 @@ struct Context {
 void UpdateUrl(Context* context,
                size_t position,
                std::vector<history_report::DeltaFileEntryWithData>* urls,
-               bool success,
-               const history::URLRow& url,
-               const history::VisitVector& visits) {
+               history::QueryURLResult result) {
   history_report::DeltaFileEntryWithData* entry = &((*urls)[position]);
-  if (success) {
-    entry->SetData(url);
-  } else if (g_is_debug){
+  if (result.success) {
+    entry->SetData(result.row);
+  } else if (g_is_debug) {
     LOG(WARNING) << "DB not initialized or no data for url " << entry->Url();
   }
   if (position + 1 == urls->size()) {
     context->finished.Signal();
   } else {
-    context->history_service->QueryURL(GURL((*urls)[position + 1].Url()),
-                                       false,
-                                       base::Bind(&UpdateUrl,
-                                                  base::Unretained(context),
-                                                  position + 1,
-                                                  base::Unretained(urls)),
-                                       context->history_task_tracker);
+    context->history_service->QueryURL(
+        GURL((*urls)[position + 1].Url()), false,
+        base::BindOnce(&UpdateUrl, base::Unretained(context), position + 1,
+                       base::Unretained(urls)),
+        context->history_task_tracker);
   }
 }
 
@@ -79,13 +75,11 @@ void QueryUrlsHistoryInUiThread(
   context->history_task_tracker->TryCancelAll();
   // TODO(haaawk): change history service so that all this data can be
   //               obtained with a single call to history service.
-  context->history_service->QueryURL(GURL((*urls)[0].Url()),
-                                     false,
-                                     base::Bind(&UpdateUrl,
-                                                base::Unretained(context),
-                                                0,
-                                                base::Unretained(urls)),
-                                     context->history_task_tracker);
+  context->history_service->QueryURL(
+      GURL((*urls)[0].Url()), false,
+      base::BindOnce(&UpdateUrl, base::Unretained(context), 0,
+                     base::Unretained(urls)),
+      context->history_task_tracker);
 }
 
 void StartVisitMigrationToUsageBufferUiThread(
@@ -128,10 +122,10 @@ std::unique_ptr<std::vector<DeltaFileEntryWithData>> DataProvider::Query(
     if (!entries->empty()) {
       Context context(history_service_,
                       &history_task_tracker_);
-      base::PostTaskWithTraits(
-          FROM_HERE, {content::BrowserThread::UI},
-          base::Bind(&QueryUrlsHistoryInUiThread, base::Unretained(&context),
-                     base::Unretained(entries.get())));
+      base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
+                               base::BindOnce(&QueryUrlsHistoryInUiThread,
+                                              base::Unretained(&context),
+                                              base::Unretained(entries.get())));
       std::vector<UrlAndTitle> bookmarks;
       bookmark_model_->model_loader()->BlockTillLoaded();
       bookmark_model_->GetBookmarks(&bookmarks);
@@ -167,10 +161,10 @@ void DataProvider::StartVisitMigrationToUsageBuffer(
   buffer_service->Clear();
   base::PostTaskWithTraits(
       FROM_HERE, {content::BrowserThread::UI},
-      base::Bind(&StartVisitMigrationToUsageBufferUiThread,
-                 base::Unretained(history_service_), buffer_service,
-                 base::Unretained(&finished),
-                 base::Unretained(&history_task_tracker_)));
+      base::BindOnce(&StartVisitMigrationToUsageBufferUiThread,
+                     base::Unretained(history_service_), buffer_service,
+                     base::Unretained(&finished),
+                     base::Unretained(&history_task_tracker_)));
   finished.Wait();
 }
 
@@ -186,10 +180,10 @@ void DataProvider::RecreateLog() {
             new GetAllUrlsFromHistoryTask(&finished, &urls));
     base::PostTaskWithTraits(
         FROM_HERE, {content::BrowserThread::UI},
-        base::Bind(base::IgnoreResult(&history::HistoryService::ScheduleDBTask),
-                   base::Unretained(history_service_), FROM_HERE,
-                   base::Passed(&task),
-                   base::Unretained(&history_task_tracker_)));
+        base::BindOnce(
+            base::IgnoreResult(&history::HistoryService::ScheduleDBTask),
+            base::Unretained(history_service_), FROM_HERE, std::move(task),
+            base::Unretained(&history_task_tracker_)));
     finished.Wait();
   }
 

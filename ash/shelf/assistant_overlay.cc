@@ -278,7 +278,6 @@ class AssistantIconBackground : public ui::Layer, public ui::LayerDelegate {
       AddPaintLayer(static_cast<PaintedShape>(i));
   }
   ~AssistantIconBackground() override = default;
-  ;
 
   void MoveLargeShadow(const gfx::PointF& new_center) {
     gfx::Transform transform;
@@ -978,6 +977,10 @@ void AssistantOverlay::HideAnimation() {
 
     background_layer_->SetOpacity(0);
   }
+}
+
+const char* AssistantOverlay::GetClassName() const {
+  return "AssistantOverlay";
 }
 
 }  // namespace ash

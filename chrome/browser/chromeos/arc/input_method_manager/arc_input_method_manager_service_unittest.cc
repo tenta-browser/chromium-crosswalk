@@ -10,12 +10,14 @@
 #include <vector>
 
 #include "ash/public/cpp/ash_pref_names.h"
+#include "ash/public/cpp/keyboard/keyboard_switches.h"
 #include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_command_line.h"
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/chromeos/arc/input_method_manager/test_input_method_manager_bridge.h"
 #include "chrome/browser/ui/ash/keyboard/chrome_keyboard_controller_client_test_helper.h"
@@ -187,7 +189,6 @@ class ArcInputMethodManagerServiceTest : public ChromeAshTestBase {
 
   void SetUp() override {
     ChromeAshTestBase::SetUp();
-    SetRunningOutsideAsh();
     ui::IMEBridge::Initialize();
     input_method_manager_ = new TestInputMethodManager();
     chromeos::input_method::InputMethodManager::Initialize(
@@ -211,10 +212,12 @@ class ArcInputMethodManagerServiceTest : public ChromeAshTestBase {
     service_->Shutdown();
     chrome_keyboard_controller_client_test_helper_.reset();
     profile_.reset();
-    tablet_mode_client_.reset(nullptr);
     chromeos::input_method::InputMethodManager::Shutdown();
     ui::IMEBridge::Shutdown();
     ChromeAshTestBase::TearDown();
+    // To match ChromeBrowserMainExtraPartsAsh, shut down the TabletModeClient
+    // after Shell.
+    tablet_mode_client_.reset();
   }
 
  private:
@@ -632,6 +635,46 @@ TEST_F(ArcInputMethodManagerServiceTest,
   service()->OnAccessibilityStatusChanged(
       {chromeos::ACCESSIBILITY_TOGGLE_VIRTUAL_KEYBOARD, false});
 
+  EXPECT_TRUE(imm()->state()->IsInputMethodAllowed(extension_ime_id));
+  EXPECT_TRUE(imm()->state()->IsInputMethodAllowed(component_extension_ime_id));
+  EXPECT_TRUE(imm()->state()->IsInputMethodAllowed(arc_ime_id));
+}
+
+TEST_F(ArcInputMethodManagerServiceTest,
+       AllowArcIMEsWhileCommandLineFlagIsSet) {
+  namespace ceiu = chromeos::extension_ime_util;
+  using crx_file::id_util::GenerateId;
+
+  const std::string extension_ime_id =
+      ceiu::GetInputMethodID(GenerateId("test.extension.ime"), "us");
+  const std::string component_extension_ime_id =
+      ceiu::GetComponentInputMethodID(
+          GenerateId("test.component.extension.ime"), "us");
+  const std::string arc_ime_id =
+      ceiu::GetArcInputMethodID(GenerateId("test.arc.ime"), "us");
+
+  // Add '--enable-virtual-keyboard' flag.
+  base::test::ScopedCommandLine scoped_command_line;
+  base::CommandLine* command_line = scoped_command_line.GetProcessCommandLine();
+  command_line->AppendSwitch(keyboard::switches::kEnableVirtualKeyboard);
+
+  // Start from tablet mode.
+  ToggleTabletMode(true);
+
+  // Activate 3 IMEs.
+  imm()->state()->AddActiveInputMethodId(extension_ime_id);
+  imm()->state()->AddActiveInputMethodId(component_extension_ime_id);
+  imm()->state()->AddActiveInputMethodId(arc_ime_id);
+
+  // All IMEs are allowed to use.
+  EXPECT_TRUE(imm()->state()->IsInputMethodAllowed(extension_ime_id));
+  EXPECT_TRUE(imm()->state()->IsInputMethodAllowed(component_extension_ime_id));
+  EXPECT_TRUE(imm()->state()->IsInputMethodAllowed(arc_ime_id));
+
+  // Change to laptop mode.
+  ToggleTabletMode(false);
+
+  // All IMEs are allowed to use even in laptop mode if the flag is set.
   EXPECT_TRUE(imm()->state()->IsInputMethodAllowed(extension_ime_id));
   EXPECT_TRUE(imm()->state()->IsInputMethodAllowed(component_extension_ime_id));
   EXPECT_TRUE(imm()->state()->IsInputMethodAllowed(arc_ime_id));

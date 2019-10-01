@@ -15,6 +15,7 @@
 #include "chromecast/browser/cast_web_contents_manager.h"
 #include "chromecast/chromecast_buildflags.h"
 #include "content/public/browser/media_capture_devices.h"
+#include "content/public/browser/media_player_id.h"
 #include "content/public/browser/media_session.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
@@ -63,9 +64,7 @@ CastWebViewDefault::CastWebViewDefault(
       transparent_(params.transparent),
       allow_media_access_(params.allow_media_access),
       web_contents_(CreateWebContents(browser_context_, site_instance_)),
-      cast_web_contents_(delegate_,
-                         web_contents_.get(),
-                         params.enabled_for_dev),
+      cast_web_contents_(web_contents_.get(), params.web_contents_params),
       window_(shell::CastContentWindow::Create(params.window_params)),
       resize_window_when_navigation_starts_(true) {
   DCHECK(delegate_);
@@ -112,8 +111,7 @@ CastWebContents* CastWebViewDefault::cast_web_contents() {
 }
 
 void CastWebViewDefault::LoadUrl(GURL url) {
-  web_contents_->GetController().LoadURL(url, content::Referrer(),
-                                         ui::PAGE_TRANSITION_TYPED, "");
+  cast_web_contents_.LoadUrl(url);
 }
 
 void CastWebViewDefault::ClosePage(const base::TimeDelta& shutdown_delay) {
@@ -141,19 +139,22 @@ void CastWebViewDefault::InitializeWindow(CastWindowManager* window_manager,
                                           CastWindowManager::WindowId z_order,
                                           VisibilityPriority initial_priority) {
   DCHECK(window_manager);
+  DCHECK(window_);
   window_->CreateWindowForWebContents(web_contents_.get(), window_manager,
                                       z_order, initial_priority);
   web_contents_->Focus();
 }
 
-void CastWebViewDefault::SetContext(base::Value context) {}
-
 void CastWebViewDefault::GrantScreenAccess() {
+  if (!window_)
+    return;
   window_->GrantScreenAccess();
 }
 
 void CastWebViewDefault::RevokeScreenAccess() {
   resize_window_when_navigation_starts_ = false;
+  if (!window_)
+    return;
   window_->RevokeScreenAccess();
 }
 
@@ -191,11 +192,11 @@ bool CastWebViewDefault::CheckMediaAccessPermission(
 
 bool CastWebViewDefault::DidAddMessageToConsole(
     content::WebContents* source,
-    int32_t level,
+    blink::mojom::ConsoleMessageLevel log_level,
     const base::string16& message,
     int32_t line_no,
     const base::string16& source_id) {
-  return delegate_->OnAddMessageToConsoleReceived(level, message, line_no,
+  return delegate_->OnAddMessageToConsoleReceived(log_level, message, line_no,
                                                   source_id);
 }
 
@@ -234,16 +235,16 @@ void CastWebViewDefault::RequestMediaAccessPermission(
       content::MediaCaptureDevices::GetInstance()->GetAudioCaptureDevices();
   auto video_devices =
       content::MediaCaptureDevices::GetInstance()->GetVideoCaptureDevices();
-  VLOG(2) << __func__ << " audio_devices=" << audio_devices.size()
-          << " video_devices=" << video_devices.size();
+  DVLOG(2) << __func__ << " audio_devices=" << audio_devices.size()
+           << " video_devices=" << video_devices.size();
 
   blink::MediaStreamDevices devices;
   if (request.audio_type == blink::MEDIA_DEVICE_AUDIO_CAPTURE) {
     const blink::MediaStreamDevice* device = GetRequestedDeviceOrDefault(
         audio_devices, request.requested_audio_device_id);
     if (device) {
-      VLOG(1) << __func__ << "Using audio device: id=" << device->id
-              << " name=" << device->name;
+      DVLOG(1) << __func__ << "Using audio device: id=" << device->id
+               << " name=" << device->name;
       devices.push_back(*device);
     }
   }
@@ -252,8 +253,8 @@ void CastWebViewDefault::RequestMediaAccessPermission(
     const blink::MediaStreamDevice* device = GetRequestedDeviceOrDefault(
         video_devices, request.requested_video_device_id);
     if (device) {
-      VLOG(1) << __func__ << "Using video device: id=" << device->id
-              << " name=" << device->name;
+      DVLOG(1) << __func__ << "Using video device: id=" << device->id
+               << " name=" << device->name;
       devices.push_back(*device);
     }
   }
@@ -306,13 +307,13 @@ void CastWebViewDefault::DidStartNavigation(
 }
 
 void CastWebViewDefault::MediaStartedPlaying(const MediaPlayerInfo& media_info,
-                                             const MediaPlayerId& id) {
+                                             const content::MediaPlayerId& id) {
   metrics::CastMetricsHelper::GetInstance()->LogMediaPlay();
 }
 
 void CastWebViewDefault::MediaStoppedPlaying(
     const MediaPlayerInfo& media_info,
-    const MediaPlayerId& id,
+    const content::MediaPlayerId& id,
     WebContentsObserver::MediaStoppedReason reason) {
   metrics::CastMetricsHelper::GetInstance()->LogMediaPause();
 }

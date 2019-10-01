@@ -20,8 +20,7 @@ void OnXmlParsed(base::RepeatingClosure quit_run_loop,
                  ParsedXml expected,
                  ParsedXml actual) {
   base::ScopedClosureRunner runner(std::move(quit_run_loop));
-  EXPECT_EQ(expected.sitelist, actual.sitelist);
-  EXPECT_EQ(expected.greylist, actual.greylist);
+  EXPECT_EQ(expected.rules, actual.rules);
   EXPECT_EQ(expected.error.has_value(), actual.error.has_value());
   if (expected.error.has_value() && actual.error.has_value())
     EXPECT_EQ(*expected.error, *actual.error);
@@ -46,15 +45,14 @@ class IeemSitelistParserTest : public InProcessBrowserTest {
 };
 
 IN_PROC_BROWSER_TEST_F(IeemSitelistParserTest, BadXml) {
-  TestParseXml("", ParsedXml({}, {}, "Invalid XML: bad content"));
-  TestParseXml("thisisnotxml", ParsedXml({}, {}, "Invalid XML: bad content"));
+  TestParseXml("", ParsedXml({}, "Invalid XML: bad content"));
+  TestParseXml("thisisnotxml", ParsedXml({}, "Invalid XML: bad content"));
 }
 
 IN_PROC_BROWSER_TEST_F(IeemSitelistParserTest, BadXmlParsed) {
-  TestParseXml("<bogus></bogus>",
-               ParsedXml({}, {}, "Invalid XML root element"));
+  TestParseXml("<bogus></bogus>", ParsedXml({}, "Invalid XML root element"));
   TestParseXml("<rules version=\"424\"><unknown></unknown></rules>",
-               ParsedXml({}, {}, base::nullopt));
+               ParsedXml({}, base::nullopt));
 }
 
 IN_PROC_BROWSER_TEST_F(IeemSitelistParserTest, V1OnlyBogusElements) {
@@ -64,7 +62,7 @@ IN_PROC_BROWSER_TEST_F(IeemSitelistParserTest, V1OnlyBogusElements) {
       "</more><emie><domain>ignoretoo.com<path>/ignored_path</path>"
       "</domain></emie><domain>onemoreignored.com</domain>"
       "<path>/ignore_outside_of_domain></path></unknown></rules>";
-  TestParseXml(xml, ParsedXml({}, {}, base::nullopt));
+  TestParseXml(xml, ParsedXml({}, base::nullopt));
 }
 
 IN_PROC_BROWSER_TEST_F(IeemSitelistParserTest, V1Full) {
@@ -101,49 +99,41 @@ IN_PROC_BROWSER_TEST_F(IeemSitelistParserTest, V1Full) {
       "exclude=\"false\">/r6</path></domain><domain docMode=\"5\" "
       "exclude=\"false\">howmanydomainz.com<path docMode=\"5\">/r8</path><path "
       "docMode=\"5\" exclude=\"true\">/r9</path><path docMode=\"5\" "
-      "exclude=\"false\">/r10</path></domain><domain doNotTransition=\"true\">"
-      "notransition.com<path>/yestransition</path><path exclude=\"true\" "
-      "doNotTransition=\"true\">/guessnot</path></domain></docMode></rules>";
+      "exclude=\"false\">/r10</path></domain><domain exclude=\"true\" "
+      "doNotTransition=\"true\">maybe.com<path>/yestransition</path>"
+      "<path doNotTransition=\"true\">/guessnot</path></domain><domain>"
+      "yes.com<path doNotTransition=\"true\">/actuallyno</path></domain>"
+      "<domain doNotTransition=\"true\">no.com</domain></docMode></rules>";
   std::vector<std::string> expected_sitelist = {
       "inside.com",
       "inside.com/in_domain",
       "google.com",
-      "!good.com",
       "more.com",
       "e100.com",
       "e100.com/path1",
-      "!e100.com/pa2",
       "e100.com/path3",
-      "!e200.com",
       "e200.com/path1",
-      "!e200.com/pth2",
       "e200.com/path3",
       "e300.com",
       "e300.com/path1",
-      "!e300.com/pt2",
       "e300.com/path3",
-      "!random.com",
-      "!random.com/path1/",
       "random.com/path2",
       "moredomains.com",
       "evenmore.com",
       "evenmore.com/r1",
       "evenmore.com/r2",
-      "!domainz.com",
       "domainz.com/r2",
-      "!domainz.com/r5",
       "domainz.com/r6",
       "howmanydomainz.com",
       "howmanydomainz.com/r8",
-      "!howmanydomainz.com/r9",
       "howmanydomainz.com/r10",
-      "notransition.com/yestransition",
+      "maybe.com/yestransition",
+      "!maybe.com/guessnot",
+      "yes.com",
+      "!yes.com/actuallyno",
+      "!no.com",
   };
-  std::vector<std::string> expected_greylist = {
-      "notransition.com", "!notransition.com/guessnot",
-  };
-  TestParseXml(xml, ParsedXml(std::move(expected_sitelist),
-                              std::move(expected_greylist), base::nullopt));
+  TestParseXml(xml, ParsedXml(std::move(expected_sitelist), base::nullopt));
 }
 
 IN_PROC_BROWSER_TEST_F(IeemSitelistParserTest, V2Full) {
@@ -162,7 +152,7 @@ IN_PROC_BROWSER_TEST_F(IeemSitelistParserTest, V2Full) {
       "</somethings></site><!-- good sites --> <site url=\"www.cpandl.com\">"
       "<compat-mode>IE8Enterprise</compat-mode><open-in>MSEdge</open-in></site>"
       "<site url=\"contoso.com\"><compat-mode>default</compat-mode><open-in>"
-      "none</open-in></site><site url=\"relecloud.com\"/><site "
+      "None</open-in></site><site url=\"relecloud.com\"/><site "
       "url=\"relecloud.com/about\"><compat-mode>IE8Enterprise</compat-mode>"
       "</site></site-list><!-- trailing gibberish <trailing><site "
       "url=\"ignore after site list!\">  <compat-mode>IE8Enterprise\""
@@ -172,7 +162,7 @@ IN_PROC_BROWSER_TEST_F(IeemSitelistParserTest, V2Full) {
       "!google.com",  "!good.site",     "www.cpandl.com",
       "!contoso.com", "!relecloud.com", "!relecloud.com/about",
   };
-  TestParseXml(xml, ParsedXml(std::move(expected_sitelist), {}, base::nullopt));
+  TestParseXml(xml, ParsedXml(std::move(expected_sitelist), base::nullopt));
 }
 
 }  // namespace browser_switcher

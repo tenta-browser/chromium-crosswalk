@@ -10,7 +10,8 @@
 #include "chrome/browser/ui/app_list/chrome_app_list_item.h"
 #include "extensions/common/constants.h"
 
-FakeAppListModelUpdater::FakeAppListModelUpdater() = default;
+FakeAppListModelUpdater::FakeAppListModelUpdater(Profile* profile)
+    : profile_(profile) {}
 
 FakeAppListModelUpdater::~FakeAppListModelUpdater() = default;
 
@@ -58,8 +59,8 @@ void FakeAppListModelUpdater::MoveItemToFolder(const std::string& id,
     ChromeAppListItem* item = items_[index].get();
     ChromeAppListItem::TestApi test_api(item);
     test_api.SetFolderId(folder_id);
-    if (delegate_)
-      delegate_->OnAppListItemUpdated(item);
+    for (AppListModelUpdaterObserver& observer : observers_)
+      observer.OnAppListItemUpdated(item);
   }
 }
 
@@ -143,13 +144,12 @@ void FakeAppListModelUpdater::PublishSearchResults(
   search_results_ = results;
 }
 
-ash::mojom::AppListItemMetadataPtr
-FakeAppListModelUpdater::FindOrCreateOemFolder(
+void FakeAppListModelUpdater::FindOrCreateOemFolder(
     const std::string& oem_folder_name,
     const syncer::StringOrdinal& preferred_oem_position) {
   ChromeAppListItem* oem_folder = FindFolderItem(ash::kOemFolderId);
   if (oem_folder) {
-    ash::mojom::AppListItemMetadataPtr folder_data =
+    std::unique_ptr<ash::AppListItemMetadata> folder_data =
         oem_folder->CloneMetadata();
     folder_data->name = oem_folder_name;
     oem_folder->SetMetadata(std::move(folder_data));
@@ -158,7 +158,7 @@ FakeAppListModelUpdater::FindOrCreateOemFolder(
         std::make_unique<ChromeAppListItem>(nullptr, ash::kOemFolderId,
                                             nullptr);
     oem_folder = new_folder.get();
-    ash::mojom::AppListItemMetadataPtr folder_data =
+    std::unique_ptr<ash::AppListItemMetadata> folder_data =
         oem_folder->CloneMetadata();
     folder_data->position = preferred_oem_position.IsValid()
                                 ? preferred_oem_position
@@ -167,7 +167,6 @@ FakeAppListModelUpdater::FindOrCreateOemFolder(
     oem_folder->SetMetadata(std::move(folder_data));
     AddItem(std::move(new_folder));
   }
-  return oem_folder->CloneMetadata();
 }
 
 syncer::StringOrdinal FakeAppListModelUpdater::GetOemFolderPos() {
@@ -214,7 +213,23 @@ void FakeAppListModelUpdater::UpdateAppItemFromSyncItem(
   }
 }
 
-void FakeAppListModelUpdater::SetDelegate(
-    AppListModelUpdaterDelegate* delegate) {
-  delegate_ = delegate;
+void FakeAppListModelUpdater::OnFolderCreated(
+    std::unique_ptr<ash::AppListItemMetadata> folder) {
+  std::unique_ptr<ChromeAppListItem> stub_folder =
+      std::make_unique<ChromeAppListItem>(profile_, folder->id, this);
+
+  for (AppListModelUpdaterObserver& observer : observers_)
+    observer.OnAppListItemAdded(stub_folder.get());
+
+  AddItem(std::move(stub_folder));
+}
+
+void FakeAppListModelUpdater::AddObserver(
+    AppListModelUpdaterObserver* observer) {
+  observers_.AddObserver(observer);
+}
+
+void FakeAppListModelUpdater::RemoveObserver(
+    AppListModelUpdaterObserver* observer) {
+  observers_.RemoveObserver(observer);
 }

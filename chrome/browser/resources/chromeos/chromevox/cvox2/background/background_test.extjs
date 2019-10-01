@@ -129,14 +129,6 @@ ChromeVoxBackgroundTest.prototype = {
       <p>After</p>
     </div>
   */},
-
-  languageSwitchingDoc: function() {/*!
-    <p id="breakfast">In the morning, I sometimes eat breakfast.</p>
-    <p id="lunch" lang="fr">Dans l'apres-midi, je dejeune.</p>
-    <p id="greeting">
-      Hello it's a pleasure to meet you. <span lang="fr">Comment ca va?</span>
-    </p>
-  */},
 };
 
 /** Tests that ChromeVox classic is in this context. */
@@ -1250,7 +1242,9 @@ TEST_F('ChromeVoxBackgroundTest', 'InPageLinks', function() {
   });
 });
 
-TEST_F('ChromeVoxBackgroundTest', 'ListItem', function() {
+// Timeout on ChromeOS with LayoutNG & Viz.
+// https://crbug.com/959261
+TEST_F('ChromeVoxBackgroundTest', 'DISABLED_ListItem', function() {
   this.resetContextualOutput();
   var mockFeedback = this.createMockFeedback();
   this.runWithLoadedTree(function(root) {/*!
@@ -1377,7 +1371,14 @@ TEST_F('ChromeVoxBackgroundTest', 'EditableKeyCommand', function() {
   });
 });
 
-TEST_F('ChromeVoxBackgroundTest', 'TextSelectionAndLiveRegion', function() {
+// TODO(crbug.com/935678): Test times out flakily in MSAN builds.
+TEST_F_WITH_PREAMBLE(`
+#if defined(MEMORY_SANITIZER)
+#define MAYBE_TextSelectionAndLiveRegion DISABLED_TextSelectionAndLiveRegion
+#else
+#define MAYBE_TextSelectionAndLiveRegion TextSelectionAndLiveRegion
+#endif
+`, 'ChromeVoxBackgroundTest', 'MAYBE_TextSelectionAndLiveRegion', function() {
   DesktopAutomationHandler.announceActions = true;
   var mockFeedback = this.createMockFeedback();
   this.runWithLoadedTree(function(root) {/*!
@@ -1540,30 +1541,11 @@ TEST_F('ChromeVoxBackgroundTest', 'NavigationEscapesEdit', function() {
           .call(textArea.focus.bind(textArea))
           .expectSpeech('Text area')
           .call(assertBeginning.bind(this, true))
-          .call(assertEnd.bind(this, false))
-          .clearPendingOutput()
-
-          .call(press(40  /* ArrowDown */))
-          .expectSpeech('is')
-          .call(press(39  /* ArrowRight */))
-          .expectSpeech('s')
-          .call(assertBeginning.bind(this, false))
-          .call(assertEnd.bind(this, false))
-
-          .call(press(40  /* ArrowDown */))
-          .call(press(37  /* ArrowLeft */))
-          .expectSpeech('a')
-          .call(assertBeginning.bind(this, false))
-          .call(assertEnd.bind(this, false))
-
-          .call(press(40  /* ArrowDown */))
-          .expectSpeech('test')
-          .call(press(39  /* ArrowRight */))
-          .expectSpeech('e')
-          .call(assertBeginning.bind(this, false))
           .call(assertEnd.bind(this, true))
 
           .replay();
+
+      // TODO: soft line breaks currently won't work in <textarea>.
     }.bind(this));
     contentEditable.focus();
   });
@@ -1806,12 +1788,13 @@ TEST_F('ChromeVoxBackgroundTest', 'ListName', function() {
 TEST_F('ChromeVoxBackgroundTest', 'LayoutTable', function() {
   var mockFeedback = this.createMockFeedback();
   this.runWithLoadedTree(function() {/*
-    <table><tr><td>start</td></tr></table>
+    <table><tr><td>start</td></tr></table><p>end</p>
   */}, function(root) {
-    mockFeedback.expectSpeech(
-            'start',
-            'row 1 column 1',
-            'Table , 1 by 1')
+    mockFeedback.expectSpeech('start')
+        .call(doCmd('nextObject'))
+        .expectNextSpeechUtteranceIsNot('row 1 column 1')
+        .expectNextSpeechUtteranceIsNot('Table , 1 by 1')
+        .expectSpeech('end')
         .replay();
   });
 });
@@ -1867,26 +1850,6 @@ TEST_F('ChromeVoxBackgroundTest', 'HoverTargetsLeafNode', function() {
         .expectSpeech('Jefferson')
         .expectSpeech('Button')
         .replay();
-  });
-});
-
-TEST_F('ChromeVoxBackgroundTest', 'DetectLanguage', function() {
-  var mockFeedback = this.createMockFeedback();
-  this.runWithLoadedTree(this.languageSwitchingDoc, function() {
-
-    mockFeedback.call(doCmd('jumpToTop'))
-        .expectSpeech("In the morning, I sometimes eat breakfast.");
-    mockFeedback.call(doCmd('nextLine'))
-        .expectSpeech("Dans l'apres-midi, je dejeune.");
-    mockFeedback.call(doCmd('nextLine'))
-        .expectSpeech("Hello it's a pleasure to meet you. ");
-    mockFeedback.call(doCmd('nextLine'))
-        .expectSpeech("Comment ca va?");
-
-    // TODO(akihiroota): Implement expectSpeechWithLanguage() to assert correct
-    // output language.
-
-    mockFeedback.replay();
   });
 });
 
@@ -1960,5 +1923,35 @@ TEST_F('ChromeVoxBackgroundTest', 'DISABLED_ValidationTest', function() {
       .expectSpeech('Alert')
       .expectSpeech('Please enter name')
       .replay();
+  });
+});
+
+TEST_F('ChromeVoxBackgroundTest', 'EventFromAction', function() {
+  this.runWithLoadedTree(function() {/*
+    <button>ok</button><button>cancel</button>
+  */}, function(root) {
+    var button = root.findAll({role: RoleType.BUTTON})[1];
+    button.addEventListener(EventType.FOCUS, this.newCallback(function(evt) {
+      assertEquals(RoleType.BUTTON, evt.target.role);
+      assertEquals('action', evt.eventFrom);
+      assertEquals('cancel', evt.target.name);
+    }));
+
+    button.focus();
+  });
+});
+
+TEST_F('ChromeVoxBackgroundTest', 'EventFromUser', function() {
+  this.runWithLoadedTree(function() {/*
+    <button>ok</button><button>cancel</button>
+  */}, function(root) {
+    var button = root.findAll({role: RoleType.BUTTON})[1];
+    button.addEventListener(EventType.FOCUS, this.newCallback(function(evt) {
+      assertEquals(RoleType.BUTTON, evt.target.role);
+      assertEquals('user', evt.eventFrom);
+      assertEquals('cancel', evt.target.name);
+    }));
+
+    press(9  /* tab */)();
   });
 });

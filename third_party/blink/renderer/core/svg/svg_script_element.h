@@ -39,8 +39,6 @@ class SVGScriptElement final : public SVGElement,
   USING_GARBAGE_COLLECTED_MIXIN(SVGScriptElement);
 
  public:
-  static SVGScriptElement* Create(Document&, const CreateElementFlags);
-
   SVGScriptElement(Document&, const CreateElementFlags);
 
   ScriptLoader* Loader() const final { return loader_.Get(); }
@@ -91,22 +89,21 @@ class SVGScriptElement final : public SVGElement,
   }
   bool AllowInlineScriptForCSP(const AtomicString& nonce,
                                const WTF::OrdinalNumber&,
-                               const String& script_content,
-                               ContentSecurityPolicy::InlineType) override;
+                               const String& script_content) override;
   Document& GetDocument() const override;
   void DispatchLoadEvent() override;
   void DispatchErrorEvent() override;
   void SetScriptElementForBinding(
       HTMLScriptElementOrSVGScriptElement&) override;
 
-  Element* CloneWithoutAttributesAndChildren(Document&) const override;
+  Element& CloneWithoutAttributesAndChildren(Document&) const override;
   bool LayoutObjectIsNeeded(const ComputedStyle&) const override {
     return false;
   }
 
   bool have_fired_load_ = false;
 
-  TraceWrapperMember<ScriptLoader> loader_;
+  Member<ScriptLoader> loader_;
 };
 
 }  // namespace blink

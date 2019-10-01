@@ -14,18 +14,16 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/feature_list.h"
 #include "base/time/time.h"
 #include "chrome/browser/android/chrome_feature_list.h"
-#include "chrome/browser/android/ntp/content_suggestions_notifier_service.h"
 #include "chrome/browser/android/ntp/get_remote_suggestions_scheduler.h"
 #include "chrome/browser/history/history_service_factory.h"
-#include "chrome/browser/ntp_snippets/content_suggestions_notifier_service_factory.h"
 #include "chrome/browser/ntp_snippets/content_suggestions_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_android.h"
-#include "chrome/browser/profiles/profile_manager.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/ntp_snippets/content_suggestion.h"
 #include "components/ntp_snippets/content_suggestions_metrics.h"
@@ -76,24 +74,6 @@ ScopedJavaLocalRef<jobject> JNI_SnippetsBridge_ToJavaSuggestionList(
             suggestion.fetch_date().ToJavaTime(),
             suggestion.is_video_suggestion(),
             suggestion.optional_image_dominant_color().value_or(0));
-    if (suggestion.id().category().IsKnownCategory(
-            KnownCategories::DOWNLOADS) &&
-        suggestion.download_suggestion_extra() != nullptr) {
-      if (suggestion.download_suggestion_extra()->is_download_asset) {
-        Java_SnippetsBridge_setAssetDownloadDataForSuggestion(
-            env, java_suggestion,
-            ConvertUTF8ToJavaString(
-                env, suggestion.download_suggestion_extra()->download_guid),
-            ConvertUTF8ToJavaString(env, suggestion.download_suggestion_extra()
-                                             ->target_file_path.value()),
-            ConvertUTF8ToJavaString(
-                env, suggestion.download_suggestion_extra()->mime_type));
-      } else {
-        Java_SnippetsBridge_setOfflinePageDownloadDataForSuggestion(
-            env, java_suggestion,
-            suggestion.download_suggestion_extra()->offline_page_id);
-      }
-    }
   }
 
   return result;
@@ -132,29 +112,6 @@ static void JNI_SnippetsBridge_RemoteSuggestionsSchedulerOnBrowserUpgraded(
   }
 
   scheduler->OnBrowserUpgraded();
-}
-
-static void JNI_SnippetsBridge_SetContentSuggestionsNotificationsEnabled(
-    JNIEnv* env,
-    jboolean enabled) {
-  ContentSuggestionsNotifierService* notifier_service =
-      ContentSuggestionsNotifierServiceFactory::GetForProfile(
-          ProfileManager::GetLastUsedProfile());
-  if (!notifier_service)
-    return;
-
-  notifier_service->SetEnabled(enabled);
-}
-
-static jboolean JNI_SnippetsBridge_AreContentSuggestionsNotificationsEnabled(
-    JNIEnv* env) {
-  ContentSuggestionsNotifierService* notifier_service =
-      ContentSuggestionsNotifierServiceFactory::GetForProfile(
-          ProfileManager::GetLastUsedProfile());
-  if (!notifier_service)
-    return false;
-
-  return notifier_service->IsEnabled();
 }
 
 NTPSnippetsBridge::NTPSnippetsBridge(JNIEnv* env,
@@ -307,11 +264,10 @@ void NTPSnippetsBridge::DismissSuggestion(
 
   history_service_->QueryURL(
       GURL(ConvertJavaStringToUTF8(env, jurl)), /*want_visits=*/false,
-      base::Bind(
+      base::BindOnce(
           [](int global_position, Category category, int position_in_category,
-             bool success, const history::URLRow& row,
-             const history::VisitVector& visit_vector) {
-            bool visited = success && row.visit_count() != 0;
+             history::QueryURLResult result) {
+            bool visited = result.success && result.row.visit_count() != 0;
             ntp_snippets::metrics::OnSuggestionDismissed(
                 global_position, category, position_in_category, visited);
           },

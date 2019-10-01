@@ -35,7 +35,6 @@
 #include "gpu/config/gpu_switches.h"
 #include "gpu/ipc/host/gpu_memory_buffer_support.h"
 #include "media/media_buildflags.h"
-#include "ui/base/ui_base_features.h"
 #include "ui/gl/gl_switches.h"
 
 namespace content {
@@ -79,8 +78,6 @@ gpu::GpuFeatureStatus SafeGetFeatureStatus(
 gpu::GpuFeatureStatus GetGpuCompositingStatus(
     const gpu::GpuFeatureInfo& gpu_feature_info,
     GpuFeatureInfoType type) {
-  if (features::IsMultiProcessMash())
-    return gpu::kGpuFeatureStatusEnabled;
   gpu::GpuFeatureStatus status = SafeGetFeatureStatus(
       gpu_feature_info, gpu::GPU_FEATURE_TYPE_GPU_COMPOSITING);
 #if defined(USE_AURA) || defined(OS_MACOSX)
@@ -172,19 +169,23 @@ const GpuFeatureData GetGpuFeatureData(
        "Out-of-process accelerated rasterization has been disabled, either "
        "via blacklist, about:flags or the command line.",
        false, true},
+      {"metal",
+       SafeGetFeatureStatus(gpu_feature_info, gpu::GPU_FEATURE_TYPE_METAL),
+#if defined(OS_MACOSX)
+       !base::FeatureList::IsEnabled(features::kMetal) /* disabled */,
+       "Metal is not enabled by default.",
+#else
+       true /* disabled */, "Metal is only available on macOS.",
+#endif
+       false /* fallback_to_software */, false /* needs_gpu_access */},
       {"multiple_raster_threads", gpu::kGpuFeatureStatusEnabled,
        NumberOfRendererRasterThreads() == 1, "Raster is using a single thread.",
        false, true},
-      {"native_gpu_memory_buffers", gpu::kGpuFeatureStatusEnabled,
-       !gpu::AreNativeGpuMemoryBuffersEnabled(),
-       "Native GpuMemoryBuffers have been disabled, either via about:flags or "
-       "command line.",
-       true, true},
       {"surface_control",
        SafeGetFeatureStatus(gpu_feature_info,
                             gpu::GPU_FEATURE_TYPE_ANDROID_SURFACE_CONTROL),
 #if defined(OS_ANDROID)
-       !base::FeatureList::IsEnabled(features::kAndroidSurfaceControl),
+       !features::IsAndroidSurfaceControlEnabled(),
 #else
        false,
 #endif
@@ -203,8 +204,12 @@ const GpuFeatureData GetGpuFeatureData(
        "WebGL2 has been disabled via blacklist or the command line.", false,
        true},
       {"viz_display_compositor", gpu::kGpuFeatureStatusEnabled,
-       !base::FeatureList::IsEnabled(features::kVizDisplayCompositor),
+       !features::IsVizDisplayCompositorEnabled(),
        "Viz service display compositor is not enabled by default.", false,
+       false},
+      {"viz_hit_test_surface_layer", gpu::kGpuFeatureStatusEnabled,
+       !features::IsVizHitTestingSurfaceLayerEnabled(),
+       "Viz hit-test surface layer version is not enabled by default.", false,
        false},
       {"skia_renderer", gpu::kGpuFeatureStatusEnabled,
        !features::IsUsingSkiaRenderer(),
@@ -270,6 +275,12 @@ std::unique_ptr<base::DictionaryValue> GetFeatureStatusImpl(
         if (features::IsUsingSkiaRenderer())
           status += "_on";
       }
+      if (gpu_feature_data.name == "viz_hit_test_surface_layer") {
+        if (features::IsVizHitTestingSurfaceLayerEnabled())
+          status += "_on";
+      }
+      if (gpu_feature_data.name == "metal")
+        status += "_on";
     }
     feature_status_dict->SetString(gpu_feature_data.name, status);
   }
@@ -427,10 +438,6 @@ bool IsGpuMemoryBufferCompositorResourcesEnabled() {
           switches::kDisableGpuMemoryBufferCompositorResources)) {
     return false;
   }
-
-  // Native GPU memory buffers are required.
-  if (!gpu::AreNativeGpuMemoryBuffersEnabled())
-    return false;
 
 #if defined(OS_MACOSX)
   return true;

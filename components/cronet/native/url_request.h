@@ -82,6 +82,9 @@ class Cronet_UrlRequestImpl : public Cronet_UrlRequest {
   void InvokeCallbackOnFailed();
   void InvokeCallbackOnCanceled();
 
+  // Runs InvokeCallbackOnFailed() on the client executor.
+  void PostCallbackOnFailedToExecutor();
+
   // Invoke all members of |status_listeners_|. Should be called prior to
   // invoking a final callback. Once a final callback has been called, |this|
   // and |executor_| may be deleted and so the callbacks cannot be issued.
@@ -102,10 +105,40 @@ class Cronet_UrlRequestImpl : public Cronet_UrlRequest {
   std::unordered_multiset<Cronet_UrlRequestStatusListenerPtr> status_listeners_
       GUARDED_BY(lock_);
 
+  // Metrics to include in RequestFinishedInfo report sent to attached
+  // RequestFinishedListener(s). A nullptr value indicates that the metrics
+  // haven't been collected.
+  std::unique_ptr<Cronet_Metrics> metrics_ GUARDED_BY(lock_);
+
+  // Optional; allows a listener to receive request info and stats.
+  //
+  // A nullptr value indicates that there is no RequestFinishedInfo listener
+  // specified for the request (however, the Engine may have additional
+  // listeners -- Engine listeners apply to all its UrlRequests).
+  //
+  // Owned by the app -- must outlive this UrlRequest.
+  Cronet_RequestFinishedInfoListenerPtr request_finished_listener_ = nullptr;
+
+  // Executor upon which |request_finished_listener_| will run. If
+  // |request_finished_listener_| is not nullptr, this won't be nullptr either.
+  //
+  // Owned by the app -- must outlive this UrlRequest.
+  Cronet_ExecutorPtr request_finished_executor_ = nullptr;
+
   // Response info updated by callback with number of bytes received. May be
   // nullptr, if no response has been received.
+  //
+  // NOTE: the synchronization of this field is complex -- it can't be
+  // completely protected by |lock_| since we pass this field as a unowned
+  // pointer to OnSucceed(), OnFailed(), and OnCanceled(). The pointee of this
+  // field cannot be updated after one of those callback calls is made.
   std::unique_ptr<Cronet_UrlResponseInfo> response_info_;
   // The error reported by request. May be nullptr if no error has occurred.
+  //
+  // NOTE: the synchronization of this field is complex -- it can't be
+  // completely protected by |lock_| since we pass this field as a unowned
+  // pointer to OnSucceed(), OnFailed(), and OnCanceled(). The pointee of this
+  // field cannot be updated after one of those callback calls is made.
   std::unique_ptr<Cronet_Error> error_;
 
   // The upload data stream if specified.
@@ -128,6 +161,6 @@ class Cronet_UrlRequestImpl : public Cronet_UrlRequest {
   DISALLOW_COPY_AND_ASSIGN(Cronet_UrlRequestImpl);
 };
 
-};  // namespace cronet
+}  // namespace cronet
 
 #endif  // COMPONENTS_CRONET_NATIVE_URL_REQUEST_H_

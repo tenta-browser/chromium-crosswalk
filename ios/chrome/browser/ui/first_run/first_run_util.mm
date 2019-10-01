@@ -19,8 +19,8 @@
 #include "ios/chrome/browser/signin/identity_manager_factory.h"
 #include "ios/chrome/browser/tabs/tab.h"
 #include "ios/chrome/browser/ui/first_run/first_run_histograms.h"
-#import "ios/chrome/browser/ui/settings/settings_utils.h"
-#import "ios/chrome/browser/ui/settings/sync_utils/sync_util.h"
+#import "ios/chrome/browser/ui/settings/sync/utils/sync_util.h"
+#import "ios/chrome/browser/ui/settings/utils/settings_utils.h"
 #include "ios/chrome/browser/ui/util/ui_util.h"
 #include "ios/web/public/web_thread.h"
 #include "services/identity/public/cpp/identity_manager.h"
@@ -163,7 +163,7 @@ void FinishFirstRun(ios::ChromeBrowserState* browserState,
                                         config.hasSSOAccount);
 
   // Display the sync errors infobar.
-  DisplaySyncErrors(browserState, tab, presenter);
+  DisplaySyncErrors(browserState, tab.webState, presenter);
 }
 
 void RecordProductTourTimingMetrics(NSString* timer_name,

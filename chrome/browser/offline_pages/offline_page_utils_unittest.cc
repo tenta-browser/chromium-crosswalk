@@ -45,6 +45,8 @@
 
 #if defined(OS_ANDROID)
 #include "chrome/browser/android/download/mock_download_controller.h"
+#include "components/gcm_driver/instance_id/instance_id_android.h"
+#include "components/gcm_driver/instance_id/scoped_use_fake_instance_id_android.h"
 #endif
 
 namespace offline_pages {
@@ -133,6 +135,15 @@ class OfflinePageUtilsTest
   int64_t last_cache_size_;
 #if defined(OS_ANDROID)
   chrome::android::MockDownloadController download_controller_;
+  // OfflinePageTabHelper instantiates PrefetchService which in turn requests a
+  // fresh GCM token automatically. These two lines mock out InstanceID (the
+  // component which actually requests the token from play services). Without
+  // this, each test takes an extra 30s waiting on the token (because
+  // content::TestBrowserThreadBundle tries to finish all pending tasks before
+  // ending the test).
+  instance_id::InstanceIDAndroid::ScopedBlockOnAsyncTasksForTesting
+      block_async_;
+  instance_id::ScopedUseFakeInstanceIDAndroid use_fake_;
 #endif
 };
 
@@ -151,7 +162,8 @@ void OfflinePageUtilsTest::SetUp() {
 
   // Set up the factory for testing.
   OfflinePageModelFactory::GetInstance()->SetTestingFactoryAndUse(
-      &profile_, base::BindRepeating(&BuildTestOfflinePageModel));
+      profile_.GetProfileKey(),
+      base::BindRepeating(&BuildTestOfflinePageModel));
   RunUntilIdle();
 
   RequestCoordinatorFactory::GetInstance()->SetTestingFactoryAndUse(
@@ -338,7 +350,12 @@ TEST_F(OfflinePageUtilsTest, CheckDuplicateDownloads) {
   EXPECT_EQ(OfflinePageUtils::DuplicateCheckResult::NOT_FOUND, result);
 }
 
-TEST_F(OfflinePageUtilsTest, ScheduleDownload) {
+#if defined(DISABLE_OFFLINE_PAGES_TOUCHLESS)
+#define MAYBE_ScheduleDownload DISABLED_ScheduleDownload
+#else
+#define MAYBE_ScheduleDownload ScheduleDownload
+#endif
+TEST_F(OfflinePageUtilsTest, MAYBE_ScheduleDownload) {
   // Pre-check.
   ASSERT_EQ(0, FindRequestByNamespaceAndURL(kDownloadNamespace, kTestPage1Url));
   ASSERT_EQ(1, FindRequestByNamespaceAndURL(kDownloadNamespace, kTestPage3Url));
@@ -376,19 +393,6 @@ TEST_F(OfflinePageUtilsTest, ScheduleDownloadWithFailedFileAcecssRequest) {
   EXPECT_EQ(0, FindRequestByNamespaceAndURL(kDownloadNamespace, kTestPage4Url));
 }
 #endif
-
-TEST_F(OfflinePageUtilsTest, EqualsIgnoringFragment) {
-  EXPECT_TRUE(OfflinePageUtils::EqualsIgnoringFragment(
-      GURL("http://example.com/"), GURL("http://example.com/")));
-  EXPECT_TRUE(OfflinePageUtils::EqualsIgnoringFragment(
-      GURL("http://example.com/"), GURL("http://example.com/#test")));
-  EXPECT_TRUE(OfflinePageUtils::EqualsIgnoringFragment(
-      GURL("http://example.com/#test"), GURL("http://example.com/")));
-  EXPECT_TRUE(OfflinePageUtils::EqualsIgnoringFragment(
-      GURL("http://example.com/#test"), GURL("http://example.com/#test2")));
-  EXPECT_FALSE(OfflinePageUtils::EqualsIgnoringFragment(
-      GURL("http://example.com/"), GURL("http://test.com/#test")));
-}
 
 TEST_F(OfflinePageUtilsTest, TestGetCachedOfflinePageSizeBetween) {
   // The clock will be at 03:00:00 after adding pages.

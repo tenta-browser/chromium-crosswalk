@@ -13,7 +13,7 @@
 #include "base/macros.h"
 #include "base/time/clock.h"
 #include "chromeos/components/drivefs/mojom/drivefs.mojom.h"
-#include "services/identity/public/mojom/identity_manager.mojom.h"
+#include "services/identity/public/mojom/identity_accessor.mojom.h"
 
 class AccountId;
 
@@ -39,6 +39,7 @@ class COMPONENT_EXPORT(DRIVEFS) DriveFsAuth {
     virtual service_manager::Connector* GetConnector() = 0;
     virtual const AccountId& GetAccountId() = 0;
     virtual std::string GetObfuscatedAccountId() = 0;
+    virtual bool IsMetricsCollectionEnabled() = 0;
 
    private:
     DISALLOW_COPY_AND_ASSIGN(Delegate);
@@ -57,33 +58,37 @@ class COMPONENT_EXPORT(DRIVEFS) DriveFsAuth {
     return delegate_->GetObfuscatedAccountId();
   }
 
-  base::Optional<std::string> TakeCachedAccessToken();
+  bool IsMetricsCollectionEnabled() {
+    return delegate_->IsMetricsCollectionEnabled();
+  }
+
+  base::Optional<std::string> GetCachedAccessToken();
 
   virtual void GetAccessToken(
       bool use_cached,
       mojom::DriveFsDelegate::GetAccessTokenCallback callback);
 
  private:
-  void AccountReady(const AccountInfo& info,
+  void AccountReady(const CoreAccountInfo& info,
                     const identity::AccountState& state);
 
   void GotChromeAccessToken(const base::Optional<std::string>& access_token,
                             base::Time expiration_time,
                             const GoogleServiceAuthError& error);
 
-  const std::string& MaybeGetCachedToken(bool use_cached);
+  const std::string& GetOrResetCachedToken(bool use_cached);
 
   void UpdateCachedToken(const std::string& token, base::Time expiry);
 
-  identity::mojom::IdentityManager& GetIdentityManager();
+  identity::mojom::IdentityAccessor& GetIdentityAccessor();
 
   SEQUENCE_CHECKER(sequence_checker_);
   const base::Clock* const clock_;
   const base::FilePath profile_path_;
   Delegate* const delegate_;
 
-  // The connection to the identity service. Access via |GetIdentityManager()|.
-  identity::mojom::IdentityManagerPtr identity_manager_;
+  // The connection to the identity service. Access via |GetIdentityAccessor()|.
+  identity::mojom::IdentityAccessorPtr identity_accessor_;
 
   // Pending callback for an in-flight GetAccessToken request.
   mojom::DriveFsDelegate::GetAccessTokenCallback get_access_token_callback_;

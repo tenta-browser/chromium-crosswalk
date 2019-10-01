@@ -80,8 +80,7 @@ class CheckClientDownloadRequest : public download::DownloadItem::Observer {
   void OnUrlWhitelistCheckDone(bool is_whitelisted);
   void OnCertificateWhitelistCheckDone(bool is_whitelisted);
   void GetTabRedirects();
-  void OnGotTabRedirects(const GURL& url,
-                         const history::RedirectList* redirect_list);
+  void OnGotTabRedirects(const GURL& url, history::RedirectList redirect_list);
   bool IsDownloadManuallyBlacklisted(const ClientDownloadRequest& request);
   std::string SanitizeUrl(const GURL& url) const;
   void SendRequest();
@@ -134,6 +133,15 @@ class CheckClientDownloadRequest : public download::DownloadItem::Observer {
   bool is_extended_reporting_;
   bool is_incognito_;
   bool is_under_advanced_protection_;
+
+  // Boolean indicating whether the user requests AP verdicts. Note that this is
+  // distinct from |is_under_advanced_protection_| while:
+  //  - The feature is still partially rolled out
+  //  - The feature has been force enabled from chrome://flags
+  bool requests_ap_verdicts_;
+
+  int file_count_;
+  int directory_count_;
 
   base::WeakPtrFactory<CheckClientDownloadRequest> weakptr_factory_;
 

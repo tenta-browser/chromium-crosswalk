@@ -385,7 +385,7 @@ bool HttpServerPropertiesImpl::SetQuicAlternativeService(
     const url::SchemeHostPort& origin,
     const AlternativeService& alternative_service,
     base::Time expiration,
-    const quic::QuicTransportVersionVector& advertised_versions) {
+    const quic::ParsedQuicVersionVector& advertised_versions) {
   DCHECK(alternative_service.protocol == kProtoQUIC);
 
   return SetAlternativeServices(
@@ -595,7 +595,7 @@ const ServerNetworkStats* HttpServerPropertiesImpl::GetServerNetworkStats(
     const url::SchemeHostPort& server) {
   auto it = server_network_stats_map_.Get(server);
   if (it == server_network_stats_map_.end()) {
-    return NULL;
+    return nullptr;
   }
   return &it->second;
 }

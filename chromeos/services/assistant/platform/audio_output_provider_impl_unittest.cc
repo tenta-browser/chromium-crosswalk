@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
@@ -80,7 +81,8 @@ class AudioDeviceOwnerTest : public testing::Test {
  public:
   AudioDeviceOwnerTest()
       : task_env_(base::test::ScopedTaskEnvironment::MainThreadType::DEFAULT,
-                  base::test::ScopedTaskEnvironment::ExecutionMode::QUEUED) {}
+                  base::test::ScopedTaskEnvironment::ThreadPoolExecutionMode::
+                      QUEUED) {}
 
   ~AudioDeviceOwnerTest() override { task_env_.RunUntilIdle(); }
 
@@ -103,7 +105,7 @@ TEST_F(AudioDeviceOwnerTest, BufferFilling) {
   delegate.Reset();
   auto owner = std::make_unique<AudioDeviceOwner>(
       base::SequencedTaskRunnerHandle::Get(),
-      base::SequencedTaskRunnerHandle::Get());
+      base::SequencedTaskRunnerHandle::Get(), "test device");
   // Upon start, it will start to fill the buffer.
   owner->StartOnMainThread(&delegate, nullptr, format);
   delegate.Wait();

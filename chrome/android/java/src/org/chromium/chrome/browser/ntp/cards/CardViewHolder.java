@@ -12,12 +12,10 @@ import android.view.View;
 import android.view.View.OnAttachStateChangeListener;
 import android.view.ViewGroup;
 
-import org.chromium.chrome.R;
 import org.chromium.chrome.browser.native_page.ContextMenuManager;
 import org.chromium.chrome.browser.native_page.ContextMenuManager.ContextMenuItemId;
 import org.chromium.chrome.browser.suggestions.SuggestionsRecyclerView;
 import org.chromium.chrome.browser.widget.displaystyle.HorizontalDisplayStyle;
-import org.chromium.chrome.browser.widget.displaystyle.MarginResizer;
 import org.chromium.chrome.browser.widget.displaystyle.UiConfig;
 
 /**
@@ -38,7 +36,6 @@ public abstract class CardViewHolder
     protected final SuggestionsRecyclerView mRecyclerView;
 
     protected final UiConfig mUiConfig;
-    private final MarginResizer mMarginResizer;
 
     /**
      * @param layoutId resource id of the layout to inflate and to use as card.
@@ -60,16 +57,9 @@ public abstract class CardViewHolder
                 (menu, view, menuInfo)
                         -> contextMenuManager.createContextMenu(
                                 menu, itemView, CardViewHolder.this));
+        ContextMenuManager.registerViewForTouchlessContextMenu(itemView, this);
 
         mUiConfig = uiConfig;
-
-        final int defaultLateralMargin =
-                resources.getDimensionPixelSize(R.dimen.content_suggestions_card_modern_margin);
-        int wideLateralMargin =
-                resources.getDimensionPixelSize(R.dimen.ntp_wide_card_lateral_margins);
-
-        mMarginResizer =
-                new MarginResizer(itemView, uiConfig, defaultLateralMargin, wideLateralMargin);
     }
 
     @Override
@@ -89,6 +79,11 @@ public abstract class CardViewHolder
 
     @Override
     public String getUrl() {
+        return null;
+    }
+
+    @Override
+    public String getContextMenuTitle() {
         return null;
     }
 
@@ -130,14 +125,6 @@ public abstract class CardViewHolder
 
         // Make sure we use the right background.
         updateLayoutParams();
-
-        mMarginResizer.attach();
-    }
-
-    @Override
-    public void recycle() {
-        mMarginResizer.detach();
-        super.recycle();
     }
 
     /**
@@ -161,7 +148,6 @@ public abstract class CardViewHolder
             case ItemViewType.HEADER:
             case ItemViewType.PROGRESS:
             case ItemViewType.FOOTER:
-            case ItemViewType.ALL_DISMISSED:
                 return false;
         }
         assert false;

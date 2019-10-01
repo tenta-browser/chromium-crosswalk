@@ -25,6 +25,7 @@
 #include "content/public/common/navigation_policy.h"
 #include "content/public/test/browser_side_navigation_test_utils.h"
 #include "content/public/test/mock_render_process_host.h"
+#include "content/public/test/navigation_simulator.h"
 #include "content/public/test/test_browser_context.h"
 #include "content/test/content_browser_sanity_checker.h"
 #include "content/test/test_render_frame_host.h"
@@ -49,7 +50,6 @@
 #if defined(USE_AURA)
 #include "ui/aura/test/aura_test_helper.h"
 #include "ui/aura/test/aura_test_utils.h"
-#include "ui/compositor/test/context_factories_for_test.h"
 #include "ui/wm/core/default_activation_client.h"
 #endif
 
@@ -77,42 +77,12 @@ void RenderFrameHostTester::CommitPendingLoad(
     NavigationController* controller) {
   // This function is currently used by BrowserWithTestWindowTest. It would be
   // ideal to instead make the users of that class create TestWebContents
-  // (rather than WebContentsImpl directly). This would allow the implementation
-  // of PrepareForCommitIfNecessary() to live directly in
-  // TestWebContents::CommitPendingNavigation() which could then be the only
-  // place to handle this simulation. Unfortunately, it is not trivial to make
-  // that change, so for now we have this extra simulation for
+  // (rather than WebContentsImpl directly). It is not trivial to make
+  // that change, so for now we have this extra function for
   // non-TestWebContents.
-  TestRenderFrameHost* old_rfh = static_cast<TestRenderFrameHost*>(
-      controller->GetWebContents()->GetMainFrame());
-  NavigationRequest* request = old_rfh->frame_tree_node()->navigation_request();
-  old_rfh->PrepareForCommitIfNecessary();
-
-  WebContentsImpl* web_contents =
-      static_cast<WebContentsImpl*>(controller->GetWebContents());
-  TestRenderFrameHost* pending_rfh = static_cast<TestRenderFrameHost*>(
-      web_contents->GetRenderManagerForTesting()
-          ->speculative_render_frame_host_.get());
-
-  // Commit on the pending_rfh, if one exists.
-  TestRenderFrameHost* test_rfh = pending_rfh ? pending_rfh : old_rfh;
-  if (request && !request->navigation_handle()->IsSameDocument()) {
-    test_rfh->SimulateCommitProcessed(
-        request->navigation_handle()->GetNavigationId(),
-        true /* was successful */);
-  }
-
-  if (controller->GetPendingEntryIndex() >= 0) {
-    test_rfh->SendNavigateWithTransition(
-        controller->GetPendingEntry()->GetUniqueID(), false,
-        controller->GetPendingEntry()->GetURL(),
-        controller->GetPendingEntry()->GetTransitionType());
-  } else {
-    test_rfh->SendNavigateWithTransition(
-        controller->GetPendingEntry()->GetUniqueID(), true,
-        controller->GetPendingEntry()->GetURL(),
-        controller->GetPendingEntry()->GetTransitionType());
-  }
+  auto navigation =
+      NavigationSimulator::CreateFromPending(controller->GetWebContents());
+  navigation->Commit();
 }
 
 // RenderViewHostTester -------------------------------------------------------
@@ -256,8 +226,11 @@ void RenderViewHostTestHarness::FocusWebContentsOnMainFrame() {
       root, root->current_frame_host()->GetSiteInstance());
 }
 
-void RenderViewHostTestHarness::NavigateAndCommit(const GURL& url) {
-  static_cast<TestWebContents*>(web_contents())->NavigateAndCommit(url);
+void RenderViewHostTestHarness::NavigateAndCommit(
+    const GURL& url,
+    ui::PageTransition transition) {
+  static_cast<TestWebContents*>(web_contents())
+      ->NavigateAndCommit(url, transition);
 }
 
 void RenderViewHostTestHarness::SetUp() {
@@ -301,7 +274,6 @@ void RenderViewHostTestHarness::TearDown() {
   DeleteContents();
 #if defined(USE_AURA)
   aura_test_helper_->TearDown();
-  ui::TerminateContextFactoryForTests();
 #endif
   // Make sure that we flush any messages related to WebContentsImpl destruction
   // before we destroy the browser context.

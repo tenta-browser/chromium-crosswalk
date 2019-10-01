@@ -5,14 +5,17 @@
 #include "chrome/browser/sessions/session_tab_helper.h"
 
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/sessions/session_service.h"
-#include "chrome/browser/sessions/session_service_factory.h"
 #include "components/sessions/content/content_serialized_navigation_builder.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/web_contents.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "extensions/common/extension_messages.h"
+#endif
+
+#if BUILDFLAG(ENABLE_SESSION_SERVICE)
+#include "chrome/browser/sessions/session_service.h"
+#include "chrome/browser/sessions/session_service_factory.h"
 #endif
 
 SessionTabHelper::SessionTabHelper(content::WebContents* contents)
@@ -85,14 +88,8 @@ void SessionTabHelper::NavigationListPruned(
   if (!session_service)
     return;
 
-  if (pruned_details.from_front) {
-    session_service->TabNavigationPathPrunedFromFront(window_id(), session_id(),
-                                                      pruned_details.count);
-  } else {
-    session_service->TabNavigationPathPrunedFromBack(
-        window_id(), session_id(),
-        web_contents()->GetController().GetEntryCount());
-  }
+  session_service->TabNavigationPathPruned(
+      window_id(), session_id(), pruned_details.index, pruned_details.count);
 }
 
 void SessionTabHelper::NavigationEntriesDeleted() {

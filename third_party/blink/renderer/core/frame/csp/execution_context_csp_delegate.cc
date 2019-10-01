@@ -9,16 +9,18 @@
 #include "third_party/blink/renderer/core/events/security_policy_violation_event.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/execution_context/security_context.h"
+#include "third_party/blink/renderer/core/frame/csp/csp_violation_report_body.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
+#include "third_party/blink/renderer/core/frame/report.h"
+#include "third_party/blink/renderer/core/frame/reporting_context.h"
 #include "third_party/blink/renderer/core/frame/use_counter.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/loader/ping_loader.h"
-#include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
 #include "third_party/blink/renderer/platform/network/encoded_form_data.h"
-#include "third_party/blink/renderer/platform/weborigin/reporting_service_proxy_ptr_holder.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 
 namespace blink {
@@ -49,8 +51,7 @@ void ExecutionContextCSPDelegate::SetAddressSpace(mojom::IPAddressSpace space) {
 }
 
 void ExecutionContextCSPDelegate::SetRequireTrustedTypes() {
-  if (origin_trials::TrustedDOMTypesEnabled(execution_context_))
-    GetSecurityContext().SetRequireTrustedTypes();
+  GetSecurityContext().SetRequireTrustedTypes();
 }
 
 void ExecutionContextCSPDelegate::AddInsecureRequestPolicy(
@@ -75,11 +76,14 @@ void ExecutionContextCSPDelegate::AddInsecureRequestPolicy(
     // Step 4. Insert tuple into settings’s upgrade insecure navigations set.
     // [spec text]
     Count(WebFeature::kUpgradeInsecureRequestsEnabled);
-    if (!Url().Host().IsEmpty()) {
+    // We don't add the hash if |document| is null, to prevent
+    // WorkerGlobalScope::Url() before it's ready. https://crbug.com/861564
+    // This should be safe, because the insecure navigations set is not used
+    // in non-Document contexts.
+    if (document && !Url().Host().IsEmpty()) {
       uint32_t hash = Url().Host().Impl()->GetHash();
       security_context.AddInsecureNavigationUpgrade(hash);
-      if (document)
-        document->DidEnforceInsecureNavigationsSet();
+      document->DidEnforceInsecureNavigationsSet();
     }
   }
 }
@@ -136,7 +140,7 @@ void ExecutionContextCSPDelegate::PostViolationReport(
                 ContentSecurityPolicy::GetDirectiveType(
                     violation_data.effectiveDirective()));
 
-  // TODO(mkwst): Support POSTing violation reports from a Worker.
+  // TODO(crbug/929370): Support POSTing violation reports from a Worker.
   Document* document = GetDocument();
   if (!document)
     return;
@@ -148,23 +152,18 @@ void ExecutionContextCSPDelegate::PostViolationReport(
   scoped_refptr<EncodedFormData> report =
       EncodedFormData::Create(stringified_report.Utf8());
 
-  DEFINE_STATIC_LOCAL(ReportingServiceProxyPtrHolder,
-                      reporting_service_proxy_holder, ());
+  // Construct and route the report to the ReportingContext, to be observed
+  // by any ReportingObservers.
+  auto* body = MakeGarbageCollected<CSPViolationReportBody>(violation_data);
+  Report* observed_report =
+      MakeGarbageCollected<Report>("csp-violation", Url().GetString(), body);
+  ReportingContext::From(document)->QueueReport(
+      observed_report, use_reporting_api ? report_endpoints : Vector<String>());
+
+  if (use_reporting_api)
+    return;
 
   for (const auto& report_endpoint : report_endpoints) {
-    if (use_reporting_api) {
-      // https://w3c.github.io/webappsec-csp/#report-violation
-      // Step 3.5. If violation’s policy’s directive set contains a directive
-      // named "report-to" (directive): [spec text]
-      //
-      // https://w3c.github.io/reporting/#queue-report
-      // Step 2. If url was not provided by the caller, let url be settings’s
-      // creation URL. [spec text]
-      reporting_service_proxy_holder.QueueCspViolationReport(
-          Url(), report_endpoint, &violation_data);
-      continue;
-    }
-
     // Use the frame's document to complete the endpoint URL, overriding its URL
     // with the blocked document's URL.
     // https://w3c.github.io/webappsec-csp/#report-violation
@@ -202,7 +201,7 @@ void ExecutionContextCSPDelegate::DisableEval(const String& error_message) {
 
 void ExecutionContextCSPDelegate::ReportBlockedScriptExecutionToInspector(
     const String& directive_text) {
-  probe::scriptExecutionBlockedByCSP(execution_context_, directive_text);
+  probe::ScriptExecutionBlockedByCSP(execution_context_, directive_text);
 }
 
 void ExecutionContextCSPDelegate::DidAddContentSecurityPolicies(

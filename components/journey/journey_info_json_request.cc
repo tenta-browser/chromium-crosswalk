@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "components/journey/proto/batch_get_switcher_journey_from_pageload_request.pb.h"
@@ -76,10 +77,11 @@ void JourneyInfoJsonRequest::OnSimpleURLLoaderComplete(
 
   if (net_error != net::OK) {
     std::move(completed_callback_)
-        .Run(nullptr, base::StringPrintf("Network error code: %d", net_error));
+        .Run(base::nullopt,
+             base::StringPrintf("Network error code: %d", net_error));
   } else if (response_code / 100 != 2) {
     std::move(completed_callback_)
-        .Run(nullptr,
+        .Run(base::nullopt,
              base::StringPrintf("Http response error code: %d", response_code));
   } else {
     last_response_string_ = std::move(*response_body);
@@ -92,14 +94,14 @@ void JourneyInfoJsonRequest::OnSimpleURLLoaderComplete(
   }
 }
 
-void JourneyInfoJsonRequest::OnJsonParsed(std::unique_ptr<base::Value> result) {
+void JourneyInfoJsonRequest::OnJsonParsed(base::Value result) {
   std::move(completed_callback_).Run(std::move(result), std::string());
 }
 
 void JourneyInfoJsonRequest::OnJsonError(const std::string& error) {
   DLOG(WARNING) << "Received invalid JSON (" << error
                 << "): " << last_response_string_;
-  std::move(completed_callback_).Run(nullptr, error);
+  std::move(completed_callback_).Run(base::nullopt, error);
 }
 
 JourneyInfoJsonRequest::Builder::Builder()
@@ -144,8 +146,6 @@ JourneyInfoJsonRequest::Builder::BuildSimpleURLLoaderHeaders() const {
   if (!auth_header_.empty()) {
     headers.SetHeader("Authorization", auth_header_);
   }
-  variations::AppendVariationHeaders(url_, variations::InIncognito::kNo,
-                                     variations::SignedIn::kNo, &headers);
   return headers;
 }
 
@@ -157,9 +157,11 @@ JourneyInfoJsonRequest::Builder::BuildSimpleURLLoader() const {
 
   auto resource_request = std::make_unique<network::ResourceRequest>();
   resource_request->url = GURL(url_);
-  resource_request->load_flags =
-      net::LOAD_DO_NOT_SAVE_COOKIES | net::LOAD_DO_NOT_SEND_COOKIES;
+  resource_request->allow_credentials = false;
   resource_request->headers = BuildSimpleURLLoaderHeaders();
+  variations::AppendVariationsHeader(url_, variations::InIncognito::kNo,
+                                     variations::SignedIn::kNo,
+                                     resource_request.get());
   resource_request->method = "POST";
 
   auto simple_loader = network::SimpleURLLoader::Create(

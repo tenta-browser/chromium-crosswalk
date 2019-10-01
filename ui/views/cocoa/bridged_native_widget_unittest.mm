@@ -2,13 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#import "ui/views_bridge_mac/bridged_native_widget_impl.h"
+#import "components/remote_cocoa/app_shim/bridged_native_widget_impl.h"
 
 #import <Cocoa/Cocoa.h>
 #include <objc/runtime.h>
 
 #include <memory>
 
+#include "base/bind.h"
 #import "base/mac/foundation_util.h"
 #import "base/mac/mac_util.h"
 #import "base/mac/scoped_objc_class_swizzler.h"
@@ -18,6 +19,9 @@
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_task_environment.h"
+#import "components/remote_cocoa/app_shim/bridged_content_view.h"
+#import "components/remote_cocoa/app_shim/native_widget_mac_nswindow.h"
+#import "components/remote_cocoa/app_shim/views_nswindow_delegate.h"
 #import "testing/gtest_mac.h"
 #import "ui/base/cocoa/window_size_constants.h"
 #include "ui/base/ime/input_method.h"
@@ -36,9 +40,6 @@
 #include "ui/views/widget/root_view.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_observer.h"
-#import "ui/views_bridge_mac/bridged_content_view.h"
-#import "ui/views_bridge_mac/native_widget_mac_nswindow.h"
-#import "ui/views_bridge_mac/views_nswindow_delegate.h"
 
 using base::ASCIIToUTF16;
 using base::SysNSStringToUTF8;
@@ -505,7 +506,8 @@ class BridgedNativeWidgetTest : public BridgedNativeWidgetTestBase,
 
   HandleKeyEventCallback handle_key_event_callback_;
 
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_{
+      base::test::ScopedTaskEnvironment::MainThreadType::UI};
 
  private:
   DISALLOW_COPY_AND_ASSIGN(BridgedNativeWidgetTest);
@@ -528,12 +530,9 @@ class EnterAcceleratorView : public View {
   int count_ = 0;
 };
 
-BridgedNativeWidgetTest::BridgedNativeWidgetTest()
-    : scoped_task_environment_(
-          base::test::ScopedTaskEnvironment::MainThreadType::UI) {}
+BridgedNativeWidgetTest::BridgedNativeWidgetTest() = default;
 
-BridgedNativeWidgetTest::~BridgedNativeWidgetTest() {
-}
+BridgedNativeWidgetTest::~BridgedNativeWidgetTest() = default;
 
 Textfield* BridgedNativeWidgetTest::InstallTextField(
     const base::string16& text,
@@ -1821,6 +1820,41 @@ TEST_F(BridgedNativeWidgetTest, TextInput_RecursiveUpdateWindows) {
   g_fake_current_input_context = nullptr;
   g_fake_interpret_key_events = nullptr;
   g_update_windows_closure = nullptr;
+}
+
+// Write selection text to the pasteboard.
+TEST_F(BridgedNativeWidgetTest, TextInput_WriteToPasteboard) {
+  const std::string test_string = "foo bar baz";
+  InstallTextField(test_string);
+
+  NSArray* types =
+      @[ NSStringPboardType, base::mac::CFToNSCast(kUTTypeUTF8PlainText) ];
+
+  // Try to write with no selection. This will succeed, but the string will be
+  // empty.
+  {
+    NSPasteboard* pboard = [NSPasteboard pasteboardWithUniqueName];
+    BOOL wrote_to_pboard = [ns_view_ writeSelectionToPasteboard:pboard
+                                                          types:types];
+    EXPECT_TRUE(wrote_to_pboard);
+    NSArray* objects = [pboard readObjectsForClasses:@ [[NSString class]]
+        options:0];
+    EXPECT_EQ(1u, [objects count]);
+    EXPECT_NSEQ(@"", [objects lastObject]);
+  }
+
+  // Write a selection successfully.
+  {
+    SetSelectionRange(NSMakeRange(4, 7));
+    NSPasteboard* pboard = [NSPasteboard pasteboardWithUniqueName];
+    BOOL wrote_to_pboard = [ns_view_ writeSelectionToPasteboard:pboard
+                                                          types:types];
+    EXPECT_TRUE(wrote_to_pboard);
+    NSArray* objects = [pboard readObjectsForClasses:@ [[NSString class]]
+        options:0];
+    EXPECT_EQ(1u, [objects count]);
+    EXPECT_NSEQ(@"bar baz", [objects lastObject]);
+  }
 }
 
 typedef BridgedNativeWidgetTestBase BridgedNativeWidgetSimulateFullscreenTest;

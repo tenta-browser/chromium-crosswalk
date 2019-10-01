@@ -5,6 +5,8 @@
 #include "content/renderer/p2p/ipc_network_manager.h"
 
 #include <string>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
@@ -46,8 +48,12 @@ rtc::AdapterType ConvertConnectionTypeToAdapterType(
 
 }  // namespace
 
-IpcNetworkManager::IpcNetworkManager(NetworkListManager* network_list_manager)
-    : network_list_manager_(network_list_manager), weak_factory_(this) {
+IpcNetworkManager::IpcNetworkManager(
+    NetworkListManager* network_list_manager,
+    std::unique_ptr<webrtc::MdnsResponderInterface> mdns_responder)
+    : network_list_manager_(network_list_manager),
+      mdns_responder_(std::move(mdns_responder)),
+      weak_factory_(this) {
   network_list_manager_->AddNetworkListObserver(this);
 }
 

@@ -35,7 +35,9 @@ import org.chromium.base.annotations.UsedByReflection;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabFavicon;
 import org.chromium.chrome.browser.tab.TabObserver;
+import org.chromium.chrome.browser.util.ColorUtils;
 
 /**
  * A widget that shows a single row of the {@link AccessibilityTabModelListView} list.
@@ -58,9 +60,10 @@ public class AccessibilityTabModelListItem extends FrameLayout implements OnClic
     private final float mFlingCommitDistance;
     private final int mDefaultLevel;
     private final int mIncognitoLevel;
-    private final ColorStateList mDarkIconColor;
-    private final ColorStateList mDarkCloseIconColor;
-    private final ColorStateList mLightCloseIconColor;
+    private final ColorStateList mDefaultIconColor;
+    private final ColorStateList mIncognitoIconColor;
+    private final ColorStateList mDefaultCloseIconColor;
+    private final ColorStateList mIncognitoCloseIconColor;
 
     // Keeps track of how a tab was closed
     //  < 0 : swiped to the left.
@@ -214,9 +217,12 @@ public class AccessibilityTabModelListItem extends FrameLayout implements OnClic
 
         mDefaultHeight =
                 context.getResources().getDimensionPixelOffset(R.dimen.accessibility_tab_height);
-        mDarkIconColor = AppCompatResources.getColorStateList(context, R.color.dark_mode_tint);
-        mDarkCloseIconColor = AppCompatResources.getColorStateList(context, R.color.black_alpha_38);
-        mLightCloseIconColor =
+        mDefaultIconColor = ColorUtils.getIconTint(context, false);
+        mIncognitoIconColor =
+                AppCompatResources.getColorStateList(context, R.color.default_icon_color_dark);
+        mDefaultCloseIconColor =
+                AppCompatResources.getColorStateList(context, R.color.default_icon_color_secondary);
+        mIncognitoCloseIconColor =
                 AppCompatResources.getColorStateList(context, R.color.white_alpha_70);
         mDefaultLevel = getResources().getInteger(R.integer.list_item_level_default);
         mIncognitoLevel = getResources().getInteger(R.integer.list_item_level_incognito);
@@ -312,14 +318,14 @@ public class AccessibilityTabModelListItem extends FrameLayout implements OnClic
             ApiCompatibilityUtils.setTextAppearance(mTitleView, R.style.TextAppearance_WhiteTitle1);
             ApiCompatibilityUtils.setTextAppearance(
                     mDescriptionView, R.style.TextAppearance_WhiteBody);
-            ApiCompatibilityUtils.setImageTintList(mCloseButton, mLightCloseIconColor);
+            ApiCompatibilityUtils.setImageTintList(mCloseButton, mIncognitoCloseIconColor);
         } else {
             setBackgroundResource(R.color.modern_primary_color);
             mFaviconView.getBackground().setLevel(mDefaultLevel);
             ApiCompatibilityUtils.setTextAppearance(mTitleView, R.style.TextAppearance_BlackTitle1);
             ApiCompatibilityUtils.setTextAppearance(
                     mDescriptionView, R.style.TextAppearance_BlackBody);
-            ApiCompatibilityUtils.setImageTintList(mCloseButton, mDarkCloseIconColor);
+            ApiCompatibilityUtils.setImageTintList(mCloseButton, mDefaultCloseIconColor);
         }
 
         if (TextUtils.isEmpty(url)) {
@@ -332,14 +338,15 @@ public class AccessibilityTabModelListItem extends FrameLayout implements OnClic
 
     private void updateFavicon() {
         if (mTab != null) {
-            Bitmap bitmap = mTab.getFavicon();
+            Bitmap bitmap = TabFavicon.getBitmap(mTab);
             if (bitmap != null) {
                 // Don't tint favicon bitmaps.
                 ApiCompatibilityUtils.setImageTintList(mFaviconView, null);
                 mFaviconView.setImageBitmap(bitmap);
             } else {
                 mFaviconView.setImageResource(R.drawable.ic_globe_24dp);
-                ApiCompatibilityUtils.setImageTintList(mFaviconView, mDarkIconColor);
+                ApiCompatibilityUtils.setImageTintList(
+                        mFaviconView, mTab.isIncognito() ? mIncognitoIconColor : mDefaultIconColor);
             }
         }
     }

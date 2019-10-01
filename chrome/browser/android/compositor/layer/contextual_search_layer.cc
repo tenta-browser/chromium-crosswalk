@@ -35,6 +35,7 @@ scoped_refptr<ContextualSearchLayer> ContextualSearchLayer::Create(
 
 void ContextualSearchLayer::SetProperties(
     int panel_shadow_resource_id,
+    int search_bar_background_color,
     int search_context_resource_id,
     int search_term_resource_id,
     int search_caption_resource_id,
@@ -42,6 +43,8 @@ void ContextualSearchLayer::SetProperties(
     int search_provider_icon_resource_id,
     int quick_action_icon_resource_id,
     int arrow_up_resource_id,
+    int drag_handlebar_resource_id,
+    int open_tab_icon_resource_id,
     int close_icon_resource_id,
     int progress_bar_background_resource_id,
     int progress_bar_resource_id,
@@ -53,6 +56,7 @@ void ContextualSearchLayer::SetProperties(
     bool search_promo_visible,
     float search_promo_height,
     float search_promo_opacity,
+    int search_promo_background_color,
     bool search_bar_banner_visible,
     float search_bar_banner_height,
     float search_bar_banner_padding,
@@ -64,6 +68,7 @@ void ContextualSearchLayer::SetProperties(
     float search_panel_width,
     float search_panel_height,
     float search_bar_margin_side,
+    float search_bar_margin_top,
     float search_bar_height,
     float search_context_opacity,
     float search_text_layer_min_height,
@@ -79,6 +84,8 @@ void ContextualSearchLayer::SetProperties(
     bool thumbnail_visible,
     float custom_image_visibility_percentage,
     int bar_image_size,
+    int icon_color,
+    int drag_handlebar_color,
     float arrow_icon_opacity,
     float arrow_icon_rotation,
     float close_icon_opacity,
@@ -105,6 +112,7 @@ void ContextualSearchLayer::SetProperties(
   OverlayPanelLayer::SetResourceIds(
       search_term_resource_id, panel_shadow_resource_id,
       search_bar_shadow_resource_id, search_provider_icon_resource_id,
+      drag_handlebar_resource_id, open_tab_icon_resource_id,
       close_icon_resource_id);
 
   float content_view_top = search_bar_bottom + search_promo_height;
@@ -116,10 +124,12 @@ void ContextualSearchLayer::SetProperties(
   // -----------------------------------------------------------------
   OverlayPanelLayer::SetProperties(
       dp_to_px, content_layer, content_view_top, search_panel_x, search_panel_y,
-      search_panel_width, search_panel_height, search_bar_margin_side,
-      search_bar_height, search_bar_top, search_term_opacity,
-      should_render_bar_border, search_bar_border_height,
-      search_bar_shadow_visible, search_bar_shadow_opacity, close_icon_opacity);
+      search_panel_width, search_panel_height, search_bar_background_color,
+      search_bar_margin_side, search_bar_margin_top, search_bar_height,
+      search_bar_top, search_term_opacity, should_render_bar_border,
+      search_bar_border_height, search_bar_shadow_visible,
+      search_bar_shadow_opacity, icon_color, drag_handlebar_color,
+      close_icon_opacity);
 
   bool is_rtl = l10n_util::IsLayoutRtl();
 
@@ -151,7 +161,7 @@ void ContextualSearchLayer::SetProperties(
     // be an interpolation between the background color of the Search Bar and
     // a lighter shade of the background color of the Ripple.
     bar_banner_container_->SetBackgroundColor(color_utils::AlphaBlend(
-        kBarBannerRippleBackgroundColor, kSearchBarBackgroundColor,
+        kBarBannerRippleBackgroundColor, search_bar_background_color,
         0.25f * search_bar_banner_ripple_opacity));
 
     // -----------------------------------------------------------------
@@ -224,8 +234,9 @@ void ContextualSearchLayer::SetProperties(
   // Arrow Icon
   // ---------------------------------------------------------------------------
   // Grabs the arrow icon resource.
-  ui::Resource* arrow_icon_resource = resource_manager_->GetResource(
-      ui::ANDROID_RESOURCE_TYPE_STATIC, arrow_up_resource_id);
+  ui::Resource* arrow_icon_resource =
+      resource_manager_->GetStaticResourceWithTint(arrow_up_resource_id,
+                                                   icon_color);
 
   // Positions the icon at the end of the bar.
   float arrow_icon_left;
@@ -278,6 +289,8 @@ void ContextualSearchLayer::SetProperties(
       search_promo_container_->SetBounds(search_promo_size);
       search_promo_container_->SetPosition(gfx::PointF(0.f, search_bar_bottom));
       search_promo_container_->SetMasksToBounds(true);
+      search_promo_container_->SetBackgroundColor(
+          search_promo_background_color);
 
       // Search Promo
       if (search_promo_->parent() != search_promo_container_)
@@ -301,61 +314,13 @@ void ContextualSearchLayer::SetProperties(
   // ---------------------------------------------------------------------------
   // Progress Bar
   // ---------------------------------------------------------------------------
-  if (should_render_progress_bar) {
-    // Grabs Progress Bar resources.
-    ui::NinePatchResource* progress_bar_background_resource =
-        ui::NinePatchResource::From(resource_manager_->GetResource(
-            ui::ANDROID_RESOURCE_TYPE_STATIC,
-            progress_bar_background_resource_id));
-    ui::NinePatchResource* progress_bar_resource =
-        ui::NinePatchResource::From(resource_manager_->GetResource(
-            ui::ANDROID_RESOURCE_TYPE_STATIC, progress_bar_resource_id));
-
-    DCHECK(progress_bar_background_resource);
-    DCHECK(progress_bar_resource);
-
-    // Progress Bar Background
-    if (progress_bar_background_->parent() != layer_)
-      layer_->AddChild(progress_bar_background_);
-
-    float progress_bar_y = search_bar_bottom - progress_bar_height;
-    gfx::Size progress_bar_background_size(search_panel_width,
-                                           progress_bar_height);
-
-    progress_bar_background_->SetUIResourceId(
-        progress_bar_background_resource->ui_resource()->id());
-    progress_bar_background_->SetBorder(
-        progress_bar_background_resource->Border(progress_bar_background_size));
-    progress_bar_background_->SetAperture(
-        progress_bar_background_resource->aperture());
-    progress_bar_background_->SetBounds(progress_bar_background_size);
-    progress_bar_background_->SetPosition(gfx::PointF(0.f, progress_bar_y));
-    progress_bar_background_->SetOpacity(progress_bar_opacity);
-
-    // Progress Bar
-    if (progress_bar_->parent() != layer_)
-      layer_->AddChild(progress_bar_);
-
-    float progress_bar_width =
-        floor(search_panel_width * progress_bar_completion / 100.f);
-    gfx::Size progress_bar_size(progress_bar_width, progress_bar_height);
-    progress_bar_->SetUIResourceId(progress_bar_resource->ui_resource()->id());
-    progress_bar_->SetBorder(progress_bar_resource->Border(progress_bar_size));
-    progress_bar_->SetAperture(progress_bar_resource->aperture());
-    progress_bar_->SetBounds(progress_bar_size);
-    progress_bar_->SetPosition(gfx::PointF(0.f, progress_bar_y));
-    progress_bar_->SetOpacity(progress_bar_opacity);
-  } else {
-    // Removes Progress Bar and its Background from the Layer Tree.
-    if (progress_bar_background_.get() && progress_bar_background_->parent())
-      progress_bar_background_->RemoveFromParent();
-
-    if (progress_bar_.get() && progress_bar_->parent())
-      progress_bar_->RemoveFromParent();
-  }
+  OverlayPanelLayer::SetProgressBar(
+      progress_bar_background_resource_id, progress_bar_resource_id,
+      progress_bar_visible, search_bar_bottom, progress_bar_height,
+      progress_bar_opacity, progress_bar_completion, search_panel_width);
 
   // ---------------------------------------------------------------------------
-  // Divider Line
+  // Divider Line separator
   // ---------------------------------------------------------------------------
   if (divider_line_visibility_percentage > 0.f) {
     if (divider_line_->parent() != layer_)
@@ -722,8 +687,6 @@ ContextualSearchLayer::ContextualSearchLayer(
       bar_banner_container_(cc::SolidColorLayer::Create()),
       bar_banner_ripple_(cc::NinePatchLayer::Create()),
       bar_banner_text_(cc::UIResourceLayer::Create()),
-      progress_bar_(cc::NinePatchLayer::Create()),
-      progress_bar_background_(cc::NinePatchLayer::Create()),
       search_caption_(cc::UIResourceLayer::Create()),
       text_layer_(cc::UIResourceLayer::Create()),
       divider_line_(cc::SolidColorLayer::Create()),
@@ -751,14 +714,6 @@ ContextualSearchLayer::ContextualSearchLayer(
   search_promo_container_->SetIsDrawable(true);
   search_promo_container_->SetBackgroundColor(kSearchBackgroundColor);
   search_promo_->SetIsDrawable(true);
-
-  // Progress Bar Background
-  progress_bar_background_->SetIsDrawable(true);
-  progress_bar_background_->SetFillCenter(true);
-
-  // Progress Bar
-  progress_bar_->SetIsDrawable(true);
-  progress_bar_->SetFillCenter(true);
 
   // Icon - holds thumbnail, search provider icon and/or quick action icon
   icon_layer_->SetIsDrawable(true);

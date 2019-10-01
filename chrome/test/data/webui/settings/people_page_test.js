@@ -44,6 +44,7 @@ cr.define('settings_people_page', function() {
 
       PolymerTest.clearBody();
       peoplePage = document.createElement('settings-people-page');
+      peoplePage.pageVisibility = settings.pageVisibility;
       document.body.appendChild(peoplePage);
 
       return Promise
@@ -110,6 +111,7 @@ cr.define('settings_people_page', function() {
 
         PolymerTest.clearBody();
         peoplePage = document.createElement('settings-people-page');
+        peoplePage.pageVisibility = settings.pageVisibility;
         document.body.appendChild(peoplePage);
       });
 
@@ -125,7 +127,7 @@ cr.define('settings_people_page', function() {
 
       // This makes sure UI meant for DICE-enabled profiles are not leaked to
       // non-dice profiles.
-      // TODO(scottchen): This should be removed once all profiles are fully
+      // TODO(tangltom): This should be removed once all profiles are fully
       // migrated.
       test('NoManageProfileRow', function() {
         assertFalse(!!peoplePage.$$('#edit-profile'));
@@ -405,6 +407,7 @@ cr.define('settings_people_page', function() {
 
         PolymerTest.clearBody();
         peoplePage = document.createElement('settings-people-page');
+        peoplePage.pageVisibility = settings.pageVisibility;
         document.body.appendChild(peoplePage);
 
         Polymer.dom.flush();
@@ -555,6 +558,7 @@ cr.define('settings_people_page', function() {
 
       PolymerTest.clearBody();
       peoplePage = document.createElement('settings-people-page');
+      peoplePage.pageVisibility = settings.pageVisibility;
       document.body.appendChild(peoplePage);
 
       Polymer.dom.flush();

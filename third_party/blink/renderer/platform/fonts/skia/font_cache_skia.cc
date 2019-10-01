@@ -38,7 +38,7 @@
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/platform/font_family_names.h"
 #include "third_party/blink/renderer/platform/fonts/alternate_font_family.h"
-#include "third_party/blink/renderer/platform/fonts/bitmap_glyphs_blacklist.h"
+#include "third_party/blink/renderer/platform/fonts/bitmap_glyphs_block_list.h"
 #include "third_party/blink/renderer/platform/fonts/font_cache.h"
 #include "third_party/blink/renderer/platform/fonts/font_description.h"
 #include "third_party/blink/renderer/platform/fonts/font_face_creation_params.h"
@@ -60,13 +60,7 @@ AtomicString ToAtomicString(const SkString& str) {
   return AtomicString::FromUTF8(str.c_str(), str.size());
 }
 
-#if defined(OS_ANDROID) || defined(OS_LINUX) || defined(OS_FUCHSIA)
-// Android special locale for retrieving the color emoji font
-// based on the proposed changes in UTR #51 for introducing
-// an Emoji script code:
-// http://www.unicode.org/reports/tr51/proposed.html#Emoji_Script
-static const char kAndroidColorEmojiLocale[] = "und-Zsye";
-
+#if defined(OS_ANDROID) || defined(OS_LINUX)
 // This function is called on android or when we are emulating android fonts on
 // linux and the embedder has overriden the default fontManager with
 // WebFontRendering::setSkiaFontMgr.
@@ -78,25 +72,10 @@ AtomicString FontCache::GetFamilyNameForCharacter(
     FontFallbackPriority fallback_priority) {
   DCHECK(fm);
 
-  const int kMaxLocales = 4;
-  const char* bcp47_locales[kMaxLocales];
-  int locale_count = 0;
-
-  // Fill in the list of locales in the reverse priority order.
-  // Skia expects the highest array index to be the first priority.
-  const LayoutLocale* content_locale = font_description.Locale();
-  if (const LayoutLocale* han_locale =
-          LayoutLocale::LocaleForHan(content_locale))
-    bcp47_locales[locale_count++] = han_locale->LocaleForHanForSkFontMgr();
-  bcp47_locales[locale_count++] =
-      LayoutLocale::GetDefault().LocaleForSkFontMgr();
-  if (content_locale)
-    bcp47_locales[locale_count++] = content_locale->LocaleForSkFontMgr();
-  if (fallback_priority == FontFallbackPriority::kEmojiEmoji)
-    bcp47_locales[locale_count++] = kAndroidColorEmojiLocale;
-  SECURITY_DCHECK(locale_count <= kMaxLocales);
+  Bcp47Vector locales =
+      GetBcp47LocaleForRequest(font_description, fallback_priority);
   sk_sp<SkTypeface> typeface(fm->matchFamilyStyleCharacter(
-      nullptr, SkFontStyle(), bcp47_locales, locale_count, c));
+      nullptr, SkFontStyle(), locales.data(), locales.size(), c));
   if (!typeface)
     return g_empty_atom;
 
@@ -104,7 +83,7 @@ AtomicString FontCache::GetFamilyNameForCharacter(
   typeface->getFamilyName(&skia_family_name);
   return ToAtomicString(skia_family_name);
 }
-#endif  // defined(OS_ANDROID) || defined(OS_LINUX) || defined(OS_FUCHSIA)
+#endif  // defined(OS_ANDROID) || defined(OS_LINUX)
 
 void FontCache::PlatformInit() {}
 
@@ -303,7 +282,7 @@ std::unique_ptr<FontPlatformData> FontCache::CreateFontPlatformData(
           font_description.Orientation());
 
   font_platform_data->SetAvoidEmbeddedBitmaps(
-      BitmapGlyphsBlacklist::AvoidEmbeddedBitmapsForTypeface(typeface.get()));
+      BitmapGlyphsBlockList::ShouldAvoidEmbeddedBitmapsForTypeface(*typeface));
 
   return font_platform_data;
 }

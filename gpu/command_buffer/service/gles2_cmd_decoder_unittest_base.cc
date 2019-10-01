@@ -247,7 +247,7 @@ void GLES2DecoderTestBase::InitDecoderWithWorkarounds(
   // will initialize itself.
   command_buffer_service_.reset(new FakeCommandBufferServiceBase());
   mock_decoder_.reset(
-      new MockGLES2Decoder(command_buffer_service_.get(), &outputter_));
+      new MockGLES2Decoder(this, command_buffer_service_.get(), &outputter_));
 
   EXPECT_EQ(group_->Initialize(mock_decoder_.get(), init.context_type,
                                DisallowedFeatures()),
@@ -1407,6 +1407,7 @@ void GLES2DecoderTestBase::DoBindTexImage2DCHROMIUM(GLenum target,
   cmds::BindTexImage2DCHROMIUM bind_tex_image_2d_cmd;
   bind_tex_image_2d_cmd.Init(target, image_id);
   EXPECT_CALL(*gl_, GetError())
+      .Times(AtMost(2))
       .WillOnce(Return(GL_NO_ERROR))
       .WillOnce(Return(GL_NO_ERROR))
       .RetiresOnSaturation();

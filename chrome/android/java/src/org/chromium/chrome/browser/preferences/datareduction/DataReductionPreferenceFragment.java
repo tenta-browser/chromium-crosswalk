@@ -16,13 +16,14 @@ import android.view.MenuItem;
 
 import org.chromium.base.CommandLine;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.datareduction.DataReductionPromoUtils;
+import org.chromium.chrome.browser.datareduction.DataReductionProxyUma;
 import org.chromium.chrome.browser.help.HelpAndFeedback;
 import org.chromium.chrome.browser.infobar.PreviewsLitePageInfoBar;
 import org.chromium.chrome.browser.net.spdyproxy.DataReductionProxySettings;
 import org.chromium.chrome.browser.preferences.ChromeSwitchPreference;
 import org.chromium.chrome.browser.preferences.PreferenceUtils;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.chrome.browser.snackbar.DataReductionPromoSnackbarController;
 import org.chromium.chrome.browser.util.IntentUtils;
 
 /**
@@ -38,8 +39,6 @@ public class DataReductionPreferenceFragment extends PreferenceFragment {
 
     private boolean mIsEnabled;
     private boolean mWasEnabledAtCreation;
-    /** Whether the current Activity is started from the snackbar promo. */
-    private boolean mFromPromo;
     private boolean mFromMainMenu;
     private boolean mFromInfobar;
 
@@ -48,8 +47,7 @@ public class DataReductionPreferenceFragment extends PreferenceFragment {
         super.onCreate(savedInstanceState);
 
         PreferenceUtils.addPreferencesFromResource(this, R.xml.data_reduction_preferences);
-        getActivity().setTitle(DataReductionBrandingResourceProvider.getDataSaverBrandedString(
-                R.string.data_reduction_title));
+        getActivity().setTitle(R.string.data_reduction_title_lite_mode);
         boolean isEnabled = DataReductionProxySettings.getInstance().isDataReductionProxyEnabled();
         mIsEnabled = !isEnabled;
         mWasEnabledAtCreation = isEnabled;
@@ -57,8 +55,6 @@ public class DataReductionPreferenceFragment extends PreferenceFragment {
 
         setHasOptionsMenu(true);
 
-        mFromPromo = IntentUtils.safeGetBoolean(
-                getArguments(), DataReductionPromoSnackbarController.FROM_PROMO, false);
         mFromMainMenu = IntentUtils.safeGetBoolean(getArguments(), FROM_MAIN_MENU, false);
         mFromInfobar = IntentUtils.safeGetBoolean(
                 getArguments(), PreviewsLitePageInfoBar.FROM_INFOBAR, false);
@@ -74,10 +70,7 @@ public class DataReductionPreferenceFragment extends PreferenceFragment {
         }
 
         int statusChange;
-        if (mFromPromo) {
-            statusChange = mIsEnabled ? DataReductionProxyUma.ACTION_SNACKBAR_LINK_CLICKED
-                                      : DataReductionProxyUma.ACTION_SNACKBAR_LINK_CLICKED_DISABLED;
-        } else if (mFromMainMenu) {
+        if (mFromMainMenu) {
             if (mWasEnabledAtCreation) {
                 statusChange = mIsEnabled ? DataReductionProxyUma.ACTION_MAIN_MENU_ON_TO_ON
                                           : DataReductionProxyUma.ACTION_MAIN_MENU_ON_TO_OFF;
@@ -134,9 +127,8 @@ public class DataReductionPreferenceFragment extends PreferenceFragment {
         if (isEnabled) {
             PreferenceUtils.addPreferencesFromResource(this, R.xml.data_reduction_preferences);
         } else {
-            PreferenceUtils.addPreferencesFromResource(this,
-                    DataReductionBrandingResourceProvider.getPreferencesOffXml(
-                            R.xml.data_reduction_preferences_off));
+            PreferenceUtils.addPreferencesFromResource(
+                    this, R.xml.data_reduction_preferences_off_lite_mode);
         }
         mIsEnabled = isEnabled;
     }
@@ -149,9 +141,7 @@ public class DataReductionPreferenceFragment extends PreferenceFragment {
             String percent =
                     DataReductionProxySettings.getInstance().getContentLengthPercentSavings();
             return resources.getString(
-                    DataReductionBrandingResourceProvider.getDataSaverBrandedString(
-                            R.string.data_reduction_menu_item_summary),
-                    percent);
+                    R.string.data_reduction_menu_item_summary_lite_mode, percent);
         } else {
             return (String) resources.getText(R.string.text_off);
         }

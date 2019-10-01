@@ -4,12 +4,8 @@
 
 /** @fileoverview Runs the Media Router Polymer elements tests. */
 
-/** @const {string} Path to source root. */
-var ROOT_PATH = '../../../../../';
-
 // Polymer BrowserTest fixture.
-GEN_INCLUDE(
-    [ROOT_PATH + 'chrome/test/data/webui/polymer_browser_test_base.js']);
+GEN_INCLUDE(['//chrome/test/data/webui/polymer_browser_test_base.js']);
 
 /**
  * Test fixture for Media Router Polymer elements.
@@ -32,7 +28,8 @@ MediaRouterElementsBrowserTest.prototype = {
   // List tests for individual elements. The media-router-container tests are
   // split between several files and use common functionality from
   // media_router_container_test_base.js.
-  extraLibraries: PolymerTest.getLibraries(ROOT_PATH).concat([
+  extraLibraries: [
+    ...PolymerTest.prototype.extraLibraries,
     'issue_banner_tests.js',
     'media_router_container_cast_mode_list_tests.js',
     'media_router_container_filter_tests.js',
@@ -45,7 +42,7 @@ MediaRouterElementsBrowserTest.prototype = {
     'media_router_search_highlighter_tests.js',
     'route_controls_tests.js',
     'route_details_tests.js',
-  ]),
+  ],
 
   /**
    * Mocks the browser API methods to make them fire events instead.
@@ -155,15 +152,35 @@ TEST_F(
       mocha.run();
     });
 
+// Disabling on chromeos due to flaky test.
+// https://crbug.com/945198
+GEN('#if defined(OS_CHROMEOS)');
+GEN('#define MAYBE_MediaRouterContainerSearchPart1 \\');
+GEN('    DISABLED_MediaRouterContainerSearchPart1');
+GEN('#else');
+GEN('#define MAYBE_MediaRouterContainerSearchPart1 \\');
+GEN('    MediaRouterContainerSearchPart1');
+GEN('#endif');
+
 TEST_F(
-    'MediaRouterElementsBrowserTest', 'MediaRouterContainerSearchPart1',
+    'MediaRouterElementsBrowserTest', 'MAYBE_MediaRouterContainerSearchPart1',
     function() {
       media_router_container_search.registerTestsPart1();
       mocha.run();
     });
 
+// Disabling on chromeos due to flaky test.
+// https://crbug.com/945198
+GEN('#if defined(OS_CHROMEOS)');
+GEN('#define MAYBE_MediaRouterContainerSearchPart2 \\');
+GEN('    DISABLED_MediaRouterContainerSearchPart2');
+GEN('#else');
+GEN('#define MAYBE_MediaRouterContainerSearchPart2 \\');
+GEN('    MediaRouterContainerSearchPart2');
+GEN('#endif');
+
 TEST_F(
-    'MediaRouterElementsBrowserTest', 'MediaRouterContainerSearchPart2',
+    'MediaRouterElementsBrowserTest', 'MAYBE_MediaRouterContainerSearchPart2',
     function() {
       media_router_container_search.registerTestsPart2();
       mocha.run();
@@ -176,26 +193,19 @@ TEST_F(
       mocha.run();
     });
 
-// Disabling on Windows Debug due to flaky timeout on Win7 Tests (dbg)(1).
-// https://crbug.com/832947
-GEN('#if defined(OS_WIN) && !defined(NDEBUG)');
-GEN('#define MAYBE_MediaRouterContainerFilterPart1 \\');
-GEN('    DISABLED_MediaRouterContainerFilterPart1');
-GEN('#else');
-GEN('#define MAYBE_MediaRouterContainerFilterPart1 \\');
-GEN('    MediaRouterContainerFilterPart1');
-GEN('#endif');
 
+// crbug.com/945581
 TEST_F(
-    'MediaRouterElementsBrowserTest', 'MAYBE_MediaRouterContainerFilterPart1',
-    function() {
+    'MediaRouterElementsBrowserTest',
+    'DISABLED_MediaRouterContainerFilterPart1', function() {
       media_router_container_filter.registerTestsPart1();
       mocha.run();
     });
 
+// crbug.com/945581
 TEST_F(
-    'MediaRouterElementsBrowserTest', 'MediaRouterContainerFilterPart2',
-    function() {
+    'MediaRouterElementsBrowserTest',
+    'DISABLED_MediaRouterContainerFilterPart2', function() {
       media_router_container_filter.registerTestsPart2();
       mocha.run();
     });

@@ -52,14 +52,14 @@ class MEDIA_GPU_EXPORT V4L2SliceVideoDecodeAccelerator
 
   // VideoDecodeAccelerator implementation.
   bool Initialize(const Config& config, Client* client) override;
-  void Decode(const BitstreamBuffer& bitstream_buffer) override;
+  void Decode(BitstreamBuffer bitstream_buffer) override;
   void Decode(scoped_refptr<DecoderBuffer> buffer,
               int32_t bitstream_id) override;
   void AssignPictureBuffers(const std::vector<PictureBuffer>& buffers) override;
   void ImportBufferForPicture(
       int32_t picture_buffer_id,
       VideoPixelFormat pixel_format,
-      const gfx::GpuMemoryBufferHandle& gpu_memory_buffer_handle) override;
+      gfx::GpuMemoryBufferHandle gpu_memory_buffer_handle) override;
   void ReusePictureBuffer(int32_t picture_buffer_id) override;
   void Flush() override;
   void Reset() override;
@@ -342,6 +342,11 @@ class MEDIA_GPU_EXPORT V4L2SliceVideoDecodeAccelerator
 
   // Callback that indicates a picture has been cleared.
   void PictureCleared();
+
+  // Returns the number of OutputRecords at client/device. This is used to
+  // compute values reported for chrome://tracing.
+  size_t GetNumOfOutputRecordsAtClient() const;
+  size_t GetNumOfOutputRecordsAtDevice() const;
 
   size_t input_planes_count_;
   size_t output_planes_count_;

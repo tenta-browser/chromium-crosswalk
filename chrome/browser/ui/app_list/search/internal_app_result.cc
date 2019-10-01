@@ -8,13 +8,13 @@
 
 #include "ash/public/cpp/app_list/app_list_config.h"
 #include "ash/public/cpp/app_list/internal_app_id_constants.h"
+#include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "chrome/browser/favicon/large_icon_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/app_list/app_context_menu.h"
 #include "chrome/browser/ui/app_list/app_list_controller_delegate.h"
+#include "chrome/browser/ui/app_list/internal_app/internal_app_context_menu.h"
 #include "chrome/browser/ui/app_list/internal_app/internal_app_metadata.h"
-#include "chrome/browser/ui/app_list/search/search_util.h"
 #include "components/favicon/core/favicon_server_fetcher_params.h"
 #include "components/favicon/core/large_icon_service.h"
 #include "components/favicon_base/fallback_icon_style.h"
@@ -71,10 +71,6 @@ void InternalAppResult::ExecuteLaunchCommand(int event_flags) {
 }
 
 void InternalAppResult::Open(int event_flags) {
-  // Record the search metric if the result is not a suggested app.
-  if (display_type() != DisplayType::kRecommendation)
-    RecordHistogram(APP_SEARCH_RESULT);
-
   RecordOpenHistogram(id());
 
   if (id() == kInternalAppIdContinueReading &&
@@ -154,7 +150,8 @@ void InternalAppResult::OnGetFaviconFromCacheFinished(
       ->GetLargeIconOrFallbackStyleFromGoogleServerSkippingLocalCache(
           favicon::FaviconServerFetcherParams::CreateForDesktop(
               url_for_continuous_reading_),
-          /*may_page_url_be_private=*/false, traffic_annotation,
+          /*may_page_url_be_private=*/false,
+          /*should_trim_page_url_path=*/false, traffic_annotation,
           base::BindRepeating(
               &InternalAppResult::OnGetFaviconFromGoogleServerFinished,
               weak_factory_.GetWeakPtr()));
@@ -177,10 +174,14 @@ void InternalAppResult::GetContextMenuModel(GetMenuModelCallback callback) {
   }
 
   if (!context_menu_) {
-    context_menu_ = std::make_unique<AppContextMenu>(nullptr, profile(), id(),
-                                                     controller());
+    context_menu_ =
+        std::make_unique<InternalAppContextMenu>(profile(), id(), controller());
   }
   context_menu_->GetMenuModel(std::move(callback));
+}
+
+SearchResultType InternalAppResult::GetSearchResultType() const {
+  return INTERNAL_APP;
 }
 
 AppContextMenu* InternalAppResult::GetAppContextMenu() {

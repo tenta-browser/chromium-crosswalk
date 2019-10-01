@@ -8,6 +8,7 @@
 #include "png.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/platform/image-decoders/image_decoder_test_helpers.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 #include "third_party/blink/renderer/platform/wtf/time.h"
 #include "third_party/skia/include/core/SkImage.h"
 
@@ -574,6 +575,40 @@ TEST(AnimatedPNGTests, IdatSizeMismatch) {
   ExpectStatic(decoder.get());
 }
 
+TEST(AnimatedPNGTests, EmptyFdatFails) {
+  const char* png_file =
+      "/images/resources/"
+      "png-animated-idat-part-of-animation.png";
+  scoped_refptr<SharedBuffer> data = ReadFile(png_file);
+  ASSERT_FALSE(data->IsEmpty());
+
+  // Modify the third fdAT to be empty.
+  constexpr size_t kOffsetThirdFdat = 352;
+  scoped_refptr<SharedBuffer> modified_data =
+      SharedBuffer::Create(data->Data(), kOffsetThirdFdat);
+  png_byte four_bytes[4u];
+  WriteUint32(0, four_bytes);
+  modified_data->Append(reinterpret_cast<char*>(four_bytes), 4u);
+
+  // fdAT tag
+  modified_data->Append(data->Data() + kOffsetThirdFdat + 4u, 4u);
+
+  // crc computed from modified fdAT chunk
+  WriteUint32(4122214294, four_bytes);
+  modified_data->Append(reinterpret_cast<char*>(four_bytes), 4u);
+
+  // IEND
+  constexpr size_t kIENDOffset = 422u;
+  modified_data->Append(data->Data() + kIENDOffset, 12u);
+
+  auto decoder = CreatePNGDecoder();
+  decoder->SetData(std::move(modified_data), true);
+  for (size_t i = 0; i < decoder->FrameCount(); i++) {
+    decoder->DecodeFrameBufferAtIndex(i);
+  }
+  ASSERT_TRUE(decoder->Failed());
+}
+
 // Originally, the third frame has an offset of (1,2) and a size of (3,2). By
 // changing the offset to (4,4), the frame rect is no longer within the image
 // size of 5x5. This results in a failure.
@@ -713,11 +748,11 @@ TEST(AnimatedPNGTests, MixedDataChunks) {
       SharedBuffer::Create(full_data->Data(), kPostIDAT);
   const size_t kFcTLSize = 38u;
   const size_t kFdATSize = 31u;
-  png_byte fd_at[kFdATSize];
-  memcpy(fd_at, full_data->Data() + kPostIDAT + kFcTLSize, kFdATSize);
+  png_byte fdat[kFdATSize];
+  memcpy(fdat, full_data->Data() + kPostIDAT + kFcTLSize, kFdATSize);
   // Modify the sequence number
-  WriteUint32(1u, fd_at + 8);
-  data->Append((const char*)fd_at, kFdATSize);
+  WriteUint32(1u, fdat + 8);
+  data->Append((const char*)fdat, kFdATSize);
   const size_t kIENDOffset = 422u;
   data->Append(full_data->Data() + kIENDOffset,
                full_data->size() - kIENDOffset);
@@ -1186,23 +1221,26 @@ static std::vector<PNGSample> GetPNGSamplesInfo(bool include_8bit_pngs) {
   for (String color_space : color_spaces) {
     for (String alpha : alpha_status) {
       PNGSample png_sample;
-      png_sample.filename.append("_");
-      png_sample.filename.append(color_space);
-      png_sample.filename.append(alpha);
-      png_sample.filename.append(".png");
+      StringBuilder filename;
+      filename.Append("_");
+      filename.Append(color_space);
+      filename.Append(alpha);
+      filename.Append(".png");
+      png_sample.filename = filename.ToString();
       png_sample.color_space = color_space;
       png_sample.is_transparent = (alpha == "_transparent");
 
       for (String interlace : interlace_status) {
         PNGSample high_bit_depth_sample(png_sample);
-        high_bit_depth_sample.filename.insert(interlace, 0);
-        high_bit_depth_sample.filename.insert("2x2_16bit", 0);
+        high_bit_depth_sample.filename =
+            "2x2_16bit" + interlace + high_bit_depth_sample.filename;
         high_bit_depth_sample.is_high_bit_depth = true;
         png_samples.push_back(high_bit_depth_sample);
       }
       if (include_8bit_pngs) {
         PNGSample regular_bit_depth_sample(png_sample);
-        regular_bit_depth_sample.filename.insert("2x2_8bit", 0);
+        regular_bit_depth_sample.filename =
+            "2x2_8bit" + regular_bit_depth_sample.filename;
         regular_bit_depth_sample.is_high_bit_depth = false;
         png_samples.push_back(regular_bit_depth_sample);
       }
@@ -1218,8 +1256,7 @@ TEST(StaticPNGTests, DecodeHighBitDepthPngToHalfFloat) {
   FillPNGSamplesSourcePixels(png_samples);
   String path = "/images/resources/png-16bit/";
   for (PNGSample& png_sample : png_samples) {
-    String full_path = path;
-    full_path.append(png_sample.filename);
+    String full_path = path + png_sample.filename;
     png_sample.png_contents = ReadFile(full_path.Ascii().data());
     auto decoder = Create16BitPNGDecoder();
     TestHighBitDepthPNGDecoding(png_sample, decoder.get());
@@ -1233,8 +1270,7 @@ TEST(StaticPNGTests, ImageIsHighBitDepth) {
 
   String path = "/images/resources/png-16bit/";
   for (PNGSample& png_sample : png_samples) {
-    String full_path = path;
-    full_path.append(png_sample.filename);
+    String full_path = path + png_sample.filename;
     png_sample.png_contents = ReadFile(full_path.Ascii().data());
     ASSERT_TRUE(png_sample.png_contents.get());
 
@@ -1352,4 +1388,13 @@ TEST(PNGTests, crbug827754) {
   ASSERT_FALSE(decoder->Failed());
 }
 
-};  // namespace blink
+TEST(AnimatedPNGTests, TrnsMeansAlpha) {
+  const char* png_file =
+      "/images/resources/"
+      "png-animated-idat-part-of-animation.png";
+  auto decoder = CreatePNGDecoderWithPngData(png_file);
+  auto* frame = decoder->DecodeFrameBufferAtIndex(0);
+  ASSERT_TRUE(frame->HasAlpha());
+}
+
+}  // namespace blink

@@ -42,7 +42,7 @@
 #include "third_party/blink/renderer/platform/network/http_parsers.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
-#include "third_party/blink/renderer/platform/wtf/noncopyable.h"
+#include "third_party/blink/renderer/platform/wtf/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/ref_counted.h"
 #include "third_party/blink/renderer/platform/wtf/text/cstring.h"
 #include "third_party/blink/renderer/platform/wtf/time.h"
@@ -57,6 +57,8 @@ namespace blink {
 //
 // This class is thread-bound. Do not copy/pass an instance across threads.
 class PLATFORM_EXPORT ResourceResponse final {
+  USING_FAST_MALLOC(ResourceResponse);
+
  public:
   enum HTTPVersion : uint8_t {
     kHTTPVersionUnknown,
@@ -79,6 +81,8 @@ class PLATFORM_EXPORT ResourceResponse final {
   };
 
   class PLATFORM_EXPORT SignedCertificateTimestamp final {
+    DISALLOW_NEW();
+
    public:
     SignedCertificateTimestamp(String status,
                                String origin,
@@ -195,15 +199,15 @@ class PLATFORM_EXPORT ResourceResponse final {
   void SetTextEncodingName(const AtomicString&);
 
   int HttpStatusCode() const;
-  void SetHTTPStatusCode(int);
+  void SetHttpStatusCode(int);
 
   const AtomicString& HttpStatusText() const;
-  void SetHTTPStatusText(const AtomicString&);
+  void SetHttpStatusText(const AtomicString&);
 
   const AtomicString& HttpHeaderField(const AtomicString& name) const;
-  void SetHTTPHeaderField(const AtomicString& name, const AtomicString& value);
-  void AddHTTPHeaderField(const AtomicString& name, const AtomicString& value);
-  void ClearHTTPHeaderField(const AtomicString& name);
+  void SetHttpHeaderField(const AtomicString& name, const AtomicString& value);
+  void AddHttpHeaderField(const AtomicString& name, const AtomicString& value);
+  void ClearHttpHeaderField(const AtomicString& name);
   const HTTPHeaderMap& HttpHeaderFields() const;
 
   bool IsAttachment() const;
@@ -240,7 +244,7 @@ class PLATFORM_EXPORT ResourceResponse final {
   void SetResourceLoadInfo(scoped_refptr<ResourceLoadInfo>);
 
   HTTPVersion HttpVersion() const { return http_version_; }
-  void SetHTTPVersion(HTTPVersion version) { http_version_ = version; }
+  void SetHttpVersion(HTTPVersion version) { http_version_ = version; }
 
   int RequestId() const { return request_id_; }
   void SetRequestId(int request_id) { request_id_ = request_id; }
@@ -256,11 +260,6 @@ class PLATFORM_EXPORT ResourceResponse final {
     return ct_policy_compliance_;
   }
   void SetCTPolicyCompliance(CTPolicyCompliance);
-
-  bool IsLegacySymantecCert() const { return is_legacy_symantec_cert_; }
-  void SetIsLegacySymantecCert(bool is_legacy_symantec_cert) {
-    is_legacy_symantec_cert_ = is_legacy_symantec_cert;
-  }
 
   bool IsLegacyTLSVersion() const { return is_legacy_tls_version_; }
   void SetIsLegacyTLSVersion(bool value) { is_legacy_tls_version_ = value; }
@@ -297,7 +296,7 @@ class PLATFORM_EXPORT ResourceResponse final {
   bool WasFetchedViaSPDY() const { return was_fetched_via_spdy_; }
   void SetWasFetchedViaSPDY(bool value) { was_fetched_via_spdy_ = value; }
 
-  // See ServiceWorkerResponseInfo::was_fetched_via_service_worker.
+  // See network::ResourceResponseInfo::was_fetched_via_service_worker.
   bool WasFetchedViaServiceWorker() const {
     return was_fetched_via_service_worker_;
   }
@@ -305,7 +304,7 @@ class PLATFORM_EXPORT ResourceResponse final {
     was_fetched_via_service_worker_ = value;
   }
 
-  // See ServiceWorkerResponseInfo::was_fallback_required.
+  // See network::ResourceResponseInfo::was_fallback_required_by_service_worker.
   bool WasFallbackRequiredByServiceWorker() const {
     return was_fallback_required_by_service_worker_;
   }
@@ -317,20 +316,20 @@ class PLATFORM_EXPORT ResourceResponse final {
   void SetType(network::mojom::FetchResponseType value) {
     response_type_ = value;
   }
-  // https://html.spec.whatwg.org/#cors-same-origin
+  // https://html.spec.whatwg.org/C/#cors-same-origin
   bool IsCorsSameOrigin() const {
     return network::cors::IsCorsSameOriginResponseType(response_type_);
   }
-  // https://html.spec.whatwg.org/#cors-cross-origin
+  // https://html.spec.whatwg.org/C/#cors-cross-origin
   bool IsCorsCrossOrigin() const {
     return network::cors::IsCorsCrossOriginResponseType(response_type_);
   }
 
-  // See ServiceWorkerResponseInfo::url_list_via_service_worker.
+  // See network::ResourceResponseInfo::url_list_via_service_worker.
   const Vector<KURL>& UrlListViaServiceWorker() const {
     return url_list_via_service_worker_;
   }
-  void SetURLListViaServiceWorker(const Vector<KURL>& url_list) {
+  void SetUrlListViaServiceWorker(const Vector<KURL>& url_list) {
     url_list_via_service_worker_ = url_list;
   }
 
@@ -363,8 +362,8 @@ class PLATFORM_EXPORT ResourceResponse final {
     remote_ip_address_ = value;
   }
 
-  unsigned short RemotePort() const { return remote_port_; }
-  void SetRemotePort(unsigned short value) { remote_port_ = value; }
+  uint16_t RemotePort() const { return remote_port_; }
+  void SetRemotePort(uint16_t value) { remote_port_ = value; }
 
   const AtomicString& AlpnNegotiatedProtocol() const {
     return alpn_negotiated_protocol_;
@@ -419,12 +418,18 @@ class PLATFORM_EXPORT ResourceResponse final {
     is_signed_exchange_inner_response_ = is_signed_exchange_inner_response;
   }
 
+  bool WasInPrefetchCache() const { return was_in_prefetch_cache_; }
+
+  void SetWasInPrefetchCache(bool was_in_prefetch_cache) {
+    was_in_prefetch_cache_ = was_in_prefetch_cache;
+  }
+
  private:
   void UpdateHeaderParsedState(const AtomicString& name);
 
   KURL current_request_url_;
   AtomicString mime_type_;
-  long long expected_content_length_ = 0;
+  int64_t expected_content_length_ = 0;
   AtomicString text_encoding_name_;
 
   unsigned connection_id_ = 0;
@@ -436,7 +441,7 @@ class PLATFORM_EXPORT ResourceResponse final {
   AtomicString remote_ip_address_;
 
   // Remote port number of the socket which fetched this resource.
-  unsigned short remote_port_ = 0;
+  uint16_t remote_port_ = 0;
 
   bool was_cached_ = false;
   bool connection_reused_ = false;
@@ -453,10 +458,6 @@ class PLATFORM_EXPORT ResourceResponse final {
   // The Certificate Transparency policy compliance status of the resource.
   CTPolicyCompliance ct_policy_compliance_ =
       kCTPolicyComplianceDetailsNotAvailable;
-
-  // True if the resource was retrieved with a legacy Symantec certificate which
-  // is slated for distrust in future.
-  bool is_legacy_symantec_cert_ = false;
 
   // True if the response was sent over TLS 1.0 or 1.1, which are deprecated and
   // will be removed in the future.
@@ -486,6 +487,9 @@ class PLATFORM_EXPORT ResourceResponse final {
   // True if this resource is from an inner response of a signed exchange.
   // https://wicg.github.io/webpackage/draft-yasskin-http-origin-signed-responses.html
   bool is_signed_exchange_inner_response_ = false;
+
+  // True if this resource is served from the prefetch cache.
+  bool was_in_prefetch_cache_ = false;
 
   // True if this resource was loaded from the network.
   bool network_accessed_ = false;

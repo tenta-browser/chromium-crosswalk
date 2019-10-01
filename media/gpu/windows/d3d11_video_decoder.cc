@@ -12,7 +12,6 @@
 #include "base/feature_list.h"
 #include "base/memory/ref_counted_delete_on_sequence.h"
 #include "base/metrics/histogram_macros.h"
-#include "gpu/config/gpu_finch_features.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/base/cdm_context.h"
 #include "media/base/decoder_buffer.h"
@@ -26,6 +25,7 @@
 #include "media/gpu/windows/d3d11_video_context_wrapper.h"
 #include "media/gpu/windows/d3d11_video_decoder_impl.h"
 #include "ui/gl/gl_angle_util_win.h"
+#include "ui/gl/gl_switches.h"
 
 namespace media {
 
@@ -78,6 +78,80 @@ scoped_refptr<CommandBufferHelper> CreateCommandBufferHelper(
 }
 
 }  // namespace
+
+D3D11_VIDEO_DECODER_DESC TextureSelector::DecoderDescriptor(gfx::Size size) {
+  D3D11_VIDEO_DECODER_DESC desc = {};
+  desc.Guid = decoder_guid;
+  desc.SampleWidth = size.width();
+  desc.SampleHeight = size.height();
+  desc.OutputFormat = dxgi_format;
+  return desc;
+}
+
+D3D11_TEXTURE2D_DESC TextureSelector::TextureDescriptor(gfx::Size size) {
+  D3D11_TEXTURE2D_DESC texture_desc = {};
+  texture_desc.Width = size.width();
+  texture_desc.Height = size.height();
+  texture_desc.MipLevels = 1;
+  texture_desc.ArraySize = TextureSelector::BUFFER_COUNT;
+  texture_desc.Format = dxgi_format;
+  texture_desc.SampleDesc.Count = 1;
+  texture_desc.Usage = D3D11_USAGE_DEFAULT;
+  texture_desc.BindFlags = D3D11_BIND_DECODER | D3D11_BIND_SHADER_RESOURCE;
+
+  // Decode swap chains do not support shared resources.
+  // TODO(sunnyps): Find a workaround for when the decoder moves to its own
+  // thread and D3D device.  See https://crbug.com/911847
+  texture_desc.MiscFlags =
+      supports_swap_chain_ ? 0 : D3D11_RESOURCE_MISC_SHARED;
+
+  if (is_encrypted_)
+    texture_desc.MiscFlags |= D3D11_RESOURCE_MISC_HW_PROTECTED;
+
+  return texture_desc;
+}
+
+bool TextureSelector::SupportsDevice(
+    Microsoft::WRL::ComPtr<ID3D11VideoDevice> video_device) {
+  for (UINT i = video_device->GetVideoDecoderProfileCount(); i--;) {
+    GUID profile = {};
+    if (SUCCEEDED(video_device->GetVideoDecoderProfile(i, &profile))) {
+      if (profile == decoder_guid)
+        return true;
+    }
+  }
+  return false;
+}
+
+// static
+std::unique_ptr<TextureSelector> TextureSelector::Create(
+    const VideoDecoderConfig& config) {
+  if (config.profile() == VP9PROFILE_PROFILE2) {
+    return std::make_unique<TextureSelector>(
+        PIXEL_FORMAT_YUV420P10, DXGI_FORMAT_P010,
+        D3D11_DECODER_PROFILE_VP9_VLD_10BIT_PROFILE2, config.is_encrypted(),
+        false);
+  }
+
+  bool supports_nv12_decode_swap_chain = base::FeatureList::IsEnabled(
+      features::kDirectCompositionUseNV12DecodeSwapChain);
+
+  if (config.profile() == VP9PROFILE_PROFILE0) {
+    return std::make_unique<TextureSelector>(
+        PIXEL_FORMAT_NV12, DXGI_FORMAT_NV12,
+        D3D11_DECODER_PROFILE_VP9_VLD_PROFILE0, config.is_encrypted(),
+        supports_nv12_decode_swap_chain);
+  }
+
+  if (IsH264(config)) {
+    return std::make_unique<TextureSelector>(
+        PIXEL_FORMAT_NV12, DXGI_FORMAT_NV12,
+        D3D11_DECODER_PROFILE_H264_VLD_NOFGT, config.is_encrypted(),
+        supports_nv12_decode_swap_chain);
+  }
+
+  return nullptr;
+}
 
 std::unique_ptr<VideoDecoder> D3D11VideoDecoder::Create(
     scoped_refptr<base::SingleThreadTaskRunner> gpu_task_runner,
@@ -187,32 +261,10 @@ HRESULT D3D11VideoDecoder::InitializeAcceleratedDecoder(
   return E_FAIL;
 }
 
-bool D3D11VideoDecoder::DeviceHasDecoderID(GUID decoder_guid) {
-  UINT index = video_device_->GetVideoDecoderProfileCount();
-  while (index-- > 0) {
-    GUID profile = {};
-    if (SUCCEEDED(video_device_->GetVideoDecoderProfile(index, &profile))) {
-      if (profile == decoder_guid)
-        return true;
-    }
-  }
-  return false;
-}
-
-GUID D3D11VideoDecoder::GetD3D11DecoderGUID(const VideoDecoderConfig& config) {
-  if (IsVP9(config))
-    return D3D11_DECODER_PROFILE_VP9_VLD_PROFILE0;
-
-  if (IsH264(config))
-    return D3D11_DECODER_PROFILE_H264_VLD_NOFGT;
-
-  return {};
-}
-
 void D3D11VideoDecoder::Initialize(const VideoDecoderConfig& config,
                                    bool low_delay,
                                    CdmContext* cdm_context,
-                                   const InitCB& init_cb,
+                                   InitCB init_cb,
                                    const OutputCB& output_cb,
                                    const WaitingCB& waiting_cb) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -222,7 +274,7 @@ void D3D11VideoDecoder::Initialize(const VideoDecoderConfig& config,
   state_ = State::kInitializing;
 
   config_ = config;
-  init_cb_ = init_cb;
+  init_cb_ = std::move(init_cb);
   output_cb_ = output_cb;
   waiting_cb_ = waiting_cb;
 
@@ -278,9 +330,14 @@ void D3D11VideoDecoder::Initialize(const VideoDecoderConfig& config,
     return;
   }
 
-  GUID decoder_guid = GetD3D11DecoderGUID(config);
-  if (!DeviceHasDecoderID(decoder_guid)) {
-    NotifyError("D3D11: Did not find a supported profile");
+  texture_selector_ = TextureSelector::Create(config);
+  if (!texture_selector_) {
+    NotifyError("D3DD11: Config provided unsupported profile");
+    return;
+  }
+
+  if (!texture_selector_->SupportsDevice(video_device_)) {
+    NotifyError("D3D11: Device does not support decoder GUID");
     return;
   }
 
@@ -296,11 +353,8 @@ void D3D11VideoDecoder::Initialize(const VideoDecoderConfig& config,
   if (multi_threaded)
     multi_threaded->SetMultithreadProtected(TRUE);
 
-  D3D11_VIDEO_DECODER_DESC desc = {};
-  desc.Guid = decoder_guid;
-  desc.SampleWidth = config.coded_size().width();
-  desc.SampleHeight = config.coded_size().height();
-  desc.OutputFormat = DXGI_FORMAT_NV12;
+  D3D11_VIDEO_DECODER_DESC desc =
+      texture_selector_->DecoderDescriptor(config.coded_size());
   UINT config_count = 0;
   hr = video_device_->GetVideoDecoderConfigCount(&desc, &config_count);
   if (FAILED(hr) || config_count == 0) {
@@ -339,8 +393,6 @@ void D3D11VideoDecoder::Initialize(const VideoDecoderConfig& config,
     NotifyError("Failed to find decoder config");
     return;
   }
-
-  memcpy(&decoder_guid_, &decoder_guid, sizeof decoder_guid_);
 
   Microsoft::WRL::ComPtr<ID3D11VideoDecoder> video_decoder;
   hr = video_device_->CreateVideoDecoder(
@@ -445,16 +497,17 @@ void D3D11VideoDecoder::OnGpuInitComplete(bool success) {
 }
 
 void D3D11VideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
-                               const DecodeCB& decode_cb) {
+                               DecodeCB decode_cb) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (state_ == State::kError) {
     // TODO(liberato): consider posting, though it likely doesn't matter.
-    decode_cb.Run(DecodeStatus::DECODE_ERROR);
+    std::move(decode_cb).Run(DecodeStatus::DECODE_ERROR);
     return;
   }
 
-  input_buffer_queue_.push_back(std::make_pair(std::move(buffer), decode_cb));
+  input_buffer_queue_.push_back(
+      std::make_pair(std::move(buffer), std::move(decode_cb)));
 
   // Post, since we're not supposed to call back before this returns.  It
   // probably doesn't matter since we're in the gpu process anyway.
@@ -477,7 +530,7 @@ void D3D11VideoDecoder::DoDecode() {
       return;
     }
     current_buffer_ = std::move(input_buffer_queue_.front().first);
-    current_decode_cb_ = input_buffer_queue_.front().second;
+    current_decode_cb_ = std::move(input_buffer_queue_.front().second);
     input_buffer_queue_.pop_front();
     if (current_buffer_->end_of_stream()) {
       // Flush, then signal the decode cb once all pictures have been output.
@@ -539,7 +592,7 @@ void D3D11VideoDecoder::DoDecode() {
       base::BindOnce(&D3D11VideoDecoder::DoDecode, weak_factory_.GetWeakPtr()));
 }
 
-void D3D11VideoDecoder::Reset(const base::RepeatingClosure& closure) {
+void D3D11VideoDecoder::Reset(base::OnceClosure closure) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK_NE(state_, State::kInitializing);
 
@@ -548,7 +601,7 @@ void D3D11VideoDecoder::Reset(const base::RepeatingClosure& closure) {
     std::move(current_decode_cb_).Run(DecodeStatus::ABORTED);
 
   for (auto& queue_pair : input_buffer_queue_)
-    queue_pair.second.Run(DecodeStatus::ABORTED);
+    std::move(queue_pair.second).Run(DecodeStatus::ABORTED);
   input_buffer_queue_.clear();
 
   // TODO(liberato): how do we signal an error?
@@ -569,7 +622,7 @@ void D3D11VideoDecoder::Reset(const base::RepeatingClosure& closure) {
   if (state_ == State::kWaitingForNewKey || state_ == State::kWaitingForReset)
     state_ = State::kRunning;
 
-  closure.Run();
+  std::move(closure).Run();
 }
 
 bool D3D11VideoDecoder::NeedsBitstreamConversion() const {
@@ -596,33 +649,11 @@ void D3D11VideoDecoder::CreatePictureBuffers() {
   // a "waiting for pictures" state, since D3D11PictureBuffer will post the gpu
   // thread work.
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-
-  // TODO(liberato): what's the minimum that we need for the decoder?
-  // the VDA requests 20.
-  const int num_buffers = 20;
-
+  DCHECK(texture_selector_);
   gfx::Size size = accelerated_video_decoder_->GetPicSize();
 
-  // Create an array of |num_buffers| elements to back the PictureBuffers.
-  D3D11_TEXTURE2D_DESC texture_desc = {};
-  texture_desc.Width = size.width();
-  texture_desc.Height = size.height();
-  texture_desc.MipLevels = 1;
-  texture_desc.ArraySize = num_buffers;
-  texture_desc.Format = DXGI_FORMAT_NV12;
-  texture_desc.SampleDesc.Count = 1;
-  texture_desc.Usage = D3D11_USAGE_DEFAULT;
-  texture_desc.BindFlags = D3D11_BIND_DECODER | D3D11_BIND_SHADER_RESOURCE;
-  texture_desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
-  if (base::FeatureList::IsEnabled(
-          features::kDirectCompositionUseNV12DecodeSwapChain)) {
-    // Decode swap chains do not support shared resources.
-    // TODO(sunnyps): Find a workaround for when the decoder moves to its own
-    // thread and D3D device.  See https://crbug.com/911847
-    texture_desc.MiscFlags = 0;
-  }
-  if (config_.is_encrypted())
-    texture_desc.MiscFlags |= D3D11_RESOURCE_MISC_HW_PROTECTED;
+  D3D11_TEXTURE2D_DESC texture_desc =
+      texture_selector_->TextureDescriptor(size);
 
   Microsoft::WRL::ComPtr<ID3D11Texture2D> out_texture;
   HRESULT hr = device_->CreateTexture2D(&texture_desc, nullptr,
@@ -639,11 +670,13 @@ void D3D11VideoDecoder::CreatePictureBuffers() {
 
   // Create each picture buffer.
   const int textures_per_picture = 2;  // From the VDA
-  for (size_t i = 0; i < num_buffers; i++) {
-    picture_buffers_.push_back(
-        new D3D11PictureBuffer(GL_TEXTURE_EXTERNAL_OES, size, i));
-    if (!picture_buffers_[i]->Init(get_helper_cb_, video_device_, out_texture,
-                                   decoder_guid_, textures_per_picture)) {
+  for (size_t i = 0; i < TextureSelector::BUFFER_COUNT; i++) {
+    auto processor = std::make_unique<DefaultTexture2DWrapper>(out_texture);
+    picture_buffers_.push_back(new D3D11PictureBuffer(
+        GL_TEXTURE_EXTERNAL_OES, std::move(processor), size, i));
+    if (!picture_buffers_[i]->Init(get_helper_cb_, video_device_,
+                                   texture_selector_->decoder_guid,
+                                   textures_per_picture, media_log_->Clone())) {
       NotifyError("Unable to allocate PictureBuffer");
       return;
     }
@@ -666,6 +699,7 @@ D3D11PictureBuffer* D3D11VideoDecoder::GetPicture() {
 void D3D11VideoDecoder::OutputResult(const CodecPicture* picture,
                                      D3D11PictureBuffer* picture_buffer) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  DCHECK(texture_selector_);
 
   picture_buffer->set_in_client_use(true);
 
@@ -680,7 +714,7 @@ void D3D11VideoDecoder::OutputResult(const CodecPicture* picture,
 
   base::TimeDelta timestamp = picture_buffer->timestamp_;
   scoped_refptr<VideoFrame> frame = VideoFrame::WrapNativeTextures(
-      PIXEL_FORMAT_NV12, picture_buffer->mailbox_holders(),
+      texture_selector_->pixel_format, picture_buffer->ProcessTexture(),
       VideoFrame::ReleaseMailboxCB(), picture_buffer->size(), visible_rect,
       GetNaturalSize(visible_rect, pixel_aspect_ratio), timestamp);
 
@@ -747,7 +781,7 @@ void D3D11VideoDecoder::NotifyError(const char* reason) {
     std::move(current_decode_cb_).Run(DecodeStatus::DECODE_ERROR);
 
   for (auto& queue_pair : input_buffer_queue_)
-    queue_pair.second.Run(DecodeStatus::DECODE_ERROR);
+    std::move(queue_pair.second).Run(DecodeStatus::DECODE_ERROR);
   input_buffer_queue_.clear();
 }
 
@@ -766,10 +800,14 @@ D3D11VideoDecoder::GetSupportedVideoDecoderConfigs(
     return {};
   }
 
-  if (gpu_workarounds.disable_dxgi_zero_copy_video) {
-    UMA_HISTOGRAM_ENUMERATION(uma_name,
-                              NotSupportedReason::kZeroCopyVideoRequired);
-    return {};
+  // This workaround accounts for almost half of all startup results, and it's
+  // unclear that it's relevant here.
+  if (!base::FeatureList::IsEnabled(kD3D11VideoDecoderIgnoreWorkarounds)) {
+    if (gpu_workarounds.disable_dxgi_zero_copy_video) {
+      UMA_HISTOGRAM_ENUMERATION(uma_name,
+                                NotSupportedReason::kZeroCopyVideoRequired);
+      return {};
+    }
   }
 
   // Remember that this might query the angle device, so this won't work if

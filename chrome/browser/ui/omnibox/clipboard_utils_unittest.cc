@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/omnibox/clipboard_utils.h"
 
+#include <string>
+
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -13,6 +15,7 @@
 #include "testing/platform_test.h"
 #include "ui/base/clipboard/clipboard.h"
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
+#include "ui/base/clipboard/test/test_clipboard.h"
 
 using base::ASCIIToUTF16;
 
@@ -24,7 +27,13 @@ class ClipboardUtilsTest : public PlatformTest {
       : scoped_task_environment_(
             base::test::ScopedTaskEnvironment::MainThreadType::UI) {}
 
+  void SetUp() override {
+    PlatformTest::SetUp();
+    ui::TestClipboard::CreateForCurrentThread();
+  }
+
   void TearDown() override {
+    PlatformTest::TearDown();
     ui::Clipboard::DestroyClipboardForCurrentThread();
   }
 
@@ -86,6 +95,24 @@ TEST_F(ClipboardUtilsTest, GetClipboardText) {
     clipboard_writer.WriteHTML(kMarkup, kURL);
   }
   EXPECT_TRUE(GetClipboardText().empty());
+}
+
+TEST_F(ClipboardUtilsTest, TruncateLongText) {
+  const base::string16 almost_long_text =
+      base::ASCIIToUTF16(std::string(kMaxClipboardTextLength, '.'));
+  {
+    ui::ScopedClipboardWriter clipboard_writer(ui::CLIPBOARD_TYPE_COPY_PASTE);
+    clipboard_writer.WriteText(almost_long_text);
+  }
+  EXPECT_EQ(almost_long_text, GetClipboardText());
+
+  const base::string16 long_text =
+      base::ASCIIToUTF16(std::string(kMaxClipboardTextLength + 1, '.'));
+  {
+    ui::ScopedClipboardWriter clipboard_writer(ui::CLIPBOARD_TYPE_COPY_PASTE);
+    clipboard_writer.WriteText(long_text);
+  }
+  EXPECT_EQ(almost_long_text, GetClipboardText());
 }
 
 }  // namespace

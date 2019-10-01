@@ -21,7 +21,6 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Before Lollipop, the only way to create multiple retargetable instances of the same Activity
@@ -108,9 +107,7 @@ public class ActivityAssigner {
     private static final Object LOCK = new Object();
     private static List<ActivityAssigner> sInstances;
 
-    private final Context mContext;
     private final List<ActivityEntry> mActivityList;
-
     private final String mPrefPackage;
     private final String mPrefNumSavedEntries;
     private final String mPrefActivityIndex;
@@ -120,7 +117,8 @@ public class ActivityAssigner {
      * Pre-load shared prefs to avoid being blocked on the
      * disk access async task in the future.
      */
-    public static void warmUpSharedPrefs(Context context) {
+    public static void warmUpSharedPrefs() {
+        Context context = ContextUtils.getApplicationContext();
         for (int i = 0; i < ActivityAssignerNamespace.NUM_ENTRIES; ++i) {
             context.getSharedPreferences(PREF_PACKAGE[i], Context.MODE_PRIVATE);
         }
@@ -154,8 +152,6 @@ public class ActivityAssigner {
     }
 
     private ActivityAssigner(int activityTypeIndex) {
-        mContext = ContextUtils.getApplicationContext();
-
         mPrefPackage = PREF_PACKAGE[activityTypeIndex];
         mPrefNumSavedEntries = PREF_NUM_SAVED_ENTRIES[activityTypeIndex];
         mPrefActivityIndex = PREF_ACTIVITY_INDEX[activityTypeIndex];
@@ -274,13 +270,14 @@ public class ActivityAssigner {
 
         // Restore any entries that were previously saved.  If it seems that the preferences have
         // been corrupted somehow, just discard the whole map.
-        SharedPreferences prefs = mContext.getSharedPreferences(mPrefPackage, Context.MODE_PRIVATE);
+        SharedPreferences prefs = ContextUtils.getApplicationContext().getSharedPreferences(
+                mPrefPackage, Context.MODE_PRIVATE);
         try {
             long time = SystemClock.elapsedRealtime();
             final int numSavedEntries = prefs.getInt(mPrefNumSavedEntries, 0);
             try {
                 RecordHistogram.recordTimesHistogram("Android.StrictMode.WebappSharedPrefs",
-                        SystemClock.elapsedRealtime() - time, TimeUnit.MILLISECONDS);
+                        SystemClock.elapsedRealtime() - time);
             } catch (UnsatisfiedLinkError error) {
                 // Intentionally ignored - it's ok to miss recording the metric occasionally.
             }
@@ -328,7 +325,8 @@ public class ActivityAssigner {
      * Saves the mapping between apps and Activities.
      */
     private void storeActivityList() {
-        SharedPreferences prefs = mContext.getSharedPreferences(mPrefPackage, Context.MODE_PRIVATE);
+        SharedPreferences prefs = ContextUtils.getApplicationContext().getSharedPreferences(
+                mPrefPackage, Context.MODE_PRIVATE);
         SharedPreferences.Editor editor = prefs.edit();
         editor.clear();
         editor.putInt(mPrefNumSavedEntries, mActivityList.size());

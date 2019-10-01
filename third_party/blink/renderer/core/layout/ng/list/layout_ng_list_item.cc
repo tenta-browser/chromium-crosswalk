@@ -8,6 +8,7 @@
 #include "third_party/blink/renderer/core/layout/layout_inline.h"
 #include "third_party/blink/renderer/core/layout/layout_list_marker.h"
 #include "third_party/blink/renderer/core/layout/list_marker_text.h"
+#include "third_party/blink/renderer/core/layout/ng/list/layout_ng_inside_list_marker.h"
 #include "third_party/blink/renderer/core/layout/ng/list/layout_ng_list_marker.h"
 #include "third_party/blink/renderer/core/layout/ng/list/layout_ng_list_marker_image.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
@@ -115,7 +116,7 @@ void LayoutNGListItem::UpdateMarkerText() {
 
 void LayoutNGListItem::UpdateMarker() {
   const ComputedStyle& style = StyleRef();
-  if (style.ListStyleType() == EListStyleType::kNone) {
+  if (style.ListStyleType() == EListStyleType::kNone && !IsMarkerImage()) {
     DestroyMarker();
     marker_type_ = kStatic;
     is_marker_text_updated_ = true;
@@ -128,13 +129,13 @@ void LayoutNGListItem::UpdateMarker() {
     if (marker_ && !marker_->IsLayoutInline())
       DestroyMarker();
     if (!marker_)
-      marker_ = LayoutInline::CreateAnonymous(&GetDocument());
+      marker_ = LayoutNGInsideListMarker::CreateAnonymous(&GetDocument());
     marker_style = ComputedStyle::CreateAnonymousStyleWithDisplay(
         style, EDisplay::kInline);
     auto margins =
         LayoutListMarker::InlineMarginsForInside(style, IsMarkerImage());
-    marker_style->SetMarginStart(Length(margins.first, kFixed));
-    marker_style->SetMarginEnd(Length(margins.second, kFixed));
+    marker_style->SetMarginStart(Length::Fixed(margins.first));
+    marker_style->SetMarginEnd(Length::Fixed(margins.second));
   } else {
     if (marker_ && !marker_->IsLayoutBlockFlow())
       DestroyMarker();
@@ -162,6 +163,21 @@ void LayoutNGListItem::UpdateMarker() {
   }
 }
 
+LayoutNGListItem* LayoutNGListItem::FromMarker(const LayoutObject& marker) {
+  DCHECK(marker.IsLayoutNGListMarkerIncludingInside());
+  for (LayoutObject* parent = marker.Parent(); parent;
+       parent = parent->Parent()) {
+    if (parent->IsLayoutNGListItem()) {
+      DCHECK(ToLayoutNGListItem(parent)->Marker() == &marker);
+      return ToLayoutNGListItem(parent);
+    }
+    // These DCHECKs are not critical but to ensure we cover all cases we know.
+    DCHECK(parent->IsAnonymous());
+    DCHECK(parent->IsLayoutBlockFlow() || parent->IsLayoutFlowThread());
+  }
+  return nullptr;
+}
+
 int LayoutNGListItem::Value() const {
   DCHECK(GetNode());
   return ordinal_.Value(*GetNode());
@@ -170,6 +186,12 @@ int LayoutNGListItem::Value() const {
 LayoutNGListItem::MarkerType LayoutNGListItem::MarkerText(
     StringBuilder* text,
     MarkerTextFormat format) const {
+  if (IsMarkerImage()) {
+    if (format == kWithSuffix)
+      text->Append(' ');
+    return kStatic;
+  }
+
   const ComputedStyle& style = StyleRef();
   switch (style.ListStyleType()) {
     case EListStyleType::kNone:
@@ -259,10 +281,20 @@ String LayoutNGListItem::MarkerTextWithoutSuffix() const {
   return text.ToString();
 }
 
+String LayoutNGListItem::TextAlternative(const LayoutObject& marker) {
+  // For accessibility, return the marker string in the logical order even in
+  // RTL, reflecting speech order.
+  if (LayoutNGListItem* list_item = FromMarker(marker))
+    return list_item->MarkerTextWithSuffix();
+  return g_empty_string;
+}
+
 void LayoutNGListItem::UpdateMarkerContentIfNeeded() {
   DCHECK(marker_);
 
   LayoutObject* child = marker_->SlowFirstChild();
+  // There should be at most one child.
+  DCHECK(!child || !child->SlowFirstChild());
   if (IsMarkerImage()) {
     StyleImage* list_style_image = StyleRef().ListStyleImage();
     if (child) {
@@ -282,7 +314,8 @@ void LayoutNGListItem::UpdateMarkerContentIfNeeded() {
                                                          EDisplay::kInline);
       image->SetStyle(image_style);
       image->SetImageResource(
-          LayoutImageResourceStyleImage::Create(list_style_image));
+          MakeGarbageCollected<LayoutImageResourceStyleImage>(
+              list_style_image));
       image->SetIsGeneratedContent();
       marker_->AddChild(image);
     }
@@ -299,8 +332,8 @@ void LayoutNGListItem::UpdateMarkerContentIfNeeded() {
       }
     }
     if (!child) {
-      text = LayoutText::CreateEmptyAnonymous(GetDocument(),
-                                              marker_->MutableStyle());
+      text = LayoutText::CreateEmptyAnonymous(
+          GetDocument(), marker_->MutableStyle(), LegacyLayout::kAuto);
       marker_->AddChild(text);
       is_marker_text_updated_ = false;
     }

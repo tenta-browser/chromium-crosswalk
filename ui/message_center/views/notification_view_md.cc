@@ -29,7 +29,6 @@
 #include "ui/message_center/public/cpp/notification.h"
 #include "ui/message_center/public/cpp/notification_types.h"
 #include "ui/message_center/vector_icons.h"
-#include "ui/message_center/views/bounded_label.h"
 #include "ui/message_center/views/notification_background_painter.h"
 #include "ui/message_center/views/notification_control_buttons_view.h"
 #include "ui/message_center/views/notification_header_view.h"
@@ -38,6 +37,7 @@
 #include "ui/strings/grit/ui_strings.h"
 #include "ui/views/animation/flood_fill_ink_drop_ripple.h"
 #include "ui/views/animation/ink_drop_highlight.h"
+#include "ui/views/animation/ink_drop_impl.h"
 #include "ui/views/animation/ink_drop_mask.h"
 #include "ui/views/background.h"
 #include "ui/views/border.h"
@@ -68,7 +68,7 @@ constexpr gfx::Size kActionButtonMinSize(0, 32);
 // TODO(tetsui): Move |kIconViewSize| to public/cpp/message_center_constants.h
 // and merge with contradicting |kNotificationIconSize|.
 constexpr gfx::Size kIconViewSize(36, 36);
-constexpr gfx::Insets kLargeImageContainerPadding(0, 12, 12, 12);
+constexpr gfx::Insets kLargeImageContainerPadding(0, 16, 16, 16);
 constexpr gfx::Size kLargeImageMinSize(328, 0);
 constexpr gfx::Size kLargeImageMaxSize(328, 218);
 constexpr gfx::Insets kLeftContentPadding(2, 4, 0, 4);
@@ -102,6 +102,8 @@ constexpr SkColor kTextfieldPlaceholderIconColorMD =
 // The icon size of inline reply input field.
 constexpr int kInputReplyButtonSize = 20;
 
+// Max number of lines for title_view_.
+constexpr int kMaxLinesForTitleView = 1;
 // Max number of lines for message_view_.
 constexpr int kMaxLinesForMessageView = 1;
 constexpr int kMaxLinesForExpandedMessageView = 4;
@@ -135,8 +137,11 @@ constexpr int kTextFontSizeDelta = 1;
 // the ratio of the message width is limited to this value.
 constexpr double kProgressNotificationMessageRatio = 0.7;
 
+// Line height of title and message views.
+constexpr int kLineHeightMD = 17;
+
 // This key/property allows tagging the textfield with its index.
-DEFINE_LOCAL_UI_CLASS_PROPERTY_KEY(int, kTextfieldIndexKey, 0U);
+DEFINE_UI_CLASS_PROPERTY_KEY(int, kTextfieldIndexKey, 0U)
 
 // FontList for the texts except for the header.
 gfx::FontList GetTextFontList() {
@@ -381,19 +386,21 @@ NotificationInputContainerMD::NotificationInputContainerMD(
   layout->SetFlexForView(textfield_, 1);
 
   button_->SetBorder(views::CreateEmptyBorder(kInputReplyButtonPadding));
-  button_->SetImageAlignment(views::ImageButton::ALIGN_CENTER,
-                             views::ImageButton::ALIGN_MIDDLE);
+  button_->SetImageHorizontalAlignment(views::ImageButton::ALIGN_CENTER);
+  button_->SetImageVerticalAlignment(views::ImageButton::ALIGN_MIDDLE);
   OnAfterUserAction(textfield_);
   AddChildView(button_);
 }
 
 NotificationInputContainerMD::~NotificationInputContainerMD() = default;
 
-void NotificationInputContainerMD::AnimateBackground(
-    const ui::LocatedEvent& event) {
-  if (View::HitTestPoint(event.location()))
-    AnimateInkDrop(views::InkDropState::ACTION_PENDING,
-                   ui::LocatedEvent::FromIfValid(&event));
+void NotificationInputContainerMD::AnimateBackground(const ui::Event& event) {
+  // Try to get a located event. This can be NULL if triggered via keyboard.
+  const ui::LocatedEvent* located_event = ui::LocatedEvent::FromIfValid(&event);
+  // Use default animation if location is out of bounds.
+  if (located_event && !View::HitTestPoint(located_event->location()))
+    located_event = nullptr;
+  AnimateInkDrop(views::InkDropState::ACTION_PENDING, located_event);
 }
 
 void NotificationInputContainerMD::AddInkDropLayer(ui::Layer* ink_drop_layer) {
@@ -466,6 +473,22 @@ class InlineSettingsRadioButton : public views::RadioButton {
   }
 };
 
+// NotificationInkDropImpl /////////////////////////////////////////////////////
+
+class NotificationInkDropImpl : public views::InkDropImpl {
+ public:
+  NotificationInkDropImpl(views::InkDropHostView* ink_drop_host,
+                          const gfx::Size& host_size)
+      : views::InkDropImpl(ink_drop_host, host_size) {
+    SetAutoHighlightMode(views::InkDropImpl::AutoHighlightMode::SHOW_ON_RIPPLE);
+  }
+
+  void HostSizeChanged(const gfx::Size& new_size) override {
+    // Prevent a call to InkDropImpl::HostSizeChanged which recreates the ripple
+    // and stops the currently active animation: http://crbug.com/915222.
+  }
+};
+
 // ////////////////////////////////////////////////////////////
 // NotificationViewMD
 // ////////////////////////////////////////////////////////////
@@ -507,7 +530,8 @@ NotificationViewMD::NotificationViewMD(const Notification& notification)
   control_buttons_view_->set_owned_by_client();
 
   // |header_row_| contains app_icon, app_name, control buttons, etc...
-  header_row_ = new NotificationHeaderView(control_buttons_view_.get(), this);
+  header_row_ = new NotificationHeaderView(this);
+  header_row_->AddChildView(control_buttons_view_.get());
   AddChildView(header_row_);
 
   // |content_row_| contains title, message, image, progressbar, etc...
@@ -516,7 +540,7 @@ NotificationViewMD::NotificationViewMD(const Notification& notification)
       content_row_->SetLayoutManager(std::make_unique<views::BoxLayout>(
           views::BoxLayout::kHorizontal, kContentRowPadding, 0));
   content_row_layout->set_cross_axis_alignment(
-      views::BoxLayout::CROSS_AXIS_ALIGNMENT_START);
+      views::BoxLayout::CrossAxisAlignment::kStart);
   AddChildView(content_row_);
 
   // |left_content_| contains most contents like title, message, etc...
@@ -581,7 +605,7 @@ void NotificationViewMD::Layout() {
 
   // The notification background is rounded in MessageView::Layout(),
   // but we also have to round the actions row background here.
-  if (actions_row_->visible()) {
+  if (actions_row_->GetVisible()) {
     constexpr SkScalar kCornerRadius = SkIntToScalar(kNotificationCornerRadius);
 
     // Use vertically larger clip path, so that actions row's top coners will
@@ -596,22 +620,11 @@ void NotificationViewMD::Layout() {
     inline_reply_->set_clip_path(path);
   }
 
-  // The animation is needed to run inside of the border, which is shown only
-  // when the notification is nested.
-  if (is_nested()) {
-    gfx::Rect ink_drop_bounds = GetLocalBounds();
-    ink_drop_bounds.Inset(gfx::Insets(kNotificationBorderThickness));
-    ink_drop_container_->SetBoundsRect(ink_drop_bounds);
-  } else {
-    ink_drop_container_->SetBoundsRect(GetLocalBounds());
-  }
-}
-
-void NotificationViewMD::OnBoundsChanged(const gfx::Rect& previous_bounds) {
+  // The animation is needed to run inside of the border.
   if (ink_drop_layer_)
-    ink_drop_layer_->SetBounds(gfx::Rect(size()));
+    ink_drop_layer_->SetBounds(GetContentsBounds());
   if (ink_drop_mask_)
-    ink_drop_mask_->layer()->SetBounds(gfx::Rect(size()));
+    ink_drop_mask_->layer()->SetBounds(GetContentsBounds());
 }
 
 void NotificationViewMD::OnFocus() {
@@ -652,7 +665,7 @@ void NotificationViewMD::OnMouseReleased(const ui::MouseEvent& event) {
   }
 
   // Ignore clicks of outside region when inline settings is shown.
-  if (settings_row_ && settings_row_->visible())
+  if (settings_row_ && settings_row_->GetVisible())
     return;
 
   MessageView::OnMouseReleased(event);
@@ -697,7 +710,7 @@ void NotificationViewMD::UpdateControlButtonsVisibilityWithNotification(
       notification.should_show_settings_button());
   control_buttons_view_->ShowSnoozeButton(
       notification.should_show_snooze_button());
-  control_buttons_view_->ShowCloseButton(GetMode() == Mode::NORMAL);
+  control_buttons_view_->ShowCloseButton(GetMode() != Mode::PINNED);
   UpdateControlButtonsVisibility();
 }
 
@@ -706,7 +719,7 @@ void NotificationViewMD::ButtonPressed(views::Button* sender,
   // Tapping anywhere on |header_row_| can expand the notification, though only
   // |expand_button| can be focused by TAB.
   if (sender == header_row_) {
-    if (IsExpandable() && content_row_->visible()) {
+    if (IsExpandable() && content_row_->GetVisible()) {
       SetManuallyExpandedOrCollapsed(true);
       auto weak_ptr = weak_ptr_factory_.GetWeakPtr();
       ToggleExpanded();
@@ -735,7 +748,7 @@ void NotificationViewMD::ButtonPressed(views::Button* sender,
               ? l10n_util::GetStringUTF16(
                     IDS_MESSAGE_CENTER_NOTIFICATION_INLINE_REPLY_PLACEHOLDER)
               : *placeholder);
-      inline_reply_->AnimateBackground(*event.AsLocatedEvent());
+      inline_reply_->AnimateBackground(event);
       inline_reply_->SetVisible(true);
       action_buttons_row_->SetVisible(false);
       // RequestFocus() should be called after SetVisible().
@@ -804,6 +817,13 @@ void NotificationViewMD::CreateOrUpdateTitleView(
     title_view_->SetFontList(font_list);
     title_view_->SetHorizontalAlignment(gfx::ALIGN_TO_HEAD);
     title_view_->SetEnabledColor(kRegularTextColorMD);
+    title_view_->SetLineHeight(kLineHeightMD);
+    // TODO(knollr): multiline should not be required, but we need to set the
+    // width of |title_view_| (because of crbug.com/682266), which only works in
+    // multiline mode.
+    title_view_->SetMultiLine(true);
+    title_view_->SetMaxLines(kMaxLinesForTitleView);
+    title_view_->SetAllowCharacterBreak(true);
     left_content_->AddChildViewAt(title_view_, left_content_count_);
   } else {
     title_view_->SetText(title);
@@ -825,13 +845,17 @@ void NotificationViewMD::CreateOrUpdateMessageView(
   base::string16 text = gfx::TruncateString(
       notification.message(), kMessageCharacterLimitMD, gfx::WORD_BREAK);
 
-  const gfx::FontList& font_list = GetTextFontList();
-
   if (!message_view_) {
-    message_view_ = new BoundedLabel(text, font_list);
-    message_view_->SetLineLimit(kMaxLinesForMessageView);
-    message_view_->SetColor(kDimTextColorMD);
+    const gfx::FontList& font_list = GetTextFontList();
 
+    message_view_ = new views::Label(text);
+    message_view_->SetFontList(font_list);
+    message_view_->SetHorizontalAlignment(gfx::ALIGN_TO_HEAD);
+    message_view_->SetEnabledColor(kDimTextColorMD);
+    message_view_->SetLineHeight(kLineHeightMD);
+    message_view_->SetMultiLine(true);
+    message_view_->SetMaxLines(kMaxLinesForMessageView);
+    message_view_->SetAllowCharacterBreak(true);
     left_content_->AddChildViewAt(message_view_, left_content_count_);
   } else {
     message_view_->SetText(text);
@@ -1008,7 +1032,7 @@ void NotificationViewMD::CreateOrUpdateImageView(
     AddChildViewAt(image_container_view_, GetIndexOf(content_row_) + 1);
   }
 
-  static_cast<LargeImageView*>(image_container_view_->child_at(0))
+  static_cast<LargeImageView*>(image_container_view_->children().front())
       ->SetImage(notification.image().AsImageSkia());
 }
 
@@ -1021,14 +1045,13 @@ void NotificationViewMD::CreateOrUpdateActionButtonViews(
     for (auto* item : action_buttons_)
       delete item;
     action_buttons_.clear();
-    if (buttons.empty())
-      actions_row_->SetVisible(false);
+    actions_row_->SetVisible(expanded_ && !buttons.empty());
   }
 
   DCHECK_EQ(this, actions_row_->parent());
 
   // Hide inline reply field if it doesn't exist anymore.
-  if (inline_reply_->visible()) {
+  if (inline_reply_->GetVisible()) {
     const size_t index =
         inline_reply_->textfield()->GetProperty(kTextfieldIndexKey);
     if (index >= buttons.size() || !buttons[index].placeholder.has_value()) {
@@ -1133,7 +1156,7 @@ void NotificationViewMD::CreateOrUpdateInlineSettingsViews(
   auto settings_button_layout = std::make_unique<views::BoxLayout>(
       views::BoxLayout::kHorizontal, kSettingsButtonRowPadding, 0);
   settings_button_layout->set_main_axis_alignment(
-      views::BoxLayout::MAIN_AXIS_ALIGNMENT_END);
+      views::BoxLayout::MainAxisAlignment::kEnd);
   settings_button_row->SetLayoutManager(std::move(settings_button_layout));
   settings_button_row->AddChildView(settings_done_button_);
   settings_row_->AddChildView(settings_button_row);
@@ -1142,13 +1165,17 @@ void NotificationViewMD::CreateOrUpdateInlineSettingsViews(
 }
 
 bool NotificationViewMD::IsExpandable() {
+  // Inline settings can not be expanded.
+  if (GetMode() == Mode::SETTING)
+    return false;
+
   // Expandable if the message exceeds one line.
-  if (message_view_ && message_view_->visible() &&
-      message_view_->GetLinesForWidthAndLimit(message_view_->width(), -1) > 1) {
+  if (message_view_ && message_view_->GetVisible() &&
+      message_view_->GetRequiredLines() > 1) {
     return true;
   }
   // Expandable if there is at least one inline action.
-  if (action_buttons_row_->has_children())
+  if (!action_buttons_row_->children().empty())
     return true;
 
   // Expandable if the notification has image.
@@ -1171,13 +1198,14 @@ void NotificationViewMD::ToggleExpanded() {
 void NotificationViewMD::UpdateViewForExpandedState(bool expanded) {
   header_row_->SetExpanded(expanded);
   if (message_view_) {
-    message_view_->SetLineLimit(expanded ? kMaxLinesForExpandedMessageView
-                                         : kMaxLinesForMessageView);
+    message_view_->SetMaxLines(expanded ? kMaxLinesForExpandedMessageView
+                                        : kMaxLinesForMessageView);
   }
   if (image_container_view_)
     image_container_view_->SetVisible(expanded);
 
-  actions_row_->SetVisible(expanded && (action_buttons_row_->has_children()));
+  actions_row_->SetVisible(expanded &&
+                           !action_buttons_row_->children().empty());
   if (!expanded) {
     action_buttons_row_->SetVisible(true);
     inline_reply_->SetVisible(false);
@@ -1194,7 +1222,7 @@ void NotificationViewMD::UpdateViewForExpandedState(bool expanded) {
 
   right_content_->SetVisible(icon_view_ &&
                              (!hide_icon_on_expanded_ || !expanded));
-  if (right_content_->visible()) {
+  if (right_content_->GetVisible()) {
     left_content_->SetBorder(
         views::CreateEmptyBorder(kLeftContentPaddingWithIcon));
 
@@ -1203,25 +1231,31 @@ void NotificationViewMD::UpdateViewForExpandedState(bool expanded) {
     // Ideally, we should fix the original bug, but it seems there's no obvious
     // solution for the bug according to https://crbug.com/678337#c7, we should
     // ensure that the change won't break any of the users of BoxLayout class.
+    if (title_view_)
+      title_view_->SizeToFit(kMessageViewWidthWithIcon);
     if (message_view_)
       message_view_->SizeToFit(kMessageViewWidthWithIcon);
   } else {
     left_content_->SetBorder(views::CreateEmptyBorder(kLeftContentPadding));
+    if (title_view_)
+      title_view_->SizeToFit(kMessageViewWidth);
     if (message_view_)
       message_view_->SizeToFit(kMessageViewWidth);
   }
+  content_row_->InvalidateLayout();
 }
 
 void NotificationViewMD::ToggleInlineSettings(const ui::Event& event) {
   if (!settings_row_)
     return;
 
-  bool inline_settings_visible = !settings_row_->visible();
+  bool inline_settings_visible = !settings_row_->GetVisible();
   bool disable_notification =
-      settings_row_->visible() && block_all_button_->checked();
+      settings_row_->GetVisible() && block_all_button_->GetChecked();
 
   settings_row_->SetVisible(inline_settings_visible);
   content_row_->SetVisible(!inline_settings_visible);
+  header_row_->SetTimestampVisible(!inline_settings_visible);
 
   // Always check "Don't block" when inline settings is shown.
   // If it's already blocked, users should not see inline settings.
@@ -1229,7 +1263,15 @@ void NotificationViewMD::ToggleInlineSettings(const ui::Event& event) {
   dont_block_button_->SetChecked(true);
 
   SetSettingMode(inline_settings_visible);
-  SetExpanded(!inline_settings_visible);
+
+  // Grab a weak pointer before calling SetExpanded() as it might cause |this|
+  // to be deleted.
+  {
+    auto weak_ptr = weak_ptr_factory_.GetWeakPtr();
+    SetExpanded(!inline_settings_visible);
+    if (!weak_ptr)
+      return;
+  }
 
   PreferredSizeChanged();
 
@@ -1271,7 +1313,6 @@ void NotificationViewMD::SetExpanded(bool expanded) {
   expanded_ = expanded;
 
   UpdateViewForExpandedState(expanded_);
-  content_row_->InvalidateLayout();
   PreferredSizeChanged();
 }
 
@@ -1291,7 +1332,7 @@ void NotificationViewMD::OnSettingsButtonPressed(const ui::Event& event) {
 }
 
 void NotificationViewMD::Activate() {
-  GetWidget()->widget_delegate()->set_can_activate(true);
+  GetWidget()->widget_delegate()->SetCanActivate(true);
   GetWidget()->Activate();
 }
 
@@ -1310,14 +1351,17 @@ void NotificationViewMD::AddBackgroundAnimation(const ui::Event& event) {
   const gfx::Point& location = event.AsLocatedEvent()->location();
   gfx::Point converted_location(location);
   View::ConvertPointToTarget(target, this, &converted_location);
+
+  // Use default animation if location is out of bounds.
+  if (!View::HitTestPoint(converted_location)) {
+    AnimateInkDrop(views::InkDropState::ACTION_PENDING, nullptr);
+    return;
+  }
+
   std::unique_ptr<ui::Event> cloned_event = ui::Event::Clone(event);
   ui::LocatedEvent* cloned_located_event = cloned_event->AsLocatedEvent();
   cloned_located_event->set_location(converted_location);
-
-  if (View::HitTestPoint(event.AsLocatedEvent()->location())) {
-    AnimateInkDrop(views::InkDropState::ACTION_PENDING,
-                   ui::LocatedEvent::FromIfValid(cloned_located_event));
-  }
+  AnimateInkDrop(views::InkDropState::ACTION_PENDING, cloned_located_event);
 }
 
 void NotificationViewMD::RemoveBackgroundAnimation() {
@@ -1349,6 +1393,10 @@ void NotificationViewMD::RemoveInkDropLayer(ui::Layer* ink_drop_layer) {
   ink_drop_container_->RemoveInkDropLayer(ink_drop_layer);
   GetInkDrop()->RemoveObserver(this);
   ink_drop_layer_ = nullptr;
+}
+
+std::unique_ptr<views::InkDrop> NotificationViewMD::CreateInkDrop() {
+  return std::make_unique<NotificationInkDropImpl>(this, size());
 }
 
 std::unique_ptr<views::InkDropRipple> NotificationViewMD::CreateInkDropRipple()

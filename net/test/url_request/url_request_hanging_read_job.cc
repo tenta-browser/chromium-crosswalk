@@ -54,8 +54,8 @@ void URLRequestHangingReadJob::Start() {
   // Start reading asynchronously so that all error reporting and data
   // callbacks happen as they would for network requests.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&URLRequestHangingReadJob::StartAsync,
-                            weak_factory_.GetWeakPtr()));
+      FROM_HERE, base::BindOnce(&URLRequestHangingReadJob::StartAsync,
+                                weak_factory_.GetWeakPtr()));
 }
 
 URLRequestHangingReadJob::~URLRequestHangingReadJob() = default;
@@ -81,8 +81,8 @@ void URLRequestHangingReadJob::GetResponseInfoConst(
       "Content-type: text/plain\n");
   raw_headers.append(
       base::StringPrintf("Content-Length: %1d\n", content_length_));
-  info->headers = new HttpResponseHeaders(HttpUtil::AssembleRawHeaders(
-      raw_headers.c_str(), static_cast<int>(raw_headers.length())));
+  info->headers = base::MakeRefCounted<HttpResponseHeaders>(
+      HttpUtil::AssembleRawHeaders(raw_headers));
 }
 
 void URLRequestHangingReadJob::StartAsync() {

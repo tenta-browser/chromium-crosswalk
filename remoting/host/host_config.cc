@@ -26,11 +26,12 @@ const char kUsageStatsConsentConfigPath[] = "usage_stats_consent";
 const char kEnableVp9ConfigPath[] = "enable_vp9";
 const char kEnableH264ConfigPath[] = "enable_h264";
 const char kFrameRecorderBufferKbConfigPath[] = "frame-recorder-buffer-kb";
+const char kIsFtlTokenConfigPath[] = "is_ftl_token";
 
 std::unique_ptr<base::DictionaryValue> HostConfigFromJson(
     const std::string& json) {
   std::unique_ptr<base::Value> value =
-      base::JSONReader::Read(json, base::JSON_ALLOW_TRAILING_COMMAS);
+      base::JSONReader::ReadDeprecated(json, base::JSON_ALLOW_TRAILING_COMMAS);
   if (!value || !value->is_dict()) {
     LOG(WARNING) << "Failed to parse host config from JSON";
     return nullptr;

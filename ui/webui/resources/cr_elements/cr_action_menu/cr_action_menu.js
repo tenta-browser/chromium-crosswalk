@@ -170,7 +170,7 @@ Polymer({
   listeners: {
     'keydown': 'onKeyDown_',
     'mouseover': 'onMouseover_',
-    'tap': 'onTap_',
+    'click': 'onClick_',
   },
 
   /** override */
@@ -184,6 +184,15 @@ Polymer({
    */
   getDialog: function() {
     return this.$.dialog;
+  },
+
+  /**
+   * @return {!Array<!Element>}
+   * @private
+   */
+  getOptions_: function() {
+    return Array.from(this.querySelectorAll('.dropdown-item'))
+        .map(cr.ui.FocusRow.getFocusableElement);
   },
 
   /** @private */
@@ -224,7 +233,7 @@ Polymer({
    * @param {!Event} e
    * @private
    */
-  onTap_: function(e) {
+  onClick_: function(e) {
     if (e.target == this) {
       this.close();
       e.stopPropagation();
@@ -247,9 +256,8 @@ Polymer({
     let selectNext = e.key == 'ArrowDown';
     if (e.key == 'Enter') {
       // If a menu item has focus, don't change focus or close menu on 'Enter'.
-      const options = this.querySelectorAll('.dropdown-item');
       const focusedIndex =
-          Array.prototype.indexOf.call(options, getDeepActiveElement());
+          this.getOptions_().indexOf(assert(getDeepActiveElement()));
       if (focusedIndex != -1) {
         return;
       }
@@ -286,8 +294,6 @@ Polymer({
    * @private
    */
   onMouseover_: function(e) {
-    // TODO(scottchen): Using "focus" to determine selected item might mess
-    // with screen readers in some edge cases.
     let i = 0;
     let target;
     do {
@@ -315,10 +321,9 @@ Polymer({
     // hidden/disabled.
     let counter = 0;
     let nextOption = null;
-    const options = this.querySelectorAll('.dropdown-item');
+    const options = this.getOptions_();
     const numOptions = options.length;
-    let focusedIndex =
-        Array.prototype.indexOf.call(options, getDeepActiveElement());
+    let focusedIndex = options.indexOf(assert(getDeepActiveElement()));
 
     // Handle case where nothing is focused and up is pressed.
     if (focusedIndex === -1 && step === -1) {

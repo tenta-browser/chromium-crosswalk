@@ -97,14 +97,21 @@ void ThrottledOfflineContentProvider::OnGetItemByIdDone(
 
 void ThrottledOfflineContentProvider::GetVisualsForItem(
     const ContentId& id,
+    GetVisualsOptions options,
     VisualsCallback callback) {
-  wrapped_provider_->GetVisualsForItem(id, std::move(callback));
+  wrapped_provider_->GetVisualsForItem(id, options, std::move(callback));
 }
 
 void ThrottledOfflineContentProvider::GetShareInfoForItem(
     const ContentId& id,
     ShareCallback callback) {
   wrapped_provider_->GetShareInfoForItem(id, std::move(callback));
+}
+
+void ThrottledOfflineContentProvider::RenameItem(const ContentId& id,
+                                                 const std::string& name,
+                                                 RenameCallback callback) {
+  wrapped_provider_->RenameItem(id, name, std::move(callback));
 }
 
 void ThrottledOfflineContentProvider::AddObserver(

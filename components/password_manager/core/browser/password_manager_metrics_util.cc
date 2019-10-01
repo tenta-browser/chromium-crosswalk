@@ -70,6 +70,10 @@ void LogPasswordSyncState(PasswordSyncState state) {
                             NUM_SYNC_STATES);
 }
 
+void LogApplySyncChangesState(ApplySyncChangesState state) {
+  UMA_HISTOGRAM_ENUMERATION("PasswordManager.ApplySyncChangesState", state);
+}
+
 void LogPasswordGenerationSubmissionEvent(PasswordSubmissionEvent event) {
   UMA_HISTOGRAM_ENUMERATION("PasswordGeneration.SubmissionEvent", event,
                             SUBMISSION_EVENT_ENUM_COUNT);
@@ -216,6 +220,10 @@ void LogDeleteUndecryptableLoginsReturnValue(
 void LogDeleteCorruptedPasswordsResult(DeleteCorruptedPasswordsResult result) {
   UMA_HISTOGRAM_ENUMERATION("PasswordManager.DeleteCorruptedPasswordsResult",
                             result);
+}
+
+void LogNewlySavedPasswordIsGenerated(bool value) {
+  UMA_HISTOGRAM_BOOLEAN("PasswordManager.NewlySavedPasswordIsGenerated", value);
 }
 
 #if defined(SYNC_PASSWORD_REUSE_DETECTION_ENABLED)

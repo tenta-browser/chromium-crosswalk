@@ -8,6 +8,8 @@
 #include <cstdint>
 
 #include <map>
+#include <set>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -19,9 +21,12 @@
 #include "content/browser/accessibility/browser_accessibility_position.h"
 #include "content/common/content_export.h"
 #include "third_party/blink/public/web/web_ax_enums.h"
+#include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_node.h"
 #include "ui/accessibility/ax_node_data.h"
+#include "ui/accessibility/ax_node_position.h"
 #include "ui/accessibility/ax_range.h"
+#include "ui/accessibility/ax_text_boundary.h"
 #include "ui/accessibility/ax_text_utils.h"
 #include "ui/accessibility/platform/ax_platform_node.h"
 #include "ui/accessibility/platform/ax_platform_node_delegate.h"
@@ -125,6 +130,11 @@ class CONTENT_EXPORT BrowserAccessibility : public ui::AXPlatformNodeDelegate {
   // invalid index. Returns NULL if PlatformIsLeaf() returns true.
   virtual BrowserAccessibility* PlatformGetChild(uint32_t child_index) const;
 
+  BrowserAccessibility* PlatformGetParent() const;
+
+  // Return a pointer to the first ancestor that is a selection container
+  BrowserAccessibility* PlatformGetSelectionContainer() const;
+
   // Returns true if an ancestor of this node (not including itself) is a
   // leaf node, meaning that this node is not actually exposed to the
   // platform.
@@ -150,38 +160,52 @@ class CONTENT_EXPORT BrowserAccessibility : public ui::AXPlatformNodeDelegate {
   // Returns nullptr if there are no children.
   BrowserAccessibility* InternalDeepestLastChild() const;
 
-  // Returns the bounds of this object in coordinates relative to this frame.
-  gfx::Rect GetFrameBoundsRect() const;
+  // Derivative utils for AXPlatformNodeDelegate::GetBoundsRect
+  gfx::Rect GetClippedScreenBoundsRect(
+      ui::AXOffscreenResult* offscreen_result = nullptr) const;
+  gfx::Rect GetUnclippedScreenBoundsRect(
+      ui::AXOffscreenResult* offscreen_result = nullptr) const;
+  gfx::Rect GetClippedRootFrameBoundsRect(
+      ui::AXOffscreenResult* offscreen_result = nullptr) const;
+  gfx::Rect GetUnclippedRootFrameBoundsRect(
+      ui::AXOffscreenResult* offscreen_result = nullptr) const;
+  gfx::Rect GetClippedFrameBoundsRect(
+      ui::AXOffscreenResult* offscreen_result = nullptr) const;
 
-  // Returns the bounds of this object in coordinates relative to the
-  // page (specifically, the top-left corner of the topmost web contents).
-  // Optionally updates |offscreen| to be true if the element is offscreen
-  // within its page. Clips bounds by default unless |clip_bounds| is false.
-  gfx::Rect GetPageBoundsRect(bool* offscreen = nullptr,
-                              bool clip_bounds = true) const;
+  // Derivative utils for AXPlatformNodeDelegate::GetHypertextRangeBoundsRect
+  gfx::Rect GetUnclippedRootFrameHypertextRangeBoundsRect(
+      const int start_offset,
+      const int end_offset,
+      ui::AXOffscreenResult* offscreen_result = nullptr) const;
+
+  // Derivative utils for AXPlatformNodeDelegate::GetInnerTextRangeBoundsRect
+  gfx::Rect GetUnclippedScreenInnerTextRangeBoundsRect(
+      const int start_offset,
+      const int end_offset,
+      ui::AXOffscreenResult* offscreen_result = nullptr) const;
+  gfx::Rect GetUnclippedRootFrameInnerTextRangeBoundsRect(
+      const int start_offset,
+      const int end_offset,
+      ui::AXOffscreenResult* offscreen_result = nullptr) const;
+
+  // DEPRECATED: Prefer using the interfaces provided by AXPlatformNodeDelegate
+  // when writing new code.
+  gfx::Rect GetScreenHypertextRangeBoundsRect(
+      int start,
+      int len,
+      const ui::AXClippingBehavior clipping_behavior,
+      ui::AXOffscreenResult* offscreen_result = nullptr) const;
 
   // Returns the bounds of the given range in coordinates relative to the
-  // top-left corner of the overall web area. Only valid when the
-  // role is WebAXRoleStaticText.
-  gfx::Rect GetPageBoundsForRange(int start,
-                                  int len,
-                                  bool clipped = false) const;
-
-  // Same as |GetPageBoundsForRange| but in screen coordinates.
-  gfx::Rect GetScreenBoundsForRange(int start,
-                                    int len,
-                                    bool clipped = false) const;
-
-  // Convert a bounding rectangle from this node's coordinate system
-  // (which is relative to its nearest scrollable ancestor) to
-  // absolute bounds, either in page coordinates (when |frameOnly| is
-  // false), or in frame coordinates (when |frameOnly| is true).
-  // Updates optional |offscreen| to be true if the node is offscreen.
-  // If |clip_bounds| is set to false, will return unclipped bounds.
-  virtual gfx::Rect RelativeToAbsoluteBounds(gfx::RectF bounds,
-                                             bool frame_only,
-                                             bool* offscreen = nullptr,
-                                             bool clip_bounds = true) const;
+  // top-left corner of the overall web area. Only valid when the role is
+  // WebAXRoleStaticText.
+  // DEPRECATED (for public use): Prefer using the interfaces provided by
+  // AXPlatformNodeDelegate when writing new non-private code.
+  gfx::Rect GetRootFrameHypertextRangeBoundsRect(
+      int start,
+      int len,
+      const ui::AXClippingBehavior clipping_behavior,
+      ui::AXOffscreenResult* offscreen_result = nullptr) const;
 
   // This is to handle the cases such as ARIA textbox, where the value should
   // be calculated from the object's inner text.
@@ -207,7 +231,7 @@ class CONTENT_EXPORT BrowserAccessibility : public ui::AXPlatformNodeDelegate {
   virtual void Destroy();
 
   // Subclasses should override this to support platform reference counting.
-  virtual void NativeAddReference() { }
+  virtual void NativeAddReference() {}
 
   // Subclasses should override this to support platform reference counting.
   virtual void NativeReleaseReference();
@@ -227,7 +251,6 @@ class CONTENT_EXPORT BrowserAccessibility : public ui::AXPlatformNodeDelegate {
   uint32_t InternalChildCount() const;
   BrowserAccessibility* InternalGetChild(uint32_t child_index) const;
   BrowserAccessibility* InternalGetParent() const;
-  BrowserAccessibility* PlatformGetParent() const;
 
   int32_t GetId() const;
   gfx::RectF GetLocation() const;
@@ -297,8 +320,6 @@ class CONTENT_EXPORT BrowserAccessibility : public ui::AXPlatformNodeDelegate {
   bool GetHtmlAttribute(const char* attr, std::string* value) const;
   bool GetHtmlAttribute(const char* attr, base::string16* value) const;
 
-  virtual base::string16 GetText() const;
-
   // Returns true if the bit corresponding to the given enum is 1.
   bool HasState(ax::mojom::State state_enum) const;
   bool HasAction(ax::mojom::Action action_enum) const;
@@ -323,37 +344,83 @@ class CONTENT_EXPORT BrowserAccessibility : public ui::AXPlatformNodeDelegate {
   // Get text to announce for a live region change if AT does not implement.
   std::string GetLiveRegionText() const;
 
-  // Creates a text position rooted at this object.
+  // Creates a text position rooted at this object. Does not conver to a
+  // leaf text position - see CreatePositionForSelectionAt, below.
   BrowserAccessibilityPosition::AXPositionInstance CreatePositionAt(
       int offset,
       ax::mojom::TextAffinity affinity =
           ax::mojom::TextAffinity::kDownstream) const;
+
+  // |offset| could either be a text character or a child index in case of
+  // non-text objects. Converts to a leaf text position if you pass a
+  // character offset on a container node.
+  BrowserAccessibilityPosition::AXPositionInstance CreatePositionForSelectionAt(
+      int offset) const;
 
   // Gets the text offsets where new lines start.
   std::vector<int> GetLineStartOffsets() const;
 
   virtual gfx::NativeViewAccessible GetNativeViewAccessible();
 
+  // AXPosition Support
+
+  // Returns the text that is present inside this node, where the representation
+  // of text found in descendant nodes depends on the platform. For example some
+  // platforms may include descendant text while while other platforms may use a
+  // special character to represent descendant text. Prefer either GetHypertext
+  // or GetInnerText so it's clear which API is called.
+  virtual base::string16 GetText() const;
+
   // AXPlatformNodeDelegate.
+  base::string16 GetAuthorUniqueId() const override;
   const ui::AXNodeData& GetData() const override;
   const ui::AXTreeData& GetTreeData() const override;
+  ui::AXNodePosition::AXPositionInstance CreateTextPositionAt(
+      int offset,
+      ax::mojom::TextAffinity affinity =
+          ax::mojom::TextAffinity::kDownstream) const override;
   gfx::NativeViewAccessible GetNSWindow() override;
   gfx::NativeViewAccessible GetParent() override;
   int GetChildCount() override;
   gfx::NativeViewAccessible ChildAtIndex(int index) override;
-  gfx::Rect GetClippedScreenBoundsRect() const override;
-  gfx::Rect GetUnclippedScreenBoundsRect() const override;
+  base::string16 GetHypertext() const override;
+  bool SetHypertextSelection(int start_offset, int end_offset) override;
+  base::string16 GetInnerText() const override;
+  gfx::Rect GetBoundsRect(
+      const ui::AXCoordinateSystem coordinate_system,
+      const ui::AXClippingBehavior clipping_behavior,
+      ui::AXOffscreenResult* offscreen_result = nullptr) const override;
+  gfx::Rect GetHypertextRangeBoundsRect(
+      const int start_offset,
+      const int end_offset,
+      const ui::AXCoordinateSystem coordinate_system,
+      const ui::AXClippingBehavior clipping_behavior,
+      ui::AXOffscreenResult* offscreen_result = nullptr) const override;
+  gfx::Rect GetInnerTextRangeBoundsRect(
+      const int start_offset,
+      const int end_offset,
+      const ui::AXCoordinateSystem coordinate_system,
+      const ui::AXClippingBehavior clipping_behavior,
+      ui::AXOffscreenResult* offscreen_result = nullptr) const override;
   gfx::NativeViewAccessible HitTestSync(int x, int y) override;
   gfx::NativeViewAccessible GetFocus() override;
   ui::AXPlatformNode* GetFromNodeID(int32_t id) override;
   int GetIndexInParent() const override;
   gfx::AcceleratedWidget GetTargetForNativeAccessibilityEvent() override;
 
+  base::Optional<int> FindTextBoundary(
+      ui::AXTextBoundary boundary,
+      int offset,
+      ui::TextBoundaryDirection direction,
+      ax::mojom::TextAffinity affinity) const override;
+
+  const std::vector<gfx::NativeViewAccessible> GetDescendants() const override;
+
   bool IsTable() const override;
   int32_t GetTableColCount() const override;
   int32_t GetTableRowCount() const override;
-  int32_t GetTableAriaColCount() const override;
-  int32_t GetTableAriaRowCount() const override;
+  base::Optional<int32_t> GetTableAriaColCount() const override;
+  base::Optional<int32_t> GetTableAriaRowCount() const override;
   int32_t GetTableCellCount() const override;
   const std::vector<int32_t> GetColHeaderNodeIds() const override;
   const std::vector<int32_t> GetColHeaderNodeIds(
@@ -361,6 +428,7 @@ class CONTENT_EXPORT BrowserAccessibility : public ui::AXPlatformNodeDelegate {
   const std::vector<int32_t> GetRowHeaderNodeIds() const override;
   const std::vector<int32_t> GetRowHeaderNodeIds(
       int32_t row_index) const override;
+  ui::AXPlatformNode* GetTableCaption() override;
 
   bool IsTableRow() const override;
   int32_t GetTableRowRowIndex() const override;
@@ -376,13 +444,26 @@ class CONTENT_EXPORT BrowserAccessibility : public ui::AXPlatformNodeDelegate {
   int32_t GetCellId(int32_t row_index, int32_t col_index) const override;
   int32_t CellIndexToId(int32_t cell_index) const override;
 
+  bool IsCellOrHeaderOfARIATable() const override;
+  bool IsCellOrHeaderOfARIAGrid() const override;
+
   bool AccessibilityPerformAction(const ui::AXActionData& data) override;
+  base::string16 GetLocalizedStringForImageAnnotationStatus(
+      ax::mojom::ImageAnnotationStatus status) const override;
+  base::string16 GetLocalizedRoleDescriptionForUnlabeledImage() const override;
+  base::string16 GetLocalizedStringForLandmarkType() const override;
+  base::string16 GetStyleNameAttributeAsLocalizedString() const override;
   bool ShouldIgnoreHoveredStateForTesting() override;
   bool IsOffscreen() const override;
-  std::set<int32_t> GetReverseRelations(ax::mojom::IntAttribute attr,
-                                        int32_t dst_id) override;
-  std::set<int32_t> GetReverseRelations(ax::mojom::IntListAttribute attr,
-                                        int32_t dst_id) override;
+  bool IsWebContent() const override;
+  ui::AXPlatformNode* GetTargetNodeForRelation(
+      ax::mojom::IntAttribute attr) override;
+  std::set<ui::AXPlatformNode*> GetTargetNodesForRelation(
+      ax::mojom::IntListAttribute attr) override;
+  std::set<ui::AXPlatformNode*> GetReverseRelations(
+      ax::mojom::IntAttribute attr) override;
+  std::set<ui::AXPlatformNode*> GetReverseRelations(
+      ax::mojom::IntListAttribute attr) override;
   bool IsOrderedSetItem() const override;
   bool IsOrderedSet() const override;
   int32_t GetPosInSet() const override;
@@ -409,13 +490,46 @@ class CONTENT_EXPORT BrowserAccessibility : public ui::AXPlatformNodeDelegate {
   const ui::AXUniqueId& GetUniqueId() const override;
 
  private:
-  // |GetInnerText| recursively includes all the text from descendants such as
-  // text found in any embedded object. In contrast, |GetText| might include a
-  // special character in the place of every embedded object instead of its
-  // text, depending on the platform.
-  base::string16 GetInnerText() const;
+  // Return the bounds after converting from this node's coordinate system
+  // (which is relative to its nearest scrollable ancestor) to the coordinate
+  // system specified. If the clipping behavior is set to clipped, clipping is
+  // applied to all bounding boxes so that the resulting rect is within the
+  // window. If the clipping behavior is unclipped, the resulting rect may be
+  // outside of the window or offscreen. If an offscreen result address is
+  // provided, it will be populated depending on whether the returned bounding
+  // box is onscreen or offscreen.
+  gfx::Rect RelativeToAbsoluteBounds(
+      gfx::RectF bounds,
+      const ui::AXCoordinateSystem coordinate_system,
+      const ui::AXClippingBehavior clipping_behavior,
+      ui::AXOffscreenResult* offscreen_result) const;
 
-  gfx::Rect GetPageBoundsPastEndOfText() const;
+  // Return a rect for a 1-width character past the end of text. This is what
+  // ATs expect when getting the character extents past the last character in a
+  // line, and equals what the caret bounds would be when past the end of the
+  // text.
+  gfx::Rect GetRootFrameHypertextBoundsPastEndOfText(
+      const ui::AXClippingBehavior clipping_behavior,
+      ui::AXOffscreenResult* offscreen_result = nullptr) const;
+
+  // Return the bounds of inline text in this node's coordinate system (which is
+  // relative to its container node specified in AXRelativeBounds).
+  gfx::RectF GetInlineTextRect(const int start_offset,
+                               const int end_offset,
+                               const int max_length) const;
+
+  // Recursive helper function for GetInnerTextRangeBounds.
+  gfx::Rect GetInnerTextRangeBoundsRectInSubtree(
+      const int start_offset,
+      const int end_offset,
+      const ui::AXCoordinateSystem coordinate_system,
+      const ui::AXClippingBehavior clipping_behavior,
+      ui::AXOffscreenResult* offscreen_result) const;
+
+  // Given a set of node ids, return the nodes in this delegate's tree to
+  // which they correspond.
+  std::set<ui::AXPlatformNode*> GetNodesForNodeIdSet(
+      const std::set<int32_t>& ids);
 
   // A unique ID, since node IDs are frame-local.
   ui::AXUniqueId unique_id_;

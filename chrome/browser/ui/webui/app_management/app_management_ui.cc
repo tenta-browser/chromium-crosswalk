@@ -11,6 +11,7 @@
 #include "chrome/browser/apps/app_service/app_icon_source.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/app_management/app_management_page_handler.h"
+#include "chrome/browser/ui/webui/localized_string.h"
 #include "chrome/browser/ui/webui/plural_string_handler.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/url_constants.h"
@@ -26,36 +27,39 @@ namespace {
 
 content::WebUIDataSource* CreateAppManagementUIHTMLSource(Profile* profile) {
   content::WebUIDataSource* source =
-      content::WebUIDataSource::Create(chrome::kChromeUIAppLauncherPageHost);
+      content::WebUIDataSource::Create(chrome::kChromeUIAppManagementHost);
 
-  source->AddLocalizedString("appListTitle", IDS_APP_MANAGEMENT_APP_LIST_TITLE);
-  source->AddLocalizedString("appNoPermission",
-                             IDS_APPLICATION_INFO_APP_NO_PERMISSIONS_TEXT);
-  source->AddLocalizedString("back", IDS_APP_MANAGEMENT_BACK);
-  source->AddLocalizedString("camera", IDS_APP_MANAGEMENT_CAMERA);
-  source->AddLocalizedString("lessApps", IDS_APP_MANAGEMENT_LESS_APPS);
-  source->AddLocalizedString("location", IDS_APP_MANAGEMENT_LOCATION);
-  source->AddLocalizedString("microphone", IDS_APP_MANAGEMENT_MICROPHONE);
-  source->AddLocalizedString("moreApps", IDS_APP_MANAGEMENT_MORE_APPS);
-  source->AddLocalizedString("notificationSublabel",
-                             IDS_APP_MANAGEMENT_NOTIFICATIONS_SUBLABEL);
-  source->AddLocalizedString("notifications", IDS_APP_MANAGEMENT_NOTIFICATIONS);
-  source->AddLocalizedString("openSiteSettings",
-                             IDS_APP_MANAGEMENT_SITE_SETTING);
-  source->AddLocalizedString("permissions", IDS_APP_MANAGEMENT_PERMISSIONS);
-  source->AddLocalizedString("pinToShelf", IDS_APP_MANAGEMENT_PIN_TO_SHELF);
-  source->AddLocalizedString("searchPrompt", IDS_APP_MANAGEMENT_SEARCH_PROMPT);
-  source->AddLocalizedString("size", IDS_APP_MANAGEMENT_SIZE);
-  source->AddLocalizedString("title", IDS_APP_MANAGEMENT_TITLE);
-  source->AddLocalizedString("uninstall", IDS_APP_MANAGEMENT_UNINSTALL);
-  source->AddLocalizedString("version", IDS_APP_MANAGEMENT_VERSION);
+  static constexpr LocalizedString kStrings[] = {
+      {"appListTitle", IDS_APP_MANAGEMENT_APP_LIST_TITLE},
+      {"appNoPermission", IDS_APPLICATION_INFO_APP_NO_PERMISSIONS_TEXT},
+      {"back", IDS_APP_MANAGEMENT_BACK},
+      {"camera", IDS_APP_MANAGEMENT_CAMERA},
+      {"lessApps", IDS_APP_MANAGEMENT_LESS_APPS},
+      {"location", IDS_APP_MANAGEMENT_LOCATION},
+      {"microphone", IDS_APP_MANAGEMENT_MICROPHONE},
+      {"moreApps", IDS_APP_MANAGEMENT_MORE_APPS},
+      {"noSearchResults", IDS_APP_MANAGEMENT_NO_RESULTS},
+      {"notificationSublabel", IDS_APP_MANAGEMENT_NOTIFICATIONS_SUBLABEL},
+      {"notifications", IDS_APP_MANAGEMENT_NOTIFICATIONS},
+      {"openAndroidSettings", IDS_APP_MANAGEMENT_ANDROID_SETTINGS},
+      {"openExtensionsSettings", IDS_APP_MANAGEMENT_EXTENSIONS_SETTINGS},
+      {"openSiteSettings", IDS_APP_MANAGEMENT_SITE_SETTING},
+      {"permissions", IDS_APP_MANAGEMENT_PERMISSIONS},
+      {"morePermissions", IDS_APP_MANAGEMENT_MORE_PERMISSIONS},
+      {"thisAppCan", IDS_APP_MANAGEMENT_THIS_APP_CAN},
+      {"pinToShelf", IDS_APP_MANAGEMENT_PIN_TO_SHELF},
+      {"searchPrompt", IDS_APP_MANAGEMENT_SEARCH_PROMPT},
+      {"size", IDS_APP_MANAGEMENT_SIZE},
+      {"title", IDS_APP_MANAGEMENT_TITLE},
+      {"uninstall", IDS_APP_MANAGEMENT_UNINSTALL},
+      {"version", IDS_APP_MANAGEMENT_VERSION},
+  };
+  AddLocalizedStringsBulk(source, kStrings, base::size(kStrings));
 
   source->AddResourcePath("app_management.mojom-lite.js",
                           IDR_APP_MANAGEMENT_MOJO_LITE_JS);
   source->AddResourcePath("types.mojom-lite.js",
                           IDR_APP_MANAGEMENT_TYPES_MOJO_LITE_JS);
-  source->AddResourcePath("big_buffer.mojom-lite.js",
-                          IDR_APP_MANAGEMENT_BIG_BUFFER_MOJO_LITE_JS);
   source->AddResourcePath("bitmap.mojom-lite.js",
                           IDR_APP_MANAGEMENT_BITMAP_MOJO_LITE_JS);
   source->AddResourcePath("image.mojom-lite.js",
@@ -73,6 +77,10 @@ content::WebUIDataSource* CreateAppManagementUIHTMLSource(Profile* profile) {
   source->AddResourcePath("app.js", IDR_APP_MANAGEMENT_APP_JS);
   source->AddResourcePath("app_item.html", IDR_APP_MANAGEMENT_APP_ITEM_HTML);
   source->AddResourcePath("app_item.js", IDR_APP_MANAGEMENT_APP_ITEM_JS);
+  source->AddResourcePath("arc_permission_view.html",
+                          IDR_APP_MANAGEMENT_ARC_PERMISSION_VIEW_HTML);
+  source->AddResourcePath("arc_permission_view.js",
+                          IDR_APP_MANAGEMENT_ARC_PERMISSION_VIEW_JS);
   source->AddResourcePath("browser_proxy.html",
                           IDR_APP_MANAGEMENT_BROWSER_PROXY_HTML);
   source->AddResourcePath("browser_proxy.js",
@@ -83,6 +91,13 @@ content::WebUIDataSource* CreateAppManagementUIHTMLSource(Profile* profile) {
                           IDR_APP_MANAGEMENT_CHROME_APP_PERMISSION_VIEW_JS);
   source->AddResourcePath("constants.html", IDR_APP_MANAGEMENT_CONSTANTS_HTML);
   source->AddResourcePath("constants.js", IDR_APP_MANAGEMENT_CONSTANTS_JS);
+  source->AddResourcePath("expandable_app_list.html",
+                          IDR_APP_MANAGEMENT_EXPANDABLE_APP_LIST_HTML);
+  source->AddResourcePath("expandable_app_list.js",
+                          IDR_APP_MANAGEMENT_EXPANDABLE_APP_LIST_JS);
+  source->AddResourcePath("dom_switch.html",
+                          IDR_APP_MANAGEMENT_DOM_SWITCH_HTML);
+  source->AddResourcePath("dom_switch.js", IDR_APP_MANAGEMENT_DOM_SWITCH_JS);
   source->AddResourcePath("fake_page_handler.js",
                           IDR_APP_MANAGEMENT_FAKE_PAGE_HANDLER_JS);
   source->AddResourcePath("main_view.html", IDR_APP_MANAGEMENT_MAIN_VIEW_HTML);
@@ -103,6 +118,10 @@ content::WebUIDataSource* CreateAppManagementUIHTMLSource(Profile* profile) {
                           IDR_APP_MANAGEMENT_PERMISSION_ITEM_HTML);
   source->AddResourcePath("permission_item.js",
                           IDR_APP_MANAGEMENT_PERMISSION_ITEM_JS);
+  source->AddResourcePath("permission_toggle.html",
+                          IDR_APP_MANAGEMENT_PERMISSION_TOGGLE_HTML);
+  source->AddResourcePath("permission_toggle.js",
+                          IDR_APP_MANAGEMENT_PERMISSION_TOGGLE_JS);
   source->AddResourcePath("pwa_permission_view.html",
                           IDR_APP_MANAGEMENT_PWA_PERMISSION_VIEW_HTML);
   source->AddResourcePath("pwa_permission_view.js",
@@ -111,6 +130,9 @@ content::WebUIDataSource* CreateAppManagementUIHTMLSource(Profile* profile) {
   source->AddResourcePath("reducers.js", IDR_APP_MANAGEMENT_REDUCERS_JS);
   source->AddResourcePath("router.html", IDR_APP_MANAGEMENT_ROUTER_HTML);
   source->AddResourcePath("router.js", IDR_APP_MANAGEMENT_ROUTER_JS);
+  source->AddResourcePath("search_view.html",
+                          IDR_APP_MANAGEMENT_SEARCH_VIEW_HTML);
+  source->AddResourcePath("search_view.js", IDR_APP_MANAGEMENT_SEARCH_VIEW_JS);
   source->AddResourcePath("shared_style.html",
                           IDR_APP_MANAGEMENT_SHARED_STYLE_HTML);
   source->AddResourcePath("shared_vars.html",

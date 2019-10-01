@@ -12,6 +12,8 @@
 #include "chrome/browser/chromeos/settings/scoped_cros_settings_test_helper.h"
 #include "chrome/browser/ui/ash/test_wallpaper_controller.h"
 #include "chrome/browser/ui/ash/wallpaper_controller_client.h"
+#include "chrome/test/base/scoped_testing_local_state.h"
+#include "chrome/test/base/testing_browser_process.h"
 #include "chromeos/cryptohome/system_salt_getter.h"
 #include "components/account_id/account_id.h"
 #include "components/user_manager/scoped_user_manager.h"
@@ -66,9 +68,10 @@ TEST_F(WallpaperPrivateApiUnittest, ResetWallpaper) {
   chromeos::SystemSaltGetter::Get()->SetRawSaltForTesting(
       chromeos::SystemSaltGetter::RawSalt({1, 2, 3, 4, 5, 6, 7, 8}));
 
+  ScopedTestingLocalState local_state(TestingBrowserProcess::GetGlobal());
   WallpaperControllerClient client;
   TestWallpaperController test_controller;
-  client.InitForTesting(test_controller.CreateInterfacePtr());
+  client.InitForTesting(&test_controller);
   fake_user_manager()->AddUser(AccountId::FromUserEmail(kTestAccount));
 
   {
@@ -78,7 +81,6 @@ TEST_F(WallpaperPrivateApiUnittest, ResetWallpaper) {
         extensions::api_test_utils::RunFunction(function.get(), "[]", nullptr));
   }
 
-  client.FlushForTesting();
   // Expect SetDefaultWallpaper() to be called exactly once.
   EXPECT_EQ(1, test_controller.set_default_wallpaper_count());
 }

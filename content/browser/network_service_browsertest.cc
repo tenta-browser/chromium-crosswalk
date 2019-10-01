@@ -2,7 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/bind.h"
+#include "base/files/file_util.h"
 #include "base/memory/ref_counted_memory.h"
+#include "base/test/bind_test_util.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "content/browser/storage_partition_impl.h"
@@ -15,6 +18,7 @@
 #include "content/public/browser/web_ui_controller_factory.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/common/network_service_util.h"
 #include "content/public/common/service_manager_connection.h"
 #include "content/public/common/service_names.mojom.h"
 #include "content/public/common/url_utils.h"
@@ -26,6 +30,8 @@
 #include "content/shell/browser/shell.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/http/http_response_headers.h"
+#include "net/test/embedded_test_server/default_handlers.h"
+#include "net/test/embedded_test_server/http_request.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/network_switches.h"
@@ -138,12 +144,12 @@ class NetworkServiceBrowserTest : public ContentBrowserTest {
     return xhr_result && execute_result;
   }
 
-  bool FetchResource(const GURL& url) {
+  bool FetchResource(const GURL& url, bool synchronous = false) {
     if (!url.is_valid())
       return false;
     std::string script = JsReplace(
         "var xhr = new XMLHttpRequest();"
-        "xhr.open('GET', $1, true);"
+        "xhr.open('GET', $1, $2);"
         "xhr.onload = function (e) {"
         "  if (xhr.readyState === 4) {"
         "    window.domAutomationController.send(xhr.status === 200);"
@@ -152,8 +158,12 @@ class NetworkServiceBrowserTest : public ContentBrowserTest {
         "xhr.onerror = function () {"
         "  window.domAutomationController.send(false);"
         "};"
-        "xhr.send(null);",
-        url);
+        "try {"
+        "  xhr.send(null);"
+        "} catch (error) {"
+        "  window.domAutomationController.send(false);"
+        "}",
+        url, !synchronous);
     return ExecuteScript(script);
   }
 
@@ -205,7 +215,7 @@ class NetworkServiceBrowserTest : public ContentBrowserTest {
 
 // Verifies that WebUI pages with WebUI bindings can't make network requests.
 IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserTest, WebUIBindingsNoHttp) {
-  GURL test_url("chrome://webui/");
+  GURL test_url(GetWebUIURL("webui/"));
   NavigateToURL(shell(), test_url);
   RenderProcessKilledObserver killed_observer(shell()->web_contents());
   ASSERT_FALSE(CheckCanLoadHttp());
@@ -215,7 +225,7 @@ IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserTest, WebUIBindingsNoHttp) {
 
 // Verifies that WebUI pages without WebUI bindings can make network requests.
 IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserTest, NoWebUIBindingsHttp) {
-  GURL test_url("chrome://webui/nobinding/");
+  GURL test_url(GetWebUIURL("webui/nobinding/"));
   NavigateToURL(shell(), test_url);
   ASSERT_TRUE(CheckCanLoadHttp());
 }
@@ -224,7 +234,7 @@ IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserTest, NoWebUIBindingsHttp) {
 // ChildProcessSecurityPolicyImpl::CanRequestURL is properly rejected.
 IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserTest,
                        FileSystemBindingsCorrectOrigin) {
-  GURL test_url("chrome://webui/nobinding/");
+  GURL test_url(GetWebUIURL("webui/nobinding/"));
   NavigateToURL(shell(), test_url);
 
   // Note: must be filesystem scheme (obviously).
@@ -359,7 +369,7 @@ IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserTest,
                        MemoryPressureSentToNetworkProcess) {
-  if (IsNetworkServiceRunningInProcess())
+  if (IsInProcessNetworkService())
     return;
 
   network::mojom::NetworkServiceTestPtr network_service_test;
@@ -384,6 +394,52 @@ IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserTest,
   network_service_test->GetLatestMemoryPressureLevel(&memory_pressure_level);
   EXPECT_EQ(memory_pressure_level,
             base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_CRITICAL);
+}
+
+// Verifies that sync XHRs don't hang if the network service crashes.
+IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserTest, SyncXHROnCrash) {
+  if (IsInProcessNetworkService())
+    return;
+
+  network::mojom::NetworkServiceTestPtr network_service_test;
+  ServiceManagerConnection::GetForProcess()->GetConnector()->BindInterface(
+      mojom::kNetworkServiceName, &network_service_test);
+  network::mojom::NetworkServiceTestPtrInfo network_service_test_info =
+      network_service_test.PassInterface();
+
+  net::EmbeddedTestServer http_server;
+  net::test_server::RegisterDefaultHandlers(&http_server);
+  http_server.RegisterRequestMonitor(base::BindLambdaForTesting(
+      [&](const net::test_server::HttpRequest& request) {
+        if (request.relative_url == "/hung") {
+          network::mojom::NetworkServiceTestPtr network_service_test2(
+              std::move(network_service_test_info));
+          network_service_test2->SimulateCrash();
+        }
+      }));
+  EXPECT_TRUE(http_server.Start());
+
+  NavigateToURL(shell(), http_server.GetURL("/empty.html"));
+
+  FetchResource(http_server.GetURL("/hung"), true);
+  // If the renderer is hung the test will hang.
+}
+
+// Verifies that sync cookie calls don't hang if the network service crashes.
+IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserTest, SyncCookieGetOnCrash) {
+  if (IsInProcessNetworkService())
+    return;
+
+  network::mojom::NetworkServiceTestPtr network_service_test;
+  ServiceManagerConnection::GetForProcess()->GetConnector()->BindInterface(
+      mojom::kNetworkServiceName, &network_service_test);
+  network_service_test->CrashOnGetCookieList();
+
+  NavigateToURL(shell(), embedded_test_server()->GetURL("/empty.html"));
+
+  ASSERT_TRUE(
+      content::ExecuteScript(shell()->web_contents(), "document.cookie"));
+  // If the renderer is hung the test will hang.
 }
 
 class NetworkServiceInProcessBrowserTest : public ContentBrowserTest {

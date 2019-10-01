@@ -14,7 +14,7 @@
 #include "content/public/browser/restore_type.h"
 #include "content/public/common/referrer.h"
 #include "content/public/common/transferrable_url_loader.mojom.h"
-#include "net/base/host_port_pair.h"
+#include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_response_info.h"
 #include "services/network/public/cpp/resource_request_body.h"
@@ -52,7 +52,7 @@ class CONTENT_EXPORT NavigationHandle {
   // some may change during navigation (e.g. due to server redirects).
 
   // Get a unique ID for this navigation.
-  virtual int64_t GetNavigationId() const = 0;
+  virtual int64_t GetNavigationId() = 0;
 
   // The URL the frame is navigating to. This may change during the navigation
   // when encountering a server redirect.
@@ -60,6 +60,8 @@ class CONTENT_EXPORT NavigationHandle {
   // WebContents::GetVisibleURL and WebContents::GetLastCommittedURL. For
   // example, viewing a page's source navigates to the URL of the page, but the
   // virtual URL is prefixed with "view-source:".
+  // Note: The URL of a NavigationHandle can change over its lifetime.
+  // e.g. URLs might be rewritten by the renderer before being committed.
   virtual const GURL& GetURL() = 0;
 
   // Returns the SiteInstance that started the request.
@@ -113,7 +115,7 @@ class CONTENT_EXPORT NavigationHandle {
   virtual base::TimeTicks NavigationInputStart() = 0;
 
   // Whether or not the navigation was started within a context menu.
-  virtual bool WasStartedFromContextMenu() const = 0;
+  virtual bool WasStartedFromContextMenu() = 0;
 
   // Returns the URL and encoding of an INPUT field that corresponds to a
   // searchable form request.
@@ -160,7 +162,7 @@ class CONTENT_EXPORT NavigationHandle {
   virtual ui::PageTransition GetPageTransition() = 0;
 
   // Returns the NavigationUIData associated with the navigation.
-  virtual const NavigationUIData* GetNavigationUIData() = 0;
+  virtual NavigationUIData* GetNavigationUIData() = 0;
 
   // Whether the target URL cannot be handled by the browser's internal protocol
   // handlers.
@@ -232,7 +234,7 @@ class CONTENT_EXPORT NavigationHandle {
   virtual const GURL& GetPreviousURL() = 0;
 
   // Returns the remote address of the socket which fetched this resource.
-  virtual net::HostPortPair GetSocketAddress() = 0;
+  virtual net::IPEndPoint GetSocketAddress() = 0;
 
   // Returns the headers used for this request.
   virtual const net::HttpRequestHeaders& GetRequestHeaders() = 0;
@@ -264,7 +266,7 @@ class CONTENT_EXPORT NavigationHandle {
   // Returns the SSLInfo for a request that succeeded or failed due to a
   // certificate error. In the case of other request failures or of a non-secure
   // scheme, returns an empty object.
-  virtual const net::SSLInfo& GetSSLInfo() = 0;
+  virtual const base::Optional<net::SSLInfo> GetSSLInfo() = 0;
 
   // Returns the ID of the URLRequest associated with this navigation. Can only
   // be called from NavigationThrottle::WillProcessResponse and
@@ -283,6 +285,9 @@ class CONTENT_EXPORT NavigationHandle {
   // Returns true if this navigation was initiated by a form submission.
   virtual bool IsFormSubmission() = 0;
 
+  // Returns true if this navigation was initiated by a link click.
+  virtual bool WasInitiatedByLinkClick() = 0;
+
   // Returns true if the target is an inner response of a signed exchange.
   virtual bool IsSignedExchangeInnerResponse() = 0;
 
@@ -299,6 +304,24 @@ class CONTENT_EXPORT NavigationHandle {
   // Returns, if available, the origin of the document that has initiated the
   // navigation for this NavigationHandle.
   virtual const base::Optional<url::Origin>& GetInitiatorOrigin() = 0;
+
+  // Whether the new document will be hosted in the same process as the current
+  // document or not. Set only when the navigation commits.
+  virtual bool IsSameProcess() = 0;
+
+  // Returns the offset between the indices of the previous last committed and
+  // the newly committed navigation entries.
+  // (e.g. -1 for back navigations, 0 for reloads, 1 for forward navigations).
+  //
+  // Note that this value is computed when we create the navigation request
+  // and doesn't fully cover all corner cases.
+  // We try to approximate them with params.should_replace_entry, but in
+  // some cases it's inaccurate:
+  // - Main frame client redirects,
+  // - History navigation to the page with subframes. The subframe
+  //   navigations will return 1 here although they don't create a new
+  //   navigation entry.
+  virtual int GetNavigationEntryOffset() = 0;
 
   // Testing methods ----------------------------------------------------------
   //

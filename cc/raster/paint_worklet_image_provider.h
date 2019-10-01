@@ -10,21 +10,25 @@
 
 namespace cc {
 class PaintWorkletImageCache;
+class PaintWorkletInput;
 
 // PaintWorkletImageProvider is a bridge between PaintWorkletImageCache and its
 // rasterization.
 class CC_EXPORT PaintWorkletImageProvider {
  public:
   explicit PaintWorkletImageProvider(PaintWorkletImageCache* cache);
+  PaintWorkletImageProvider(const PaintWorkletImageProvider&) = delete;
+  PaintWorkletImageProvider(PaintWorkletImageProvider&& other);
   ~PaintWorkletImageProvider();
 
-  PaintWorkletImageProvider(PaintWorkletImageProvider&& other);
+  PaintWorkletImageProvider& operator=(const PaintWorkletImageProvider&) =
+      delete;
   PaintWorkletImageProvider& operator=(PaintWorkletImageProvider&& other);
+
+  ImageProvider::ScopedResult GetPaintRecordResult(PaintWorkletInput* input);
 
  private:
   PaintWorkletImageCache* cache_;
-
-  DISALLOW_COPY_AND_ASSIGN(PaintWorkletImageProvider);
 };
 
 }  // namespace cc

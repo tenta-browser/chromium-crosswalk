@@ -10,13 +10,6 @@
  *
  * The names passed to the tests are file names to select. They are generated
  * from COMPLEX_DRIVE_ENTRY_SET (see setupAndWaitUntilReady).
- *
- * TODO(sashab): Generate the entries used in these tests at runtime, by
- * creating entries with pre-set combinations of permissions and ensuring the
- * outcome is always as expected.
- *
- * TODO(sashab): Once Team Drives is enabled, add tests for team drive roots
- * and entries as well.
  */
 
 /**
@@ -81,7 +74,7 @@ async function checkContextMenu(commandId, path, expectedEnabledState) {
 /**
  * Tests that the Delete menu item is enabled if a read-write entry is selected.
  */
-testcase.checkDeleteEnabledForReadWriteFile = function() {
+testcase.checkDeleteEnabledForReadWriteFile = () => {
   return checkContextMenu('delete', 'hello.txt', true);
 };
 
@@ -89,14 +82,14 @@ testcase.checkDeleteEnabledForReadWriteFile = function() {
  * Tests that the Delete menu item is disabled if a read-only document is
  * selected.
  */
-testcase.checkDeleteDisabledForReadOnlyDocument = function() {
+testcase.checkDeleteDisabledForReadOnlyDocument = () => {
   return checkContextMenu('delete', 'Read-Only Doc.gdoc', false);
 };
 
 /**
  * Tests that the Delete menu item is disabled if a read-only file is selected.
  */
-testcase.checkDeleteDisabledForReadOnlyFile = function() {
+testcase.checkDeleteDisabledForReadOnlyFile = () => {
   return checkContextMenu('delete', 'Read-Only File.jpg', false);
 };
 
@@ -104,14 +97,14 @@ testcase.checkDeleteDisabledForReadOnlyFile = function() {
  * Tests that the Delete menu item is disabled if a read-only folder is
  * selected.
  */
-testcase.checkDeleteDisabledForReadOnlyFolder = function() {
+testcase.checkDeleteDisabledForReadOnlyFolder = () => {
   return checkContextMenu('delete', 'Read-Only Folder', false);
 };
 
 /**
  * Tests that the Rename menu item is enabled if a read-write entry is selected.
  */
-testcase.checkRenameEnabledForReadWriteFile = function() {
+testcase.checkRenameEnabledForReadWriteFile = () => {
   return checkContextMenu('rename', 'hello.txt', true);
 };
 
@@ -119,14 +112,14 @@ testcase.checkRenameEnabledForReadWriteFile = function() {
  * Tests that the Rename menu item is disabled if a read-only document is
  * selected.
  */
-testcase.checkRenameDisabledForReadOnlyDocument = function() {
+testcase.checkRenameDisabledForReadOnlyDocument = () => {
   return checkContextMenu('rename', 'Read-Only Doc.gdoc', false);
 };
 
 /**
  * Tests that the Rename menu item is disabled if a read-only file is selected.
  */
-testcase.checkRenameDisabledForReadOnlyFile = function() {
+testcase.checkRenameDisabledForReadOnlyFile = () => {
   return checkContextMenu('rename', 'Read-Only File.jpg', false);
 };
 
@@ -134,14 +127,14 @@ testcase.checkRenameDisabledForReadOnlyFile = function() {
  * Tests that the Rename menu item is disabled if a read-only folder is
  * selected.
  */
-testcase.checkRenameDisabledForReadOnlyFolder = function() {
+testcase.checkRenameDisabledForReadOnlyFolder = () => {
   return checkContextMenu('rename', 'Read-Only Folder', false);
 };
 
 /**
  * Tests that the Share menu item is enabled if a read-write entry is selected.
  */
-testcase.checkShareEnabledForReadWriteFile = function() {
+testcase.checkShareEnabledForReadWriteFile = () => {
   return checkContextMenu('share', 'hello.txt', true);
 };
 
@@ -149,7 +142,7 @@ testcase.checkShareEnabledForReadWriteFile = function() {
  * Tests that the Share menu item is enabled if a read-only document is
  * selected.
  */
-testcase.checkShareEnabledForReadOnlyDocument = function() {
+testcase.checkShareEnabledForReadOnlyDocument = () => {
   return checkContextMenu('share', 'Read-Only Doc.gdoc', true);
 };
 
@@ -157,14 +150,14 @@ testcase.checkShareEnabledForReadOnlyDocument = function() {
  * Tests that the Share menu item is disabled if a strict read-only document is
  * selected.
  */
-testcase.checkShareDisabledForStrictReadOnlyDocument = function() {
+testcase.checkShareDisabledForStrictReadOnlyDocument = () => {
   return checkContextMenu('share', 'Read-Only (Strict) Doc.gdoc', false);
 };
 
 /**
  * Tests that the Share menu item is enabled if a read-only file is selected.
  */
-testcase.checkShareEnabledForReadOnlyFile = function() {
+testcase.checkShareEnabledForReadOnlyFile = () => {
   return checkContextMenu('share', 'Read-Only File.jpg', true);
 };
 
@@ -172,14 +165,14 @@ testcase.checkShareEnabledForReadOnlyFile = function() {
  * Tests that the Share menu item is enabled if a read-only folder is
  * selected.
  */
-testcase.checkShareEnabledForReadOnlyFolder = function() {
+testcase.checkShareEnabledForReadOnlyFolder = () => {
   return checkContextMenu('share', 'Read-Only Folder', true);
 };
 
 /**
  * Tests that the Copy menu item is enabled if a read-write entry is selected.
  */
-testcase.checkCopyEnabledForReadWriteFile = function() {
+testcase.checkCopyEnabledForReadWriteFile = () => {
   return checkContextMenu('copy', 'hello.txt', true);
 };
 
@@ -187,7 +180,7 @@ testcase.checkCopyEnabledForReadWriteFile = function() {
  * Tests that the Copy menu item is enabled if a read-only document is
  * selected.
  */
-testcase.checkCopyEnabledForReadOnlyDocument = function() {
+testcase.checkCopyEnabledForReadOnlyDocument = () => {
   return checkContextMenu('copy', 'Read-Only Doc.gdoc', true);
 };
 
@@ -195,14 +188,14 @@ testcase.checkCopyEnabledForReadOnlyDocument = function() {
  * Tests that the Copy menu item is disabled if a strict (no-copy) read-only
  * document is selected.
  */
-testcase.checkCopyDisabledForStrictReadOnlyDocument = function() {
+testcase.checkCopyDisabledForStrictReadOnlyDocument = () => {
   return checkContextMenu('copy', 'Read-Only Doc.gdoc', true);
 };
 
 /**
  * Tests that the Copy menu item is enabled if a read-only file is selected.
  */
-testcase.checkCopyEnabledForReadOnlyFile = function() {
+testcase.checkCopyEnabledForReadOnlyFile = () => {
   return checkContextMenu('copy', 'Read-Only File.jpg', true);
 };
 
@@ -210,14 +203,14 @@ testcase.checkCopyEnabledForReadOnlyFile = function() {
  * Tests that the Copy menu item is enabled if a read-only folder is
  * selected.
  */
-testcase.checkCopyEnabledForReadOnlyFolder = function() {
+testcase.checkCopyEnabledForReadOnlyFolder = () => {
   return checkContextMenu('copy', 'Read-Only Folder', true);
 };
 
 /**
  * Tests that the Cut menu item is enabled if a read-write entry is selected.
  */
-testcase.checkCutEnabledForReadWriteFile = function() {
+testcase.checkCutEnabledForReadWriteFile = () => {
   return checkContextMenu('cut', 'hello.txt', true);
 };
 
@@ -225,14 +218,14 @@ testcase.checkCutEnabledForReadWriteFile = function() {
  * Tests that the Cut menu item is disabled if a read-only document is
  * selected.
  */
-testcase.checkCutDisabledForReadOnlyDocument = function() {
+testcase.checkCutDisabledForReadOnlyDocument = () => {
   return checkContextMenu('cut', 'Read-Only Doc.gdoc', false);
 };
 
 /**
  * Tests that the Cut menu item is disabled if a read-only file is selected.
  */
-testcase.checkCutDisabledForReadOnlyFile = function() {
+testcase.checkCutDisabledForReadOnlyFile = () => {
   return checkContextMenu('cut', 'Read-Only File.jpg', false);
 };
 
@@ -240,7 +233,7 @@ testcase.checkCutDisabledForReadOnlyFile = function() {
  * Tests that the Cut menu item is disabled if a read-only folder is
  * selected.
  */
-testcase.checkCutDisabledForReadOnlyFolder = function() {
+testcase.checkCutDisabledForReadOnlyFolder = () => {
   return checkContextMenu('cut', 'Read-Only Folder', false);
 };
 
@@ -248,7 +241,7 @@ testcase.checkCutDisabledForReadOnlyFolder = function() {
  * Tests that the Paste into Folder menu item is enabled if a read-write folder
  * is selected.
  */
-testcase.checkPasteIntoFolderEnabledForReadWriteFolder = function() {
+testcase.checkPasteIntoFolderEnabledForReadWriteFolder = () => {
   return checkContextMenu('paste-into-folder', 'photos', true);
 };
 
@@ -256,14 +249,14 @@ testcase.checkPasteIntoFolderEnabledForReadWriteFolder = function() {
  * Tests that the Paste into Folder menu item is disabled if a read-only folder
  * is selected.
  */
-testcase.checkPasteIntoFolderDisabledForReadOnlyFolder = function() {
+testcase.checkPasteIntoFolderDisabledForReadOnlyFolder = () => {
   return checkContextMenu('paste-into-folder', 'Read-Only Folder', false);
 };
 
 /**
  * Tests that text selection context menus are disabled in tablet mode.
  */
-testcase.checkContextMenusForInputElements = async function() {
+testcase.checkContextMenusForInputElements = async () => {
   // Open FilesApp on Downloads.
   const appId = await setupAndWaitUntilReady(RootPath.DOWNLOADS);
 
@@ -305,10 +298,6 @@ testcase.checkContextMenusForInputElements = async function() {
 };
 
 /**
- * TODO(sashab): Add tests for copying to/from the directory tree on the LHS.
- */
-
-/**
  * Tests that the specified menu item is in |expectedEnabledState| when the
  * context menu is opened from the file list inside the folder called
  * |folderName|. The folder is opened and the white area inside the folder is
@@ -337,6 +326,9 @@ async function checkContextMenuInDriveFolder(
   chrome.test.assertTrue(!!await remoteCall.callRemoteTestUtil(
       'selectFolderInTree', appId, ['My Drive']));
 
+  // Wait for My Drive to load.
+  await remoteCall.waitUntilCurrentDirectoryIsChanged(appId, '/My Drive');
+
   // Expand 'My Drive'.
   chrome.test.assertTrue(!!await remoteCall.callRemoteTestUtil(
       'expandSelectedFolderInTree', appId, []));
@@ -344,6 +336,10 @@ async function checkContextMenuInDriveFolder(
   // Select the folder.
   await remoteCall.callRemoteTestUtil(
       'selectFolderInTree', appId, [folderName]);
+
+  // Wait the folder to load.
+  await remoteCall.waitUntilCurrentDirectoryIsChanged(
+      appId, '/My Drive/' + folderName);
 
   // Right-click inside the file list.
   chrome.test.assertTrue(!!await remoteCall.callRemoteTestUtil(
@@ -366,7 +362,7 @@ async function checkContextMenuInDriveFolder(
  * Tests that the New Folder menu item is enabled inside a folder that has
  * read-write permissions.
  */
-testcase.checkNewFolderEnabledInsideReadWriteFolder = function() {
+testcase.checkNewFolderEnabledInsideReadWriteFolder = () => {
   return checkContextMenuInDriveFolder('new-folder', 'photos', true);
 };
 
@@ -374,7 +370,7 @@ testcase.checkNewFolderEnabledInsideReadWriteFolder = function() {
  * Tests that the New Folder menu item is enabled inside a folder that has
  * read-write permissions.
  */
-testcase.checkNewFolderDisabledInsideReadOnlyFolder = function() {
+testcase.checkNewFolderDisabledInsideReadOnlyFolder = () => {
   return checkContextMenuInDriveFolder('new-folder', 'Read-Only Folder', false);
 };
 
@@ -382,7 +378,7 @@ testcase.checkNewFolderDisabledInsideReadOnlyFolder = function() {
  * Tests that the Paste menu item is enabled inside a folder that has read-write
  * permissions.
  */
-testcase.checkPasteEnabledInsideReadWriteFolder = function() {
+testcase.checkPasteEnabledInsideReadWriteFolder = () => {
   return checkContextMenuInDriveFolder('paste', 'photos', true);
 };
 
@@ -390,221 +386,37 @@ testcase.checkPasteEnabledInsideReadWriteFolder = function() {
  * Tests that the Paste menu item is disabled inside a folder that has read-only
  * permissions.
  */
-testcase.checkPasteDisabledInsideReadOnlyFolder = function() {
+testcase.checkPasteDisabledInsideReadOnlyFolder = () => {
   return checkContextMenuInDriveFolder('paste', 'Read-Only Folder', false);
-};
-
-/**
- * Tests that the specified menu item is in |expectedEnabledState| when the
- * context menu is opened from the directory tree. The tree item must be
- * visible.
- * TODO(sashab): Allow specifying a generic path to any folder in the tree.
- *
- * @param {string} commandId ID of the command in the context menu to check.
- * @param {string} folderSelector CSS selector to the folder node in the tree.
- * @param {boolean} expectedEnabledState True if the command should be enabled
- *     in the context menu, false if not.
- */
-async function checkContextMenuForDriveFolderInTree(
-    commandId, folderSelector, expectedEnabledState) {
-  // Open Files App on Drive.
-  const appId =
-      await setupAndWaitUntilReady(RootPath.DRIVE, [], COMPLEX_DRIVE_ENTRY_SET);
-
-  // Optionally copy hello.txt into the clipboard if needed.
-  await maybeCopyToClipboard(appId, commandId);
-
-  // Focus the file list.
-  chrome.test.assertTrue(!!await remoteCall.callRemoteTestUtil(
-      'focus', appId, ['#file-list:not([hidden])']));
-
-  // Select 'My Drive'.
-  chrome.test.assertTrue(!!await remoteCall.callRemoteTestUtil(
-      'selectFolderInTree', appId, ['My Drive']));
-
-  // Expand 'My Drive'.
-  chrome.test.assertTrue(await remoteCall.callRemoteTestUtil(
-      'expandSelectedFolderInTree', appId, []));
-
-  // Wait for the folder to be visible.
-  await remoteCall.waitForElement(appId, `${folderSelector}:not([hidden])`);
-
-  // Focus the selected folder.
-  chrome.test.assertTrue(!!await remoteCall.callRemoteTestUtil(
-      'focus', appId, ['#directory-tree']));
-
-  // Right-click the selected folder.
-  chrome.test.assertTrue(!!await remoteCall.callRemoteTestUtil(
-      'fakeMouseRightClick', appId,
-      [`${folderSelector}:not([hidden]) .label`]));
-
-  // Wait for the context menu to appear.
-  await remoteCall.waitForElement(
-      appId, '#directory-tree-context-menu:not([hidden])');
-
-  // Wait for the command option to appear.
-  let query = '#directory-tree-context-menu:not([hidden])';
-  if (expectedEnabledState) {
-    query += ` [command="#${commandId}"]:not([hidden]):not([disabled])`;
-  } else {
-    query += ` [command="#${commandId}"][disabled]:not([hidden])`;
-  }
-  await remoteCall.waitForElement(appId, query);
-}
-
-/**
- * Tests that the Copy menu item is enabled if a read-write folder is selected
- * in the directory tree.
- */
-testcase.checkCopyEnabledForReadWriteFolderInTree = function() {
-  return checkContextMenuForDriveFolderInTree(
-      'copy',
-      '#directory-tree [full-path-for-testing="/root/photos"]:not([hidden])',
-      true);
-};
-
-/**
- * Tests that the Copy menu item is enabled if a read-only folder is
- * selected in the directory tree.
- */
-testcase.checkCopyEnabledForReadOnlyFolderInTree = function() {
-  return checkContextMenuForDriveFolderInTree(
-      'copy',
-      '#directory-tree [full-path-for-testing="/root/Read-Only Folder"]' +
-          ':not([hidden])',
-      true);
-};
-
-/**
- * Tests that the Cut menu item is enabled if a read-write folder is
- * selected in the directory tree.
- */
-testcase.checkCutEnabledForReadWriteFolderInTree = function() {
-  return checkContextMenuForDriveFolderInTree(
-      'cut',
-      '#directory-tree [full-path-for-testing="/root/photos"]:not([hidden])',
-      true);
-};
-
-/**
- * Tests that the Cut menu item is disabled if a read-only folder is
- * selected in the directory tree.
- */
-testcase.checkCutDisabledForReadOnlyFolderInTree = function() {
-  return checkContextMenuForDriveFolderInTree(
-      'cut',
-      '#directory-tree [full-path-for-testing="/root/Read-Only Folder"]' +
-          ':not([hidden])',
-      false);
-};
-
-/**
- * Tests that the Paste menu item is enabled in the directory
- * tree for a folder that has read-write permissions.
- */
-testcase.checkPasteEnabledForReadWriteFolderInTree = function() {
-  return checkContextMenuForDriveFolderInTree(
-      'paste-into-folder',
-      '#directory-tree [full-path-for-testing="/root/photos"]:not([hidden])',
-      true);
-};
-
-/**
- * Tests that the Paste menu item is disabled in the directory tree for a folder
- * that has read-only permissions.
- */
-testcase.checkPasteDisabledForReadOnlyFolderInTree = function() {
-  return checkContextMenuForDriveFolderInTree(
-      'paste-into-folder',
-      '#directory-tree [full-path-for-testing="/root/Read-Only Folder"]' +
-          ':not([hidden])',
-      false);
-};
-
-/**
- * Tests that the specified menu item is in |expectedEnabledState| when the
- * context menu for the Team Drive root with name |teamDriveName| is opened in
- * the directory tree.
- *
- * TODO(sashab): Make this take a map of {commandId: expectedEnabledState}, and
- * flatten all tests into 1.
- *
- * @param {string} commandId ID of the command in the context menu to check.
- * @param {string} teamDriveName Team drive name to open the context menu for.
- * @param {Object} expectedContextMenuState Map of context-menu options to True
- *     if the command should be enabled in the context menu, false if not.
- */
-async function checkTeamDriveContextMenuInTree(
-    teamDriveName, expectedContextMenuState) {
-  let navItemSelector = `#directory-tree ` +
-      `.tree-item[full-path-for-testing="/team_drives/${teamDriveName}"]`;
-
-  // Open Files App on Drive.
-  const appId =
-      await setupAndWaitUntilReady(RootPath.DRIVE, [], TEAM_DRIVE_ENTRY_SET);
-
-  // Focus the file list.
-  chrome.test.assertTrue(!!await remoteCall.callRemoteTestUtil(
-      'focus', appId, ['#file-list:not([hidden])']));
-
-  // Select 'Team Drives'.
-  chrome.test.assertTrue(!!await remoteCall.callRemoteTestUtil(
-      'selectFolderInTree', appId, ['Team Drives']));
-
-  // Expand 'Team Drives'.
-  chrome.test.assertTrue(await remoteCall.callRemoteTestUtil(
-      'expandSelectedFolderInTree', appId, []));
-
-  // Wait for the team drive to be visible.
-  await remoteCall.waitForElement(appId, `${navItemSelector}:not([hidden])`);
-
-  // Focus the selected team drive.
-  chrome.test.assertTrue(
-      await remoteCall.callRemoteTestUtil('focus', appId, ['#directory-tree']));
-
-  // Right-click the selected team drive.
-  chrome.test.assertTrue(!!await remoteCall.callRemoteTestUtil(
-      'fakeMouseRightClick', appId,
-      [`${navItemSelector}:not([hidden]) .label`]));
-
-  // Wait for the context menu to appear.
-  await remoteCall.waitForElement(
-      appId, '#directory-tree-context-menu:not([hidden])');
-
-  // Wait for the command options to appear.
-  let promises = [];
-  for (let commandId in expectedContextMenuState) {
-    let query = '#directory-tree-context-menu:not([hidden])';
-    if (expectedContextMenuState[commandId] == true) {
-      query += ` [command="#${commandId}"]:not([hidden]):not([disabled])`;
-    } else {
-      query += ` [command="#${commandId}"][disabled]:not([hidden])`;
-    }
-    promises.push(remoteCall.waitForElement(appId, query));
-  }
-
-  await Promise.all(promises);
-}
-
-/**
- * Tests that the context menu contains the correct items with the correct
- * enabled/disabled state if a Team Drive Root is selected.
- */
-testcase.checkContextMenuForTeamDriveRoot = function() {
-  return checkTeamDriveContextMenuInTree('Team Drive A', {
-    'cut': false,
-    'copy': false,
-    'rename': false,
-    'delete': false,
-    'new-folder': true
-  });
 };
 
 /**
  * Checks that mutating context menu items are not present for a root within
  * My files.
+ * @param {string} itemName Name of item inside MyFiles that should be checked.
+ * @param {!Object<string, boolean>} commandStates Commands that should be
+ *     enabled for the checked item.
  */
-async function checkMyFilesRootItemContextMenu(itemName) {
+async function checkMyFilesRootItemContextMenu(itemName, commandStates) {
+  const validCmds = {
+    'copy': true,
+    'cut': true,
+    'delete': true,
+    'rename': true,
+    'zip-selection': true,
+  };
+
+  const enabledCmds = [];
+  const disabledCmds = [];
+  for (let [cmd, enabled] of Object.entries(commandStates)) {
+    chrome.test.assertTrue(cmd in validCmds, cmd + ' is not a valid command.');
+    if (enabled) {
+      enabledCmds.push(cmd);
+    } else {
+      disabledCmds.push(cmd);
+    }
+  }
+
   // Open FilesApp on Downloads.
   const appId =
       await setupAndWaitUntilReady(RootPath.DOWNLOADS, [ENTRIES.photos], []);
@@ -636,35 +448,161 @@ async function checkMyFilesRootItemContextMenu(itemName) {
   // Wait for the context menu to appear.
   await remoteCall.waitForElement(appId, '#file-context-menu:not([hidden])');
 
-  // Check that the commands are neither visible nor enabled.
-  for (const commandId
-           of ['delete', 'copy', 'cut', 'zip-selection', 'rename']) {
+  // Check the enabled commands.
+  for (const commandId of enabledCmds) {
     let query = `#file-context-menu:not([hidden]) [command="#${
-        commandId}"][disabled][hidden]`;
+        commandId}"]:not([disabled])`;
     await remoteCall.waitForElement(appId, query);
   }
+
+  // Check the disabled commands.
+  for (const commandId of disabledCmds) {
+    let query =
+        `#file-context-menu:not([hidden]) [command="#${commandId}"][disabled]`;
+    await remoteCall.waitForElement(appId, query);
+  }
+
+  // Check that the delete button isn't visible.
+  const deleteButton = await remoteCall.waitForElement(appId, '#delete-button');
+  chrome.test.assertTrue(deleteButton.hidden, 'delete button should be hidden');
 }
 
 /**
  * Check that mutating context menu items are not shown for Downloads within My
  * files.
  */
-testcase.checkDownloadsContextMenu = function() {
-  return checkMyFilesRootItemContextMenu('Downloads');
+testcase.checkDownloadsContextMenu = () => {
+  const commands = {
+    copy: true,
+    cut: false,
+    delete: false,
+    rename: false,
+    'zip-selection': true,
+  };
+  return checkMyFilesRootItemContextMenu('Downloads', commands);
 };
 
 /**
  * Check that mutating context menu items are not shown for Play files within My
  * files.
  */
-testcase.checkPlayFilesContextMenu = function() {
-  return checkMyFilesRootItemContextMenu('Play files');
+testcase.checkPlayFilesContextMenu = () => {
+  const commands = {
+    copy: false,
+    cut: false,
+    delete: false,
+    rename: false,
+    'zip-selection': false,
+  };
+  return checkMyFilesRootItemContextMenu('Play files', commands);
 };
 
 /**
  * Check that mutating context menu items are not shown for Linux files within
  * My files.
  */
-testcase.checkLinuxFilesContextMenu = function() {
-  return checkMyFilesRootItemContextMenu('Linux files');
+testcase.checkLinuxFilesContextMenu = () => {
+  const commands = {
+    copy: false,
+    cut: false,
+    delete: false,
+    rename: false,
+    'zip-selection': false,
+  };
+  return checkMyFilesRootItemContextMenu('Linux files', commands);
+};
+
+/**
+ * Tests that the specified menu item is in |expectedEnabledState| when the
+ * entry at |path| is selected.
+ *
+ * @param {string} commandId ID of the command in the context menu to check.
+ * @param {string} path Path to the file to open the context menu for.
+ * @param {boolean} expectedEnabledState True if the command should be enabled
+ *     in the context menu, false if not.
+ */
+async function checkDocumentsProviderContextMenu(
+    commandId, path, expectedEnabledState) {
+  const documentsProviderVolumeQuery =
+      '[has-children="true"] [volume-type-icon="documents_provider"]';
+
+  // Open Files app.
+  const appId = await openNewWindow(RootPath.DOWNLOADS);
+
+  // Add files to the DocumentsProvider volume.
+  await addEntries(
+      ['documents_provider'], COMPLEX_DOCUMENTS_PROVIDER_ENTRY_SET);
+
+  // Wait for the DocumentsProvider volume to mount.
+  await remoteCall.waitForElement(appId, documentsProviderVolumeQuery);
+
+  // Click to open the DocumentsProvider volume.
+  chrome.test.assertTrue(
+      !!await remoteCall.callRemoteTestUtil(
+          'fakeMouseClick', appId, [documentsProviderVolumeQuery]),
+      'fakeMouseClick failed');
+
+  // Check: the DocumentsProvider files should appear in the file list.
+  const files =
+      TestEntryInfo.getExpectedRows(COMPLEX_DOCUMENTS_PROVIDER_ENTRY_SET);
+  await remoteCall.waitForFiles(appId, files, {ignoreLastModifiedTime: true});
+
+  // Select the file |path|.
+  chrome.test.assertTrue(
+      !!await remoteCall.callRemoteTestUtil('selectFile', appId, [path]));
+
+  // Wait for the file to be selected.
+  await remoteCall.waitForElement(appId, '.table-row[selected]');
+
+  // Right-click the selected file.
+  chrome.test.assertTrue(!!await remoteCall.callRemoteTestUtil(
+      'fakeMouseRightClick', appId, ['.table-row[selected]']));
+
+  // Wait for the context menu to appear.
+  await remoteCall.waitForElement(appId, '#file-context-menu:not([hidden])');
+
+  // Wait for the command option to appear.
+  let query = '#file-context-menu:not([hidden])';
+  if (expectedEnabledState) {
+    query += ` [command="#${commandId}"]:not([hidden]):not([disabled])`;
+  } else {
+    query += ` [command="#${commandId}"][disabled]:not([hidden])`;
+  }
+  await remoteCall.waitForElement(appId, query);
+}
+
+/**
+ * Tests that the Delete menu item is disabled if the DocumentsProvider file is
+ * not deletable.
+ */
+testcase.checkDeleteDisabledInDocProvider = () => {
+  return checkDocumentsProviderContextMenu(
+      'delete', 'Renamable File.txt', false);
+};
+
+/**
+ * Tests that the Delete menu item is enabled if the DocumentsProvider file is
+ * deletable.
+ */
+testcase.checkDeleteEnabledInDocProvider = () => {
+  return checkDocumentsProviderContextMenu(
+      'delete', 'Deletable File.txt', true);
+};
+
+/**
+ * Tests that the Rename menu item is disabled if the DocumentsProvider file is
+ * not renamable.
+ */
+testcase.checkRenameDisabledInDocProvider = () => {
+  return checkDocumentsProviderContextMenu(
+      'rename', 'Deletable File.txt', false);
+};
+
+/**
+ * Tests that the Rename menu item is enabled if the DocumentsProvider file is
+ * renamable.
+ */
+testcase.checkRenameEnabledInDocProvider = () => {
+  return checkDocumentsProviderContextMenu(
+      'rename', 'Renamable File.txt', true);
 };

@@ -82,15 +82,9 @@ StartupTabs StartupTabProviderImpl::GetOnboardingTabs(Profile* profile) const {
   standard_params.is_signin_allowed = profile->IsSyncAllowed();
   if (auto* identity_manager = IdentityManagerFactory::GetForProfile(profile)) {
     standard_params.is_signed_in = identity_manager->HasPrimaryAccount();
-    if (auto* account_mutator = identity_manager->GetPrimaryAccountMutator()) {
-      standard_params.is_signin_in_progress =
-          account_mutator->LegacyIsPrimaryAccountAuthInProgress();
-    }
   }
   standard_params.is_supervised_user = profile->IsSupervised();
   standard_params.is_force_signin_enabled = signin_util::IsForceSigninEnabled();
-
-// TODO(scottchen): make win-10 also show NUX onboarding page when its enabled.
 
 #if defined(OS_WIN)
   // Windows 10 has unique onboarding policies and content. However, if
@@ -100,7 +94,8 @@ StartupTabs StartupTabProviderImpl::GetOnboardingTabs(Profile* profile) const {
 #if defined(GOOGLE_CHROME_BUILD)
   is_navi_enabled = nux::IsNuxOnboardingEnabled(profile);
 #endif
-  if (base::win::GetVersion() >= base::win::VERSION_WIN10 && !is_navi_enabled) {
+  if (base::win::GetVersion() >= base::win::Version::WIN10 &&
+      !is_navi_enabled) {
     Win10OnboardingTabsParams win10_params;
     PrefService* local_state = g_browser_process->local_state();
     if (base::FeatureList::IsEnabled(
@@ -218,9 +213,8 @@ bool StartupTabProviderImpl::CanShowWelcome(bool is_signin_allowed,
 // static
 bool StartupTabProviderImpl::ShouldShowWelcomeForOnboarding(
     bool has_seen_welcome_page,
-    bool is_signed_in,
-    bool is_signin_in_progress) {
-  return !has_seen_welcome_page && !is_signed_in && !is_signin_in_progress;
+    bool is_signed_in) {
+  return !has_seen_welcome_page && !is_signed_in;
 }
 
 // static
@@ -230,8 +224,7 @@ StartupTabs StartupTabProviderImpl::GetStandardOnboardingTabsForState(
   if (CanShowWelcome(params.is_signin_allowed, params.is_supervised_user,
                      params.is_force_signin_enabled) &&
       ShouldShowWelcomeForOnboarding(params.has_seen_welcome_page,
-                                     params.is_signed_in,
-                                     params.is_signin_in_progress)) {
+                                     params.is_signed_in)) {
     tabs.emplace_back(GetWelcomePageUrl(!params.is_first_run), false);
   }
   return tabs;

@@ -32,6 +32,7 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobRegistryImpl
     virtual bool CanReadFile(const base::FilePath& file) = 0;
     virtual bool CanReadFileSystemFile(const FileSystemURL& url) = 0;
     virtual bool CanCommitURL(const GURL& url) = 0;
+    virtual bool IsProcessValid() = 0;
   };
 
   BlobRegistryImpl(base::WeakPtr<BlobStorageContext> context,
@@ -64,6 +65,10 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobRegistryImpl
 
   size_t BlobsUnderConstructionForTesting() const {
     return blobs_under_construction_.size();
+  }
+
+  size_t BlobsBeingStreamedForTesting() const {
+    return blobs_being_streamed_.size();
   }
 
   using URLStoreCreationHook = base::RepeatingCallback<void(

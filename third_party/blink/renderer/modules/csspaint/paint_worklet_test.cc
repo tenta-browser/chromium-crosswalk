@@ -11,12 +11,14 @@
 #include "third_party/blink/renderer/bindings/core/v8/worker_or_worklet_script_controller.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
+#include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 #include "third_party/blink/renderer/modules/csspaint/css_paint_definition.h"
 #include "third_party/blink/renderer/modules/csspaint/paint_worklet_global_scope.h"
 #include "third_party/blink/renderer/modules/csspaint/paint_worklet_global_scope_proxy.h"
-#include "third_party/blink/renderer/platform/graphics/image.h"
+#include "third_party/blink/renderer/platform/graphics/paint_generated_image.h"
+#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 
 namespace blink {
 class TestPaintWorklet : public PaintWorklet {
@@ -122,8 +124,17 @@ TEST_F(PaintWorkletTest, PaintWithNullPaintArguments) {
   ASSERT_TRUE(observer);
 
   const FloatSize container_size(100, 100);
-  scoped_refptr<Image> image =
-      definition->Paint(*observer, container_size, nullptr);
+  const LayoutObject& layout_object =
+      static_cast<const LayoutObject&>(*observer);
+  float zoom = layout_object.StyleRef().EffectiveZoom();
+  StylePropertyMapReadOnly* style_map =
+      MakeGarbageCollected<PrepopulatedComputedStylePropertyMap>(
+          layout_object.GetDocument(), layout_object.StyleRef(),
+          layout_object.GetNode(), definition->NativeInvalidationProperties(),
+          definition->CustomInvalidationProperties());
+  scoped_refptr<Image> image = PaintGeneratedImage::Create(
+      definition->Paint(container_size, zoom, style_map, nullptr),
+      container_size);
   EXPECT_NE(image, nullptr);
 }
 
@@ -161,6 +172,32 @@ TEST_F(PaintWorkletTest, GlobalScopeSelection) {
 
   // Delete the page & associated objects.
   Terminate();
+}
+
+TEST_F(PaintWorkletTest, NativeAndCustomProperties) {
+  ScopedOffMainThreadCSSPaintForTest off_main_thread_css_paint(true);
+  Vector<CSSPropertyID> native_invalidation_properties = {
+      CSSPropertyID::kColor,
+      CSSPropertyID::kZoom,
+      CSSPropertyID::kTop,
+  };
+  Vector<String> custom_invalidation_properties = {
+      "--my-property",
+      "--another-property",
+  };
+
+  TestPaintWorklet* paint_worklet_to_test = GetTestPaintWorklet();
+  paint_worklet_to_test->RegisterMainThreadDocumentPaintDefinition(
+      "foo", native_invalidation_properties, custom_invalidation_properties,
+      true);
+
+  CSSPaintImageGeneratorImpl* generator =
+      MakeGarbageCollected<CSSPaintImageGeneratorImpl>(paint_worklet_to_test,
+                                                       "foo");
+  EXPECT_NE(generator, nullptr);
+  EXPECT_EQ(generator->NativeInvalidationProperties().size(), 3u);
+  EXPECT_EQ(generator->CustomInvalidationProperties().size(), 2u);
+  EXPECT_TRUE(generator->HasAlpha());
 }
 
 }  // namespace blink

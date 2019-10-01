@@ -77,7 +77,6 @@ class ResourceHandler;
 class ResourceMessageDelegate;
 class ResourceRequesterInfo;
 class ResourceRequestInfoImpl;
-class ServiceWorkerNavigationHandleCore;
 struct NavigationRequestInfo;
 struct Referrer;
 struct ResourceRequest;
@@ -106,7 +105,6 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
 
   // ResourceDispatcherHost implementation:
   void SetDelegate(ResourceDispatcherHostDelegate* delegate) override;
-  void SetAllowCrossOriginAuthPrompt(bool value) override;
   void RegisterInterceptor(const std::string& http_header,
                            const std::string& starts_with,
                            const InterceptorCallback& interceptor) override;
@@ -176,10 +174,6 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
   void CancelBlockedRequestsForRoute(
       const GlobalFrameRoutingId& global_routing_id);
 
-  // Indicates whether third-party sub-content can pop-up HTTP basic auth
-  // dialog boxes.
-  bool allow_cross_origin_auth_prompt();
-
   ResourceDispatcherHostDelegate* delegate() {
     return delegate_;
   }
@@ -235,7 +229,6 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
       std::unique_ptr<NavigationUIData> navigation_ui_data,
       network::mojom::URLLoaderClientPtr url_loader_client,
       network::mojom::URLLoaderRequest url_loader_request,
-      ServiceWorkerNavigationHandleCore* service_worker_handle_core,
       AppCacheNavigationHandleCore* appcache_handle_core,
       uint32_t url_loader_options,
       net::RequestPriority net_priority,
@@ -273,6 +266,7 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
                             int render_process_host_id,
                             int render_view_routing_id,
                             int render_frame_routing_id,
+                            int frame_tree_node_id,
                             PreviewsState previews_state,
                             ResourceContext* context);
 
@@ -392,9 +386,9 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
   typedef std::map<std::string, HeaderInterceptorInfo> HeaderInterceptorMap;
 
   // ResourceLoaderDelegate implementation:
-  scoped_refptr<LoginDelegate> CreateLoginDelegate(
+  std::unique_ptr<LoginDelegate> CreateLoginDelegate(
       ResourceLoader* loader,
-      net::AuthChallengeInfo* auth_info) override;
+      const net::AuthChallengeInfo& auth_info) override;
   bool HandleExternalProtocol(ResourceLoader* loader, const GURL& url) override;
   void DidStartRequest(ResourceLoader* loader) override;
   void DidReceiveRedirect(ResourceLoader* loader,
@@ -431,18 +425,18 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
   // Returns the OustandingRequestsStats for |info|'s renderer, or an empty
   // struct if that renderer has no outstanding requests.
   OustandingRequestsStats GetOutstandingRequestsStats(
-      const ResourceRequestInfoImpl& info);
+      ResourceRequestInfoImpl* info);
 
   // Updates |outstanding_requests_stats_map_| with the specified |stats| for
   // the renderer that made the request in |info|.
-  void UpdateOutstandingRequestsStats(const ResourceRequestInfoImpl& info,
+  void UpdateOutstandingRequestsStats(ResourceRequestInfoImpl* info,
                                       const OustandingRequestsStats& stats);
 
   // Called every time an outstanding request is created or deleted. |count|
   // indicates whether the request is new or deleted. |count| must be 1 or -1.
   OustandingRequestsStats IncrementOutstandingRequestsMemory(
       int count,
-      const ResourceRequestInfoImpl& info);
+      ResourceRequestInfoImpl* info);
 
   // Called when an in flight request allocates or releases a shared memory
   // buffer. |count| indicates whether the request is issuing or finishing.
@@ -601,25 +595,13 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
 
   // Creates ResourceRequestInfoImpl for a download or page save.
   // |download| should be true if the request is a file download.
-  ResourceRequestInfoImpl* CreateRequestInfo(
-      int child_id,
-      int render_view_route_id,
-      int render_frame_route_id,
-      PreviewsState previews_state,
-      bool download,
-      ResourceContext* context);
-
-  // Relationship of resource being authenticated with the top level page.
-  enum HttpAuthRelationType {
-    HTTP_AUTH_RELATION_TOP,            // Top-level page itself
-    HTTP_AUTH_RELATION_SAME_DOMAIN,    // Sub-content from same domain
-    HTTP_AUTH_RELATION_BLOCKED_CROSS,  // Blocked Sub-content from cross domain
-    HTTP_AUTH_RELATION_ALLOWED_CROSS,  // Allowed Sub-content per command line
-    HTTP_AUTH_RELATION_LAST
-  };
-
-  HttpAuthRelationType HttpAuthRelationTypeOf(const GURL& request_url,
-                                              const GURL& first_party);
+  ResourceRequestInfoImpl* CreateRequestInfo(int child_id,
+                                             int render_view_route_id,
+                                             int render_frame_route_id,
+                                             int frame_tree_node_id,
+                                             PreviewsState previews_state,
+                                             bool download,
+                                             ResourceContext* context);
 
   ResourceLoader* GetLoader(const GlobalRequestID& id) const;
   ResourceLoader* GetLoader(int child_id, int request_id) const;
@@ -723,8 +705,6 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
   ResourceDispatcherHostDelegate* delegate_;
 
   LoaderDelegate* loader_delegate_;
-
-  bool allow_cross_origin_auth_prompt_;
 
   std::unique_ptr<network::ResourceScheduler> scheduler_;
 

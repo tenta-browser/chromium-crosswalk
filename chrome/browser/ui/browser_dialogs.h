@@ -5,12 +5,12 @@
 #ifndef CHROME_BROWSER_UI_BROWSER_DIALOGS_H_
 #define CHROME_BROWSER_UI_BROWSER_DIALOGS_H_
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "base/callback.h"
-#include "base/memory/scoped_refptr.h"
 #include "base/optional.h"
 #include "base/strings/string16.h"
 #include "build/build_config.h"
@@ -23,7 +23,6 @@
 class Browser;
 class LoginHandler;
 class Profile;
-class WebShareTarget;
 struct WebApplicationInfo;
 
 namespace base {
@@ -97,7 +96,7 @@ void ShowCreateChromeAppShortcutsDialog(
 // WebApplicationInfo parameter contains the information about the app,
 // possibly modified by the user.
 using AppInstallationAcceptanceCallback =
-    base::OnceCallback<void(bool, const WebApplicationInfo&)>;
+    base::OnceCallback<void(bool, std::unique_ptr<WebApplicationInfo>)>;
 
 // Shows the Bookmark App bubble.
 // See Extension::InitFromValueFlags::FROM_BOOKMARK for a description of
@@ -105,23 +104,31 @@ using AppInstallationAcceptanceCallback =
 //
 // |web_app_info| is the WebApplicationInfo being converted into an app.
 void ShowBookmarkAppDialog(content::WebContents* web_contents,
-                           const WebApplicationInfo& web_app_info,
+                           std::unique_ptr<WebApplicationInfo> web_app_info,
                            AppInstallationAcceptanceCallback callback);
 
 // Sets whether |ShowBookmarkAppDialog| should accept immediately without any
 // user interaction.
 void SetAutoAcceptBookmarkAppDialogForTesting(bool auto_accept);
 
-// Shows the PWA installation confirmation bubble.
+// Shows the PWA installation confirmation modal dialog.
 //
 // |web_app_info| is the WebApplicationInfo to be installed.
 void ShowPWAInstallDialog(content::WebContents* web_contents,
-                          const WebApplicationInfo& web_app_info,
+                          std::unique_ptr<WebApplicationInfo> web_app_info,
                           AppInstallationAcceptanceCallback callback);
 
-// Sets whether |ShowPWAInstallDialog| should accept immediately without any
-// user interaction.
-void SetAutoAcceptPWAInstallDialogForTesting(bool auto_accept);
+// Shows the PWA installation confirmation bubble anchored off the PWA install
+// icon in the omnibox.
+//
+// |web_app_info| is the WebApplicationInfo to be installed.
+void ShowPWAInstallBubble(content::WebContents* web_contents,
+                          std::unique_ptr<WebApplicationInfo> web_app_info,
+                          AppInstallationAcceptanceCallback callback);
+
+// Sets whether |ShowPWAInstallDialog| and |ShowPWAInstallBubble| should accept
+// immediately without any user interaction.
+void SetAutoAcceptPWAInstallConfirmationForTesting(bool auto_accept);
 
 #if defined(OS_MACOSX)
 
@@ -137,9 +144,9 @@ void ShowUpdateChromeDialogViews(gfx::NativeWindow parent);
 #if defined(TOOLKIT_VIEWS)
 
 // Creates a toolkit-views based LoginHandler (e.g. HTTP-Auth dialog).
-scoped_refptr<LoginHandler> CreateLoginHandlerViews(
-    net::AuthChallengeInfo* auth_info,
-    content::ResourceRequestInfo::WebContentsGetter web_contents_getter,
+std::unique_ptr<LoginHandler> CreateLoginHandlerViews(
+    const net::AuthChallengeInfo& auth_info,
+    content::WebContents* web_contents,
     LoginAuthRequiredCallback auth_required_callback);
 
 // Shows the toolkit-views based BookmarkEditor.
@@ -150,19 +157,6 @@ void ShowBookmarkEditorViews(gfx::NativeWindow parent_window,
 
 payments::PaymentRequestDialog* CreatePaymentRequestDialog(
     payments::PaymentRequest* request);
-
-// Used to return the target the user picked or nullptr if the user cancelled
-// the share.
-using WebShareTargetPickerCallback =
-    base::OnceCallback<void(const WebShareTarget*)>;
-
-// Shows the dialog to choose a share target app. |targets| is a list of app
-// title and manifest URL pairs that will be shown in a list. If the user picks
-// a target, this calls |callback| with the manifest URL of the chosen target,
-// or supplies null if the user cancelled the share.
-void ShowWebShareTargetPickerDialog(gfx::NativeWindow parent_window,
-                                    std::vector<WebShareTarget> targets,
-                                    WebShareTargetPickerCallback callback);
 
 #endif  // TOOLKIT_VIEWS
 
@@ -263,7 +257,7 @@ enum class DialogIdentifier {
   CROSTINI_UPGRADE = 89,
   HATS_BUBBLE = 90,
   CROSTINI_APP_RESTART = 91,
-  INCOGNITO_WINDOW_COUNTER = 92,
+  INCOGNITO_WINDOW_COUNT = 92,
   CROSTINI_APP_UNINSTALLER = 93,
   CROSTINI_CONTAINER_UPGRADE = 94,
   // Add values above this line with a corresponding label in

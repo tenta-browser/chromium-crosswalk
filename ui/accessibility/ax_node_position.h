@@ -18,6 +18,8 @@
 
 namespace ui {
 
+// AXNodePosition includes implementations of AXPosition methods which require
+// knowledge of the AXPosition AXNodeType (which is unknown by AXPosition).
 class AX_EXPORT AXNodePosition : public AXPosition<AXNodePosition, AXNode> {
  public:
   AXNodePosition();
@@ -25,7 +27,7 @@ class AX_EXPORT AXNodePosition : public AXPosition<AXNodePosition, AXNode> {
 
   AXPositionInstance Clone() const override;
 
-  base::string16 GetInnerText() const override;
+  base::string16 GetText() const override;
 
   static void SetTreeForTesting(AXTree* tree) { tree_ = tree; }
 
@@ -36,9 +38,9 @@ class AX_EXPORT AXNodePosition : public AXPosition<AXNodePosition, AXNode> {
                    int32_t* child_id) const override;
   int AnchorChildCount() const override;
   int AnchorIndexInParent() const override;
+  base::stack<AXNode*> GetAncestorAnchors() const override;
   void AnchorParent(AXTreeID* tree_id, int32_t* parent_id) const override;
   AXNode* GetNodeInTree(AXTreeID tree_id, int32_t node_id) const override;
-  int MaxTextOffset() const override;
   bool IsInWhiteSpace() const override;
   std::vector<int32_t> GetWordStartOffsets() const override;
   std::vector<int32_t> GetWordEndOffsets() const override;
@@ -47,6 +49,14 @@ class AX_EXPORT AXNodePosition : public AXPosition<AXNodePosition, AXNode> {
 
  private:
   static AXTree* tree_;
+
+  // Returns the parent node of the provided child. Returns the parent
+  // node's tree id and node id through the provided output parameters,
+  // parent_tree_id and parent_id.
+  static AXNode* GetParent(AXNode* child,
+                           AXTreeID child_tree_id,
+                           AXTreeID* parent_tree_id,
+                           int32_t* parent_id);
 };
 
 }  // namespace ui

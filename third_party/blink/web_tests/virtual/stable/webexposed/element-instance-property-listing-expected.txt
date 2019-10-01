@@ -504,6 +504,7 @@ html element form
     property name
     property noValidate
     property reportValidity
+    property requestSubmit
     property reset
     property submit
     property target
@@ -569,6 +570,7 @@ html element iframe
     property contentDocument
     property contentWindow
     property csp
+    property featurePolicy
     property frameBorder
     property getSVGDocument
     property height
@@ -1078,6 +1080,7 @@ html element video
     property play
     property playbackRate
     property played
+    property playsInline
     property poster
     property preload
     property readyState

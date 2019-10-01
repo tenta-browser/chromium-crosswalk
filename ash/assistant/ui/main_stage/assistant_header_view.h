@@ -9,6 +9,7 @@
 
 #include "ash/assistant/model/assistant_interaction_model_observer.h"
 #include "ash/assistant/model/assistant_ui_model_observer.h"
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "ui/views/view.h"
 
@@ -19,13 +20,14 @@ class BoxLayout;
 namespace ash {
 
 class AssistantViewDelegate;
-class BaseLogoView;
+class LogoView;
 
 // AssistantHeaderView is the child of UiElementContainerView which provides
 // the Assistant icon.
-class AssistantHeaderView : public views::View,
-                            public AssistantInteractionModelObserver,
-                            public AssistantUiModelObserver {
+class COMPONENT_EXPORT(ASSISTANT_UI) AssistantHeaderView
+    : public views::View,
+      public AssistantInteractionModelObserver,
+      public AssistantUiModelObserver {
  public:
   explicit AssistantHeaderView(AssistantViewDelegate* delegate);
   ~AssistantHeaderView() override;
@@ -51,7 +53,7 @@ class AssistantHeaderView : public views::View,
   AssistantViewDelegate* const delegate_;  // Owned by Shell.
 
   views::BoxLayout* layout_manager_;  // Owned by view hierarchy.
-  BaseLogoView* molecule_icon_;       // Owned by view hierarchy.
+  LogoView* molecule_icon_;           // Owned by view hierarchy.
 
   // True if this is the first query response received for the current Assistant
   // UI session, false otherwise.

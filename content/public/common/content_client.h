@@ -135,9 +135,6 @@ class CONTENT_EXPORT ContentClient {
     std::vector<std::string> csp_bypassing_schemes;
     // See https://www.w3.org/TR/powerful-features/#is-origin-trustworthy.
     std::vector<std::string> secure_schemes;
-    // Registers a serialized origin or a hostname pattern that should be
-    // considered trustworthy.
-    std::vector<std::string> secure_origins;
     // Registers a URL scheme as strictly empty documents, allowing them to
     // commit synchronously.
     std::vector<std::string> empty_document_schemes;
@@ -156,6 +153,12 @@ class CONTENT_EXPORT ContentClient {
   // Returns a string resource given its id.
   virtual base::string16 GetLocalizedString(int message_id) const;
 
+  // Returns a string resource given its id and replace $1 with the given
+  // replacement.
+  virtual base::string16 GetLocalizedString(
+      int message_id,
+      const base::string16& replacement) const;
+
   // Return the contents of a resource in a StringPiece given the resource id.
   virtual base::StringPiece GetDataResource(
       int resource_id,
@@ -164,6 +167,9 @@ class CONTENT_EXPORT ContentClient {
   // Returns the raw bytes of a scale independent data resource.
   virtual base::RefCountedMemory* GetDataResourceBytes(
       int resource_id) const;
+
+  // Returns whether the contents of a resource are compressed (with gzip).
+  virtual bool IsDataResourceGzipped(int resource_id) const;
 
   // Returns a native image given its id.
   virtual gfx::Image& GetNativeImageNamed(int resource_id) const;
@@ -182,7 +188,8 @@ class CONTENT_EXPORT ContentClient {
 
   // Returns whether or not V8 script extensions should be allowed for a
   // service worker.
-  virtual bool AllowScriptExtensionForServiceWorker(const GURL& script_url);
+  virtual bool AllowScriptExtensionForServiceWorker(
+      const url::Origin& script_origin);
 
   // Returns the origin trial policy, or nullptr if origin trials are not
   // supported by the embedder.

@@ -7,20 +7,22 @@
 #include <utility>
 
 #include "base/command_line.h"
+#include "base/containers/span.h"
+#include "base/feature_list.h"
 #include "base/stl_util.h"
+#include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/permissions/permission_manager.h"
 #include "chrome/browser/permissions/permission_result.h"
 #include "chrome/browser/permissions/permission_util.h"
-#include "chrome/browser/plugins/plugin_utils.h"
-#include "chrome/browser/plugins/plugins_field_trial.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/strings/grit/components_chromium_strings.h"
 #include "components/strings/grit/components_strings.h"
 #include "ppapi/buildflags/buildflags.h"
+#include "services/device/public/cpp/device_features.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 
@@ -38,7 +40,7 @@
 #include "ui/gfx/paint_vector_icon.h"
 #endif
 
-#if defined(SAFE_BROWSING_DB_LOCAL)
+#if defined(FULL_SAFE_BROWSING)
 #include "components/safe_browsing/password_protection/password_protection_service.h"
 #endif
 
@@ -142,7 +144,9 @@ struct PermissionsUIInfo {
   int string_id;
 };
 
-const PermissionsUIInfo kPermissionsUIInfo[] = {
+base::span<const PermissionsUIInfo> GetContentSettingsUIInfo() {
+  DCHECK(base::FeatureList::GetInstance() != nullptr);
+  static const PermissionsUIInfo kPermissionsUIInfo[] = {
     {CONTENT_SETTINGS_TYPE_COOKIES, 0},
     {CONTENT_SETTINGS_TYPE_IMAGES, IDS_PAGE_INFO_TYPE_IMAGES},
     {CONTENT_SETTINGS_TYPE_JAVASCRIPT, IDS_PAGE_INFO_TYPE_JAVASCRIPT},
@@ -162,9 +166,21 @@ const PermissionsUIInfo kPermissionsUIInfo[] = {
     {CONTENT_SETTINGS_TYPE_ADS, IDS_PAGE_INFO_TYPE_ADS},
     {CONTENT_SETTINGS_TYPE_SOUND, IDS_PAGE_INFO_TYPE_SOUND},
     {CONTENT_SETTINGS_TYPE_CLIPBOARD_READ, IDS_PAGE_INFO_TYPE_CLIPBOARD},
-    {CONTENT_SETTINGS_TYPE_SENSORS, IDS_PAGE_INFO_TYPE_SENSORS},
+    {CONTENT_SETTINGS_TYPE_SENSORS,
+     base::FeatureList::IsEnabled(features::kGenericSensorExtraClasses)
+         ? IDS_PAGE_INFO_TYPE_SENSORS
+         : IDS_PAGE_INFO_TYPE_MOTION_SENSORS},
     {CONTENT_SETTINGS_TYPE_USB_GUARD, IDS_PAGE_INFO_TYPE_USB},
-};
+#if !defined(OS_ANDROID)
+    {CONTENT_SETTINGS_TYPE_SERIAL_GUARD, IDS_PAGE_INFO_TYPE_SERIAL},
+    // TODO(https://crbug.com/960962): Implement Bluetooth scanning API content
+    // settings and page info on Android.
+    {CONTENT_SETTINGS_TYPE_BLUETOOTH_SCANNING,
+     IDS_PAGE_INFO_TYPE_BLUETOOTH_SCANNING},
+#endif
+  };
+  return kPermissionsUIInfo;
+}
 
 std::unique_ptr<PageInfoUI::SecurityDescription> CreateSecurityDescription(
     PageInfoUI::SecuritySummaryColor style,
@@ -188,20 +204,11 @@ ContentSetting GetEffectiveSetting(Profile* profile,
   if (effective_setting == CONTENT_SETTING_DEFAULT)
     effective_setting = default_setting;
 
-#if BUILDFLAG(ENABLE_PLUGINS)
-  HostContentSettingsMap* host_content_settings_map =
-      HostContentSettingsMapFactory::GetForProfile(profile);
-  effective_setting = PluginsFieldTrial::EffectiveContentSetting(
-      host_content_settings_map, type, effective_setting);
-
-  // Display the UI string for ASK instead of DETECT for HTML5 by Default.
-  // TODO(tommycli): Once HTML5 by Default is shipped and the feature flag
-  // is removed, just migrate the actual content setting to ASK.
-  if (PluginUtils::ShouldPreferHtmlOverPlugins(host_content_settings_map) &&
-      effective_setting == CONTENT_SETTING_DETECT_IMPORTANT_CONTENT) {
+  // Display the UI string for ASK instead of DETECT for Flash.
+  // TODO(tommycli): Just migrate the actual content setting to ASK.
+  if (effective_setting == CONTENT_SETTING_DETECT_IMPORTANT_CONTENT)
     effective_setting = CONTENT_SETTING_ASK;
-  }
-#endif
+
   return effective_setting;
 }
 
@@ -230,6 +237,9 @@ PageInfoUI::IdentityInfo::IdentityInfo()
       show_change_password_buttons(false) {}
 
 PageInfoUI::IdentityInfo::~IdentityInfo() {}
+
+PageInfoUI::PageFeatureInfo::PageFeatureInfo()
+    : is_vr_presentation_in_headset(false) {}
 
 std::unique_ptr<PageInfoUI::SecurityDescription>
 PageInfoUI::GetSecurityDescription(const IdentityInfo& identity_info) const {
@@ -285,12 +295,12 @@ PageInfoUI::GetSecurityDescription(const IdentityInfo& identity_info) const {
                                        IDS_PAGE_INFO_UNWANTED_SOFTWARE_SUMMARY,
                                        IDS_PAGE_INFO_UNWANTED_SOFTWARE_DETAILS);
     case PageInfo::SITE_IDENTITY_STATUS_SIGN_IN_PASSWORD_REUSE:
-#if defined(SAFE_BROWSING_DB_LOCAL)
+#if defined(FULL_SAFE_BROWSING)
       return CreateSecurityDescriptionForPasswordReuse(
           /*is_enterprise_password=*/false);
 #endif
     case PageInfo::SITE_IDENTITY_STATUS_ENTERPRISE_PASSWORD_REUSE:
-#if defined(SAFE_BROWSING_DB_LOCAL)
+#if defined(FULL_SAFE_BROWSING)
       return CreateSecurityDescriptionForPasswordReuse(
           /*is_enterprise_password=*/true);
 #endif
@@ -312,7 +322,7 @@ PageInfoUI::~PageInfoUI() {}
 
 // static
 base::string16 PageInfoUI::PermissionTypeToUIString(ContentSettingsType type) {
-  for (const PermissionsUIInfo& info : kPermissionsUIInfo) {
+  for (const PermissionsUIInfo& info : GetContentSettingsUIInfo()) {
     if (info.type == type)
       return l10n_util::GetStringUTF16(info.string_id);
   }
@@ -427,9 +437,8 @@ SkColor PageInfoUI::GetSecondaryTextColor() {
 // static
 base::string16 PageInfoUI::ChosenObjectToUIString(
     const ChosenObjectInfo& object) {
-  base::string16 name;
-  object.chooser_object->value.GetString(object.ui_info.ui_name_key, &name);
-  return name;
+  return base::UTF8ToUTF16(
+      object.ui_info.get_object_name(object.chooser_object->value));
 }
 
 #if defined(OS_ANDROID)
@@ -549,6 +558,16 @@ const gfx::ImageSkia PageInfoUI::GetPermissionIcon(const PermissionInfo& info,
     case CONTENT_SETTINGS_TYPE_USB_GUARD:
       icon = &vector_icons::kUsbIcon;
       break;
+#if !defined(OS_ANDROID)
+    case CONTENT_SETTINGS_TYPE_SERIAL_GUARD:
+      icon = &vector_icons::kSerialPortIcon;
+      break;
+    // TODO(https://crbug.com/960962): Implement Bluetooth scanning API content
+    // settings and page info on Android.
+    case CONTENT_SETTINGS_TYPE_BLUETOOTH_SCANNING:
+      icon = &vector_icons::kBluetoothScanningIcon;
+      break;
+#endif
     default:
       // All other |ContentSettingsType|s do not have icons on desktop or are
       // not shown in the Page Info bubble.
@@ -575,9 +594,21 @@ const gfx::ImageSkia PageInfoUI::GetChosenObjectIcon(
     const ChosenObjectInfo& object,
     bool deleted,
     SkColor related_text_color) {
-  DCHECK_EQ(CONTENT_SETTINGS_TYPE_USB_CHOOSER_DATA,
-            object.ui_info.content_settings_type);
-  const gfx::VectorIcon* icon = &vector_icons::kUsbIcon;
+  const gfx::VectorIcon* icon = &gfx::kNoneIcon;
+  switch (object.ui_info.content_settings_type) {
+    case CONTENT_SETTINGS_TYPE_USB_CHOOSER_DATA:
+      icon = &vector_icons::kUsbIcon;
+      break;
+    case CONTENT_SETTINGS_TYPE_SERIAL_CHOOSER_DATA:
+      icon = &vector_icons::kSerialPortIcon;
+      break;
+    default:
+      // All other content settings types do not represent chosen object
+      // permissions.
+      NOTREACHED();
+      break;
+  }
+
   if (deleted) {
     return gfx::CreateVectorIconWithBadge(
         *icon, kVectorIconSize,
@@ -604,11 +635,18 @@ const gfx::ImageSkia PageInfoUI::GetSiteSettingsIcon(
       kSettingsIcon, kVectorIconSize,
       color_utils::DeriveDefaultIconColor(related_text_color));
 }
+
+// static
+const gfx::ImageSkia PageInfoUI::GetVrSettingsIcon(SkColor related_text_color) {
+  return gfx::CreateVectorIcon(
+      kVrHeadsetIcon, kVectorIconSize,
+      color_utils::DeriveDefaultIconColor(related_text_color));
+}
 #endif
 
 // static
 bool PageInfoUI::ContentSettingsTypeInPageInfo(ContentSettingsType type) {
-  for (const PermissionsUIInfo& info : kPermissionsUIInfo) {
+  for (const PermissionsUIInfo& info : GetContentSettingsUIInfo()) {
     if (info.type == type)
       return true;
   }

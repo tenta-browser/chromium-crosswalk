@@ -6,13 +6,15 @@
 
 namespace blink {
 
-EffectProxy::EffectProxy() : local_time_(base::nullopt) {}
+EffectProxy::EffectProxy(base::Optional<TimeDelta> local_time)
+    : local_time_(local_time) {}
 
 void EffectProxy::setLocalTime(double time_ms, bool is_null) {
   if (is_null) {
     local_time_.reset();
     return;
   }
+  DCHECK(!std::isnan(time_ms));
   // Convert double to TimeDelta because cc/animation expects TimeDelta.
   //
   // Note on precision loss: TimeDelta has microseconds precision which is

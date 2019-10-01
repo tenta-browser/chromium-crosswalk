@@ -4,6 +4,8 @@
 
 #include "ash/system/tray/tray_detailed_view.h"
 
+#include <utility>
+
 #include "ash/public/cpp/ash_view_ids.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/system/tray/detailed_view_delegate.h"
@@ -38,6 +40,7 @@
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/view_targeter.h"
 #include "ui/views/view_targeter_delegate.h"
+#include "ui/views/widget/widget.h"
 
 namespace ash {
 namespace {
@@ -49,7 +52,7 @@ const int kTitleRowSeparatorIndex = 1;
 // the children as sticky header rows. The sticky header rows are not scrolled
 // above the top of the visible viewport until the next one "pushes" it up and
 // are painted above other children. To indicate that a child is a sticky header
-// row use set_id(VIEW_ID_STICKY_HEADER).
+// row use SetID(VIEW_ID_STICKY_HEADER).
 class ScrollContentsView : public views::View {
  public:
   explicit ScrollContentsView(DetailedViewDelegate* delegate)
@@ -71,7 +74,7 @@ class ScrollContentsView : public views::View {
       // Sticky header is at the top.
       if (header.view->y() != header.natural_offset) {
         sticky_header_height = header.view->bounds().height();
-        DCHECK_EQ(VIEW_ID_STICKY_HEADER, header.view->id());
+        DCHECK_EQ(VIEW_ID_STICKY_HEADER, header.view->GetID());
         break;
       }
     }
@@ -85,16 +88,14 @@ class ScrollContentsView : public views::View {
       clip_rect.Inset(clip_insets.Scale(paint_info.paint_recording_scale_x(),
                                         paint_info.paint_recording_scale_y()));
       clip_recorder.ClipRect(clip_rect);
-      for (int i = 0; i < child_count(); ++i) {
-        auto* child = child_at(i);
-        if (child->id() != VIEW_ID_STICKY_HEADER && !child->layer())
+      for (auto* child : children()) {
+        if (child->GetID() != VIEW_ID_STICKY_HEADER && !child->layer())
           child->Paint(paint_info);
       }
     }
     // Paint sticky headers.
-    for (int i = 0; i < child_count(); ++i) {
-      auto* child = child_at(i);
-      if (child->id() == VIEW_ID_STICKY_HEADER && !child->layer())
+    for (auto* child : children()) {
+      if (child->GetID() == VIEW_ID_STICKY_HEADER && !child->layer())
         child->Paint(paint_info);
     }
 
@@ -109,40 +110,35 @@ class ScrollContentsView : public views::View {
     // that's below the header view so we don't get both a separator and a full
     // shadow.
     if (y() != 0 && !did_draw_shadow)
-      DrawShadow(
-          paint_info.context(),
-          gfx::Rect(0, 0, width(), -y() - TrayConstants::separator_width()));
+      DrawShadow(paint_info.context(),
+                 gfx::Rect(0, 0, width(), -y() - kTraySeparatorWidth));
   }
 
   void Layout() override {
     views::View::Layout();
     headers_.clear();
-    for (int i = 0; i < child_count(); ++i) {
-      views::View* view = child_at(i);
-      if (view->id() == VIEW_ID_STICKY_HEADER)
-        headers_.emplace_back(view);
+    for (auto* child : children()) {
+      if (child->GetID() == VIEW_ID_STICKY_HEADER)
+        headers_.emplace_back(child);
     }
     PositionHeaderRows();
   }
 
+  const char* GetClassName() const override { return "ScrollContentsView"; }
+
   View::Views GetChildrenInZOrder() override {
-    View::Views children;
-    // Iterate over regular children and later over the sticky headers to keep
-    // the sticky headers above in Z-order.
-    for (int i = 0; i < child_count(); ++i) {
-      if (child_at(i)->id() != VIEW_ID_STICKY_HEADER)
-        children.push_back(child_at(i));
-    }
-    for (int i = 0; i < child_count(); ++i) {
-      if (child_at(i)->id() == VIEW_ID_STICKY_HEADER)
-        children.push_back(child_at(i));
-    }
-    DCHECK_EQ(child_count(), static_cast<int>(children.size()));
-    return children;
+    // Place sticky headers last in the child order so that they wind up on top
+    // in Z order.
+    View::Views children_in_z_order = children();
+    std::stable_partition(children_in_z_order.begin(),
+                          children_in_z_order.end(), [](const View* child) {
+                            return child->GetID() != VIEW_ID_STICKY_HEADER;
+                          });
+    return children_in_z_order;
   }
 
   void ViewHierarchyChanged(
-      const ViewHierarchyChangedDetails& details) override {
+      const views::ViewHierarchyChangedDetails& details) override {
     if (!details.is_add && details.parent == this) {
       headers_.erase(std::remove_if(headers_.begin(), headers_.end(),
                                     [details](const Header& header) {
@@ -150,14 +146,14 @@ class ScrollContentsView : public views::View {
                                     }),
                      headers_.end());
     } else if (details.is_add && details.parent == this &&
-               details.child == child_at(0)) {
+               details.child == children().front()) {
       // We always want padding on the bottom of the scroll contents.
       // We only want padding on the top of the scroll contents if the first
       // child is not a header (in that case, the padding is built into the
       // header).
       DCHECK_EQ(box_layout_, GetLayoutManager());
       box_layout_->set_inside_border_insets(
-          gfx::Insets(details.child->id() == VIEW_ID_STICKY_HEADER
+          gfx::Insets(details.child->GetID() == VIEW_ID_STICKY_HEADER
                           ? 0
                           : kMenuSeparatorVerticalPadding,
                       0, kMenuSeparatorVerticalPadding, 0));
@@ -314,11 +310,11 @@ void TrayDetailedView::CreateTitleRow(int string_id) {
 
 void TrayDetailedView::CreateScrollableList() {
   DCHECK(!scroller_);
-  scroll_content_ = new ScrollContentsView(delegate_);
+  auto scroll_content = std::make_unique<ScrollContentsView>(delegate_);
   scroller_ = new views::ScrollView;
   scroller_->set_draw_overflow_indicator(
       delegate_->IsOverflowIndicatorEnabled());
-  scroller_->SetContents(scroll_content_);
+  scroll_content_ = scroller_->SetContents(std::move(scroll_content));
   // TODO(varkha): Make the sticky rows work with EnableViewPortLayer().
   scroller_->SetBackgroundColor(
       delegate_->GetBackgroundColor(GetNativeTheme()));
@@ -411,7 +407,7 @@ void TrayDetailedView::ShowProgress(double value, bool visible) {
 
   progress_bar_->SetValue(value);
   progress_bar_->SetVisible(visible);
-  child_at(kTitleRowSeparatorIndex)->SetVisible(!visible);
+  children()[size_t{kTitleRowSeparatorIndex}]->SetVisible(!visible);
 }
 
 views::Button* TrayDetailedView::CreateInfoButton(int info_accessible_name_id) {
@@ -447,6 +443,11 @@ void TrayDetailedView::TransitionToMainView() {
 }
 
 void TrayDetailedView::CloseBubble() {
+  // Don't close again if we're already closing.
+  views::Widget* widget = GetWidget();
+  if (widget && widget->IsClosed())
+    return;
+
   delegate_->CloseBubble();
 }
 
@@ -464,6 +465,10 @@ int TrayDetailedView::GetHeightForWidth(int width) const {
   // the preferred height of the default view, and that determines the
   // initial height of |this|. Always request to stay the same height.
   return height();
+}
+
+const char* TrayDetailedView::GetClassName() const {
+  return "TrayDetailedView";
 }
 
 }  // namespace ash

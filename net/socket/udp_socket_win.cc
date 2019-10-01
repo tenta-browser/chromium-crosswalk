@@ -6,6 +6,7 @@
 
 #include <mstcpip.h>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
@@ -1332,7 +1333,7 @@ void DscpManager::RequestHandle() {
 
   if (qos_handle_) {
     api_->CloseHandle(qos_handle_);
-    qos_handle_ = NULL;
+    qos_handle_ = nullptr;
   }
 
   handle_is_initializing_ = true;
@@ -1348,7 +1349,7 @@ HANDLE DscpManager::DoCreateHandle(QwaveApi* api) {
   version.MajorVersion = 1;
   version.MinorVersion = 0;
 
-  HANDLE handle = NULL;
+  HANDLE handle = nullptr;
 
   // No access to net_log_ so swallow any errors here.
   api->CreateHandle(&version, &handle);

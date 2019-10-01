@@ -21,7 +21,9 @@ import java.util.Collection;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 
 /**
  * A class responsible for turning a {@link Collection} of {@link OfflineItem}s into a list meant
@@ -45,8 +47,16 @@ class DateOrderedListMutator implements OfflineItemFilterObserver {
     private final Map<Date, DateGroup> mDateGroups =
             new TreeMap<>((lhs, rhs) -> { return rhs.compareTo(lhs); });
 
+    // Whether we should hide the section headers and only show the ones that show a new date. Title
+    // and menu button are not present.
+    private final boolean mHideSectionHeaders;
+
+    // Whether we shouldn't have any headers. Meant to be used for prefetch tab.
     private boolean mHideAllHeaders;
-    private boolean mHideSectionHeaders;
+
+    // Meant to be used when a non-all chip is selected. Shouldn't have titles, only have dates. Can
+    // have menu button.
+    private boolean mHideTitleFromSectionHeaders;
 
     /**
      * Creates an DateOrderedList instance that will reflect {@code source}.
@@ -60,6 +70,7 @@ class DateOrderedListMutator implements OfflineItemFilterObserver {
         mModel = model;
         mConfig = config;
         mJustNowProvider = justNowProvider;
+        mHideSectionHeaders = !mConfig.showSectionHeaders;
         source.addObserver(this);
         onItemsAdded(source.getItems());
     }
@@ -70,7 +81,7 @@ class DateOrderedListMutator implements OfflineItemFilterObserver {
      */
     public void onFilterTypeSelected(@Filters.FilterType int filter) {
         mHideAllHeaders = filter == Filters.FilterType.PREFETCHED;
-        mHideSectionHeaders = filter != Filters.FilterType.NONE;
+        mHideTitleFromSectionHeaders = filter != Filters.FilterType.NONE;
     }
 
     // OfflineItemFilterObserver implementation.
@@ -123,7 +134,9 @@ class DateOrderedListMutator implements OfflineItemFilterObserver {
                 if (item.id.equals(existingItem.item.id)) {
                     existingItem.item = item;
                     mModel.update(i, existingItem);
-                    if (oldItem.state != item.state) updateSectionHeader(sectionHeaderIndex, i);
+                    if (oldItem.state != item.state) {
+                        updateSectionHeader(sectionHeaderIndex, i);
+                    }
                     break;
                 }
             }
@@ -143,7 +156,7 @@ class DateOrderedListMutator implements OfflineItemFilterObserver {
     }
 
     private void updateSectionHeader(int sectionHeaderIndex, int offlineItemIndex) {
-        if (sectionHeaderIndex < 0) return;
+        if (sectionHeaderIndex < 0 || mHideSectionHeaders) return;
 
         SectionHeaderListItem sectionHeader =
                 (SectionHeaderListItem) mModel.get(sectionHeaderIndex);
@@ -167,22 +180,24 @@ class DateOrderedListMutator implements OfflineItemFilterObserver {
                 Section section = dateGroup.sections.get(filter);
 
                 // Add a section header.
-                if (!mHideAllHeaders) {
+                if (!mHideAllHeaders && (!mHideSectionHeaders || sectionIndex == 0)) {
                     SectionHeaderListItem sectionHeaderItem = new SectionHeaderListItem(filter,
                             date.getTime(), sectionIndex == 0 /* showDate */,
                             date.equals(JUST_NOW_DATE) /* isJustNow */,
                             sectionIndex == 0 && dateIndex > 0 /* showDivider */);
-                    sectionHeaderItem.showTitle = !mHideSectionHeaders;
-                    sectionHeaderItem.showMenu = filter == OfflineItemFilter.FILTER_IMAGE;
-                    sectionHeaderItem.items = new ArrayList<>(section.items.values());
+                    if (!mHideSectionHeaders) {
+                        sectionHeaderItem.showTitle = !mHideTitleFromSectionHeaders;
+                        sectionHeaderItem.showMenu = filter == OfflineItemFilter.IMAGE;
+                        sectionHeaderItem.items = new ArrayList<>(section.items);
+                    }
                     listItems.add(sectionHeaderItem);
                 }
 
                 // Add the items in the section.
-                for (OfflineItem offlineItem : section.items.values()) {
+                for (OfflineItem offlineItem : section.items) {
                     OfflineItemListItem item = new OfflineItemListItem(offlineItem);
                     if (mConfig.supportFullWidthImages && section.items.size() == 1
-                            && offlineItem.filter == OfflineItemFilter.FILTER_IMAGE) {
+                            && offlineItem.filter == OfflineItemFilter.IMAGE) {
                         item.spanFullWidth = true;
                     }
                     listItems.add(item);
@@ -245,7 +260,7 @@ class DateOrderedListMutator implements OfflineItemFilterObserver {
 
         public boolean contains(ContentId id) {
             for (Section section : sections.values()) {
-                for (OfflineItem item : section.items.values()) {
+                for (OfflineItem item : section.items) {
                     if (item.id.equals(id)) return true;
                 }
             }
@@ -255,15 +270,25 @@ class DateOrderedListMutator implements OfflineItemFilterObserver {
 
     /** Represents a group of items having the same filter type. */
     private static class Section {
-        public Map<Date, OfflineItem> items =
-                new TreeMap<>((lhs, rhs) -> { return rhs.compareTo(lhs); });
+        /**
+         * The list of items in a section for a day. Ordered by descending creation time then
+         * namespace and finally by id.
+         */
+        public Set<OfflineItem> items = new TreeSet<>((lhs, rhs) -> {
+            int comparison = Long.compare(rhs.creationTimeMs, lhs.creationTimeMs);
+            if (comparison != 0) return comparison;
+            comparison = lhs.id.namespace.compareTo(rhs.id.namespace);
+            if (comparison != 0) return comparison;
+            return lhs.id.id.compareTo(rhs.id.id);
+        });
 
         public void addOrUpdateItem(OfflineItem item) {
-            items.put(new Date(item.creationTimeMs), item);
+            items.remove(item);
+            items.add(item);
         }
 
         public void removeItem(OfflineItem item) {
-            items.remove(new Date(item.creationTimeMs));
+            items.remove(item);
         }
     }
 }

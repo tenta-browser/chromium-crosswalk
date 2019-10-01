@@ -54,6 +54,10 @@ class SearchIPCRouter : public content::WebContentsObserver,
     // Called when the EmbeddedSearch wants to undo all Most Visited deletions.
     virtual void OnUndoAllMostVisitedDeletions() = 0;
 
+    // Called when the EmbeddedSearch wants to switch between custom links and
+    // Most Visited.
+    virtual void OnToggleMostVisitedOrCustomLinks() = 0;
+
     // Called when the EmbeddedSearch wants to add a custom link.
     virtual bool OnAddCustomLink(const GURL& url, const std::string& title) = 0;
 
@@ -81,6 +85,13 @@ class SearchIPCRouter : public content::WebContentsObserver,
     virtual void OnLogEvent(NTPLoggingEventType event,
                             base::TimeDelta time) = 0;
 
+    // Called to signal that an event has occurred on the New Tab Page at a
+    // particular time since navigation start, and provide an int value.
+    virtual void OnLogSuggestionEventWithValue(
+        NTPSuggestionsLoggingEventType event,
+        int data,
+        base::TimeDelta time) = 0;
+
     // Called to log an impression from a given provider on the New Tab Page.
     virtual void OnLogMostVisitedImpression(
         const ntp_tiles::NTPTileImpression& impression) = 0;
@@ -92,17 +103,6 @@ class SearchIPCRouter : public content::WebContentsObserver,
     // Called when the page wants to paste the |text| (or the clipboard contents
     // if the |text| is empty) into the omnibox.
     virtual void PasteIntoOmnibox(const base::string16& text) = 0;
-
-    // Called when the EmbeddedSearch wants to verify the signed-in Chrome
-    // identity against the provided |identity|.
-    virtual bool ChromeIdentityCheck(const base::string16& identity) = 0;
-
-    // Called when the EmbeddedSearch wants to verify that history sync is
-    // enabled.
-    virtual bool HistorySyncCheck() = 0;
-
-    // Called when a custom background is selected on the NTP.
-    virtual void OnSetCustomBackgroundURL(const GURL& url) = 0;
 
     // Called when a custom background with attributions is selected on the NTP.
     // background_url: Url of the background image.
@@ -152,6 +152,7 @@ class SearchIPCRouter : public content::WebContentsObserver,
     virtual bool ShouldProcessDeleteMostVisitedItem() = 0;
     virtual bool ShouldProcessUndoMostVisitedDeletion() = 0;
     virtual bool ShouldProcessUndoAllMostVisitedDeletions() = 0;
+    virtual bool ShouldProcessToggleMostVisitedOrCustomLinks() = 0;
     virtual bool ShouldProcessAddCustomLink() = 0;
     virtual bool ShouldProcessUpdateCustomLink() = 0;
     virtual bool ShouldProcessReorderCustomLink() = 0;
@@ -159,14 +160,12 @@ class SearchIPCRouter : public content::WebContentsObserver,
     virtual bool ShouldProcessUndoCustomLinkAction() = 0;
     virtual bool ShouldProcessResetCustomLinks() = 0;
     virtual bool ShouldProcessLogEvent() = 0;
+    virtual bool ShouldProcessLogSuggestionEventWithValue() = 0;
     virtual bool ShouldProcessPasteIntoOmnibox(bool is_active_tab) = 0;
-    virtual bool ShouldProcessChromeIdentityCheck() = 0;
-    virtual bool ShouldProcessHistorySyncCheck() = 0;
     virtual bool ShouldSendSetInputInProgress(bool is_active_tab) = 0;
     virtual bool ShouldSendOmniboxFocusChanged() = 0;
     virtual bool ShouldSendMostVisitedItems() = 0;
     virtual bool ShouldSendThemeBackgroundInfo() = 0;
-    virtual bool ShouldProcessSetCustomBackgroundURL() = 0;
     virtual bool ShouldProcessSetCustomBackgroundURLWithAttributions() = 0;
     virtual bool ShouldProcessSelectLocalBackgroundImage() = 0;
     virtual bool ShouldProcessBlocklistSearchSuggestion() = 0;
@@ -221,6 +220,7 @@ class SearchIPCRouter : public content::WebContentsObserver,
   void DeleteMostVisitedItem(int page_seq_no, const GURL& url) override;
   void UndoMostVisitedDeletion(int page_seq_no, const GURL& url) override;
   void UndoAllMostVisitedDeletions(int page_seq_no) override;
+  void ToggleMostVisitedOrCustomLinks(int page_seq_no) override;
   void AddCustomLink(int page_seq_no,
                      const GURL& url,
                      const std::string& title,
@@ -241,6 +241,10 @@ class SearchIPCRouter : public content::WebContentsObserver,
   void LogEvent(int page_seq_no,
                 NTPLoggingEventType event,
                 base::TimeDelta time) override;
+  void LogSuggestionEventWithValue(int page_seq_no,
+                                   NTPSuggestionsLoggingEventType event,
+                                   int data,
+                                   base::TimeDelta time) override;
   void LogMostVisitedImpression(
       int page_seq_no,
       const ntp_tiles::NTPTileImpression& impression) override;
@@ -249,12 +253,6 @@ class SearchIPCRouter : public content::WebContentsObserver,
       const ntp_tiles::NTPTileImpression& impression) override;
   void PasteAndOpenDropdown(int page_seq_no,
                             const base::string16& text) override;
-  void ChromeIdentityCheck(int page_seq_no,
-                           const base::string16& identity,
-                           ChromeIdentityCheckCallback callback) override;
-  void HistorySyncCheck(int page_seq_no,
-                        HistorySyncCheckCallback callback) override;
-  void SetCustomBackgroundURL(const GURL& url) override;
   void SetCustomBackgroundURLWithAttributions(
       const GURL& background_url,
       const std::string& attribution_line_1,

@@ -4,6 +4,7 @@
 
 #include "components/invalidation/impl/per_user_topic_registration_request.h"
 
+#include "base/bind.h"
 #include "base/json/json_reader.h"
 #include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
@@ -15,9 +16,9 @@
 #include "base/test/test_simple_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
-#include "components/invalidation/impl/json_unsafe_parser.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "net/url_request/url_request_test_util.h"
+#include "services/data_decoder/public/cpp/testing_json_parser.h"
 #include "services/network/test/test_url_loader_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -30,7 +31,8 @@ using testing::_;
 using testing::SaveArg;
 
 MATCHER_P(EqualsJSON, json, "equals JSON") {
-  std::unique_ptr<base::Value> expected = base::JSONReader::Read(json);
+  std::unique_ptr<base::Value> expected =
+      base::JSONReader::ReadDeprecated(json);
   if (!expected) {
     *result_listener << "INTERNAL ERROR: couldn't parse expected JSON";
     return false;
@@ -38,8 +40,9 @@ MATCHER_P(EqualsJSON, json, "equals JSON") {
 
   std::string err_msg;
   int err_line, err_col;
-  std::unique_ptr<base::Value> actual = base::JSONReader::ReadAndReturnError(
-      arg, base::JSON_PARSE_RFC, nullptr, &err_msg, &err_line, &err_col);
+  std::unique_ptr<base::Value> actual =
+      base::JSONReader::ReadAndReturnErrorDeprecated(
+          arg, base::JSON_PARSE_RFC, nullptr, &err_msg, &err_line, &err_col);
   if (!actual) {
     *result_listener << "input:" << err_line << ":" << err_col << ": "
                      << "parse error: " << err_msg;
@@ -72,6 +75,7 @@ class PerUserTopicRegistrationRequestTest : public testing::Test {
 
  private:
   base::test::ScopedTaskEnvironment task_environment_;
+  data_decoder::TestingJsonParser::ScopedFactoryOverride factory_override_;
   network::TestURLLoaderFactory url_loader_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(PerUserTopicRegistrationRequestTest);
@@ -98,9 +102,10 @@ TEST_F(PerUserTopicRegistrationRequestTest,
           .SetProjectId(project_id)
           .SetType(type)
           .Build();
-  request->Start(callback.Get(),
-                 base::BindRepeating(&syncer::JsonUnsafeParser::Parse),
-                 url_loader_factory());
+  request->Start(
+      callback.Get(),
+      base::BindRepeating(&data_decoder::SafeJsonParser::Parse, nullptr),
+      url_loader_factory());
   base::RunLoop().RunUntilIdle();
 
   // Destroy the request before getting any response.
@@ -142,9 +147,10 @@ TEST_F(PerUserTopicRegistrationRequestTest, ShouldSubscribeWithoutErrors) {
   url_loader_factory()->AddResponse(url(request.get()),
                                     CreateHeadersForTest(net::HTTP_OK),
                                     response_body, response_status);
-  request->Start(callback.Get(),
-                 base::BindRepeating(&syncer::JsonUnsafeParser::Parse),
-                 url_loader_factory());
+  request->Start(
+      callback.Get(),
+      base::BindRepeating(&data_decoder::SafeJsonParser::Parse, nullptr),
+      url_loader_factory());
   base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(status.code, StatusCode::SUCCESS);
@@ -187,9 +193,10 @@ TEST_F(PerUserTopicRegistrationRequestTest,
   url_loader_factory()->AddResponse(url(request.get()),
                                     CreateHeadersForTest(net::HTTP_OK),
                                     response_body, response_status);
-  request->Start(callback.Get(),
-                 base::BindRepeating(&syncer::JsonUnsafeParser::Parse),
-                 url_loader_factory());
+  request->Start(
+      callback.Get(),
+      base::BindRepeating(&data_decoder::SafeJsonParser::Parse, nullptr),
+      url_loader_factory());
   base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(status.code, StatusCode::FAILED);
@@ -230,9 +237,10 @@ TEST_F(PerUserTopicRegistrationRequestTest,
   url_loader_factory()->AddResponse(url(request.get()),
                                     CreateHeadersForTest(net::HTTP_OK),
                                     response_body, response_status);
-  request->Start(callback.Get(),
-                 base::BindRepeating(&syncer::JsonUnsafeParser::Parse),
-                 url_loader_factory());
+  request->Start(
+      callback.Get(),
+      base::BindRepeating(&data_decoder::SafeJsonParser::Parse, nullptr),
+      url_loader_factory());
   base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(status.code, StatusCode::FAILED);
@@ -273,9 +281,10 @@ TEST_F(PerUserTopicRegistrationRequestTest, ShouldUnsubscribe) {
   url_loader_factory()->AddResponse(url(request.get()),
                                     CreateHeadersForTest(net::HTTP_OK),
                                     response_body, response_status);
-  request->Start(callback.Get(),
-                 base::BindRepeating(&syncer::JsonUnsafeParser::Parse),
-                 url_loader_factory());
+  request->Start(
+      callback.Get(),
+      base::BindRepeating(&data_decoder::SafeJsonParser::Parse, nullptr),
+      url_loader_factory());
   base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(status.code, StatusCode::SUCCESS);
@@ -322,18 +331,19 @@ TEST_P(PerUserTopicRegistrationRequestParamTest,
   url_loader_factory()->AddResponse(
       url(request.get()), CreateHeadersForTest(GetParam()),
       /* response_body */ std::string(), response_status);
-  request->Start(callback.Get(),
-                 base::BindRepeating(&syncer::JsonUnsafeParser::Parse),
-                 url_loader_factory());
+  request->Start(
+      callback.Get(),
+      base::BindRepeating(&data_decoder::SafeJsonParser::Parse, nullptr),
+      url_loader_factory());
   base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(status.code, StatusCode::FAILED_NON_RETRIABLE);
 }
 
-INSTANTIATE_TEST_CASE_P(,
-                        PerUserTopicRegistrationRequestParamTest,
-                        testing::Values(net::HTTP_BAD_REQUEST,
-                                        net::HTTP_FORBIDDEN,
-                                        net::HTTP_NOT_FOUND));
+INSTANTIATE_TEST_SUITE_P(,
+                         PerUserTopicRegistrationRequestParamTest,
+                         testing::Values(net::HTTP_BAD_REQUEST,
+                                         net::HTTP_FORBIDDEN,
+                                         net::HTTP_NOT_FOUND));
 
 }  // namespace syncer

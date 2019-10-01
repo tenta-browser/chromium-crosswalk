@@ -139,10 +139,9 @@ class CrostiniRegistryService : public KeyedService {
   //
   // First try to return a desktop file id matching the |window_startup_id|.
   //
-  // If the given window app id is not for Crostini (i.e. Arc++), returns an
-  // empty string. If we can uniquely identify a registry entry, returns the
-  // crostini app id for that. Otherwise, returns the string pointed to by
-  // |window_app_id|, prefixed by "crostini:".
+  // If the app id is empty, returns empty string. If we can uniquely identify
+  // a registry entry, returns the crostini app id for that. Otherwise, returns
+  // the string pointed to by |window_app_id|, prefixed by "crostini:".
   //
   // As the window app id is derived from fields set by the app itself, it is
   // possible for an app to masquerade as a different app.
@@ -166,9 +165,16 @@ class CrostiniRegistryService : public KeyedService {
   void MaybeRequestIcon(const std::string& app_id,
                         ui::ScaleFactor scale_factor);
 
-  // Remove all apps from the named container. Used in the uninstall process.
+  // Remove all apps from the named VM and container. If |container_name| is an
+  // empty string, this function removes all apps associated with the VM,
+  // regardless of container. Used in the uninstall process.
   void ClearApplicationList(const std::string& vm_name,
                             const std::string& container_name);
+
+  // Remove all apps from the named container. Used when deleting a container
+  // without deleting the whole VM.
+  void ClearApplicationListForContainer(const std::string& vm_name,
+                                        const std::string& container_name);
 
   // The existing list of apps is replaced by |application_list|.
   void UpdateApplicationList(const vm_tools::apps::ApplicationList& app_list);

@@ -9,10 +9,14 @@
 #include <vector>
 
 #include "base/metrics/histogram_macros.h"
+#include "content/browser/browser_main_loop.h"
+#include "content/browser/media/media_keys_listener_manager_impl.h"
 #include "content/public/browser/media_keys_listener_manager.h"
 #include "services/media_session/public/mojom/constants.mojom.h"
+#include "services/media_session/public/mojom/media_session.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "ui/base/accelerators/accelerator.h"
+#include "ui/base/accelerators/media_keys_util.h"
 
 namespace content {
 
@@ -44,7 +48,14 @@ HardwareKeyMediaController::~HardwareKeyMediaController() = default;
 
 void HardwareKeyMediaController::MediaSessionInfoChanged(
     media_session::mojom::MediaSessionInfoPtr session_info) {
+  MediaKeysListenerManagerImpl* media_keys_listener_manager_impl =
+      BrowserMainLoop::GetInstance()->media_keys_listener_manager();
+  DCHECK(media_keys_listener_manager_impl);
+
   session_info_ = std::move(session_info);
+  media_keys_listener_manager_impl->SetIsMediaPlaying(
+      session_info_ && session_info_->playback_state ==
+                           media_session::mojom::MediaPlaybackState::kPlaying);
 }
 
 void HardwareKeyMediaController::MediaSessionActionsChanged(
@@ -113,23 +124,26 @@ void HardwareKeyMediaController::PerformAction(MediaSessionAction action) {
   switch (action) {
     case MediaSessionAction::kPreviousTrack:
       media_controller_ptr_->PreviousTrack();
-      RecordAction(MediaHardwareKeyAction::kActionPreviousTrack);
+      ui::RecordMediaHardwareKeyAction(
+          ui::MediaHardwareKeyAction::kPreviousTrack);
       return;
     case MediaSessionAction::kPlay:
       media_controller_ptr_->Resume();
-      RecordAction(MediaHardwareKeyAction::kActionPlay);
+      ui::RecordMediaHardwareKeyAction(ui::MediaHardwareKeyAction::kPlay);
       return;
     case MediaSessionAction::kPause:
       media_controller_ptr_->Suspend();
-      RecordAction(MediaHardwareKeyAction::kActionPause);
+      ui::RecordMediaHardwareKeyAction(
+          ui::MediaHardwareKeyAction::kPause);
       return;
     case MediaSessionAction::kNextTrack:
       media_controller_ptr_->NextTrack();
-      RecordAction(MediaHardwareKeyAction::kActionNextTrack);
+      ui::RecordMediaHardwareKeyAction(
+          ui::MediaHardwareKeyAction::kNextTrack);
       return;
     case MediaSessionAction::kStop:
       media_controller_ptr_->Stop();
-      RecordAction(MediaHardwareKeyAction::kActionStop);
+      ui::RecordMediaHardwareKeyAction(ui::MediaHardwareKeyAction::kStop);
       return;
     case MediaSessionAction::kSeekBackward:
     case MediaSessionAction::kSeekForward:

@@ -34,15 +34,13 @@ namespace blink {
 
 using namespace html_names;
 
-inline HTMLOListElement::HTMLOListElement(Document& document)
+HTMLOListElement::HTMLOListElement(Document& document)
     : HTMLElement(kOlTag, document),
       start_(0xBADBEEF),
       item_count_(0),
       has_explicit_start_(false),
       is_reversed_(false),
       should_recalculate_item_count_(false) {}
-
-DEFINE_NODE_FACTORY(HTMLOListElement)
 
 bool HTMLOListElement::IsPresentationAttribute(
     const QualifiedName& name) const {
@@ -56,21 +54,22 @@ void HTMLOListElement::CollectStyleForPresentationAttribute(
     const AtomicString& value,
     MutableCSSPropertyValueSet* style) {
   if (name == kTypeAttr) {
-    if (value == "a")
-      AddPropertyToPresentationAttributeStyle(style, CSSPropertyListStyleType,
-                                              CSSValueLowerAlpha);
-    else if (value == "A")
-      AddPropertyToPresentationAttributeStyle(style, CSSPropertyListStyleType,
-                                              CSSValueUpperAlpha);
-    else if (value == "i")
-      AddPropertyToPresentationAttributeStyle(style, CSSPropertyListStyleType,
-                                              CSSValueLowerRoman);
-    else if (value == "I")
-      AddPropertyToPresentationAttributeStyle(style, CSSPropertyListStyleType,
-                                              CSSValueUpperRoman);
-    else if (value == "1")
-      AddPropertyToPresentationAttributeStyle(style, CSSPropertyListStyleType,
-                                              CSSValueDecimal);
+    if (value == "a") {
+      AddPropertyToPresentationAttributeStyle(
+          style, CSSPropertyID::kListStyleType, CSSValueID::kLowerAlpha);
+    } else if (value == "A") {
+      AddPropertyToPresentationAttributeStyle(
+          style, CSSPropertyID::kListStyleType, CSSValueID::kUpperAlpha);
+    } else if (value == "i") {
+      AddPropertyToPresentationAttributeStyle(
+          style, CSSPropertyID::kListStyleType, CSSValueID::kLowerRoman);
+    } else if (value == "I") {
+      AddPropertyToPresentationAttributeStyle(
+          style, CSSPropertyID::kListStyleType, CSSValueID::kUpperRoman);
+    } else if (value == "1") {
+      AddPropertyToPresentationAttributeStyle(
+          style, CSSPropertyID::kListStyleType, CSSValueID::kDecimal);
+    }
   } else {
     HTMLElement::CollectStyleForPresentationAttribute(name, value, style);
   }

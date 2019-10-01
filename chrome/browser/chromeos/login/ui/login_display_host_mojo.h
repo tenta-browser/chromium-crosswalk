@@ -12,7 +12,6 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/optional.h"
-#include "chrome/browser/chromeos/login/ui/kiosk_app_menu_updater.h"
 #include "chrome/browser/chromeos/login/ui/login_display_host_common.h"
 #include "chrome/browser/chromeos/login/ui/oobe_ui_dialog_delegate.h"
 #include "chrome/browser/ui/ash/login_screen_client.h"
@@ -51,9 +50,6 @@ class LoginDisplayHostMojo : public LoginDisplayHostCommon,
   // signin but whitelist check fails.
   void ShowWhitelistCheckFailedError();
 
-  // Show unrecoverable cryptohome error dialog.
-  void ShowUnrecoverableCrypthomeErrorDialog();
-
   // Displays detailed error screen for error with ID |error_id|.
   void ShowErrorScreen(LoginDisplay::SigninError error_id);
 
@@ -73,7 +69,7 @@ class LoginDisplayHostMojo : public LoginDisplayHostCommon,
   WebUILoginView* GetWebUILoginView() const override;
   void OnFinalize() override;
   void SetStatusAreaVisible(bool visible) override;
-  void StartWizard(OobeScreen first_screen) override;
+  void StartWizard(OobeScreenId first_screen) override;
   WizardController* GetWizardController() override;
   void OnStartUserAdding() override;
   void CancelUserAdding() override;
@@ -82,12 +78,11 @@ class LoginDisplayHostMojo : public LoginDisplayHostCommon,
   void OnStartAppLaunch() override;
   void OnStartArcKiosk() override;
   void OnBrowserCreated() override;
-  void ShowGaiaDialog(
-      bool can_close,
-      const base::Optional<AccountId>& prefilled_account) override;
+  void ShowGaiaDialog(bool can_close,
+                      const AccountId& prefilled_account) override;
   void HideOobeDialog() override;
   void UpdateOobeDialogSize(int width, int height) override;
-  void UpdateOobeDialogState(ash::mojom::OobeDialogState state) override;
+  void UpdateOobeDialogState(ash::OobeDialogState state) override;
   const user_manager::UserList GetUsers() override;
   void OnCancelPasswordChangedFlow() override;
   void ShowFeedback() override;
@@ -100,12 +95,12 @@ class LoginDisplayHostMojo : public LoginDisplayHostCommon,
       const AccountId& account_id,
       const std::string& password,
       bool authenticated_by_pin,
-      AuthenticateUserWithPasswordOrPinCallback callback) override;
+      base::OnceCallback<void(bool)> callback) override;
   void HandleAuthenticateUserWithExternalBinary(
       const AccountId& account_id,
-      AuthenticateUserWithExternalBinaryCallback callback) override;
+      base::OnceCallback<void(bool)> callback) override;
   void HandleEnrollUserWithExternalBinary(
-      EnrollUserWithExternalBinaryCallback callback) override;
+      base::OnceCallback<void(bool)> callback) override;
   void HandleAuthenticateUserWithEasyUnlock(
       const AccountId& account_id) override;
   void HandleHardlockPod(const AccountId& account_id) override;
@@ -120,20 +115,22 @@ class LoginDisplayHostMojo : public LoginDisplayHostCommon,
   // AuthStatusConsumer:
   void OnAuthFailure(const AuthFailure& error) override;
   void OnAuthSuccess(const UserContext& user_context) override;
+  void OnPasswordChangeDetected() override;
+  void OnOldEncryptionDetected(const UserContext& user_context,
+                               bool has_incomplete_migration) override;
 
  private:
   void LoadOobeDialog();
 
   // State associated with a pending authentication attempt.
   struct AuthState {
-    AuthState(AccountId account_id,
-              AuthenticateUserWithPasswordOrPinCallback callback);
+    AuthState(AccountId account_id, base::OnceCallback<void(bool)> callback);
     ~AuthState();
 
     // Account that is being authenticated.
     AccountId account_id;
     // Callback that should be executed the authentication result is available.
-    AuthenticateUserWithPasswordOrPinCallback callback;
+    base::OnceCallback<void(bool)> callback;
   };
   std::unique_ptr<AuthState> pending_auth_state_;
 
@@ -156,8 +153,6 @@ class LoginDisplayHostMojo : public LoginDisplayHostCommon,
 
   // The account id of the user pod that's being focused.
   AccountId focused_pod_account_id_;
-
-  KioskAppMenuUpdater kiosk_updater_;
 
   // Fetches system information and sends it to the UI over mojo.
   std::unique_ptr<MojoSystemInfoDispatcher> system_info_updater_;

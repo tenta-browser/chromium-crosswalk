@@ -7,9 +7,9 @@
 #include "ash/public/cpp/ash_typography.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/root_window_controller.h"
-#include "ash/shelf/shelf.h"
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
+#include "ash/wm/work_area_insets.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -52,8 +52,8 @@ constexpr int kToastButtonMaximumWidth = 160;
 // Returns the work area bounds for the root window where new windows are added
 // (including new toasts).
 gfx::Rect GetUserWorkAreaBounds() {
-  return Shelf::ForWindow(Shell::GetRootWindowForNewWindows())
-      ->GetUserWorkAreaBounds();
+  return WorkAreaInsets::ForWindow(Shell::GetRootWindowForNewWindows())
+      ->user_work_area_bounds();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -247,9 +247,12 @@ ToastOverlay::ToastOverlay(Delegate* delegate,
   ::wm::SetWindowVisibilityAnimationDuration(
       overlay_window,
       base::TimeDelta::FromMilliseconds(kSlideAnimationDurationMs));
+
+  keyboard::KeyboardController::Get()->AddObserver(this);
 }
 
 ToastOverlay::~ToastOverlay() {
+  keyboard::KeyboardController::Get()->RemoveObserver(this);
   overlay_widget_->Close();
 }
 
@@ -296,6 +299,13 @@ void ToastOverlay::OnImplicitAnimationsScheduled() {}
 void ToastOverlay::OnImplicitAnimationsCompleted() {
   if (!overlay_widget_->GetLayer()->GetTargetVisibility())
     delegate_->OnClosed();
+}
+
+void ToastOverlay::OnKeyboardWorkspaceOccludedBoundsChanged(
+    const gfx::Rect& new_bounds_in_screen) {
+  // TODO(https://crbug.com/943446): Observe changes in user work area bounds
+  // directly instead of listening for keyboard bounds changes.
+  UpdateOverlayBounds();
 }
 
 views::Widget* ToastOverlay::widget_for_testing() {

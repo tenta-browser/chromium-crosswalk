@@ -4,6 +4,7 @@
 
 #include "ui/wm/core/window_util.h"
 
+#include "base/bind.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/window.h"
 #include "ui/compositor/dip_util.h"
@@ -46,8 +47,8 @@ void MirrorChildren(ui::Layer* to_mirror,
                     ui::Layer* parent,
                     bool sync_bounds) {
   for (auto* child : to_mirror->children()) {
-    child->set_sync_bounds(sync_bounds);
     ui::Layer* mirror = child->Mirror().release();
+    mirror->set_sync_bounds_with_source(sync_bounds);
     parent->Add(mirror);
     MirrorChildren(child, mirror, sync_bounds);
   }

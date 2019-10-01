@@ -4,17 +4,22 @@
 
 #include "chrome/browser/ui/views/chrome_web_dialog_view.h"
 
+#include <memory>
+
+#include "build/build_config.h"
 #include "chrome/browser/extensions/chrome_extension_web_contents_observer.h"
 #include "chrome/browser/ui/webui/chrome_web_contents_handler.h"
 #include "ui/views/controls/webview/web_dialog_view.h"
 #include "ui/views/widget/widget.h"
 
 #if defined(OS_CHROMEOS)
+#include "ash/public/cpp/multi_user_window_manager.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/ash/ash_util.h"
-#include "chrome/browser/ui/ash/multi_user/multi_user_window_manager_client.h"
+#include "chrome/browser/ui/ash/multi_user/multi_user_window_manager_helper.h"
+#include "components/session_manager/core/session_manager.h"
 #include "components/user_manager/user.h"
 #endif  // defined(OS_CHROMEOS)
 
@@ -49,8 +54,8 @@ gfx::NativeWindow ShowWebDialogWithParams(
     content::BrowserContext* context,
     ui::WebDialogDelegate* delegate,
     const views::Widget::InitParams* extra_params) {
-  views::WebDialogView* view =
-      new views::WebDialogView(context, delegate, new ChromeWebContentsHandler);
+  views::WebDialogView* view = new views::WebDialogView(
+      context, delegate, std::make_unique<ChromeWebContentsHandler>());
   views::Widget::InitParams params;
   if (extra_params)
     params = *extra_params;
@@ -67,9 +72,11 @@ gfx::NativeWindow ShowWebDialogWithParams(
   const user_manager::User* user =
       chromeos::ProfileHelper::Get()->GetUserByProfile(
           Profile::FromBrowserContext(context));
-  if (user) {
-    // Dialogs should not be shown for other users when logged in.
-    MultiUserWindowManagerClient::GetInstance()->SetWindowOwner(
+  if (user && session_manager::SessionManager::Get()->session_state() ==
+                  session_manager::SessionState::ACTIVE) {
+    // Dialogs should not be shown for other users when logged in and the
+    // session is active.
+    MultiUserWindowManagerHelper::GetWindowManager()->SetWindowOwner(
         window, user->GetAccountId());
   }
 #endif

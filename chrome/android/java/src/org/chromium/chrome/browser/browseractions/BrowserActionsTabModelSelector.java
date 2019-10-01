@@ -6,7 +6,8 @@ package org.chromium.chrome.browser.browseractions;
 
 import org.chromium.base.Callback;
 import org.chromium.base.ThreadUtils;
-import org.chromium.base.task.AsyncTask;
+import org.chromium.base.task.PostTask;
+import org.chromium.base.task.TaskTraits;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.browseractions.BrowserActionsTabCreatorManager.BrowserActionsTabCreator;
 import org.chromium.chrome.browser.tab.Tab;
@@ -26,6 +27,7 @@ import org.chromium.chrome.browser.tabmodel.TabPersistentStore;
 import org.chromium.chrome.browser.tabmodel.TabPersistentStore.TabPersistentStoreObserver;
 import org.chromium.chrome.browser.tabmodel.TabSelectionType;
 import org.chromium.content_public.browser.LoadUrlParams;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -118,7 +120,7 @@ public class BrowserActionsTabModelSelector
         };
         getModel(false).addObserver(tabModelObserver);
         if (mTabCreationRunnable != null) {
-            ThreadUtils.runOnUiThread(mTabCreationRunnable);
+            PostTask.runOrPostTask(UiThreadTaskTraits.DEFAULT, mTabCreationRunnable);
         }
         mTabCreationRunnable = null;
     }
@@ -144,15 +146,10 @@ public class BrowserActionsTabModelSelector
                     mPendingUrls.clear();
                 }
             };
-            new AsyncTask<Void>() {
-                @Override
-                protected Void doInBackground() {
-                    mTabSaver.loadState(true);
-                    mTabSaver.restoreTabs(false);
-                    return null;
-                }
-            }
-                    .executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+            PostTask.postTask(TaskTraits.USER_BLOCKING, () -> {
+                mTabSaver.loadState(true);
+                mTabSaver.restoreTabs(false);
+            });
         }
         mPendingUrls.add(loadUrlParams);
     }

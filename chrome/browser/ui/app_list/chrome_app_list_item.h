@@ -9,6 +9,7 @@
 #include <string>
 #include <utility>
 
+#include "ash/public/cpp/app_list/app_list_types.h"
 #include "base/macros.h"
 #include "chrome/browser/ui/app_list/app_context_menu.h"
 #include "chrome/browser/ui/app_list/app_list_syncable_service.h"
@@ -23,7 +24,7 @@ class AppSorting;
 }  // namespace extensions
 
 namespace ui {
-class MenuModel;
+class SimpleMenuModel;
 }  // namespace ui
 
 // Base class of all chrome app list items.
@@ -58,14 +59,15 @@ class ChromeAppListItem {
   const syncer::StringOrdinal& position() const { return metadata_->position; }
   const std::string& name() const { return metadata_->name; }
   bool is_folder() const { return metadata_->is_folder; }
+  bool is_persistent() const { return metadata_->is_persistent; }
   const gfx::ImageSkia& icon() const { return metadata_->icon; }
   bool is_page_break() const { return metadata_->is_page_break; }
 
   void SetIsInstalling(bool is_installing);
   void SetPercentDownloaded(int32_t percent_downloaded);
 
-  void SetMetadata(ash::mojom::AppListItemMetadataPtr metadata);
-  ash::mojom::AppListItemMetadataPtr CloneMetadata() const;
+  void SetMetadata(std::unique_ptr<ash::AppListItemMetadata> metadata);
+  std::unique_ptr<ash::AppListItemMetadata> CloneMetadata() const;
 
   // The following methods set Chrome side data here, and call model updater
   // interfaces that talk to ash directly.
@@ -76,6 +78,7 @@ class ChromeAppListItem {
   void SetFolderId(const std::string& folder_id);
   void SetPosition(const syncer::StringOrdinal& position);
   void SetIsPageBreak(bool is_page_break);
+  void SetIsPersistent(bool is_persistent);
 
   // The following methods won't make changes to Ash and it should be called
   // by this item itself or the model updater.
@@ -98,15 +101,12 @@ class ChromeAppListItem {
   // is currently no menu for the item (e.g. during install). Note |callback|
   // takes the ownership of the returned menu model.
   using GetMenuModelCallback =
-      base::OnceCallback<void(std::unique_ptr<ui::MenuModel>)>;
+      base::OnceCallback<void(std::unique_ptr<ui::SimpleMenuModel>)>;
   virtual void GetContextMenuModel(GetMenuModelCallback callback);
 
   // Returns true iff this item was badged because it's an extension app that
   // has its Android analog installed.
   virtual bool IsBadged() const;
-
-  // Invoked when a context menu item of this item is selected.
-  void ContextMenuItemSelected(int command_id, int event_flags);
 
   bool CompareForTest(const ChromeAppListItem* other) const;
 
@@ -141,7 +141,7 @@ class ChromeAppListItem {
   void MaybeDismissAppList();
 
  private:
-  ash::mojom::AppListItemMetadataPtr metadata_;
+  std::unique_ptr<ash::AppListItemMetadata> metadata_;
   Profile* profile_;
   AppListModelUpdater* model_updater_ = nullptr;
 

@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "base/base64.h"
+#include "base/bind.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
@@ -18,14 +19,18 @@
 #include "chrome/common/chrome_features.h"
 #include "components/ntp_snippets/pref_names.h"
 #include "components/offline_items_collection/core/offline_content_aggregator.h"
+#include "components/offline_items_collection/core/offline_content_provider.h"
 #include "components/offline_items_collection/core/offline_item.h"
 #include "components/offline_items_collection/core/offline_item_state.h"
+#include "components/offline_pages/core/offline_page_feature.h"
 #include "components/prefs/pref_service.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "ui/base/l10n/time_format.h"
 
 namespace android {
 using chrome::mojom::AvailableContentType;
+using GetVisualsOptions =
+    offline_items_collection::OfflineContentProvider::GetVisualsOptions;
 using offline_items_collection::OfflineItem;
 using offline_items_collection::OfflineItemState;
 
@@ -95,14 +100,20 @@ bool CompareItemsByUsefulness(const OfflineItem& a, const OfflineItem& b) {
 
 class ThumbnailFetch {
  public:
-  // Gets visuals for a list of thumbnails. Calls |complete_callback| with
-  // a list of data URIs containing the thumbnails for |content_ids|, in the
-  // same order. If no thumbnail is available, the corresponding result
-  // string is left empty.
+  struct VisualsDataUris {
+    GURL thumbnail;
+    GURL favicon;
+  };
+
+  // Gets visuals for a list of visuals. Calls |complete_callback| with
+  // a list of VisualsDataUris structs containing data URIs for thumbnails and
+  // favicons for |content_ids|, in the same order. If no thumbnail or favicon
+  // is available, the corresponding result string is left empty.
   static void Start(
       offline_items_collection::OfflineContentAggregator* aggregator,
       std::vector<offline_items_collection::ContentId> content_ids,
-      base::OnceCallback<void(std::vector<GURL>)> complete_callback) {
+      base::OnceCallback<void(std::vector<VisualsDataUris>)>
+          complete_callback) {
     // ThumbnailFetch instances are self-deleting.
     ThumbnailFetch* fetch = new ThumbnailFetch(std::move(content_ids),
                                                std::move(complete_callback));
@@ -110,11 +121,12 @@ class ThumbnailFetch {
   }
 
  private:
-  ThumbnailFetch(std::vector<offline_items_collection::ContentId> content_ids,
-                 base::OnceCallback<void(std::vector<GURL>)> complete_callback)
+  ThumbnailFetch(
+      std::vector<offline_items_collection::ContentId> content_ids,
+      base::OnceCallback<void(std::vector<VisualsDataUris>)> complete_callback)
       : content_ids_(std::move(content_ids)),
         complete_callback_(std::move(complete_callback)) {
-    thumbnails_.resize(content_ids_.size());
+    visuals_.resize(content_ids_.size());
   }
 
   void Start(offline_items_collection::OfflineContentAggregator* aggregator) {
@@ -125,7 +137,8 @@ class ThumbnailFetch {
     auto callback = base::BindRepeating(&ThumbnailFetch::VisualsReceived,
                                         base::Unretained(this));
     for (offline_items_collection::ContentId id : content_ids_) {
-      aggregator->GetVisualsForItem(id, callback);
+      aggregator->GetVisualsForItem(
+          id, GetVisualsOptions::IconAndCustomFavicon(), callback);
     }
   }
 
@@ -141,7 +154,7 @@ class ThumbnailFetch {
   void Complete() {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::BindOnce(std::move(complete_callback_), std::move(thumbnails_)));
+        base::BindOnce(std::move(complete_callback_), std::move(visuals_)));
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
         base::BindOnce(
@@ -149,21 +162,28 @@ class ThumbnailFetch {
             this));
   }
 
+  GURL GetImageAsDataUri(const gfx::Image& image) {
+    scoped_refptr<base::RefCountedMemory> data = image.As1xPNGBytes();
+    if (!data || data->size() == 0)
+      return GURL();
+    std::string png_base64;
+    base::Base64Encode(base::StringPiece(data->front_as<char>(), data->size()),
+                       &png_base64);
+    return GURL(base::StrCat({"data:image/png;base64,", png_base64}));
+  }
+
   void AddVisual(
       const offline_items_collection::ContentId& id,
       std::unique_ptr<offline_items_collection::OfflineItemVisuals> visuals) {
     if (!visuals)
       return;
-    scoped_refptr<base::RefCountedMemory> data = visuals->icon.As1xPNGBytes();
-    if (!data || data->size() == 0)
-      return;
-    std::string content_base64;
-    base::Base64Encode(base::StringPiece(data->front_as<char>(), data->size()),
-                       &content_base64);
+
+    GURL thumbnail_data_uri = GetImageAsDataUri(visuals->icon);
+    GURL favicon_data_uri = GetImageAsDataUri(visuals->custom_favicon);
     for (size_t i = 0; i < content_ids_.size(); ++i) {
       if (content_ids_[i] == id) {
-        thumbnails_[i] =
-            GURL(base::StrCat({"data:image/png;base64,", content_base64}));
+        visuals_[i] = {std::move(thumbnail_data_uri),
+                       std::move(favicon_data_uri)};
         break;
       }
     }
@@ -171,10 +191,10 @@ class ThumbnailFetch {
 
   // The list of item IDs for which to fetch visuals.
   std::vector<offline_items_collection::ContentId> content_ids_;
-  // The thumbnail data URIs to be returned. |thumbnails_| size is equal to
-  // |content_ids_| size.
-  std::vector<GURL> thumbnails_;
-  base::OnceCallback<void(std::vector<GURL>)> complete_callback_;
+  // The thumbnail and favicon data URIs to be returned. |visuals_| size is
+  // equal to |content_ids_| size.
+  std::vector<VisualsDataUris> visuals_;
+  base::OnceCallback<void(std::vector<VisualsDataUris>)> complete_callback_;
   size_t callback_count_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(ThumbnailFetch);
@@ -182,14 +202,14 @@ class ThumbnailFetch {
 
 chrome::mojom::AvailableOfflineContentPtr CreateAvailableOfflineContent(
     const OfflineItem& item,
-    const GURL& thumbnail_url) {
+    ThumbnailFetch::VisualsDataUris visuals_data_uris) {
   return chrome::mojom::AvailableOfflineContent::New(
       item.id.id, item.id.name_space, item.title, item.description,
       base::UTF16ToUTF8(ui::TimeFormat::Simple(
           ui::TimeFormat::FORMAT_ELAPSED, ui::TimeFormat::LENGTH_SHORT,
           base::Time::Now() - item.creation_time)),
-      "",  // TODO(crbug.com/852872): Add attribution
-      std::move(thumbnail_url), ContentType(item));
+      item.attribution, std::move(visuals_data_uris.thumbnail),
+      std::move(visuals_data_uris.favicon), ContentType(item));
 }
 }  // namespace
 
@@ -199,16 +219,9 @@ AvailableOfflineContentProvider::AvailableOfflineContentProvider(
 
 AvailableOfflineContentProvider::~AvailableOfflineContentProvider() = default;
 
-void AvailableOfflineContentProvider::Summarize(SummarizeCallback callback) {
-  offline_items_collection::OfflineContentAggregator* aggregator =
-      OfflineContentAggregatorFactory::GetForBrowserContext(profile_);
-  aggregator->GetAllItems(
-      base::BindOnce(&AvailableOfflineContentProvider::SummarizeFinalize,
-                     weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
-}
-
 void AvailableOfflineContentProvider::List(ListCallback callback) {
-  if (!base::FeatureList::IsEnabled(features::kNewNetErrorPageUI)) {
+  if (!offline_pages::IsOfflinePagesEnabled() ||
+      !base::FeatureList::IsEnabled(features::kNewNetErrorPageUI)) {
     std::move(callback).Run(true, {});
     return;
   }
@@ -255,40 +268,6 @@ void AvailableOfflineContentProvider::Create(
       std::move(request));
 }
 
-void AvailableOfflineContentProvider::SummarizeFinalize(
-    AvailableOfflineContentProvider::SummarizeCallback callback,
-    const std::vector<OfflineItem>& all_items) {
-  auto summary = chrome::mojom::AvailableOfflineContentSummary::New();
-  summary->total_items = base::saturated_cast<uint32_t>(all_items.size());
-  // Decrement the total item count to find the interesting item count.
-  size_t interesting_items = all_items.size();
-  for (const OfflineItem& item : all_items) {
-    switch (ContentType(item)) {
-      case AvailableContentType::kPrefetchedPage:
-        summary->has_prefetched_page = true;
-        break;
-      case AvailableContentType::kVideo:
-        summary->has_video = true;
-        break;
-      case AvailableContentType::kAudio:
-        summary->has_audio = true;
-        break;
-      case AvailableContentType::kOtherPage:
-        summary->has_offline_page = true;
-        break;
-      case AvailableContentType::kUninteresting:
-        interesting_items--;
-        break;
-    }
-  }
-
-  // If the number of interesting items is lower then the minimum required then
-  // reset all summary data so avoid presenting the card.
-  if (interesting_items < kMinInterestingItemCount)
-    summary = chrome::mojom::AvailableOfflineContentSummary::New();
-  std::move(callback).Run(std::move(summary));
-}
-
 // Picks the best available offline content items, and passes them to callback.
 void AvailableOfflineContentProvider::ListFinalize(
     AvailableOfflineContentProvider::ListCallback callback,
@@ -316,19 +295,19 @@ void AvailableOfflineContentProvider::ListFinalize(
   bool list_visible_by_prefs = profile_->GetPrefs()->GetBoolean(
       ntp_snippets::prefs::kArticlesListVisible);
 
-  auto complete = [](AvailableOfflineContentProvider::ListCallback callback,
-                     std::vector<OfflineItem> selected,
-                     bool list_visible_by_prefs,
-                     std::vector<GURL> thumbnail_data_uris) {
-    // Translate OfflineItem to AvailableOfflineContentPtr.
-    std::vector<chrome::mojom::AvailableOfflineContentPtr> result;
-    for (size_t i = 0; i < selected.size(); ++i) {
-      result.push_back(
-          CreateAvailableOfflineContent(selected[i], thumbnail_data_uris[i]));
-    }
+  auto complete =
+      [](AvailableOfflineContentProvider::ListCallback callback,
+         std::vector<OfflineItem> selected, bool list_visible_by_prefs,
+         std::vector<ThumbnailFetch::VisualsDataUris> visuals_data_uris) {
+        // Translate OfflineItem to AvailableOfflineContentPtr.
+        std::vector<chrome::mojom::AvailableOfflineContentPtr> result;
+        for (size_t i = 0; i < selected.size(); ++i) {
+          result.push_back(CreateAvailableOfflineContent(
+              selected[i], std::move(visuals_data_uris[i])));
+        }
 
-    std::move(callback).Run(list_visible_by_prefs, std::move(result));
-  };
+        std::move(callback).Run(list_visible_by_prefs, std::move(result));
+      };
 
   ThumbnailFetch::Start(
       aggregator, selected_ids,

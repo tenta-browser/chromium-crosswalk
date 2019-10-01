@@ -45,13 +45,12 @@ namespace data_use_measurement {
 DataUseUserData::DataUseContentType ContentURLRequestClassifier::GetContentType(
     const net::URLRequest& request,
     const net::HttpResponseHeaders& response_headers) const {
-  const content::ResourceRequestInfo* request_info =
+  content::ResourceRequestInfo* request_info =
       content::ResourceRequestInfo::ForRequest(&request);
   std::string mime_type;
   if (response_headers.GetMimeType(&mime_type)) {
     if (mime_type == "text/html" && request_info &&
-        request_info->GetResourceType() ==
-            content::ResourceType::RESOURCE_TYPE_MAIN_FRAME) {
+        request_info->GetResourceType() == content::ResourceType::kMainFrame) {
       return DataUseUserData::MAIN_FRAME_HTML;
     }
     if (mime_type == "text/html")
@@ -137,10 +136,10 @@ void ContentURLRequestClassifier::RecordPageTransitionUMA(
 
 bool ContentURLRequestClassifier::IsFavIconRequest(
     const net::URLRequest& request) const {
-  const content::ResourceRequestInfo* request_info =
+  content::ResourceRequestInfo* request_info =
       content::ResourceRequestInfo::ForRequest(&request);
-  return request_info && request_info->GetResourceType() ==
-                             content::ResourceType::RESOURCE_TYPE_FAVICON;
+  return request_info &&
+         request_info->GetResourceType() == content::ResourceType::kFavicon;
 }
 
 }  // namespace data_use_measurement

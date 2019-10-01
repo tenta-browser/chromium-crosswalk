@@ -12,6 +12,7 @@
 
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
+#include "base/strings/string16.h"
 
 class AppListModelUpdater;
 class ChromeSearchResult;
@@ -23,6 +24,8 @@ FORWARD_DECLARE_TEST(MixerTest, Publish);
 }
 
 class SearchProvider;
+class SearchResultRanker;
+enum class RankingItemType;
 
 // Mixer collects results from providers, sorts them and publishes them to the
 // SearchResults UI model. The targeted results have 6 slots to hold the
@@ -45,10 +48,18 @@ class Mixer {
   void AddProviderToGroup(size_t group_id, SearchProvider* provider);
 
   // Collects the results, sorts and publishes them.
-  void MixAndPublish(size_t num_max_results);
+  void MixAndPublish(size_t num_max_results, const base::string16& query);
 
- private:
-  FRIEND_TEST_ALL_PREFIXES(test::MixerTest, Publish);
+  // Sets a SearchResultRanker to re-rank non-app search results before they are
+  // published.
+  void SetNonAppSearchResultRanker(std::unique_ptr<SearchResultRanker> ranker);
+
+  // Get a pointer to the SearchResultRanker owned by this object used for all
+  // non-app ranking.
+  SearchResultRanker* GetNonAppSearchResultRanker();
+
+  // Handle a training signal.
+  void Train(const std::string& id, RankingItemType type);
 
   // Used for sorting and mixing results.
   struct SortData {
@@ -62,6 +73,9 @@ class Mixer {
   };
   typedef std::vector<Mixer::SortData> SortedResults;
 
+ private:
+  FRIEND_TEST_ALL_PREFIXES(test::MixerTest, Publish);
+
   class Group;
   typedef std::vector<std::unique_ptr<Group>> Groups;
 
@@ -71,11 +85,14 @@ class Mixer {
   // |results| may not have been sorted yet.
   static void RemoveDuplicates(SortedResults* results);
 
-  void FetchResults();
+  void FetchResults(const base::string16& query);
 
   AppListModelUpdater* const model_updater_;  // Not owned.
 
   Groups groups_;
+
+  // Adaptive models used for re-ranking search results.
+  std::unique_ptr<SearchResultRanker> non_app_ranker_;
 
   DISALLOW_COPY_AND_ASSIGN(Mixer);
 };

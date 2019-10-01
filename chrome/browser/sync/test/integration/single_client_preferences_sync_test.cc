@@ -6,17 +6,16 @@
 #include "base/strings/stringprintf.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/values.h"
-#include "chrome/browser/sync/test/integration/feature_toggler.h"
+#include "build/build_config.h"
 #include "chrome/browser/sync/test/integration/preferences_helper.h"
 #include "chrome/browser/sync/test/integration/profile_sync_service_harness.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
 #include "chrome/browser/sync/test/integration/updated_progress_marker_checker.h"
 #include "chrome/common/pref_names.h"
-#include "components/browser_sync/profile_sync_service.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/json_pref_store.h"
 #include "components/prefs/pref_service.h"
-#include "components/sync/driver/sync_driver_switches.h"
+#include "components/sync/driver/profile_sync_service.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
 using preferences_helper::BooleanPrefMatches;
@@ -29,18 +28,17 @@ using testing::NotNull;
 
 namespace {
 
-class SingleClientPreferencesSyncTest : public FeatureToggler, public SyncTest {
+class SingleClientPreferencesSyncTest : public SyncTest {
  public:
-  SingleClientPreferencesSyncTest()
-      : FeatureToggler(switches::kSyncPseudoUSSPreferences),
-        SyncTest(SINGLE_CLIENT) {}
+  SingleClientPreferencesSyncTest() : SyncTest(SINGLE_CLIENT) {}
+
   ~SingleClientPreferencesSyncTest() override {}
 
  private:
   DISALLOW_COPY_AND_ASSIGN(SingleClientPreferencesSyncTest);
 };
 
-IN_PROC_BROWSER_TEST_P(SingleClientPreferencesSyncTest, Sanity) {
+IN_PROC_BROWSER_TEST_F(SingleClientPreferencesSyncTest, Sanity) {
   ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
   ASSERT_TRUE(BooleanPrefMatches(prefs::kHomePageIsNewTabPage));
   ChangeBooleanPref(0, prefs::kHomePageIsNewTabPage);
@@ -50,7 +48,7 @@ IN_PROC_BROWSER_TEST_P(SingleClientPreferencesSyncTest, Sanity) {
 
 // This test simply verifies that preferences registered after sync started
 // get properly synced.
-IN_PROC_BROWSER_TEST_P(SingleClientPreferencesSyncTest, LateRegistration) {
+IN_PROC_BROWSER_TEST_F(SingleClientPreferencesSyncTest, LateRegistration) {
   ASSERT_TRUE(SetupClients()) << "SetupClients() failed.";
   PrefRegistrySyncable* registry = GetRegistry(GetProfile(0));
   const std::string pref_name = "testing.my-test-preference";
@@ -71,8 +69,16 @@ IN_PROC_BROWSER_TEST_P(SingleClientPreferencesSyncTest, LateRegistration) {
   EXPECT_FALSE(BooleanPrefMatches(pref_name.c_str()));
 }
 
-IN_PROC_BROWSER_TEST_P(SingleClientPreferencesSyncTest,
-                       ShouldRemoveBadDataWhenRegistering) {
+// Flaky on Windows. https://crbug.com/930482
+#if defined(OS_WIN)
+#define MAYBE_ShouldRemoveBadDataWhenRegistering \
+  DISABLED_ShouldRemoveBadDataWhenRegistering
+#else
+#define MAYBE_ShouldRemoveBadDataWhenRegistering \
+  ShouldRemoveBadDataWhenRegistering
+#endif
+IN_PROC_BROWSER_TEST_F(SingleClientPreferencesSyncTest,
+                       MAYBE_ShouldRemoveBadDataWhenRegistering) {
   // Populate the data store with data of type boolean but register as string.
   SetPreexistingPreferencesFileContents(
       0, "{\"testing\":{\"my-test-preference\":true}}");
@@ -100,7 +106,7 @@ IN_PROC_BROWSER_TEST_P(SingleClientPreferencesSyncTest,
 
 // Regression test to verify that pagination during GetUpdates() contributes
 // properly to UMA histograms.
-IN_PROC_BROWSER_TEST_P(SingleClientPreferencesSyncTest,
+IN_PROC_BROWSER_TEST_F(SingleClientPreferencesSyncTest,
                        EmitModelTypeEntityChangeToUma) {
   const int kNumEntities = 17;
 
@@ -110,9 +116,10 @@ IN_PROC_BROWSER_TEST_P(SingleClientPreferencesSyncTest,
   for (int i = 0; i < kNumEntities; i++) {
     specifics.mutable_preference()->set_name(base::StringPrintf("pref%d", i));
     fake_server_->InjectEntity(
-        syncer::PersistentUniqueClientEntity::CreateFromEntitySpecifics(
-            specifics.preference().name(), specifics, /*creation_time=*/0,
-            /*last_modified_time=*/0));
+        syncer::PersistentUniqueClientEntity::CreateFromSpecificsForTesting(
+            /*non_unique_name=*/"",
+            /*client_tag=*/specifics.preference().name(), specifics,
+            /*creation_time=*/0, /*last_modified_time=*/0));
   }
 
   base::HistogramTester histogram_tester;
@@ -122,13 +129,15 @@ IN_PROC_BROWSER_TEST_P(SingleClientPreferencesSyncTest,
                               /*REMOTE_INITIAL_UPDATE=*/5));
 }
 
-IN_PROC_BROWSER_TEST_P(SingleClientPreferencesSyncTest,
+IN_PROC_BROWSER_TEST_F(SingleClientPreferencesSyncTest,
                        PRE_PersistProgressMarkerOnRestart) {
   sync_pb::EntitySpecifics specifics;
   specifics.mutable_preference()->set_name("testing.my-test-preference");
   fake_server_->InjectEntity(
-      syncer::PersistentUniqueClientEntity::CreateFromEntitySpecifics(
-          specifics.preference().name(), specifics, /*creation_time=*/0,
+      syncer::PersistentUniqueClientEntity::CreateFromSpecificsForTesting(
+          /*non_unique_name=*/"",
+          /*client_tag=*/specifics.preference().name(), specifics,
+          /*creation_time=*/0,
           /*last_modified_time=*/0));
 
   base::HistogramTester histogram_tester;
@@ -138,13 +147,15 @@ IN_PROC_BROWSER_TEST_P(SingleClientPreferencesSyncTest,
                    /*REMOTE_INITIAL_UPDATE=*/5));
 }
 
-IN_PROC_BROWSER_TEST_P(SingleClientPreferencesSyncTest,
+IN_PROC_BROWSER_TEST_F(SingleClientPreferencesSyncTest,
                        PersistProgressMarkerOnRestart) {
   sync_pb::EntitySpecifics specifics;
   specifics.mutable_preference()->set_name("testing.my-test-preference");
   fake_server_->InjectEntity(
-      syncer::PersistentUniqueClientEntity::CreateFromEntitySpecifics(
-          specifics.preference().name(), specifics, /*creation_time=*/0,
+      syncer::PersistentUniqueClientEntity::CreateFromSpecificsForTesting(
+          /*non_unique_name=*/"",
+          /*client_tag=*/specifics.preference().name(), specifics,
+          /*creation_time=*/0,
           /*last_modified_time=*/0));
 
   base::HistogramTester histogram_tester;
@@ -165,9 +176,5 @@ IN_PROC_BROWSER_TEST_P(SingleClientPreferencesSyncTest,
                    "Sync.ModelTypeEntityChange3.PREFERENCE",
                    /*REMOTE_INITIAL_UPDATE=*/5));
 }
-
-INSTANTIATE_TEST_CASE_P(USS,
-                        SingleClientPreferencesSyncTest,
-                        ::testing::Values(false, true));
 
 }  // namespace

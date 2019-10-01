@@ -8,11 +8,14 @@ import android.content.SharedPreferences;
 import android.support.annotation.Nullable;
 
 import org.chromium.base.ContextUtils;
+import org.chromium.base.StrictModeContext;
 import org.chromium.chrome.browser.crash.MinidumpUploadService.ProcessType;
 
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -107,6 +110,13 @@ public class ChromePreferenceManager {
             "contextual_search_previous_interaction_timestamp";
 
     /**
+     * Key to cache whether
+     * {@link ChromeFeatureList#SWAP_PIXEL_FORMAT_TO_FIX_CONVERT_FROM_TRANSLUCENT} is enabled.
+     */
+    public static final String SWAP_PIXEL_FORMAT_TO_FIX_CONVERT_FROM_TRANSLUCENT =
+            "swap_pixel_format_to_fix_convert_from_translucent";
+
+    /**
      * Whether the promotion for data reduction has been skipped on first invocation.
      * Default value is false.
      */
@@ -170,10 +180,17 @@ public class ChromePreferenceManager {
     private static final String NTP_BUTTON_VARIANT_KEY = "ntp_button_variant";
 
     /**
-     * Whether or not to inflate the ChromeTabbedActivity toolbar on a background thread async.
+     * Whether or not TabPersistentStore is using a TaskRunner instead of SERIAL_EXECUTOR.
      * Default value is false.
      */
-    public static final String INFLATE_TOOLBAR_ON_BACKGROUND_THREAD_KEY =
+    public static final String TAB_PERSISTENT_STORE_TASK_RUNNER_ENABLED_KEY =
+            "tab_persistent_store_task_runner_enabled";
+
+    /**
+     * Deprecated in M75. This value may still exist in shared preferences file. Do not reuse.
+     */
+    @Deprecated
+    private static final String INFLATE_TOOLBAR_ON_BACKGROUND_THREAD_KEY =
             "inflate_toolbar_on_background_thread";
 
     /**
@@ -183,10 +200,35 @@ public class ChromePreferenceManager {
     public static final String BOTTOM_TOOLBAR_ENABLED_KEY = "bottom_toolbar_enabled";
 
     /**
+     * Whether or not the adaptive toolbar is enabled.
+     * Default value is true.
+     */
+    public static final String ADAPTIVE_TOOLBAR_ENABLED_KEY = "adaptive_toolbar_enabled";
+
+    /**
+     * Whether or not the labeled bottom toolbar is enabled.
+     * Default value is false.
+     */
+    public static final String LABELED_BOTTOM_TOOLBAR_ENABLED_KEY =
+            "labeled_bottom_toolbar_enabled";
+
+    /**
      * Whether or not night mode is available.
      * Default value is false.
      */
     public static final String NIGHT_MODE_AVAILABLE_KEY = "night_mode_available";
+
+    /**
+     * Whether or not night mode is available for custom tabs.
+     * Default value is false.
+     */
+    public static final String NIGHT_MODE_CCT_AVAILABLE_KEY = "night_mode_cct_available";
+
+    /**
+     * The current theme setting in the user settings.
+     * Default value is System default (see {@link ThemePreference.ThemeSetting}).
+     */
+    public static final String UI_THEME_SETTING_KEY = "ui_theme_setting";
 
     /**
      * Whether or not the download auto-resumption is enabled in native.
@@ -221,9 +263,9 @@ public class ChromePreferenceManager {
     private static final String FAILURE_UPLOAD_SUFFIX = "_crash_failure_upload";
 
     /**
-     * Whether or not Sole integration is enabled.
-     * Default value is true.
+     * Deprecated in M76. This value may still exist in the shared preferences file. Do not reuse.
      */
+    @Deprecated
     public static final String SOLE_INTEGRATION_ENABLED_KEY = "sole_integration_enabled";
 
     /**
@@ -264,10 +306,57 @@ public class ChromePreferenceManager {
      * Keys for deferred recording of the outcomes of showing the clear data dialog after
      * Trusted Web Activity client apps are uninstalled or have their data cleared.
      */
-    public static final String TWA_DIALOG_NUMBER_OF_DIMSISSALS_ON_UNINSTALL =
+    public static final String TWA_DIALOG_NUMBER_OF_DISMISSALS_ON_UNINSTALL =
             "twa_dialog_number_of_dismissals_on_uninstall";
-    public static final String TWA_DIALOG_NUMBER_OF_DIMSISSALS_ON_CLEAR_DATA =
+    public static final String TWA_DIALOG_NUMBER_OF_DISMISSALS_ON_CLEAR_DATA =
             "twa_dialog_number_of_dismissals_on_clear_data";
+
+    /** Key for deferred recording of WebAPK uninstalls. */
+    public static final String WEBAPK_NUMBER_OF_UNINSTALLS = "webapk_number_of_uninstalls";
+
+    public static final String INTEREST_FEED_CONTENT_SUGGESTIONS_KEY =
+            "interest_feed_content_suggestions";
+
+    /**
+     * Whether or not the grid tab switcher is enabled.
+     * Default value is false.
+     */
+    public static final String GRID_TAB_SWITCHER_ENABLED_KEY = "grid_tab_switcher_enabled";
+
+    /**
+     * Whether or not the tab group is enabled.
+     * Default value is false.
+     */
+    public static final String TAB_GROUPS_ANDROID_ENABLED_KEY = "tab_group_android_enabled";
+
+    /**
+     * Whether or not the tab group UI improvement is enabled.
+     * Default value is false.
+     */
+    public static final String TAB_GROUPS_UI_IMPROVEMENTS_ANDROID_ENABLED_KEY =
+            "tab_group_ui_improvements_android_enabled";
+
+    /**
+     * Key for whether PrefetchBackgroundTask should load native in service manager only mode.
+     * Default value is false.
+     */
+    public static final String SERVICE_MANAGER_FOR_BACKGROUND_PREFETCH_KEY =
+            "service_manager_for_background_prefetch";
+
+    /**
+     * Key for whether DownloadResumptionBackgroundTask should load native in service manager only
+     * mode.
+     * Default value is false.
+     */
+    public static final String SERVICE_MANAGER_FOR_DOWNLOAD_RESUMPTION_KEY =
+            "service_manager_for_download_resumption";
+
+    /**
+     * Key for whether it allows to start in service manager only mode.
+     * Default value is false.
+     */
+    public static final String ALLOW_STARTING_SERVICE_MANAGER_ONLY_KEY =
+            "allow_starting_service_manager_only";
 
     /**
      * Deprecated keys for Chrome Home.
@@ -278,11 +367,53 @@ public class ChromePreferenceManager {
     public static final String CHROME_HOME_INFO_PROMO_SHOWN_KEY = "chrome_home_info_promo_shown";
     public static final String CHROME_HOME_SHARED_PREFERENCES_KEY = "chrome_home_enabled_date";
 
+    /**
+     * Whether or not bootstrap tasks should be prioritized (i.e. bootstrap task prioritization
+     * experiment is enabled). Default value is true.
+     */
+    public static final String PRIORITIZE_BOOTSTRAP_TASKS_KEY = "prioritize_bootstrap_tasks";
+
+    /**
+     * Whether network service is enabled.
+     */
+    public static final String NETWORK_SERVICE_KEY = "network_service";
+
+    /**
+     * Whether warming up network service is enabled.
+     * Default value is false.
+     */
+    public static final String NETWORK_SERVICE_WARM_UP_ENABLED_KEY =
+            "network_service_warm_up_enabled";
+
+    /**
+     * Key to cache whether immersive ui mode is enabled.
+     */
+    public static final String IMMERSIVE_UI_MODE_ENABLED = "immersive_ui_mode_enabled";
+
+    /**
+     * The total number of browsing sessions in touchless mode.
+     */
+    public static final String TOUCHLESS_BROWSING_SESSION_COUNT =
+            "touchless_browsing_session_count";
+
     private static class LazyHolder {
         static final ChromePreferenceManager INSTANCE = new ChromePreferenceManager();
     }
 
+    /**
+     * Observes preference changes.
+     */
+    public interface Observer {
+        /**
+         * Notifies when a preference maintained by {@link ChromePreferenceManager} is changed.
+         * @param key The key of the preference changed.
+         */
+        void onPreferenceChanged(String key);
+    }
+
     private final SharedPreferences mSharedPreferences;
+    private final Map<Observer, SharedPreferences.OnSharedPreferenceChangeListener> mObservers =
+            new HashMap<>();
 
     private ChromePreferenceManager() {
         mSharedPreferences = ContextUtils.getAppSharedPreferences();
@@ -294,6 +425,25 @@ public class ChromePreferenceManager {
      */
     public static ChromePreferenceManager getInstance() {
         return LazyHolder.INSTANCE;
+    }
+
+    /**
+     * @param observer The {@link Observer} to be added for observing preference changes.
+     */
+    public void addObserver(Observer observer) {
+        SharedPreferences.OnSharedPreferenceChangeListener listener =
+                (SharedPreferences sharedPreferences, String s) -> observer.onPreferenceChanged(s);
+        mObservers.put(observer, listener);
+        mSharedPreferences.registerOnSharedPreferenceChangeListener(listener);
+    }
+
+    /**
+     * @param observer The {@link Observer} to be removed from observing preference changes.
+     */
+    public void removeObserver(Observer observer) {
+        SharedPreferences.OnSharedPreferenceChangeListener listener = mObservers.get(observer);
+        if (listener == null) return;
+        mSharedPreferences.unregisterOnSharedPreferenceChangeListener(listener);
     }
 
     /**
@@ -554,7 +704,9 @@ public class ChromePreferenceManager {
      * @return The value of the preference.
      */
     public int readInt(String key) {
-        return mSharedPreferences.getInt(key, 0);
+        try (StrictModeContext unused = StrictModeContext.allowDiskReads()) {
+            return mSharedPreferences.getInt(key, 0);
+        }
     }
 
     /**
@@ -589,7 +741,9 @@ public class ChromePreferenceManager {
      * @return The value of the preference if stored; defaultValue otherwise.
      */
     public long readLong(String key, long defaultValue) {
-        return mSharedPreferences.getLong(key, defaultValue);
+        try (StrictModeContext unused = StrictModeContext.allowDiskReads()) {
+            return mSharedPreferences.getLong(key, defaultValue);
+        }
     }
 
     /**
@@ -612,7 +766,9 @@ public class ChromePreferenceManager {
      * @return The value of the preference if stored; defaultValue otherwise.
      */
     public boolean readBoolean(String key, boolean defaultValue) {
-        return mSharedPreferences.getBoolean(key, defaultValue);
+        try (StrictModeContext unused = StrictModeContext.allowDiskReads()) {
+            return mSharedPreferences.getBoolean(key, defaultValue);
+        }
     }
 
     /**
@@ -635,7 +791,9 @@ public class ChromePreferenceManager {
      * @return The value of the preference if stored; defaultValue otherwise.
      */
     public String readString(String key, @Nullable String defaultValue) {
-        return mSharedPreferences.getString(key, defaultValue);
+        try (StrictModeContext unused = StrictModeContext.allowDiskReads()) {
+            return mSharedPreferences.getString(key, defaultValue);
+        }
     }
 
     /**

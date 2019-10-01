@@ -33,7 +33,7 @@ class FakeSafeBrowsingUIManager
 
   void DisplayBlockingPage(const UnsafeResource& resource) override {
     resource.callback_thread->PostTask(
-        FROM_HERE, base::Bind(resource.callback, true /* proceed */));
+        FROM_HERE, base::BindOnce(resource.callback, true /* proceed */));
   }
 
  private:
@@ -138,7 +138,8 @@ void TestSafeBrowsingDatabaseHelper::AddFullHashToDbAndFullHashCache(
 void TestSafeBrowsingDatabaseHelper::LocallyMarkPrefixAsBad(
     const GURL& url,
     const safe_browsing::ListIdentifier& list_id) {
-  safe_browsing::FullHash full_hash = safe_browsing::GetFullHash(url);
+  safe_browsing::FullHash full_hash =
+      safe_browsing::V4ProtocolManagerUtil::GetFullHash(url);
   v4_db_factory_->MarkPrefixAsBad(list_id, full_hash);
 }
 

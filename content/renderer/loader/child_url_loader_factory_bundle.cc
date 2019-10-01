@@ -76,8 +76,8 @@ class URLLoaderRelay : public network::mojom::URLLoaderClient,
                                    std::move(callback));
   }
 
-  void OnReceiveCachedMetadata(const std::vector<uint8_t>& data) override {
-    client_sink_->OnReceiveCachedMetadata(data);
+  void OnReceiveCachedMetadata(mojo_base::BigBuffer data) override {
+    client_sink_->OnReceiveCachedMetadata(std::move(data));
   }
 
   void OnTransferSizeUpdated(int32_t transfer_size_diff) override {
@@ -221,7 +221,7 @@ void ChildURLLoaderFactoryBundle::CreateLoaderAndStart(
   // special prefetch handling.
   // TODO(horo): Move this routing logic to network service, when we will have
   // the special prefetch handling in network service.
-  if ((request.resource_type == RESOURCE_TYPE_PREFETCH) &&
+  if ((request.resource_type == static_cast<int>(ResourceType::kPrefetch)) &&
       prefetch_loader_factory_) {
     prefetch_loader_factory_->CreateLoaderAndStart(
         std::move(loader), routing_id, request_id, options, request,

@@ -12,6 +12,7 @@
 #include "media/base/media_status_observer.h"
 #include "media/base/renderer.h"
 #include "media/base/renderer_client.h"
+#include "media/mojo/interfaces/renderer_extensions.mojom.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -27,13 +28,16 @@ class RenderFrameHost;
 class CONTENT_EXPORT FlingingRenderer : public media::Renderer,
                                         media::MediaStatusObserver {
  public:
+  using ClientExtensionPtr = media::mojom::FlingingRendererClientExtensionPtr;
+
   // Helper method to create a FlingingRenderer from an already existing
   // presentation ID.
   // Returns nullptr if there was an error getting the MediaControllor for the
   // given presentation ID.
   static std::unique_ptr<FlingingRenderer> Create(
       RenderFrameHost* render_frame_host,
-      const std::string& presentation_id);
+      const std::string& presentation_id,
+      ClientExtensionPtr client_extension);
 
   ~FlingingRenderer() override;
 
@@ -57,7 +61,16 @@ class CONTENT_EXPORT FlingingRenderer : public media::Renderer,
   using PlayState = media::MediaStatus::State;
 
   explicit FlingingRenderer(
-      std::unique_ptr<media::FlingingController> controller);
+      std::unique_ptr<media::FlingingController> controller,
+      ClientExtensionPtr client_extension);
+
+  void SetTargetPlayState(PlayState state);
+
+  // The state that we expect the remotely playing video to transition into.
+  // This is used to differentiate between state changes that originated from
+  // this device versus external devices.
+  PlayState target_play_state_ = PlayState::UNKNOWN;
+  bool reached_target_play_state_ = false;
 
   void SetTargetPlayState(PlayState state);
 
@@ -68,6 +81,8 @@ class CONTENT_EXPORT FlingingRenderer : public media::Renderer,
   bool reached_target_play_state_ = false;
 
   media::RendererClient* client_;
+
+  ClientExtensionPtr client_extension_;
 
   std::unique_ptr<media::FlingingController> controller_;
 

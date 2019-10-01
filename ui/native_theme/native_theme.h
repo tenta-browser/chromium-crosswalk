@@ -23,7 +23,7 @@ class Size;
 }
 
 namespace ui {
-
+class DarkModeObserver;
 class NativeThemeObserver;
 
 // This class supports drawing UI controls (like buttons, text fields, lists,
@@ -296,6 +296,7 @@ class NATIVE_THEME_EXPORT NativeTheme {
     // Dialogs
     kColorId_DialogBackground,
     kColorId_BubbleBackground,
+    kColorId_BubbleFooterBackground,
     // FocusableBorder
     kColorId_FocusedBorderColor,
     kColorId_UnfocusedBorderColor,
@@ -323,7 +324,10 @@ class NATIVE_THEME_EXPORT NativeTheme {
     kColorId_HighlightedMenuItemBackgroundColor,
     kColorId_HighlightedMenuItemForegroundColor,
     kColorId_FocusedHighlightedMenuItemBackgroundColor,
-    kColorId_MenuItemAlertBackgroundColor,
+    kColorId_MenuItemAlertBackgroundColorMax,  // Animation color at max
+                                               // intensity
+    kColorId_MenuItemAlertBackgroundColorMin,  // Animation color at min
+                                               // intensity
     // Label
     kColorId_LabelEnabledColor,
     kColorId_LabelDisabledColor,
@@ -381,6 +385,8 @@ class NATIVE_THEME_EXPORT NativeTheme {
     kColorId_AlertSeverityLow,
     kColorId_AlertSeverityMedium,
     kColorId_AlertSeverityHigh,
+    // Colors for icons in secondary UI (content settings, help button, etc).
+    kColorId_DefaultIconColor,
     // TODO(benrg): move other hardcoded colors here.
 
     kColorId_NumColors,
@@ -409,7 +415,7 @@ class NATIVE_THEME_EXPORT NativeTheme {
 
   // Returns whether this NativeTheme uses higher-contrast colors, controlled by
   // system accessibility settings and the system theme.
-  virtual bool UsesHighContrastColors() const = 0;
+  virtual bool UsesHighContrastColors() const;
 
   // Whether OS-level dark mode (as in macOS Mojave or Windows 10) is enabled.
   virtual bool SystemDarkModeEnabled() const;
@@ -417,17 +423,38 @@ class NATIVE_THEME_EXPORT NativeTheme {
   // Returns the system's caption style.
   virtual CaptionStyle GetSystemCaptionStyle() const;
 
+  // Observes |dark_mode_parent| for dark mode changes and propagates them to
+  // self.
+  void SetDarkModeParent(NativeTheme* dark_mode_parent);
+
  protected:
   NativeTheme();
   virtual ~NativeTheme();
+
+  // Whether high contrast is forced via command-line flag.
+  bool IsForcedHighContrast() const;
+  // Whether dark mode is forced via command-line flag.
+  bool IsForcedDarkMode() const;
+
+  void set_dark_mode(bool is_dark_mode) { is_dark_mode_ = is_dark_mode; }
+  void set_high_contrast(bool is_high_contrast) {
+    is_high_contrast_ = is_high_contrast;
+  }
 
   unsigned int thumb_inactive_color_;
   unsigned int thumb_active_color_;
   unsigned int track_color_;
 
  private:
+  // DarkModeObserver callback.
+  void OnParentDarkModeChanged(bool is_dark_mode);
   // Observers to notify when the native theme changes.
   base::ObserverList<NativeThemeObserver>::Unchecked native_theme_observers_;
+
+  std::unique_ptr<DarkModeObserver> dark_mode_parent_observer_;
+
+  bool is_dark_mode_ = false;
+  bool is_high_contrast_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(NativeTheme);
 };

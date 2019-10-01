@@ -25,10 +25,10 @@
 #include "base/task/post_task.h"
 #include "base/task_runner_util.h"
 #include "base/timer/elapsed_timer.h"
+#include "base/trace_event/trace_event.h"
 #include "base/values.h"
 #include "base/version.h"
 #include "build/build_config.h"
-#include "components/data_use_measurement/core/data_use_user_data.h"
 #include "components/encrypted_messages/encrypted_message.pb.h"
 #include "components/encrypted_messages/message_encrypter.h"
 #include "components/metrics/clean_exit_beacon.h"
@@ -502,11 +502,11 @@ bool VariationsService::DoFetchFromURL(const GURL& url, bool is_http_retry) {
 
   safe_seed_manager_.RecordFetchStarted();
 
-  // Normally, there shouldn't be a |pending_request_| when this fires. However
-  // it's not impossible - for example if Chrome was paused (e.g. in a debugger
-  // or if the machine was suspended) and OnURLFetchComplete() hasn't had a
-  // chance to run yet from the previous request. In this case, don't start a
-  // new request and just let the previous one finish.
+  // Normally, there shouldn't be a |pending_seed_request_| when this fires.
+  // However it's not impossible - for example if Chrome was paused (e.g. in a
+  // debugger or if the machine was suspended) and OnURLFetchComplete() hasn't
+  // had a chance to run yet from the previous request. In this case, don't
+  // start a new request and just let the previous one finish.
   if (pending_seed_request_)
     return false;
 
@@ -553,9 +553,6 @@ bool VariationsService::DoFetchFromURL(const GURL& url, bool is_http_retry) {
   const char* supported_im = enable_deltas ? "x-bm,gzip" : "gzip";
   resource_request->headers.SetHeader("A-IM", supported_im);
 
-  // TODO(https://crbug.com/808498): Re-add data use measurement once
-  // SimpleURLLoader supports it.
-  // ID=data_use_measurement::DataUseUserData::VARIATIONS
   pending_seed_request_ = network::SimpleURLLoader::Create(
       std::move(resource_request), traffic_annotation);
   // Ensure our callback is called even with "304 Not Modified" responses.
@@ -692,11 +689,12 @@ void VariationsService::OnSimpleLoaderRedirect(
 void VariationsService::OnSimpleLoaderCompleteOrRedirect(
     std::unique_ptr<std::string> response_body,
     bool was_redirect) {
+  TRACE_EVENT0("browser", "VariationsService::OnSimpleLoaderCompleteOrRedirect");
   const bool is_first_request = !initial_request_completed_;
   initial_request_completed_ = true;
 
   bool is_success = false;
-  int net_error = net::ERR_ABORTED;
+  int net_error = net::ERR_INVALID_REDIRECT;
   scoped_refptr<net::HttpResponseHeaders> headers;
 
   int response_code = -1;
@@ -708,7 +706,7 @@ void VariationsService::OnSimpleLoaderCompleteOrRedirect(
 
   // Variations seed fetches should not follow redirects, so if this request was
   // redirected, keep the default values for |net_error| and |is_success| (treat
-  // it as a net::ERR_ABORTED), and the fetch will be cancelled when
+  // it as a net::ERR_INVALID_REDIRECT), and the fetch will be cancelled when
   // pending_seed_request is reset.
   if (!was_redirect) {
     final_url_was_https =
@@ -916,6 +914,15 @@ bool VariationsService::SetupFieldTrials(
 
 void VariationsService::OverrideCachedUIStrings() {
   field_trial_creator_.OverrideCachedUIStrings();
+}
+
+void VariationsService::CancelCurrentRequestForTesting() {
+  pending_seed_request_.reset();
+}
+
+void VariationsService::StartRepeatedVariationsSeedFetchForTesting() {
+  InitResourceRequestedAllowedNotifier();
+  return StartRepeatedVariationsSeedFetch();
 }
 
 std::string VariationsService::GetStoredPermanentCountry() {

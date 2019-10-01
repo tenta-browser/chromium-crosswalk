@@ -38,8 +38,13 @@
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/skia/include/core/SkColor.h"
 
+namespace cc {
+class PaintCanvas;
+}
+
 namespace gfx {
 class Point;
+class Rect;
 }
 
 namespace blink {
@@ -94,12 +99,26 @@ class WebView {
                                       bool compositing_enabled,
                                       WebView* opener);
 
-  // Called on WebView when a WebFrameWidget is created for a local main frame,
-  // and can be set back to null when the WebWidgetClient is removed due to the
-  // main frame being detached.
-  // TODO(danakj): Move this to WebWidget and merge with SetLayerTreeView, have
-  // it be null/not set when the main frame is remote.
-  virtual void SetWebWidgetClient(WebWidgetClient*) = 0;
+  // Called to inform WebViewImpl that a local main frame has been attached.
+  // After this call MainFrameImpl() will return a valid frame until it is
+  // detached. It receives the WebWidgetClient* that provides input/compositing
+  // services for the attached main frame.
+  // This must be called for composited WebViews. Non-composited WebViews do not
+  // require a WebWidgetClient, but must call this in order to establish one.
+  virtual void DidAttachLocalMainFrame(WebWidgetClient*) = 0;
+
+  // Called to inform WebViewImpl that it has an initial remote main frame. This
+  // is a hack to just get a WebWidgetClient to WebViewImpl since it expects to
+  // always have one at this time.
+  // This does *NOT* need to be called every time a remote main frame exists,
+  // but is meant to be called when WebViewImpl is initialized with a remote
+  // main frame, since it will not receive a WebWidgetClient otherwise.
+  // TODO(danakj): Remove this method when WebViewImpl does not need a
+  // WebWidgetClient without a local main frame. At that point it should
+  // also drop the WebWidgetClient when a local main frame is detached.
+  // This must only be called for composited WebViews. Non-composited WebViews
+  // do not require a WebWidgetClient.
+  virtual void DidAttachRemoteMainFrame(WebWidgetClient*) = 0;
 
   // Initializes the various client interfaces.
   virtual void SetPrerendererClient(WebPrerendererClient*) = 0;
@@ -163,7 +182,7 @@ class WebView {
   virtual void ClearFocusedElement() = 0;
 
   // Smooth scroll the root layer to |targetX|, |targetY| in |durationMs|.
-  virtual void SmoothScroll(int target_x, int target_y, long duration_ms) {}
+  virtual void SmoothScroll(int target_x, int target_y, uint64_t duration_ms) {}
 
   // Advance the focus of the WebView forward to the next element or to the
   // previous element in the tab sequence (if reverse is true).
@@ -322,7 +341,7 @@ class WebView {
 
   // Returns next unused request identifier which is unique within the
   // parent Page.
-  virtual unsigned long CreateUniqueIdentifierForRequest() = 0;
+  virtual uint64_t CreateUniqueIdentifierForRequest() = 0;
 
   // Developer tools -----------------------------------------------------
 
@@ -355,7 +374,7 @@ class WebView {
 
   // Tells all WebView instances to update the visited link state for the
   // specified hash.
-  BLINK_EXPORT static void UpdateVisitedLinkState(unsigned long long hash);
+  BLINK_EXPORT static void UpdateVisitedLinkState(uint64_t hash);
 
   // Tells all WebView instances to update the visited state for all
   // their links. Use invalidateVisitedLinkHashes to inform that the visitedlink
@@ -366,11 +385,6 @@ class WebView {
 
   // Custom colors -------------------------------------------------------
 
-  virtual void SetSelectionColors(unsigned active_background_color,
-                                  unsigned active_foreground_color,
-                                  unsigned inactive_background_color,
-                                  unsigned inactive_foreground_color) = 0;
-
   // Sets the default background color when the page has not loaded enough to
   // know a background colour. This can be overridden by the methods below as
   // well.
@@ -379,6 +393,8 @@ class WebView {
   // Overrides the page's background and base background color. You
   // can use this to enforce a transparent background, which is useful if you
   // want to have some custom background rendered behind the widget.
+  //
+  // These may are only called for composited WebViews.
   virtual void SetBackgroundColorOverride(SkColor) {}
   virtual void ClearBackgroundColorOverride() {}
   virtual void SetBaseBackgroundColorOverride(SkColor) {}
@@ -441,14 +457,39 @@ class WebView {
   virtual void ClearAutoplayFlags() = 0;
   virtual int32_t AutoplayFlagsForTest() = 0;
 
-  // Suspend and resume ---------------------------------------------------
+  // Non-composited support -----------------------------------------------
 
-  // Pausing and unpausing current scheduled tasks.
-  virtual void PausePageScheduledTasks(bool paused) = 0;
+  // Called to paint the rectangular region within the WebView's main frame
+  // onto the specified canvas at (viewport.x, viewport.y). This is to provide
+  // support for non-composited WebViews, and is used to paint into a
+  // PaintCanvas being supplied by another (composited) WebView.
+  //
+  // Before calling PaintContent(), the caller must ensure the lifecycle of the
+  // widget's frame is clean by calling UpdateLifecycle(LifecycleUpdate::All).
+  // It is okay to call paint multiple times once the lifecycle is clean,
+  // assuming no other changes are made to the WebWidget (e.g., once
+  // events are processed, it should be assumed that another call to
+  // UpdateLifecycle is warranted before painting again). Paints starting from
+  // the main LayoutView's property tree state, thus ignoring any transient
+  // transormations (e.g. pinch-zoom, dev tools emulation, etc.).
+  //
+  // The painting will be performed without applying the DevicePixelRatio as
+  // scaling is expected to already be applied to the PaintCanvas by the
+  // composited WebView which supplied the PaintCanvas. The canvas state may
+  // be modified and should be saved before calling this method and restored
+  // after.
+  virtual void PaintContent(cc::PaintCanvas*, const gfx::Rect& viewport) = 0;
+
+  // Suspend and resume ---------------------------------------------------
 
   // TODO(lfg): Remove this once the refactor of WebView/WebWidget is
   // completed.
   virtual WebWidget* MainFrameWidget() = 0;
+
+  // Portals --------------------------------------------------------------
+
+  // Informs the page that it is inside a portal.
+  virtual void SetInsidePortal(bool inside_portal) = 0;
 
  protected:
   ~WebView() = default;

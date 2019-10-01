@@ -3,17 +3,19 @@
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/display_lock/display_lock_budget.h"
+
+#include "base/time/default_tick_clock.h"
 #include "third_party/blink/renderer/core/display_lock/display_lock_context.h"
 
 namespace blink {
 
 DisplayLockBudget::DisplayLockBudget(DisplayLockContext* context)
-    : context_(context) {}
+    : clock_(base::DefaultTickClock::GetInstance()), context_(context) {}
 
 bool DisplayLockBudget::MarkAncestorsDirtyForPhaseIfNeeded(Phase phase) {
   switch (phase) {
     case Phase::kStyle:
-      return context_->MarkAncestorsForStyleRecalcIfNeeded();
+      return context_->MarkForStyleRecalcIfNeeded();
     case Phase::kLayout:
       return context_->MarkAncestorsForLayoutIfNeeded();
     case Phase::kPrePaint:

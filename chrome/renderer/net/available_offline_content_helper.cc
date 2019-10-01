@@ -5,6 +5,7 @@
 #include "chrome/renderer/net/available_offline_content_helper.h"
 
 #include "base/base64.h"
+#include "base/bind.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_value_converter.h"
 #include "base/json/json_writer.h"
@@ -57,6 +58,8 @@ base::Value AvailableContentToValue(const AvailableOfflineContentPtr& content) {
                base::Value(ConvertToUTF16Base64(content->attribution)));
   value.SetKey("thumbnail_data_uri",
                base::Value(content->thumbnail_data_uri.spec()));
+  value.SetKey("favicon_data_uri",
+               base::Value(content->favicon_data_uri.spec()));
   value.SetKey("content_type",
                base::Value(static_cast<int>(content->content_type)));
   return value;
@@ -68,19 +71,6 @@ base::Value AvailableContentListToValue(
   for (const auto& content : content_list) {
     value.GetList().push_back(AvailableContentToValue(content));
   }
-  return value;
-}
-
-base::Value AvailableContentSummaryToValue(
-    const chrome::mojom::AvailableOfflineContentSummaryPtr& summary) {
-  base::Value value(base::Value::Type::DICTIONARY);
-  value.SetKey("total_items",
-               base::Value(base::saturated_cast<int>(summary->total_items)));
-  value.SetKey("has_prefetched_page",
-               base::Value(summary->has_prefetched_page));
-  value.SetKey("has_offline_page", base::Value(summary->has_offline_page));
-  value.SetKey("has_video", base::Value(summary->has_video));
-  value.SetKey("has_audio", base::Value(summary->has_audio));
   return value;
 }
 
@@ -109,16 +99,6 @@ void AvailableOfflineContentHelper::FetchAvailableContent(
   }
   provider_->List(
       base::BindOnce(&AvailableOfflineContentHelper::AvailableContentReceived,
-                     base::Unretained(this), std::move(callback)));
-}
-
-void AvailableOfflineContentHelper::FetchSummary(SummaryCallback callback) {
-  if (!BindProvider()) {
-    std::move(callback).Run({});
-    return;
-  }
-  provider_->Summarize(
-      base::BindOnce(&AvailableOfflineContentHelper::SummaryReceived,
                      base::Unretained(this), std::move(callback)));
 }
 
@@ -184,24 +164,10 @@ void AvailableOfflineContentHelper::AvailableContentReceived(
                             &json);
   }
   std::move(callback).Run(list_visible_by_prefs, json);
-  // We don't need to retain the thumbnail here, so free up some memory.
+  // We don't need to retain the visuals here, so free up some memory.
   for (const AvailableOfflineContentPtr& item : fetched_content_) {
     item->thumbnail_data_uri = GURL();
+    item->favicon_data_uri = GURL();
   }
 }
 
-void AvailableOfflineContentHelper::SummaryReceived(
-    SummaryCallback callback,
-    chrome::mojom::AvailableOfflineContentSummaryPtr summary) {
-  has_prefetched_content_ = false;
-  if (summary->total_items == 0) {
-    std::move(callback).Run("");
-  } else {
-    has_prefetched_content_ = summary->has_prefetched_page;
-
-    std::string json;
-    base::JSONWriter::Write(AvailableContentSummaryToValue(summary), &json);
-    RecordEvent(error_page::NETWORK_ERROR_PAGE_OFFLINE_CONTENT_SUMMARY_SHOWN);
-    std::move(callback).Run(json);
-  }
-}

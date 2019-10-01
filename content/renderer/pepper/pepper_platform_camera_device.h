@@ -13,8 +13,8 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
-#include "content/common/media/video_capture.h"
 #include "media/capture/video_capture_types.h"
+#include "third_party/blink/public/common/media/video_capture.h"
 
 namespace content {
 class PepperMediaDeviceManager;
@@ -49,7 +49,7 @@ class PepperPlatformCameraDevice {
 
   std::string label_;
   int session_id_;
-  base::Closure release_device_cb_;
+  base::OnceClosure release_device_cb_;
 
   PepperCameraDeviceHost* handler_;
 

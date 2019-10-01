@@ -28,12 +28,17 @@ namespace translate {
 class TranslateHelper;
 }
 
+namespace web_cache {
+class WebCacheImpl;
+}
+
 // This class holds the Chrome specific parts of RenderFrame, and has the same
 // lifetime.
 class ChromeRenderFrameObserver : public content::RenderFrameObserver,
                                   public chrome::mojom::ChromeRenderFrame {
  public:
-  explicit ChromeRenderFrameObserver(content::RenderFrame* render_frame);
+  ChromeRenderFrameObserver(content::RenderFrame* render_frame,
+                            web_cache::WebCacheImpl* web_cache_impl);
   ~ChromeRenderFrameObserver() override;
 
   service_manager::BinderRegistry* registry() { return &registry_; }
@@ -52,8 +57,8 @@ class ChromeRenderFrameObserver : public content::RenderFrameObserver,
       const std::string& interface_name,
       mojo::ScopedInterfaceEndpointHandle* handle) override;
   bool OnMessageReceived(const IPC::Message& message) override;
-  void DidStartProvisionalLoad(blink::WebDocumentLoader* document_loader,
-                               bool is_content_initiated) override;
+  void ReadyToCommitNavigation(
+      blink::WebDocumentLoader* document_loader) override;
   void DidFinishLoad() override;
   void DidCreateNewDocument() override;
   void DidCommitProvisionalLoad(bool is_same_document_navigation,
@@ -105,6 +110,8 @@ class ChromeRenderFrameObserver : public content::RenderFrameObserver,
   translate::TranslateHelper* translate_helper_;
   safe_browsing::PhishingClassifierDelegate* phishing_classifier_;
 
+  // Owned by ChromeContentRendererClient and outlive us.
+  web_cache::WebCacheImpl* web_cache_impl_;
 
 #if !defined(OS_ANDROID)
   // Save the JavaScript to preload if ExecuteWebUIJavaScript is invoked.

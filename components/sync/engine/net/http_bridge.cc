@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/bit_cast.h"
 #include "base/location.h"
 #include "base/metrics/histogram_functions.h"
@@ -45,23 +46,6 @@ void LogTimeout(bool timed_out) {
   UMA_HISTOGRAM_BOOLEAN("Sync.URLFetchTimedOut", timed_out);
 }
 
-void RecordSyncRequestContentLengthHistograms(int64_t compressed_content_length,
-                                              int64_t original_content_length) {
-  UMA_HISTOGRAM_COUNTS_1M("Sync.RequestContentLength.Compressed",
-                          compressed_content_length);
-  UMA_HISTOGRAM_COUNTS_1M("Sync.RequestContentLength.Original",
-                          original_content_length);
-}
-
-void RecordSyncResponseContentLengthHistograms(
-    int64_t compressed_content_length,
-    int64_t original_content_length) {
-  UMA_HISTOGRAM_COUNTS_1M("Sync.ResponseContentLength.Compressed",
-                          compressed_content_length);
-  UMA_HISTOGRAM_COUNTS_1M("Sync.ResponseContentLength.Original",
-                          original_content_length);
-}
-
 base::LazyInstance<scoped_refptr<base::SequencedTaskRunner>>::Leaky
     g_io_capable_task_runner_for_tests = LAZY_INSTANCE_INITIALIZER;
 
@@ -95,19 +79,15 @@ HttpBridgeFactory::~HttpBridgeFactory() {
   }
 }
 
-void HttpBridgeFactory::Init(
-    const std::string& user_agent,
-    const BindToTrackerCallback& bind_to_tracker_callback) {
+void HttpBridgeFactory::Init(const std::string& user_agent) {
   user_agent_ = user_agent;
-  bind_to_tracker_callback_ = bind_to_tracker_callback;
 }
 
 HttpPostProviderInterface* HttpBridgeFactory::Create() {
   DCHECK(url_loader_factory_);
 
-  scoped_refptr<HttpBridge> http =
-      new HttpBridge(user_agent_, url_loader_factory_->Clone(),
-                     network_time_update_callback_, bind_to_tracker_callback_);
+  scoped_refptr<HttpBridge> http = new HttpBridge(
+      user_agent_, url_loader_factory_->Clone(), network_time_update_callback_);
   http->AddRef();
   return http.get();
 }
@@ -138,8 +118,7 @@ HttpBridge::HttpBridge(
     const std::string& user_agent,
     std::unique_ptr<network::SharedURLLoaderFactoryInfo>
         url_loader_factory_info,
-    const NetworkTimeUpdateCallback& network_time_update_callback,
-    const BindToTrackerCallback& bind_to_tracker_callback)
+    const NetworkTimeUpdateCallback& network_time_update_callback)
     : user_agent_(user_agent),
       http_post_completed_(base::WaitableEvent::ResetPolicy::AUTOMATIC,
                            base::WaitableEvent::InitialState::NOT_SIGNALED),
@@ -148,8 +127,7 @@ HttpBridge::HttpBridge(
           g_io_capable_task_runner_for_tests.Get()
               ? g_io_capable_task_runner_for_tests.Get()
               : base::CreateSequencedTaskRunnerWithTraits({base::MayBlock()})),
-      network_time_update_callback_(network_time_update_callback),
-      bind_to_tracker_callback_(bind_to_tracker_callback) {}
+      network_time_update_callback_(network_time_update_callback) {}
 
 HttpBridge::~HttpBridge() {}
 
@@ -171,7 +149,7 @@ void HttpBridge::SetURL(const char* url, int port) {
 #endif
   GURL temp(url);
   GURL::Replacements replacements;
-  std::string port_str = base::IntToString(port);
+  std::string port_str = base::NumberToString(port);
   replacements.SetPort(port_str.c_str(), url::Component(0, port_str.length()));
   url_for_request_ = temp.ReplaceComponents(replacements);
 }
@@ -303,20 +281,9 @@ void HttpBridge::MakeAsynchronousPost() {
       std::move(resource_request), traffic_annotation);
   network::SimpleURLLoader* url_loader = fetch_state_.url_loader.get();
 
-  // TODO(https://crbug.com/808498): Re-add data use measurement once
-  // SimpleURLLoader supports it.
-  //
-  // This calls |BindFetcherToDataTracker| in
-  // components/sync/driver/glue/sync_backend_host_core.cc which used to
-  // data_use_measurement::DataUseUserData::AttachToFetcher.
-  // if (!bind_to_tracker_callback_.is_null())
-  //  bind_to_tracker_callback_.Run(fetch_state_.url_poster);
-
   std::string request_to_send;
   compression::GzipCompress(request_content_, &request_to_send);
   url_loader->AttachStringForUpload(request_to_send, content_type_);
-  RecordSyncRequestContentLengthHistograms(request_to_send.size(),
-                                           request_content_.size());
 
   // Sync relies on HTTP errors being detectable (and distinct from
   // net/connection errors).
@@ -406,15 +373,14 @@ void HttpBridge::OnURLLoadComplete(std::unique_ptr<std::string> response_body) {
     fetch_state_.response_headers = url_loader->ResponseInfo()->headers;
   }
 
-  OnURLLoadCompleteInternal(
-      http_status_code, url_loader->NetError(), url_loader->GetContentSize(),
-      url_loader->GetFinalURL(), std::move(response_body));
+  OnURLLoadCompleteInternal(http_status_code, url_loader->NetError(),
+                            url_loader->GetFinalURL(),
+                            std::move(response_body));
 }
 
 void HttpBridge::OnURLLoadCompleteInternal(
     int http_status_code,
     int net_error_code,
-    int64_t compressed_content_length,
     const GURL& final_url,
     std::unique_ptr<std::string> response_body) {
   DCHECK(network_task_runner_->RunsTasksInCurrentSequence());
@@ -454,10 +420,6 @@ void HttpBridge::OnURLLoadCompleteInternal(
     fetch_state_.response_content = std::move(*response_body);
 
   UpdateNetworkTime();
-
-  int64_t original_content_length = fetch_state_.response_content.size();
-  RecordSyncResponseContentLengthHistograms(compressed_content_length,
-                                            original_content_length);
 
   fetch_state_.url_loader.reset();
   url_loader_factory_ = nullptr;

@@ -14,7 +14,7 @@
 #include "third_party/khronos/GLES2/gl2.h"
 #include "ui/gfx/presentation_feedback.h"
 #include "ui/gfx/transform.h"
-#include "ui/gl/gl_utils.h"
+#include "ui/gl/color_space_utils.h"
 
 namespace cc {
 
@@ -58,7 +58,7 @@ void PixelTestOutputSurface::Reshape(const gfx::Size& size,
   if (context_provider()) {
     context_provider()->ContextGL()->ResizeCHROMIUM(
         size.width(), size.height(), device_scale_factor,
-        gl::GetGLColorSpace(color_space), has_alpha);
+        gl::ColorSpaceUtils::GetGLColorSpace(color_space), has_alpha);
   } else {
     software_device()->Resize(size, device_scale_factor);
   }
@@ -82,8 +82,8 @@ void PixelTestOutputSurface::SwapBuffersCallback() {
       gfx::PresentationFeedback(base::TimeTicks::Now(), base::TimeDelta(), 0));
 }
 
-viz::OverlayCandidateValidator*
-PixelTestOutputSurface::GetOverlayCandidateValidator() const {
+std::unique_ptr<viz::OverlayCandidateValidator>
+PixelTestOutputSurface::TakeOverlayCandidateValidator() {
   return nullptr;
 }
 
@@ -106,15 +106,15 @@ uint32_t PixelTestOutputSurface::GetFramebufferCopyTextureFormat() {
   return GL_RGB;
 }
 
-#if BUILDFLAG(ENABLE_VULKAN)
-gpu::VulkanSurface* PixelTestOutputSurface::GetVulkanSurface() {
-  NOTIMPLEMENTED();
-  return nullptr;
-}
-#endif
-
 unsigned PixelTestOutputSurface::UpdateGpuFence() {
   return 0;
+}
+
+void PixelTestOutputSurface::SetUpdateVSyncParametersCallback(
+    viz::UpdateVSyncParametersCallback callback) {}
+
+gfx::OverlayTransform PixelTestOutputSurface::GetDisplayTransform() {
+  return gfx::OVERLAY_TRANSFORM_NONE;
 }
 
 }  // namespace cc

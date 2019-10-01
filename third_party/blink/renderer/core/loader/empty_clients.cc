@@ -32,8 +32,8 @@
 #include "third_party/blink/public/platform/modules/service_worker/web_service_worker_provider.h"
 #include "third_party/blink/public/platform/modules/service_worker/web_service_worker_provider_client.h"
 #include "third_party/blink/public/platform/platform.h"
-#include "third_party/blink/public/platform/web_application_cache_host.h"
 #include "third_party/blink/public/platform/web_media_player.h"
+#include "third_party/blink/public/web/web_application_cache_host.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/visual_viewport.h"
 #include "third_party/blink/renderer/core/html/forms/color_chooser.h"
@@ -46,7 +46,7 @@ namespace blink {
 
 void FillWithEmptyClients(Page::PageClients& page_clients) {
   DEFINE_STATIC_LOCAL(Persistent<ChromeClient>, dummy_chrome_client,
-                      (EmptyChromeClient::Create()));
+                      (MakeGarbageCollected<EmptyChromeClient>()));
   page_clients.chrome_client = dummy_chrome_client;
 }
 
@@ -69,6 +69,7 @@ ColorChooser* EmptyChromeClient::OpenColorChooser(LocalFrame*,
 }
 
 DateTimeChooser* EmptyChromeClient::OpenDateTimeChooser(
+    LocalFrame* frame,
     DateTimeChooserClient*,
     const DateTimeChooserParameters&) {
   return nullptr;
@@ -96,6 +97,7 @@ String EmptyChromeClient::AcceptLanguages() {
 
 void EmptyLocalFrameClient::BeginNavigation(
     const ResourceRequest&,
+    network::mojom::RequestContextFrameType,
     Document* origin_document,
     DocumentLoader*,
     WebNavigationType,
@@ -126,8 +128,24 @@ DocumentLoader* EmptyLocalFrameClient::CreateDocumentLoader(
 
 mojom::blink::DocumentInterfaceBroker*
 EmptyLocalFrameClient::GetDocumentInterfaceBroker() {
-  mojo::MakeRequest(&document_interface_broker_);
+  if (!document_interface_broker_.is_bound())
+    mojo::MakeRequest(&document_interface_broker_);
   return document_interface_broker_.get();
+}
+
+mojo::ScopedMessagePipeHandle
+EmptyLocalFrameClient::SetDocumentInterfaceBrokerForTesting(
+    mojo::ScopedMessagePipeHandle blink_handle) {
+  mojom::blink::DocumentInterfaceBrokerPtr test_broker(
+      mojom::blink::DocumentInterfaceBrokerPtrInfo(
+          std::move(blink_handle),
+          mojom::blink::DocumentInterfaceBroker::Version_));
+
+  mojo::ScopedMessagePipeHandle real_handle =
+      document_interface_broker_.PassInterface().PassHandle();
+  document_interface_broker_ = std::move(test_broker);
+
+  return real_handle;
 }
 
 LocalFrame* EmptyLocalFrameClient::CreateFrame(const AtomicString&,
@@ -136,10 +154,16 @@ LocalFrame* EmptyLocalFrameClient::CreateFrame(const AtomicString&,
 }
 
 std::pair<RemoteFrame*, base::UnguessableToken>
-EmptyLocalFrameClient::CreatePortal(HTMLPortalElement*,
-                                    mojom::blink::PortalRequest) {
+EmptyLocalFrameClient::CreatePortal(
+    HTMLPortalElement*,
+    mojom::blink::PortalAssociatedRequest,
+    mojom::blink::PortalClientAssociatedPtrInfo) {
   return std::pair<RemoteFrame*, base::UnguessableToken>(
       nullptr, base::UnguessableToken());
+}
+
+RemoteFrame* EmptyLocalFrameClient::AdoptPortal(HTMLPortalElement*) {
+  return nullptr;
 }
 
 WebPluginContainerImpl* EmptyLocalFrameClient::CreatePlugin(
@@ -185,6 +209,7 @@ EmptyLocalFrameClient::CreateServiceWorkerProvider() {
 
 std::unique_ptr<WebApplicationCacheHost>
 EmptyLocalFrameClient::CreateApplicationCacheHost(
+    DocumentLoader*,
     WebApplicationCacheHostClient*) {
   return nullptr;
 }

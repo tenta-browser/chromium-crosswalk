@@ -4,18 +4,21 @@
 
 #include "chrome/browser/ui/ash/fake_tablet_mode_controller.h"
 
-FakeTabletModeController::FakeTabletModeController() : binding_(this) {}
+#include <utility>
+
+FakeTabletModeController::FakeTabletModeController() = default;
 
 FakeTabletModeController::~FakeTabletModeController() = default;
 
-ash::mojom::TabletModeControllerPtr
-FakeTabletModeController::CreateInterfacePtr() {
-  ash::mojom::TabletModeControllerPtr ptr;
-  binding_.Bind(mojo::MakeRequest(&ptr));
-  return ptr;
+void FakeTabletModeController::SetTabletModeToggleObserver(
+    ash::TabletModeToggleObserver* observer) {
+  observer_ = observer;
 }
 
-void FakeTabletModeController::SetClient(
-    ash::mojom::TabletModeClientPtr client) {
-  was_client_set_ = true;
+bool FakeTabletModeController::IsEnabled() const {
+  return enabled_;
+}
+
+void FakeTabletModeController::SetEnabledForTest(bool enabled) {
+  enabled_ = enabled;
 }

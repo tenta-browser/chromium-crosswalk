@@ -75,6 +75,12 @@ class BASE_EXPORT RunLoop {
   // RunLoop::Delegate asynchronously.
   void Run();
 
+  // Run the current RunLoop::Delegate. This blocks until either |timeout| has
+  // elapsed or Quit is called. Nesting multiple runloops with and without
+  // timeouts is supported. If an inner loop has a longer timeout than the outer
+  // loop, the outer loop will immediately exit when the inner one does.
+  void RunWithTimeout(TimeDelta timeout);
+
   // Run the current RunLoop::Delegate until it doesn't find any tasks or
   // messages in its queue (it goes idle).
   // WARNING #1: This may run long (flakily timeout) and even never return! Do
@@ -82,8 +88,8 @@ class BASE_EXPORT RunLoop {
   //             are present.
   // WARNING #2: This may return too early! For example, if used to run until an
   //             incoming event has occurred but that event depends on a task in
-  //             a different queue -- e.g. a system event.
-  // Per the warnings below, this tends to lead to flaky tests; prefer
+  //             a different queue -- e.g. another TaskRunner or a system event.
+  // Per the warnings above, this tends to lead to flaky tests; prefer
   // QuitClosure()+Run() when at all possible.
   void RunUntilIdle();
 
@@ -163,17 +169,18 @@ class BASE_EXPORT RunLoop {
 
     // Used by RunLoop to inform its Delegate to Run/Quit. Implementations are
     // expected to keep on running synchronously from the Run() call until the
-    // eventual matching Quit() call. Upon receiving a Quit() call it should
-    // return from the Run() call as soon as possible without executing
-    // remaining tasks/messages. Run() calls can nest in which case each Quit()
-    // call should result in the topmost active Run() call returning. The only
-    // other trigger for Run() to return is the
-    // |should_quit_when_idle_callback_| which the Delegate should probe before
-    // sleeping when it becomes idle. |application_tasks_allowed| is true if
-    // this is the first Run() call on the stack or it was made from a nested
-    // RunLoop of Type::kNestableTasksAllowed (otherwise this Run() level should
-    // only process system tasks).
-    virtual void Run(bool application_tasks_allowed) = 0;
+    // eventual matching Quit() call or a delay of |timeout| expires. Upon
+    // receiving a Quit() call or timing out it should return from the Run()
+    // call as soon as possible without executing remaining tasks/messages.
+    // Run() calls can nest in which case each Quit() call should result in the
+    // topmost active Run() call returning. The only other trigger for Run()
+    // to return is the |should_quit_when_idle_callback_| which the Delegate
+    // should probe before sleeping when it becomes idle.
+    // |application_tasks_allowed| is true if this is the first Run() call on
+    // the stack or it was made from a nested RunLoop of
+    // Type::kNestableTasksAllowed (otherwise this Run() level should only
+    // process system tasks).
+    virtual void Run(bool application_tasks_allowed, TimeDelta timeout) = 0;
     virtual void Quit() = 0;
 
     // Invoked right before a RunLoop enters a nested Run() call on this
@@ -244,26 +251,26 @@ class BASE_EXPORT RunLoop {
   // allow a step to Run() for longer than the suite's default timeout, by
   // creating a new ScopedRunTimeoutForTest on their stack, e.g:
   //
-  //   ScopedRunTimeoutForTest default_timeout(kDefaultRunTimeout);
+  //   ScopedRunTimeoutForTest default_timeout(kDefaultRunTimeout, on_timeout);
   //   ... do other test stuff ...
   //   RunLoop().Run(); // Run for up to kDefaultRunTimeout.
   //   ...
   //   {
-  //     ScopedRunTimeoutForTest test_specific_timeout(kTestSpecificTimeout);
+  //     ScopedRunTimeoutForTest specific_timeout(kTestSpecificTimeout, ...);
   //     RunLoop().Run(); // Run for up to kTestSpecificTimeout.
   //   }
   //   ...
   //   RunLoop().Run(); // Run for up to kDefaultRunTimeout.
   //
-  // The currently-active timeout can be temporarily disabled by passing a zero
-  // timeout e.g:
-  //   ScopedRunTimeoutForTest disable_timeout(TimeDelta());
+  // The currently-active timeout can also be temporarily disabled:
+  //   ScopedDisableRunTimeoutForTest disable_timeout;
   //
   // ScopedTaskEnvironment applies a default Run() timeout after which a
-  // LOG(FATAL) is performed, to dump a crash stack for diagnosis.
+  // LOG(FATAL) is performed, to dump a crash stack for diagnosis. Tests adding
+  // their own Run() timeouts can use e.g. MakeExpectedNotRunClosure().
+
   class BASE_EXPORT ScopedRunTimeoutForTest {
    public:
-    explicit ScopedRunTimeoutForTest(TimeDelta timeout);
     ScopedRunTimeoutForTest(TimeDelta timeout, RepeatingClosure on_timeout);
     ~ScopedRunTimeoutForTest();
 
@@ -279,6 +286,16 @@ class BASE_EXPORT RunLoop {
     const RepeatingClosure on_timeout_;
     ScopedRunTimeoutForTest* const nested_timeout_;
     DISALLOW_COPY_AND_ASSIGN(ScopedRunTimeoutForTest);
+  };
+
+  class BASE_EXPORT ScopedDisableRunTimeoutForTest {
+   public:
+    ScopedDisableRunTimeoutForTest();
+    ~ScopedDisableRunTimeoutForTest();
+
+   private:
+    ScopedRunTimeoutForTest* const nested_timeout_;
+    DISALLOW_COPY_AND_ASSIGN(ScopedDisableRunTimeoutForTest);
   };
 
   // Run() will DCHECK if called while there's a ScopedDisallowRunningForTesting

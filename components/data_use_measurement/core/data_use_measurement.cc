@@ -6,6 +6,7 @@
 
 #include <set>
 
+#include "base/bind.h"
 #include "base/feature_list.h"
 #include "base/lazy_instance.h"
 #include "base/memory/ptr_util.h"
@@ -483,6 +484,7 @@ bool DataUseMeasurement::IsUserRequest(
           "downloads_api_run_async"), /* Can be user request or
                                          autonomous request from extensions*/
       COMPUTE_NETWORK_TRAFFIC_ANNOTATION_ID_HASH("resource_dispatcher_host"),
+      COMPUTE_NETWORK_TRAFFIC_ANNOTATION_ID_HASH("navigation_url_loader"),
   };
   return kUserInitiatedTrafficAnnotations.find(
              network_traffic_annotation_hash_id) !=

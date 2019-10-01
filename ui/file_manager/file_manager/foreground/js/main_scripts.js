@@ -41,7 +41,6 @@
 // <include src="../../../../webui/resources/js/event_tracker.js">
 // <include src="../../../../webui/resources/js/cr/ui.js">
 // <include src="../../../../webui/resources/js/cr/event_target.js">
-// <include src="../../../../webui/resources/js/cr/ui/touch_handler.js">
 // <include src="../../../../webui/resources/js/cr/ui/array_data_model.js">
 // <include src="../../../../webui/resources/js/cr/ui/dialogs.js">
 // <include src="../../../../webui/resources/js/cr/ui/list_item.js">
@@ -72,7 +71,7 @@
 // <include src="../../../../webui/resources/js/cr/ui/menu_button.js">
 // <include src="../../../../webui/resources/js/cr/ui/context_menu_handler.js">
 
-(function() {
+(() => {
 // 'strict mode' is invoked for this scope.
 'use strict';
 
@@ -81,6 +80,7 @@
 // <include src="../../common/js/file_type.js">
 // <include src="../../common/js/files_app_entry_types.js">
 // <include src="../../../base/js/volume_manager_types.js">
+// <include src="../../../base/js/app_util.js">
 // <include src="../../common/js/util.js">
 // <include src="../../common/js/progress_center_common.js">
 // <include src="../../common/js/importer_common.js">
@@ -101,6 +101,7 @@
 //
 // <include src="actions_controller.js">
 // <include src="actions_model.js">
+// <include src="android_app_list_model.js">
 // <include src="app_state_controller.js">
 // <include src="column_visibility_controller.js">
 // <include src="dialog_action_controller.js">
@@ -157,7 +158,6 @@
 // <include src="ui/directory_tree.js">
 // <include src="ui/drag_selector.js">
 // <include src="ui/empty_folder.js">
-// <include src="ui/error_dialog.js">
 // <include src="ui/file_grid.js">
 // <include src="ui/file_manager_ui.js">
 // <include src="ui/file_metadata_formatter.js">

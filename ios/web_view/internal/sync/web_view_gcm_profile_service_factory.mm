@@ -4,6 +4,7 @@
 
 #import "ios/web_view/internal/sync/web_view_gcm_profile_service_factory.h"
 
+#include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/no_destructor.h"
@@ -97,7 +98,7 @@ WebViewGCMProfileServiceFactory::BuildServiceInstanceFor(
       base::BindRepeating(&RequestProxyResolvingSocketFactory, context),
       browser_state->GetSharedURLLoaderFactory(),
       ApplicationContext::GetInstance()->GetNetworkConnectionTracker(),
-      version_info::Channel::UNKNOWN, GetProductCategoryForSubtypes(),
+      version_info::Channel::STABLE, GetProductCategoryForSubtypes(),
       WebViewIdentityManagerFactory::GetForBrowserState(browser_state),
       base::WrapUnique(new gcm::GCMClientFactory),
       base::CreateSingleThreadTaskRunnerWithTraits({web::WebThread::UI}),

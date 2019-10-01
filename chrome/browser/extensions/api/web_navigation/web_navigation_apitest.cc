@@ -5,6 +5,8 @@
 #include <list>
 #include <set>
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -111,7 +113,8 @@ class DelayLoadStartAndExecuteJavascript
       rfh_->ExecuteJavaScriptWithUserGestureForTests(
           base::UTF8ToUTF16(script_));
     } else {
-      rfh_->ExecuteJavaScriptForTests(base::UTF8ToUTF16(script_));
+      rfh_->ExecuteJavaScriptForTests(base::UTF8ToUTF16(script_),
+                                      base::NullCallback());
     }
     script_was_executed_ = true;
   }
@@ -240,6 +243,11 @@ IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, ServerRedirect) {
       << message_;
 }
 
+IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, FormSubmission) {
+  ASSERT_TRUE(StartEmbeddedTestServer());
+  ASSERT_TRUE(RunExtensionTest("webnavigation/formSubmission")) << message_;
+}
+
 IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, Download) {
   ASSERT_TRUE(StartEmbeddedTestServer());
   content::DownloadManager* download_manager =
@@ -360,18 +368,9 @@ IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, MAYBE_UserAction) {
   const extensions::Extension* extension =
       service->GetExtensionById(last_loaded_extension_id(), false);
   GURL url = extension->GetResourceURL(
-      "a.html?" + base::IntToString(embedded_test_server()->port()));
+      "a.html?" + base::NumberToString(embedded_test_server()->port()));
 
-  // Register an observer for the navigation in the subframe, so the test
-  // can wait until it is fully complete. Otherwise the context menu
-  // navigation is non-deterministic on which process it will get associated
-  // with, leading to test flakiness.
-  content::TestNavigationManager nav_manager(
-      tab, embedded_test_server()->GetURL(
-               "/extensions/api_test/webnavigation/userAction/subframe.html"));
   ui_test_utils::NavigateToURL(browser(), url);
-  nav_manager.WaitForNavigationFinished();
-  EXPECT_TRUE(nav_manager.was_successful());
 
   // This corresponds to "Open link in new tab".
   content::ContextMenuParams params;

@@ -36,6 +36,7 @@ class MockSyncEngine : public SyncEngine {
 
   // SyncEngine:
   MOCK_METHOD1(Initialize, void(InitParams));
+  MOCK_CONST_METHOD0(IsInitialized, bool());
   MOCK_METHOD1(TriggerRefresh, void(const ModelTypeSet&));
   MOCK_METHOD1(UpdateCredentials, void(const SyncCredentials&));
   MOCK_METHOD0(InvalidateCredentials, void());
@@ -47,7 +48,7 @@ class MockSyncEngine : public SyncEngine {
   MOCK_METHOD1(Shutdown, void(ShutdownReason));
   MOCK_METHOD0(EnableEncryptEverything, void());
   MOCK_CONST_METHOD0(GetUserShare, UserShare*());
-  MOCK_METHOD0(GetDetailedStatus, Status());
+  MOCK_METHOD0(GetDetailedStatus, SyncStatus());
   MOCK_CONST_METHOD1(HasUnsyncedItemsForTest,
                      void(base::OnceCallback<void(bool)>));
   MOCK_CONST_METHOD1(GetModelSafeRoutingInfo, void(ModelSafeRoutingInfo*));

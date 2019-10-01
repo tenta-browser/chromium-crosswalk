@@ -94,6 +94,11 @@ class HTTPHeaderNameListParser {
     while (true) {
       ConsumeSpaces();
 
+      if (pos_ == value_.length() && !output.empty()) {
+        output.insert(std::string());
+        return;
+      }
+
       size_t token_start = pos_;
       ConsumeTokenChars();
       size_t token_size = pos_ - token_start;
@@ -427,13 +432,20 @@ WebHTTPHeaderSet ExtractCorsExposedHeaderNamesList(
   return header_set;
 }
 
-bool IsOnAccessControlResponseHeaderWhitelist(const String& name) {
-  DEFINE_THREAD_SAFE_STATIC_LOCAL(
-      WebHTTPHeaderSet, allowed_cross_origin_response_headers,
-      ({
-          "cache-control", "content-language", "content-type", "expires",
-          "last-modified", "pragma",
-      }));
+bool IsCorsSafelistedResponseHeader(const String& name) {
+  // https://fetch.spec.whatwg.org/#cors-safelisted-response-header-name
+  // TODO(dcheng): Consider using a flat_set here with a transparent comparator.
+  DEFINE_THREAD_SAFE_STATIC_LOCAL(WebHTTPHeaderSet,
+                                  allowed_cross_origin_response_headers,
+                                  ({
+                                      "cache-control",
+                                      "content-language",
+                                      "content-length",
+                                      "content-type",
+                                      "expires",
+                                      "last-modified",
+                                      "pragma",
+                                  }));
   return allowed_cross_origin_response_headers.find(name.Ascii().data()) !=
          allowed_cross_origin_response_headers.end();
 }

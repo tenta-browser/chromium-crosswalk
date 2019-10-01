@@ -4,8 +4,13 @@
 
 #include "chrome/browser/chromeos/login/ui/oobe_ui_dialog_delegate.h"
 
+#include <memory>
+#include <utility>
+#include <vector>
+
+#include "ash/public/cpp/login_screen.h"
+#include "ash/public/cpp/login_screen_model.h"
 #include "ash/public/cpp/shell_window_ids.h"
-#include "chrome/browser/chromeos/login/screens/gaia_view.h"
 #include "chrome/browser/chromeos/login/ui/login_display_host_mojo.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/extensions/chrome_extension_web_contents_observer.h"
@@ -14,6 +19,7 @@
 #include "chrome/browser/ui/ash/login_screen_client.h"
 #include "chrome/browser/ui/ash/tablet_mode_client.h"
 #include "chrome/browser/ui/webui/chrome_web_contents_handler.h"
+#include "chrome/browser/ui/webui/chromeos/login/gaia_screen_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "content/public/browser/web_contents.h"
@@ -43,8 +49,8 @@ class OobeWebDialogView : public views::WebDialogView {
  public:
   OobeWebDialogView(content::BrowserContext* context,
                     ui::WebDialogDelegate* delegate,
-                    WebContentsHandler* handler)
-      : views::WebDialogView(context, delegate, handler) {}
+                    std::unique_ptr<WebContentsHandler> handler)
+      : views::WebDialogView(context, delegate, std::move(handler)) {}
 
   // content::WebContentsDelegate:
   void RequestMediaAccessPermission(
@@ -64,7 +70,7 @@ class OobeWebDialogView : public views::WebDialogView {
   }
 
   bool TakeFocus(content::WebContents* source, bool reverse) override {
-    LoginScreenClient::Get()->login_screen()->FocusLoginShelf(reverse);
+    ash::LoginScreen::Get()->FocusLoginShelf(reverse);
     return true;
   }
 
@@ -89,8 +95,9 @@ class CaptivePortalDialogDelegate
   explicit CaptivePortalDialogDelegate(views::WebDialogView* host_dialog_view)
       : host_view_(host_dialog_view),
         web_contents_(host_dialog_view->web_contents()) {
-    view_ = new views::WebDialogView(ProfileHelper::GetSigninProfile(), this,
-                                     new ChromeWebContentsHandler);
+    view_ =
+        new views::WebDialogView(ProfileHelper::GetSigninProfile(), this,
+                                 std::make_unique<ChromeWebContentsHandler>());
     view_->SetVisible(false);
 
     views::Widget::InitParams params(
@@ -214,13 +221,14 @@ OobeUIDialogDelegate::OobeUIDialogDelegate(
   // Widget owns a root view which has |dialog_view_| as its child view.
   // Before the widget is destroyed, it will clean up the view hierarchy
   // starting from root view.
-  dialog_view_ = new OobeWebDialogView(ProfileHelper::GetSigninProfile(), this,
-                                       new ChromeWebContentsHandler);
+  dialog_view_ =
+      new OobeWebDialogView(ProfileHelper::GetSigninProfile(), this,
+                            std::make_unique<ChromeWebContentsHandler>());
   views::Widget::InitParams params(
       views::Widget::InitParams::TYPE_WINDOW_FRAMELESS);
   params.delegate = dialog_view_;
   ash_util::SetupWidgetInitParamsForContainer(
-      &params, ash::kShellWindowId_LockSystemModalContainer);
+      &params, ash::kShellWindowId_LockScreenContainer);
 
   dialog_widget_ = new views::Widget;
   dialog_widget_->Init(params);
@@ -262,14 +270,14 @@ void OobeUIDialogDelegate::SetShouldDisplayCaptivePortal(bool should_display) {
 
 void OobeUIDialogDelegate::Show() {
   dialog_widget_->Show();
-  SetState(ash::mojom::OobeDialogState::GAIA_SIGNIN);
+  SetState(ash::OobeDialogState::GAIA_SIGNIN);
 
   if (should_display_captive_portal_)
     GetOobeUI()->GetErrorScreen()->FixCaptivePortal();
 }
 
 void OobeUIDialogDelegate::ShowFullScreen() {
-  const gfx::Size& size =
+  const gfx::Size size =
       display::Screen::GetScreen()
           ->GetDisplayNearestWindow(dialog_widget_->GetNativeWindow())
           .size();
@@ -282,7 +290,7 @@ void OobeUIDialogDelegate::Hide() {
   if (!dialog_widget_)
     return;
   dialog_widget_->Hide();
-  SetState(ash::mojom::OobeDialogState::HIDDEN);
+  SetState(ash::OobeDialogState::HIDDEN);
 }
 
 void OobeUIDialogDelegate::Close() {
@@ -294,19 +302,17 @@ void OobeUIDialogDelegate::Close() {
   dialog_widget_->Close();
 }
 
-void OobeUIDialogDelegate::SetState(ash::mojom::OobeDialogState state) {
+void OobeUIDialogDelegate::SetState(ash::OobeDialogState state) {
   if (!dialog_widget_ || state_ == state)
     return;
 
-  // Gaia WebUI is preloaded, so it's possible that WebUI send certain state
+  // Gaia WebUI is preloaded, so it's possible for WebUI to send state updates
   // while the widget is not visible. Defer the state update until Show().
-  if (!dialog_widget_->IsVisible() &&
-      state != ash::mojom::OobeDialogState::HIDDEN) {
+  if (!dialog_widget_->IsVisible() && state != ash::OobeDialogState::HIDDEN)
     return;
-  }
 
   state_ = state;
-  LoginScreenClient::Get()->login_screen()->NotifyOobeDialogState(state_);
+  ash::LoginScreen::Get()->GetModel()->NotifyOobeDialogState(state_);
 }
 
 void OobeUIDialogDelegate::UpdateSizeAndPosition(int width, int height) {
@@ -368,7 +374,7 @@ void OobeUIDialogDelegate::OnTabletModeToggled(bool enabled) {
 }
 
 ui::ModalType OobeUIDialogDelegate::GetDialogModalType() const {
-  return ui::MODAL_TYPE_SYSTEM;
+  return ui::MODAL_TYPE_WINDOW;
 }
 
 base::string16 OobeUIDialogDelegate::GetDialogTitle() const {
@@ -408,6 +414,7 @@ bool OobeUIDialogDelegate::ShouldShowDialogTitle() const {
 }
 
 bool OobeUIDialogDelegate::HandleContextMenu(
+    content::RenderFrameHost* render_frame_host,
     const content::ContextMenuParams& params) {
   return true;
 }

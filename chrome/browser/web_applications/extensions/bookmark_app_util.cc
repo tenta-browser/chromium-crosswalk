@@ -16,6 +16,7 @@
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/url_pattern.h"
 #include "extensions/common/url_pattern_set.h"
 #include "url/gurl.h"
 
@@ -52,28 +53,6 @@ bool BookmarkAppIsLocallyInstalled(const ExtensionPrefs* prefs,
   }
 
   return true;
-}
-
-bool BookmarkOrHostedAppInstalled(content::BrowserContext* browser_context,
-                                  const GURL& url) {
-  ExtensionRegistry* registry = ExtensionRegistry::Get(browser_context);
-  const ExtensionSet& extensions = registry->enabled_extensions();
-
-  // Iterate through the extensions and extract the LaunchWebUrl (bookmark apps)
-  // or check the web extent (hosted apps).
-  for (const scoped_refptr<const Extension>& extension : extensions) {
-    if (!extension->is_hosted_app())
-      continue;
-
-    if (!BookmarkAppIsLocallyInstalled(browser_context, extension.get()))
-      continue;
-
-    if (extension->web_extent().MatchesURL(url) ||
-        AppLaunchInfo::GetLaunchWebURL(extension.get()) == url) {
-      return true;
-    }
-  }
-  return false;
 }
 
 bool IsInNavigationScopeForLaunchUrl(const GURL& launch_url, const GURL& url) {
@@ -127,6 +106,12 @@ int CountUserInstalledBookmarkApps(content::BrowserContext* browser_context) {
   }
 
   return num_user_installed;
+}
+
+bool IsValidBookmarkAppUrl(const GURL& url) {
+  URLPattern origin_only_pattern(Extension::kValidBookmarkAppSchemes);
+  origin_only_pattern.SetMatchAllURLs(true);
+  return url.is_valid() && origin_only_pattern.MatchesURL(url);
 }
 
 }  // namespace extensions

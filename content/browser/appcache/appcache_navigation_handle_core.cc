@@ -5,6 +5,7 @@
 #include "content/browser/appcache/appcache_navigation_handle_core.h"
 
 #include <map>
+#include <string>
 #include <utility>
 
 #include "base/bind.h"
@@ -17,13 +18,14 @@
 #include "content/public/common/child_process_host.h"
 #include "third_party/blink/public/mojom/appcache/appcache.mojom.h"
 #include "third_party/blink/public/mojom/appcache/appcache_info.mojom.h"
+#include "third_party/blink/public/mojom/devtools/console_message.mojom.h"
 
 namespace {
 
 // Map of AppCache host id to the AppCacheNavigationHandleCore instance.
 // Accessed on the IO thread only.
 using AppCacheHandleMap =
-    std::map <int, content::AppCacheNavigationHandleCore*>;
+    std::map<base::UnguessableToken, content::AppCacheNavigationHandleCore*>;
 base::LazyInstance<AppCacheHandleMap>::DestructorAtExit g_appcache_handle_map =
     LAZY_INSTANCE_INITIALIZER;
 
@@ -33,7 +35,7 @@ namespace content {
 
 AppCacheNavigationHandleCore::AppCacheNavigationHandleCore(
     ChromeAppCacheService* appcache_service,
-    int appcache_host_id,
+    const base::UnguessableToken& appcache_host_id,
     int process_id)
     : appcache_service_(appcache_service),
       appcache_host_id_(appcache_host_id),
@@ -41,6 +43,7 @@ AppCacheNavigationHandleCore::AppCacheNavigationHandleCore(
   // The AppCacheNavigationHandleCore is created on the UI thread but
   // should only be accessed from the IO thread afterwards.
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  DCHECK(!appcache_host_id_.is_empty());
 }
 
 AppCacheNavigationHandleCore::~AppCacheNavigationHandleCore() {
@@ -52,8 +55,9 @@ AppCacheNavigationHandleCore::~AppCacheNavigationHandleCore() {
 void AppCacheNavigationHandleCore::Initialize() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   DCHECK(precreated_host_.get() == nullptr);
-  precreated_host_.reset(new AppCacheHost(appcache_host_id_, process_id_, this,
-                                          GetAppCacheService()));
+  precreated_host_ = std::make_unique<AppCacheHost>(
+      appcache_host_id_, process_id_, MSG_ROUTING_NONE, nullptr,
+      GetAppCacheService());
 
   DCHECK(g_appcache_handle_map.Get().find(appcache_host_id_) ==
          g_appcache_handle_map.Get().end());
@@ -62,7 +66,7 @@ void AppCacheNavigationHandleCore::Initialize() {
 
 // static
 std::unique_ptr<AppCacheHost> AppCacheNavigationHandleCore::GetPrecreatedHost(
-    int host_id) {
+    const base::UnguessableToken& host_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   auto index = g_appcache_handle_map.Get().find(host_id);
   if (index != g_appcache_handle_map.Get().end()) {
@@ -83,62 +87,6 @@ void AppCacheNavigationHandleCore::SetProcessId(int process_id) {
   DCHECK(precreated_host_);
   process_id_ = process_id;
   precreated_host_->SetProcessId(process_id);
-}
-
-void AppCacheNavigationHandleCore::OnCacheSelected(
-    int host_id,
-    const blink::mojom::AppCacheInfo& info) {
-  DCHECK(false);
-}
-
-void AppCacheNavigationHandleCore::OnStatusChanged(
-    const std::vector<int>& host_ids,
-    blink::mojom::AppCacheStatus status) {
-  // Should never be called.
-  DCHECK(false);
-}
-
-void AppCacheNavigationHandleCore::OnEventRaised(
-    const std::vector<int>& host_ids,
-    blink::mojom::AppCacheEventID event_id) {
-  // Should never be called.
-  DCHECK(false);
-}
-
-void AppCacheNavigationHandleCore::OnProgressEventRaised(
-    const std::vector<int>& host_ids,
-    const GURL& url,
-    int num_total,
-    int num_complete) {
-  // Should never be called.
-  DCHECK(false);
-}
-
-void AppCacheNavigationHandleCore::OnErrorEventRaised(
-    const std::vector<int>& host_ids,
-    const blink::mojom::AppCacheErrorDetails& details) {
-  // Should never be called.
-  DCHECK(false);
-}
-
-void AppCacheNavigationHandleCore::OnLogMessage(int host_id,
-                                                AppCacheLogLevel log_level,
-                                                const std::string& message) {
-  // Should never be called.
-  DCHECK(false);
-}
-
-void AppCacheNavigationHandleCore::OnContentBlocked(int host_id,
-                                                    const GURL& manifest_url) {
-  // Should never be called.
-  DCHECK(false);
-}
-
-void AppCacheNavigationHandleCore::OnSetSubresourceFactory(
-    int host_id,
-    network::mojom::URLLoaderFactoryPtr url_loader_factory) {
-  // Should never be called.
-  DCHECK(false);
 }
 
 }  // namespace content

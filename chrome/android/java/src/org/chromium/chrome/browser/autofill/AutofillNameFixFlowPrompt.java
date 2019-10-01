@@ -73,18 +73,21 @@ public class AutofillNameFixFlowPrompt implements TextWatcher, ModalDialogProper
         mNameFixFlowTooltipIcon = (ImageView) mDialogView.findViewById(R.id.cc_name_tooltip_icon);
         mNameFixFlowTooltipIcon.setOnClickListener((view) -> onTooltipIconClicked());
 
-        mDialogModel = new PropertyModel.Builder(ModalDialogProperties.ALL_KEYS)
-                               .with(ModalDialogProperties.CONTROLLER, this)
-                               .with(ModalDialogProperties.TITLE, title)
-                               .with(ModalDialogProperties.TITLE_ICON, context, drawableId)
-                               .with(ModalDialogProperties.CUSTOM_VIEW, mDialogView)
-                               .with(ModalDialogProperties.POSITIVE_BUTTON_TEXT, confirmButtonLabel)
-                               .with(ModalDialogProperties.NEGATIVE_BUTTON_TEXT,
-                                       context.getResources(), R.string.cancel)
-                               .with(ModalDialogProperties.CANCEL_ON_TOUCH_OUTSIDE, true)
-                               .with(ModalDialogProperties.POSITIVE_BUTTON_DISABLED,
-                                       inferredName.isEmpty())
-                               .build();
+        PropertyModel.Builder builder =
+                new PropertyModel.Builder(ModalDialogProperties.ALL_KEYS)
+                        .with(ModalDialogProperties.CONTROLLER, this)
+                        .with(ModalDialogProperties.TITLE, title)
+                        .with(ModalDialogProperties.CUSTOM_VIEW, mDialogView)
+                        .with(ModalDialogProperties.POSITIVE_BUTTON_TEXT, confirmButtonLabel)
+                        .with(ModalDialogProperties.NEGATIVE_BUTTON_TEXT, context.getResources(),
+                                R.string.cancel)
+                        .with(ModalDialogProperties.CANCEL_ON_TOUCH_OUTSIDE, false)
+                        .with(ModalDialogProperties.POSITIVE_BUTTON_DISABLED,
+                                inferredName.isEmpty());
+        if (drawableId != 0) {
+            builder.with(ModalDialogProperties.TITLE_ICON, context, drawableId);
+        }
+        mDialogModel = builder.build();
 
         // Hitting the "submit" button on the software keyboard should submit.
         mUserNameInput.setOnEditorActionListener((view, actionId, event) -> {
@@ -161,6 +164,7 @@ public class AutofillNameFixFlowPrompt implements TextWatcher, ModalDialogProper
     public void onClick(PropertyModel model, int buttonType) {
         if (buttonType == ModalDialogProperties.ButtonType.POSITIVE) {
             mDelegate.onUserAccept(mUserNameInput.getText().toString());
+            mModalDialogManager.dismissDialog(model, DialogDismissalCause.POSITIVE_BUTTON_CLICKED);
         } else if (buttonType == ModalDialogProperties.ButtonType.NEGATIVE) {
             mModalDialogManager.dismissDialog(model, DialogDismissalCause.NEGATIVE_BUTTON_CLICKED);
         }
@@ -168,6 +172,11 @@ public class AutofillNameFixFlowPrompt implements TextWatcher, ModalDialogProper
 
     @Override
     public void onDismiss(PropertyModel model, int dismissalCause) {
-        mDelegate.onPromptDismissed();
+        // Do not call dismissed on the delegate if dialog was dismissed either because the user
+        // accepted to save the card or was dismissed by native code.
+        if (dismissalCause != DialogDismissalCause.POSITIVE_BUTTON_CLICKED
+                && dismissalCause != DialogDismissalCause.DISMISSED_BY_NATIVE) {
+            mDelegate.onPromptDismissed();
+        }
     }
 }

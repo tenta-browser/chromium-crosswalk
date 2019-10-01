@@ -21,7 +21,7 @@ class ForwardingModelTypeChangeProcessor : public ModelTypeChangeProcessor {
   // |other| must not be nullptr and must outlive this object.
   explicit ForwardingModelTypeChangeProcessor(ModelTypeChangeProcessor* other)
       : other_(other) {}
-  ~ForwardingModelTypeChangeProcessor() override{};
+  ~ForwardingModelTypeChangeProcessor() override {}
 
   void Put(const std::string& client_tag,
            std::unique_ptr<EntityData> entity_data,
@@ -53,6 +53,16 @@ class ForwardingModelTypeChangeProcessor : public ModelTypeChangeProcessor {
     return other_->IsEntityUnsynced(storage_key);
   }
 
+  base::Time GetEntityCreationTime(
+      const std::string& storage_key) const override {
+    return other_->GetEntityCreationTime(storage_key);
+  }
+
+  base::Time GetEntityModificationTime(
+      const std::string& storage_key) const override {
+    return other_->GetEntityModificationTime(storage_key);
+  }
+
   void OnModelStarting(ModelTypeSyncBridge* bridge) override {
     other_->OnModelStarting(bridge);
   }
@@ -64,6 +74,8 @@ class ForwardingModelTypeChangeProcessor : public ModelTypeChangeProcessor {
   bool IsTrackingMetadata() override { return other_->IsTrackingMetadata(); }
 
   std::string TrackedAccountId() override { return other_->TrackedAccountId(); }
+
+  std::string TrackedCacheGuid() override { return other_->TrackedCacheGuid(); }
 
   void ReportError(const ModelError& error) override {
     other_->ReportError(error);
@@ -131,6 +143,9 @@ void MockModelTypeChangeProcessor::DelegateCallsByDefaultTo(
   ON_CALL(*this, TrackedAccountId())
       .WillByDefault(
           Invoke(delegate, &ModelTypeChangeProcessor::TrackedAccountId));
+  ON_CALL(*this, TrackedCacheGuid())
+      .WillByDefault(
+          Invoke(delegate, &ModelTypeChangeProcessor::TrackedCacheGuid));
   ON_CALL(*this, ReportError(_))
       .WillByDefault(Invoke(delegate, &ModelTypeChangeProcessor::ReportError));
   ON_CALL(*this, GetError())

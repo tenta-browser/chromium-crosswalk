@@ -7,8 +7,8 @@
 
 #include "ash/ash_export.h"
 #include "ash/session/session_observer.h"
-#include "ash/shell_observer.h"
 #include "ash/system/tray/tray_background_view.h"
+#include "ash/wm/overview/overview_observer.h"
 #include "ash/wm/tablet_mode/tablet_mode_observer.h"
 #include "base/macros.h"
 #include "ui/events/event_constants.h"
@@ -26,7 +26,7 @@ namespace ash {
 // provide any bubble view windows.
 class ASH_EXPORT OverviewButtonTray : public TrayBackgroundView,
                                       public SessionObserver,
-                                      public ShellObserver,
+                                      public OverviewObserver,
                                       public TabletModeObserver {
  public:
   // Second taps within this time will be counted as double taps. Use this
@@ -45,6 +45,11 @@ class ASH_EXPORT OverviewButtonTray : public TrayBackgroundView,
   // state of TabletMode
   virtual void UpdateAfterLoginStatusChange(LoginStatus status);
 
+  // Sets the ink drop ripple to ACTIVATED immediately with no animations.
+  void SnapRippleToActivated();
+
+  void UpdateIconVisibility();
+
   // views::Button:
   void OnGestureEvent(ui::GestureEvent* event) override;
 
@@ -54,7 +59,7 @@ class ASH_EXPORT OverviewButtonTray : public TrayBackgroundView,
   // SessionObserver:
   void OnSessionStateChanged(session_manager::SessionState state) override;
 
-  // ShellObserver:
+  // OverviewObserver:
   void OnOverviewModeStarting() override;
   void OnOverviewModeEnded() override;
 
@@ -66,12 +71,11 @@ class ASH_EXPORT OverviewButtonTray : public TrayBackgroundView,
   base::string16 GetAccessibleNameForTray() override;
   void HideBubbleWithView(const TrayBubbleView* bubble_view) override;
 
+  // views::View:
+  const char* GetClassName() const override;
+
  private:
   friend class OverviewButtonTrayTest;
-
-  // Sets the icon to visible if tablet mode is enabled and
-  // OverviewController::CanSelect.
-  void UpdateIconVisibility();
 
   // Weak pointer, will be parented by TrayContainer for its lifetime.
   views::ImageView* icon_;

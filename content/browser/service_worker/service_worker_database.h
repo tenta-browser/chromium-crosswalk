@@ -24,6 +24,7 @@
 #include "content/common/service_worker/service_worker_types.h"
 #include "third_party/blink/public/common/origin_trials/trial_token_validator.h"
 #include "third_party/blink/public/common/service_worker/service_worker_status_code.h"
+#include "third_party/blink/public/mojom/web_feature/web_feature.mojom.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -78,10 +79,11 @@ class CONTENT_EXPORT ServiceWorkerDatabase {
     bool is_active;
     bool has_fetch_handler;
     base::Time last_update_check;
+    base::Time script_response_time;
     base::Optional<blink::TrialTokenValidator::FeatureToTokensMap>
         origin_trial_tokens;
     blink::mojom::NavigationPreloadState navigation_preload_state;
-    std::set<uint32_t> used_features;
+    std::set<blink::mojom::WebFeature> used_features;
 
     // Not populated until ServiceWorkerStorage::StoreRegistration is called.
     int64_t resources_total_size_bytes;
@@ -240,11 +242,18 @@ class CONTENT_EXPORT ServiceWorkerDatabase {
       const std::string& user_data_name,
       std::vector<std::pair<int64_t, std::string>>* user_data);
 
-  // Reads user data for all registrations that have data with |user_data_name|
-  // from the database. Returns OK if they are successfully read or not found.
+  // Reads user data for all registrations that have data with
+  // |user_data_name_prefix| from the database. Returns OK if they are
+  // successfully read or not found.
   Status ReadUserDataForAllRegistrationsByKeyPrefix(
       const std::string& user_data_name_prefix,
       std::vector<std::pair<int64_t, std::string>>* user_data);
+
+  // Deletes user data for all registrations that have data with
+  // |user_data_name_prefix| from the database. Returns OK if all are
+  // successfully deleted or not found in the database.
+  Status DeleteUserDataForAllRegistrationsByKeyPrefix(
+      const std::string& user_data_name_prefix);
 
   // Resources should belong to one of following resource lists: uncommitted,
   // committed and purgeable.
@@ -422,6 +431,7 @@ class CONTENT_EXPORT ServiceWorkerDatabase {
   FRIEND_TEST_ALL_PREFIXES(ServiceWorkerDatabaseTest,
                            UserData_UninitializedDatabase);
   FRIEND_TEST_ALL_PREFIXES(ServiceWorkerDatabaseTest, DestroyDatabase);
+  FRIEND_TEST_ALL_PREFIXES(ServiceWorkerDatabaseTest, InvalidWebFeature);
 
   DISALLOW_COPY_AND_ASSIGN(ServiceWorkerDatabase);
 };

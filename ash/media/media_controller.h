@@ -50,6 +50,7 @@ class ASH_EXPORT MediaController
 
   // mojom::MediaController:
   void SetClient(mojom::MediaClientAssociatedPtrInfo client) override;
+  void SetForceMediaClientKeyHandling(bool enabled) override;
   void NotifyCaptureState(
       const base::flat_map<AccountId, mojom::MediaCaptureState>& capture_states)
       override;
@@ -67,26 +68,33 @@ class ASH_EXPORT MediaController
 
   // media_session::mojom::MediaControllerObserver:
   void MediaSessionInfoChanged(
-      media_session::mojom::MediaSessionInfoPtr session_info) override {}
+      media_session::mojom::MediaSessionInfoPtr session_info) override;
   void MediaSessionMetadataChanged(
       const base::Optional<media_session::MediaMetadata>& metadata) override {}
   void MediaSessionActionsChanged(
       const std::vector<media_session::mojom::MediaSessionAction>& actions)
       override;
+  void MediaSessionChanged(
+      const base::Optional<base::UnguessableToken>& request_id) override {}
 
  private:
+  friend class MediaControllerTest;
   friend class MediaSessionAcceleratorTest;
   friend class MultiProfileMediaTrayItemTest;
   FRIEND_TEST_ALL_PREFIXES(MediaSessionAcceleratorTest,
                            MediaGlobalAccelerators_NextTrack);
   FRIEND_TEST_ALL_PREFIXES(MediaSessionAcceleratorTest,
-                           MediaGlobalAccelerators_PlayPause);
+                           MediaGlobalAccelerators_Play);
+  FRIEND_TEST_ALL_PREFIXES(MediaSessionAcceleratorTest,
+                           MediaGlobalAccelerators_Pause);
   FRIEND_TEST_ALL_PREFIXES(MediaSessionAcceleratorTest,
                            MediaGlobalAccelerators_PrevTrack);
   FRIEND_TEST_ALL_PREFIXES(MediaSessionAcceleratorTest,
                            MediaGlobalAccelerators_UpdateAction_Disable);
   FRIEND_TEST_ALL_PREFIXES(MediaSessionAcceleratorTest,
                            MediaGlobalAccelerators_UpdateAction_Enable);
+  FRIEND_TEST_ALL_PREFIXES(MediaSessionAcceleratorTest,
+                           MediaGlobalAccelerators_UpdateForceKeyHandling);
 
   void SetMediaSessionControllerForTest(
       media_session::mojom::MediaControllerPtr controller);
@@ -103,9 +111,19 @@ class ASH_EXPORT MediaController
   // Returns true if we should use the media session service for key handling.
   bool ShouldUseMediaSession();
 
+  void ResetForceMediaClientKeyHandling();
+
   // Whether the active media session currently supports any action that has a
   // media key.
   bool supported_media_session_action_ = false;
+
+  // The info about the current media session. It will be null if there is not
+  // a current session.
+  media_session::mojom::MediaSessionInfoPtr media_session_info_;
+
+  // If true then the media keys should be forwarded to the client instead of
+  // being handled in ash.
+  bool force_media_client_key_handling_ = false;
 
   // Mojo pointer to the active media session controller.
   media_session::mojom::MediaControllerPtr media_session_controller_ptr_;

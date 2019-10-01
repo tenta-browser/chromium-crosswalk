@@ -11,7 +11,6 @@
 #include "ash/app_list/views/apps_container_view.h"
 #include "ash/app_list/views/contents_view.h"
 #include "ash/public/cpp/app_list/app_list_config.h"
-#include "ash/public/cpp/app_list/app_list_constants.h"
 #include "ash/public/cpp/app_list/vector_icons/vector_icons.h"
 #include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
@@ -19,6 +18,7 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/animation/slide_animation.h"
 #include "ui/gfx/canvas.h"
+#include "ui/gfx/color_palette.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/strings/grit/ui_strings.h"
 #include "ui/views/animation/flood_fill_ink_drop_ripple.h"
@@ -84,11 +84,11 @@ constexpr int kArrowMoveInEndTimeInMs = 900;
 
 constexpr SkColor kExpandArrowColor = SK_ColorWHITE;
 constexpr SkColor kPulseColor = SK_ColorWHITE;
-constexpr SkColor kUnFocusedBackgroundColor =
-    SkColorSetARGB(0xF, 0xFF, 0xFF, 0xFF);
-constexpr SkColor kFocusedBackgroundColor =
-    SkColorSetARGB(0x3D, 0xFF, 0xFF, 0xFF);
+constexpr SkColor kBackgroundColor = SkColorSetARGB(0xF, 0xFF, 0xFF, 0xFF);
 constexpr SkColor kInkDropRippleColor = SkColorSetARGB(0x14, 0xFF, 0xFF, 0xFF);
+
+constexpr SkColor kFocusRingColor = gfx::kGoogleBlue300;
+constexpr int kFocusRingWidth = 2;
 
 }  // namespace
 
@@ -111,9 +111,13 @@ ExpandArrowView::ExpandArrowView(ContentsView* contents_view,
   animation_->SetSlideDuration(kCycleDurationInMs * 2 + kCycleIntervalInMs);
   ResetHintingAnimation();
   // When side shelf or tablet mode is enabled, the peeking launcher won't be
-  // shown, so the hint animation is unnecessary.
-  if (!app_list_view_->is_side_shelf() && !app_list_view_->is_tablet_mode())
+  // shown, so the hint animation is unnecessary. Also, do not run the animation
+  // during test since we are not testing the animation and it might cause msan
+  // crash when spoken feedbacke is enabled (See https://crbug.com/926038).
+  if (!app_list_view_->is_side_shelf() && !app_list_view_->is_tablet_mode() &&
+      !AppListView::ShortAnimationsForTesting()) {
     ScheduleHintingAnimation(true);
+  }
 }
 
 ExpandArrowView::~ExpandArrowView() = default;
@@ -124,8 +128,7 @@ void ExpandArrowView::PaintButtonContents(gfx::Canvas* canvas) {
   gfx::PointF arrow_points[kPointCount];
   for (size_t i = 0; i < kPointCount; ++i)
     arrow_points[i] = kPeekingPoints[i];
-  SkColor circle_color =
-      HasFocus() ? kFocusedBackgroundColor : kUnFocusedBackgroundColor;
+  SkColor circle_color = kBackgroundColor;
   const float progress = app_list_view_->GetAppListTransitionProgress();
   if (progress <= 1) {
     // Currently transition progress is between closed and peeking state.
@@ -165,6 +168,17 @@ void ExpandArrowView::PaintButtonContents(gfx::Canvas* canvas) {
   circle_flags.setColor(circle_color);
   circle_flags.setStyle(cc::PaintFlags::kFill_Style);
   canvas->DrawCircle(circle_center, kCircleRadius, circle_flags);
+
+  if (HasFocus()) {
+    cc::PaintFlags focus_ring_flags;
+    focus_ring_flags.setAntiAlias(true);
+    focus_ring_flags.setColor(kFocusRingColor);
+    focus_ring_flags.setStyle(cc::PaintFlags::Style::kStroke_Style);
+    focus_ring_flags.setStrokeWidth(kFocusRingWidth);
+
+    // Creates a focus ring with 1px wider radius to create a border.
+    canvas->DrawCircle(circle_center, kCircleRadius + 1, focus_ring_flags);
+  }
 
   if (animation_->is_animating() && progress <= 1) {
     // Draw a pulse that expands around the circle.
@@ -230,6 +244,10 @@ void ExpandArrowView::OnFocus() {
 void ExpandArrowView::OnBlur() {
   SchedulePaint();
   Button::OnBlur();
+}
+
+const char* ExpandArrowView::GetClassName() const {
+  return "ExpandArrowView";
 }
 
 std::unique_ptr<views::InkDrop> ExpandArrowView::CreateInkDrop() {
@@ -335,7 +353,7 @@ void ExpandArrowView::TransitToFullscreenAllAppsState() {
   UMA_HISTOGRAM_ENUMERATION(kAppListPeekingToFullscreenHistogram, kExpandArrow,
                             kMaxPeekingToFullscreen);
   contents_view_->SetActiveState(ash::AppListState::kStateApps);
-  app_list_view_->SetState(AppListViewState::FULLSCREEN_ALL_APPS);
+  app_list_view_->SetState(ash::AppListViewState::kFullscreenAllApps);
 }
 
 void ExpandArrowView::ScheduleHintingAnimation(bool is_first_time) {

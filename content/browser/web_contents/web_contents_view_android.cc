@@ -310,6 +310,7 @@ void WebContentsViewAndroid::ShowContextMenu(
     RenderFrameHost* render_frame_host, const ContextMenuParams& params) {
   auto* rwhv = static_cast<RenderWidgetHostViewAndroid*>(
       web_contents_->GetRenderWidgetHostView());
+
   // See if context menu is handled by SelectionController as a selection menu.
   // If not, use the delegate to show it.
   if (rwhv && rwhv->ShowSelectionMenu(params))
@@ -385,8 +386,13 @@ void WebContentsViewAndroid::StartDragging(
     return;
   }
 
-  if (selection_popup_controller_)
+  if (selection_popup_controller_) {
     selection_popup_controller_->HidePopupsAndPreserveSelection();
+    // Hide the handles temporarily.
+    auto* rwhva = GetRenderWidgetHostViewAndroid();
+    if (rwhva)
+      rwhva->SetTextHandlesTemporarilyHidden(true);
+  }
 }
 
 void WebContentsViewAndroid::UpdateDragCursor(blink::WebDragOperation op) {
@@ -482,6 +488,14 @@ void WebContentsViewAndroid::OnPerformDrop(DropData* drop_data,
 
 void WebContentsViewAndroid::OnSystemDragEnded() {
   web_contents_->GetRenderViewHost()->GetWidget()->DragSourceSystemDragEnded();
+
+  // Restore the selection popups and the text handles if necessary.
+  if (selection_popup_controller_) {
+    selection_popup_controller_->RestoreSelectionPopupsIfNecessary();
+    auto* rwhva = GetRenderWidgetHostViewAndroid();
+    if (rwhva)
+      rwhva->SetTextHandlesTemporarilyHidden(false);
+  }
 }
 
 void WebContentsViewAndroid::OnDragEnded() {

@@ -84,6 +84,7 @@ const char kDeleteTokenResponse[] = "token=foo";
 const int kTestTokenInvalidationPeriod = 5;
 const char kGroupName[] = "Enabled";
 const char kInvalidateTokenTrialName[] = "InvalidateTokenTrial";
+const char kMessageId[] = "0:12345%5678";
 
 const char kRegisterUrl[] = "https://android.clients.google.com/c2dm/register3";
 
@@ -108,6 +109,7 @@ MCSMessage BuildDownstreamMessage(
     app_data->set_value(subtype);
   }
   data_message.set_raw_data(raw_data);
+  data_message.set_persistent_id(kMessageId);
   return MCSMessage(kDataMessageStanzaTag, data_message);
 }
 
@@ -1115,10 +1117,9 @@ TEST_F(GCMClientImplTest, DispatchDownstreamMessageRawData) {
 }
 
 TEST_F(GCMClientImplTest, DispatchDownstreamMessageSendError) {
-  std::map<std::string, std::string> expected_data;
-  expected_data["message_type"] = "send_error";
-  expected_data["google.message_id"] = "007";
-  expected_data["error_details"] = "some details";
+  std::map<std::string, std::string> expected_data = {
+      {"message_type", "send_error"}, {"error_details", "some details"}};
+
   MCSMessage message(BuildDownstreamMessage(
       kSender, kExtensionAppId, std::string() /* subtype */, expected_data,
       std::string() /* raw_data */));
@@ -1127,7 +1128,7 @@ TEST_F(GCMClientImplTest, DispatchDownstreamMessageSendError) {
 
   EXPECT_EQ(MESSAGE_SEND_ERROR, last_event());
   EXPECT_EQ(kExtensionAppId, last_app_id());
-  EXPECT_EQ("007", last_error_details().message_id);
+  EXPECT_EQ(kMessageId, last_error_details().message_id);
   EXPECT_EQ(1UL, last_error_details().additional_data.size());
   auto iter = last_error_details().additional_data.find("error_details");
   EXPECT_TRUE(iter != last_error_details().additional_data.end());
@@ -1202,7 +1203,7 @@ void GCMClientImplCheckinTest::SetUp() {
 
 TEST_F(GCMClientImplCheckinTest, GServicesSettingsAfterInitialCheckin) {
   std::map<std::string, std::string> settings;
-  settings["checkin_interval"] = base::Int64ToString(kSettingsCheckinInterval);
+  settings["checkin_interval"] = base::NumberToString(kSettingsCheckinInterval);
   settings["checkin_url"] = "http://alternative.url/checkin";
   settings["gcm_hostname"] = "alternative.gcm.host";
   settings["gcm_secure_port"] = "7777";
@@ -1225,7 +1226,7 @@ TEST_F(GCMClientImplCheckinTest, GServicesSettingsAfterInitialCheckin) {
 // This test only checks that periodic checkin happens.
 TEST_F(GCMClientImplCheckinTest, PeriodicCheckin) {
   std::map<std::string, std::string> settings;
-  settings["checkin_interval"] = base::Int64ToString(kSettingsCheckinInterval);
+  settings["checkin_interval"] = base::NumberToString(kSettingsCheckinInterval);
   settings["checkin_url"] = "http://alternative.url/checkin";
   settings["gcm_hostname"] = "alternative.gcm.host";
   settings["gcm_secure_port"] = "7777";
@@ -1244,7 +1245,7 @@ TEST_F(GCMClientImplCheckinTest, PeriodicCheckin) {
 
 TEST_F(GCMClientImplCheckinTest, LoadGSettingsFromStore) {
   std::map<std::string, std::string> settings;
-  settings["checkin_interval"] = base::Int64ToString(kSettingsCheckinInterval);
+  settings["checkin_interval"] = base::NumberToString(kSettingsCheckinInterval);
   settings["checkin_url"] = "http://alternative.url/checkin";
   settings["gcm_hostname"] = "alternative.gcm.host";
   settings["gcm_secure_port"] = "7777";
@@ -1272,7 +1273,7 @@ TEST_F(GCMClientImplCheckinTest, LoadGSettingsFromStore) {
 // This test only checks that periodic checkin happens.
 TEST_F(GCMClientImplCheckinTest, CheckinWithAccounts) {
   std::map<std::string, std::string> settings;
-  settings["checkin_interval"] = base::Int64ToString(kSettingsCheckinInterval);
+  settings["checkin_interval"] = base::NumberToString(kSettingsCheckinInterval);
   settings["checkin_url"] = "http://alternative.url/checkin";
   settings["gcm_hostname"] = "alternative.gcm.host";
   settings["gcm_secure_port"] = "7777";
@@ -1308,7 +1309,7 @@ TEST_F(GCMClientImplCheckinTest, CheckinWithAccounts) {
 // This test only checks that periodic checkin happens.
 TEST_F(GCMClientImplCheckinTest, CheckinWhenAccountRemoved) {
   std::map<std::string, std::string> settings;
-  settings["checkin_interval"] = base::Int64ToString(kSettingsCheckinInterval);
+  settings["checkin_interval"] = base::NumberToString(kSettingsCheckinInterval);
   settings["checkin_url"] = "http://alternative.url/checkin";
   settings["gcm_hostname"] = "alternative.gcm.host";
   settings["gcm_secure_port"] = "7777";
@@ -1350,7 +1351,7 @@ TEST_F(GCMClientImplCheckinTest, CheckinWhenAccountRemoved) {
 // This test only checks that periodic checkin happens.
 TEST_F(GCMClientImplCheckinTest, CheckinWhenAccountReplaced) {
   std::map<std::string, std::string> settings;
-  settings["checkin_interval"] = base::Int64ToString(kSettingsCheckinInterval);
+  settings["checkin_interval"] = base::NumberToString(kSettingsCheckinInterval);
   settings["checkin_url"] = "http://alternative.url/checkin";
   settings["gcm_hostname"] = "alternative.gcm.host";
   settings["gcm_secure_port"] = "7777";

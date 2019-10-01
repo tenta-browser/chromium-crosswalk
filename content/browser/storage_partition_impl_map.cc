@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/files/file_enumerator.h"
@@ -33,7 +34,6 @@
 #include "content/browser/loader/prefetch_url_loader_service.h"
 #include "content/browser/loader/resource_request_info_impl.h"
 #include "content/browser/resource_context_impl.h"
-#include "content/browser/service_worker/service_worker_request_handler.h"
 #include "content/browser/storage_partition_impl.h"
 #include "content/browser/streams/stream.h"
 #include "content/browser/streams/stream_context.h"
@@ -418,22 +418,9 @@ StoragePartitionImpl* StoragePartitionImplMap::Get(
       DevToolsURLRequestInterceptor::MaybeCreate(browser_context_);
   if (devtools_interceptor)
     request_interceptors.push_back(std::move(devtools_interceptor));
-  request_interceptors.push_back(ServiceWorkerRequestHandler::CreateInterceptor(
-      browser_context_->GetResourceContext()));
   request_interceptors.push_back(std::make_unique<AppCacheInterceptor>());
 
-  bool create_request_context = true;
-  if (base::FeatureList::IsEnabled(network::features::kNetworkService)) {
-    // These ifdefs should match StoragePartitionImpl::GetURLRequestContext.
-#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX)
-    create_request_context = false;
-#elif defined(OS_ANDROID)
-    create_request_context =
-        GetContentClient()->browser()->NeedURLRequestContext();
-#endif
-  }
-
-  if (create_request_context) {
+  if (!base::FeatureList::IsEnabled(network::features::kNetworkService)) {
     // These calls must happen after StoragePartitionImpl::Create().
     if (partition_domain.empty()) {
       partition->SetURLRequestContext(browser_context_->CreateRequestContext(
@@ -587,12 +574,8 @@ void StoragePartitionImplMap::PostCreateInitialization(
             browser_context_->GetResourceContext(), request_context_getter,
             base::RetainedRef(browser_context_->GetSpecialStoragePolicy())));
 
-    base::PostTaskWithTraits(
-        FROM_HERE, {BrowserThread::IO},
-        base::BindOnce(&CacheStorageContextImpl::SetBlobParametersForCache,
-                       partition->GetCacheStorageContext(),
-                       base::RetainedRef(ChromeBlobStorageContext::GetFor(
-                           browser_context_))));
+    partition->GetCacheStorageContext()->SetBlobParametersForCache(
+        ChromeBlobStorageContext::GetFor(browser_context_));
 
     base::PostTaskWithTraits(
         FROM_HERE, {BrowserThread::IO},
@@ -602,10 +585,12 @@ void StoragePartitionImplMap::PostCreateInitialization(
 
     base::PostTaskWithTraits(
         FROM_HERE, {BrowserThread::IO},
-        base::BindOnce(&PrefetchURLLoaderService::InitializeResourceContext,
-                       partition->GetPrefetchURLLoaderService(),
-                       browser_context_->GetResourceContext(),
-                       request_context_getter));
+        base::BindOnce(
+            &PrefetchURLLoaderService::InitializeResourceContext,
+            partition->GetPrefetchURLLoaderService(),
+            browser_context_->GetResourceContext(), request_context_getter,
+            base::RetainedRef(
+                ChromeBlobStorageContext::GetFor(browser_context_))));
 
     base::PostTaskWithTraits(
         FROM_HERE, {BrowserThread::IO},

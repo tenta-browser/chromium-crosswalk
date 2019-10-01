@@ -6,6 +6,8 @@
 
 #include <string>
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
@@ -37,14 +39,13 @@
 #include "content/public/test/browser_test_utils.h"
 #include "net/base/escape.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
-#include "net/url_request/test_url_fetcher_factory.h"
 #include "services/device/public/cpp/test/scoped_geolocation_overrider.h"
 #include "services/device/public/mojom/geoposition.mojom.h"
 
 namespace {
 
 std::string GetErrorCodePermissionDenied() {
-  return base::IntToString(static_cast<int>(
+  return base::NumberToString(static_cast<int>(
       device::mojom::Geoposition::ErrorCode::PERMISSION_DENIED));
 }
 
@@ -105,7 +106,7 @@ IFrameLoader::IFrameLoader(Browser* browser, int iframe_id, const GURL& url)
       "window.domAutomationController.send(addIFrame(%d, \"%s\"));",
       iframe_id, url.spec().c_str()));
   web_contents->GetMainFrame()->ExecuteJavaScriptForTests(
-      base::UTF8ToUTF16(script));
+      base::UTF8ToUTF16(script), base::NullCallback());
   content::RunMessageLoop();
 
   EXPECT_EQ(base::StringPrintf("\"%d\"", iframe_id), javascript_response_);
@@ -168,39 +169,6 @@ class PermissionRequestObserver : public PermissionRequestManager::Observer {
   scoped_refptr<content::MessageLoopRunner> message_loop_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(PermissionRequestObserver);
-};
-
-// Observer that waits until a TestURLFetcher with the specified fetcher_id
-// starts, after which it is made available through .fetcher().
-class TestURLFetcherObserver : public net::TestURLFetcher::DelegateForTests {
- public:
-  explicit TestURLFetcherObserver(int expected_fetcher_id)
-      : expected_fetcher_id_(expected_fetcher_id) {
-    factory_.SetDelegateForTests(this);
-  }
-  virtual ~TestURLFetcherObserver() {}
-
-  void Wait() { loop_.Run(); }
-
-  net::TestURLFetcher* fetcher() { return fetcher_; }
-
-  // net::TestURLFetcher::DelegateForTests:
-  void OnRequestStart(int fetcher_id) override {
-    if (fetcher_id == expected_fetcher_id_) {
-      fetcher_ = factory_.GetFetcherByID(fetcher_id);
-      fetcher_->SetDelegateForTests(nullptr);
-      factory_.SetDelegateForTests(nullptr);
-      loop_.Quit();
-    }
-  }
-  void OnChunkUpload(int fetcher_id) override {}
-  void OnRequestEnd(int fetcher_id) override {}
-
- private:
-  const int expected_fetcher_id_;
-  net::TestURLFetcher* fetcher_ = nullptr;
-  net::TestURLFetcherFactory factory_;
-  base::RunLoop loop_;
 };
 
 }  // namespace

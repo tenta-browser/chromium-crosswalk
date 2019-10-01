@@ -4,6 +4,9 @@
 
 package org.chromium.chrome.browser.customtabs;
 
+import static android.support.customtabs.CustomTabsIntent.COLOR_SCHEME_LIGHT;
+import static android.support.customtabs.CustomTabsIntent.COLOR_SCHEME_SYSTEM;
+
 import android.app.PendingIntent;
 import android.app.PendingIntent.CanceledException;
 import android.content.ComponentName;
@@ -16,7 +19,9 @@ import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.support.annotation.IntDef;
+import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
+import android.support.customtabs.CustomTabColorSchemeParams;
 import android.support.customtabs.CustomTabsIntent;
 import android.support.customtabs.CustomTabsSessionToken;
 import android.support.customtabs.TrustedWebUtils;
@@ -53,6 +58,10 @@ import java.util.regex.Pattern;
 
 /**
  * A model class that parses the incoming intent for Custom Tabs specific customization data.
+ *
+ * Lifecycle: is activity-scoped, i.e. one instance per CustomTabActivity instance. Must be
+ * re-created when color scheme changes, which happens automatically since color scheme change leads
+ * to activity re-creation.
  */
 public class CustomTabIntentDataProvider extends BrowserSessionDataProvider {
     private static final String TAG = "CustomTabIntentData";
@@ -121,7 +130,7 @@ public class CustomTabIntentDataProvider extends BrowserSessionDataProvider {
     /**
      * Indicates the source where the Custom Tab is launched. This is only used for
      * WebApp/WebAPK/TrustedWebActivity. The value is defined as
-     * {@link WebappActivity.ActivityType#WebappActivity}.
+     * {@link LaunchSourceType}.
      */
     public static final String EXTRA_BROWSER_LAUNCH_SOURCE =
             "org.chromium.chrome.browser.customtabs.EXTRA_BROWSER_LAUNCH_SOURCE";
@@ -141,9 +150,9 @@ public class CustomTabIntentDataProvider extends BrowserSessionDataProvider {
     public static final String EXTRA_MODULE_PACKAGE_NAME =
             "org.chromium.chrome.browser.customtabs.EXTRA_MODULE_PACKAGE_NAME";
 
-    /** The resource ID of the dex file that contains the module code. */
-    private static final String EXTRA_MODULE_DEX_RESOURCE_ID =
-            "org.chromium.chrome.browser.customtabs.EXTRA_MODULE_DEX_RESOURCE_ID";
+    /** The asset name of the dex file that contains the module code. */
+    private static final String EXTRA_MODULE_DEX_ASSET_NAME =
+            "org.chromium.chrome.browser.customtabs.EXTRA_MODULE_DEX_ASSET_NAME";
 
     /** The class name of the module entry point. */
     @VisibleForTesting
@@ -159,6 +168,14 @@ public class CustomTabIntentDataProvider extends BrowserSessionDataProvider {
     @VisibleForTesting
     public static final String EXTRA_HIDE_CCT_HEADER_ON_MODULE_MANAGED_URLS =
             "org.chromium.chrome.browser.customtabs.EXTRA_HIDE_CCT_HEADER_ON_MODULE_MANAGED_URLS";
+
+    // TODO(amalova): Move this to CustomTabsIntent.
+    /**
+     * Extra that, if set, specifies Translate UI should be triggered with
+     * specified target language.
+     */
+    private static final String EXTRA_TRANSLATE_LANGUAGE =
+            "androidx.browser.customtabs.extra.TRANSLATE_LANGUAGE";
 
     private static final int MAX_CUSTOM_MENU_ITEMS = 5;
 
@@ -182,14 +199,19 @@ public class CustomTabIntentDataProvider extends BrowserSessionDataProvider {
     private final boolean mIsOpenedByWebApk;
     private final boolean mIsTrustedWebActivity;
     @Nullable
+    private final Integer mNavigationBarColor;
+    @Nullable
     private final ComponentName mModuleComponentName;
     @Nullable
     private final Pattern mModuleManagedUrlsPattern;
     @Nullable
     private final String mModuleManagedUrlsHeaderValue;
     private final boolean mHideCctHeaderOnModuleManagedUrls;
-    private final int mModuleDexResourceId;
+    @Nullable
+    private final String mModuleDexAssetName;
     private final boolean mIsIncognito;
+    @Nullable
+    private final List<String> mTrustedWebActivityAdditionalOrigins;
     @Nullable
     private String mUrlToLoad;
 
@@ -211,6 +233,10 @@ public class CustomTabIntentDataProvider extends BrowserSessionDataProvider {
     /** Whether this CustomTabActivity was explicitly started by another Chrome Activity. */
     private final boolean mIsOpenedByChrome;
 
+    /** ISO 639 language code */
+    @Nullable
+    private final String mTranslateLanguage;
+
     /**
      * Add extras to customize menu items for opening payment request UI custom tab from Chrome.
      */
@@ -231,8 +257,15 @@ public class CustomTabIntentDataProvider extends BrowserSessionDataProvider {
 
     /**
      * Constructs a {@link CustomTabIntentDataProvider}.
+     *
+     * The colorScheme parameter specifies which color scheme the Custom Tab should use.
+     * It can currently be either {@link CustomTabsIntent#COLOR_SCHEME_LIGHT} or
+     * {@link CustomTabsIntent#COLOR_SCHEME_DARK}.
+     * If Custom Tab was launched with {@link CustomTabsIntent#COLOR_SCHEME_SYSTEM}, colorScheme
+     * must reflect the current system setting. When the system setting changes, a new
+     * CustomTabIntentDataProvider object must be created.
      */
-    public CustomTabIntentDataProvider(Intent intent, Context context) {
+    public CustomTabIntentDataProvider(Intent intent, Context context, int colorScheme) {
         super(intent);
         if (intent == null) assert false;
 
@@ -246,9 +279,12 @@ public class CustomTabIntentDataProvider extends BrowserSessionDataProvider {
 
         mIsIncognito = isIncognitoForPaymentsFlow(intent) || isValidExternalIncognitoIntent(intent);
 
+        CustomTabColorSchemeParams params = getColorSchemeParams(intent, colorScheme);
         retrieveCustomButtons(intent, context);
-        retrieveToolbarColor(intent, context);
-        retrieveBottomBarColor(intent);
+        retrieveToolbarColor(params, context);
+        retrieveBottomBarColor(params);
+        mNavigationBarColor = params.navigationBarColor == null ? null
+                : removeTransparencyFromColor(params.navigationBarColor);
         mInitialBackgroundColor = retrieveInitialBackgroundColor(intent);
 
         mEnableUrlBarHiding = IntentUtils.safeGetBooleanExtra(
@@ -284,6 +320,8 @@ public class CustomTabIntentDataProvider extends BrowserSessionDataProvider {
 
         mIsTrustedWebActivity = IntentUtils.safeGetBooleanExtra(
                 intent, TrustedWebUtils.EXTRA_LAUNCH_AS_TRUSTED_WEB_ACTIVITY, false);
+        mTrustedWebActivityAdditionalOrigins = IntentUtils.safeGetStringArrayListExtra(intent,
+                TrustedWebUtils.EXTRA_ADDITIONAL_TRUSTED_ORIGINS);
         mTitleVisibilityState = IntentUtils.safeGetIntExtra(
                 intent, CustomTabsIntent.EXTRA_TITLE_VISIBILITY_STATE, CustomTabsIntent.NO_TITLE);
         mShowShareItem = IntentUtils.safeGetBooleanExtra(intent,
@@ -311,12 +349,15 @@ public class CustomTabIntentDataProvider extends BrowserSessionDataProvider {
         mIsOpenedByWebApk =
                 IntentUtils.safeGetBooleanExtra(intent, EXTRA_IS_OPENED_BY_WEBAPK, false);
 
+        mTranslateLanguage = IntentUtils.safeGetStringExtra(intent, EXTRA_TRANSLATE_LANGUAGE);
+
         String modulePackageName =
                 IntentUtils.safeGetStringExtra(intent, EXTRA_MODULE_PACKAGE_NAME);
         String moduleClassName = IntentUtils.safeGetStringExtra(intent, EXTRA_MODULE_CLASS_NAME);
         if (modulePackageName != null && moduleClassName != null) {
             mModuleComponentName = new ComponentName(modulePackageName, moduleClassName);
-            mModuleDexResourceId = intent.getIntExtra(EXTRA_MODULE_DEX_RESOURCE_ID, -1);
+            mModuleDexAssetName =
+                    IntentUtils.safeGetStringExtra(intent, EXTRA_MODULE_DEX_ASSET_NAME);
             String moduleManagedUrlsRegex =
                     IntentUtils.safeGetStringExtra(intent, EXTRA_MODULE_MANAGED_URLS_REGEX);
             mModuleManagedUrlsPattern = (moduleManagedUrlsRegex != null)
@@ -331,7 +372,23 @@ public class CustomTabIntentDataProvider extends BrowserSessionDataProvider {
             mModuleManagedUrlsPattern = null;
             mModuleManagedUrlsHeaderValue = null;
             mHideCctHeaderOnModuleManagedUrls = false;
-            mModuleDexResourceId = 0;
+            mModuleDexAssetName = null;
+        }
+    }
+
+    @NonNull
+    private CustomTabColorSchemeParams getColorSchemeParams(Intent intent, int colorScheme) {
+        if (colorScheme == COLOR_SCHEME_SYSTEM) {
+            assert false : "Color scheme passed to IntentDataProvider should not be "
+                    + "COLOR_SCHEME_SYSTEM";
+            colorScheme = COLOR_SCHEME_LIGHT;
+        }
+        try {
+            return CustomTabsIntent.getColorSchemeParams(intent, colorScheme);
+        } catch (Throwable e) {
+            // Catch any un-parceling exceptions, like in IntentUtils#safe* methods
+            Log.e(TAG, "Failed to parse CustomTabColorSchemeParams");
+            return new CustomTabColorSchemeParams.Builder().build(); // Empty params
         }
     }
 
@@ -415,28 +472,27 @@ public class CustomTabIntentDataProvider extends BrowserSessionDataProvider {
     /**
      * Processes the color passed from the client app and updates {@link #mToolbarColor}.
      */
-    private void retrieveToolbarColor(Intent intent, Context context) {
+    private void retrieveToolbarColor(CustomTabColorSchemeParams schemeParams, Context context) {
         int defaultColor = ColorUtils.getDefaultThemeColor(context.getResources(), isIncognito());
         if (isIncognito()) {
             mToolbarColor = defaultColor;
             return; // Don't allow toolbar color customization for incognito tabs.
         }
-        int color = IntentUtils.safeGetIntExtra(
-                intent, CustomTabsIntent.EXTRA_TOOLBAR_COLOR, defaultColor);
+        int color = schemeParams.toolbarColor != null ? schemeParams.toolbarColor : defaultColor;
         mToolbarColor = removeTransparencyFromColor(color);
     }
 
     /**
-     * Must be called after calling {@link #retrieveToolbarColor(Intent, Context)}.
+     * Must be called after calling {@link #retrieveToolbarColor}.
      */
-    private void retrieveBottomBarColor(Intent intent) {
+    private void retrieveBottomBarColor(CustomTabColorSchemeParams schemeParams) {
         if (isIncognito()) {
             mBottomBarColor = mToolbarColor;
             return;
         }
         int defaultColor = mToolbarColor;
-        int color = IntentUtils.safeGetIntExtra(
-                intent, CustomTabsIntent.EXTRA_SECONDARY_TOOLBAR_COLOR, defaultColor);
+        int color = schemeParams.secondaryToolbarColor != null ? schemeParams.secondaryToolbarColor
+                : defaultColor;
         mBottomBarColor = removeTransparencyFromColor(color);
     }
 
@@ -506,6 +562,14 @@ public class CustomTabIntentDataProvider extends BrowserSessionDataProvider {
      */
     public int getToolbarColor() {
         return mToolbarColor;
+    }
+
+    /**
+     * @return The navigation bar color specified in the intent, or null if not specified.
+     */
+    @Nullable
+    public Integer getNavigationBarColor() {
+        return mNavigationBarColor;
     }
 
     /**
@@ -737,7 +801,7 @@ public class CustomTabIntentDataProvider extends BrowserSessionDataProvider {
      * @return If the Custom Tab is an info page.
      * See {@link #EXTRA_UI_TYPE}.
      */
-    boolean isInfoPage() {
+    public boolean isInfoPage() {
         return mUiType == CustomTabsUiType.INFO_PAGE;
     }
 
@@ -834,8 +898,9 @@ public class CustomTabIntentDataProvider extends BrowserSessionDataProvider {
      * @return The resource identifier for the dex that contains module code. {@code 0} if no dex
      * resource is provided.
      */
-    public int getModuleDexResourceId() {
-        return mModuleDexResourceId;
+    @Nullable
+    public String getModuleDexAssetName() {
+        return mModuleDexAssetName;
     }
 
     /**
@@ -870,5 +935,24 @@ public class CustomTabIntentDataProvider extends BrowserSessionDataProvider {
      */
     public boolean shouldHideCctHeaderOnModuleManagedUrls() {
         return mHideCctHeaderOnModuleManagedUrls;
+    }
+
+    /**
+     * @return Additional origins associated with a Trusted Web Activity client app.
+     */
+    @Nullable
+    public List<String> getTrustedWebActivityAdditionalOrigins() {
+        return mTrustedWebActivityAdditionalOrigins;
+    }
+
+    /**
+     * @return ISO 639 code of target language the page should be translated to.
+     * This method requires native.
+     */
+    @Nullable
+    public String getTranslateLanguage() {
+        boolean isEnabled =
+                ChromeFeatureList.isEnabled(ChromeFeatureList.CCT_TARGET_TRANSLATE_LANGUAGE);
+        return isEnabled ? mTranslateLanguage : null;
     }
 }

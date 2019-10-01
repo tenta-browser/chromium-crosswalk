@@ -15,15 +15,17 @@
 #include "content/public/browser/serial_chooser.h"
 #include "services/device/public/mojom/serial.mojom.h"
 #include "third_party/blink/public/mojom/serial/serial.mojom.h"
-#include "url/gurl.h"
+#include "url/origin.h"
 
 namespace content {
 class RenderFrameHost;
 }  // namespace content
 
+class SerialChooserContext;
+
 // SerialChooserController provides data for the Serial API permission prompt.
 // It is owned by ChooserBubbleDelegate.
-class SerialChooserController : public ChooserController {
+class SerialChooserController final : public ChooserController {
  public:
   SerialChooserController(
       content::RenderFrameHost* render_frame_host,
@@ -48,9 +50,13 @@ class SerialChooserController : public ChooserController {
 
   std::vector<blink::mojom::SerialPortFilterPtr> filters_;
   content::SerialChooser::Callback callback_;
+  url::Origin requesting_origin_;
+  url::Origin embedding_origin_;
 
-  device::mojom::SerialPortManagerPtr port_manager_;
+  base::WeakPtr<SerialChooserContext> chooser_context_;
   std::vector<device::mojom::SerialPortInfoPtr> ports_;
+
+  base::WeakPtrFactory<SerialChooserController> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(SerialChooserController);
 };

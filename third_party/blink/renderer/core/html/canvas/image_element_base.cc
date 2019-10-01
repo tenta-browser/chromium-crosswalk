@@ -142,7 +142,7 @@ ScriptPromise ImageElementBase::CreateImageBitmap(
   if (!image_content) {
     return ScriptPromise::RejectWithDOMException(
         script_state,
-        DOMException::Create(
+        MakeGarbageCollected<DOMException>(
             DOMExceptionCode::kInvalidStateError,
             "No image can be retrieved from the provided element."));
   }
@@ -153,15 +153,12 @@ ScriptPromise ImageElementBase::CreateImageBitmap(
          (!options->hasResizeWidth() || !options->hasResizeHeight()))) {
       return ScriptPromise::RejectWithDOMException(
           script_state,
-          DOMException::Create(
+          MakeGarbageCollected<DOMException>(
               DOMExceptionCode::kInvalidStateError,
               "The image element contains an SVG image without intrinsic "
               "dimensions, and no resize options or crop region are "
               "specified."));
     }
-  }
-
-  if (IsSVGSource()) {
     return ImageBitmap::CreateAsync(this, crop_rect,
                                     event_target.ToLocalDOMWindow()->document(),
                                     script_state, options);

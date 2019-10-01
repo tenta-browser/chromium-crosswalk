@@ -189,7 +189,7 @@ class RepeatingTimerTester {
   int counter_;
 
   RunLoop run_loop_;
-  Closure quit_closure_;
+  RepeatingClosure quit_closure_;
   WaitableEvent* const did_run_;
 
   const TimeDelta delay_;
@@ -700,8 +700,8 @@ TEST(TimerTest, ContinuationReset) {
   }
 }
 
-INSTANTIATE_TEST_CASE_P(,
-                        TimerTestWithThreadType,
-                        testing::ValuesIn(testing_main_threads));
+INSTANTIATE_TEST_SUITE_P(,
+                         TimerTestWithThreadType,
+                         testing::ValuesIn(testing_main_threads));
 
 }  // namespace base

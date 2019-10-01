@@ -239,10 +239,6 @@ const base::ListValue* EasyUnlockServiceSignin::GetRemoteDevices() const {
   return &data->remote_devices_value;
 }
 
-void EasyUnlockServiceSignin::SetRemoteDevices(const base::ListValue& devices) {
-  NOTREACHED();
-}
-
 std::string EasyUnlockServiceSignin::GetChallenge() const {
   const UserData* data = FindLoadedDataForCurrentUser();
   if (!data)
@@ -542,7 +538,8 @@ void EasyUnlockServiceSignin::OnUserDataLoaded(
     }
 
     multidevice::RemoteDevice remote_device(
-        account_id.GetUserEmail(), std::string() /* name */, decoded_public_key,
+        account_id.GetUserEmail(), std::string() /* name */,
+        std::string() /* pii_free_name */, decoded_public_key,
         decoded_psk /* persistent_symmetric_key */,
         0L /* last_update_time_millis */, software_features, beacon_seeds);
 

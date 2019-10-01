@@ -19,7 +19,7 @@
 #include "content/renderer/media/stream/media_stream_dispatcher_eventhandler.h"
 #include "third_party/blink/public/mojom/mediastream/media_devices.mojom.h"
 #include "third_party/blink/public/mojom/mediastream/media_stream.mojom.h"
-#include "third_party/blink/public/platform/modules/mediastream/platform_media_stream_source.h"
+#include "third_party/blink/public/platform/modules/mediastream/web_platform_media_stream_source.h"
 #include "third_party/blink/public/platform/web_vector.h"
 #include "third_party/blink/public/web/web_user_media_request.h"
 
@@ -28,6 +28,10 @@ class Size;
 }
 
 namespace blink {
+class AudioCaptureSettings;
+class MediaStreamAudioSource;
+class MediaStreamVideoSource;
+class VideoCaptureSettings;
 class WebMediaStream;
 class WebMediaStreamSource;
 class WebString;
@@ -35,13 +39,9 @@ class WebString;
 
 namespace content {
 
-class AudioCaptureSettings;
 class AudioDeviceCaptureCapability;
-class MediaStreamAudioSource;
 class MediaStreamDeviceObserver;
-class MediaStreamVideoSource;
 class PeerConnectionDependencyFactory;
-class VideoCaptureSettings;
 class RenderFrameImpl;
 
 // TODO(guidou): Add |request_id| and |is_processing_user_gesture| to
@@ -131,18 +131,18 @@ class CONTENT_EXPORT UserMediaProcessor
 
   // Creates a MediaStreamAudioSource/MediaStreamVideoSource objects.
   // These are virtual for test purposes.
-  virtual std::unique_ptr<MediaStreamAudioSource> CreateAudioSource(
+  virtual std::unique_ptr<blink::MediaStreamAudioSource> CreateAudioSource(
       const blink::MediaStreamDevice& device,
-      const blink::WebPlatformMediaStreamSource::ConstraintsCallback&
+      blink::WebPlatformMediaStreamSource::ConstraintsRepeatingCallback
           source_ready);
-  virtual std::unique_ptr<MediaStreamVideoSource> CreateVideoSource(
+  virtual std::unique_ptr<blink::MediaStreamVideoSource> CreateVideoSource(
       const blink::MediaStreamDevice& device,
       const blink::WebPlatformMediaStreamSource::SourceStoppedCallback&
           stop_callback);
 
   // Intended to be used only for testing.
-  const AudioCaptureSettings& AudioCaptureSettingsForTesting() const;
-  const VideoCaptureSettings& VideoCaptureSettingsForTesting() const;
+  const blink::AudioCaptureSettings& AudioCaptureSettingsForTesting() const;
+  const blink::VideoCaptureSettings& VideoCaptureSettingsForTesting() const;
 
  private:
   class RequestInfo;
@@ -274,8 +274,8 @@ class CONTENT_EXPORT UserMediaProcessor
           video_input_capabilities);
   void FinalizeSelectVideoDeviceSettings(
       const blink::WebUserMediaRequest& web_request,
-      const VideoCaptureSettings& settings);
-  void SelectVideoContentSettings(bool allow_device_id_constraint);
+      const blink::VideoCaptureSettings& settings);
+  void SelectVideoContentSettings();
 
   void GenerateStreamForCurrentRequestInfo();
 

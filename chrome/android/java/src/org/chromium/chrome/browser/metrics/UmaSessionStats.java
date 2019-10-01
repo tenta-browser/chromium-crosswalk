@@ -9,8 +9,10 @@ import android.content.Context;
 import android.content.res.Configuration;
 import android.text.TextUtils;
 
+import org.chromium.base.library_loader.LibraryProcessType;
 import org.chromium.base.metrics.RecordHistogram;
-import org.chromium.base.task.AsyncTask;
+import org.chromium.base.task.PostTask;
+import org.chromium.base.task.TaskTraits;
 import org.chromium.chrome.browser.DefaultBrowserInfo;
 import org.chromium.chrome.browser.instantapps.InstantAppsHandler;
 import org.chromium.chrome.browser.preferences.privacy.PrivacyPreferencesManager;
@@ -19,6 +21,7 @@ import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorTabObserver;
 import org.chromium.chrome.browser.util.UrlUtilities;
+import org.chromium.content_public.browser.BrowserStartupController;
 import org.chromium.content_public.browser.WebContents;
 
 /**
@@ -59,7 +62,7 @@ public class UmaSessionStats {
 
         String url = tab.getUrl();
         if (!TextUtils.isEmpty(url) && UrlUtilities.isHttpOrHttps(url)) {
-            AsyncTask.THREAD_POOL_EXECUTOR.execute(() -> {
+            PostTask.postTask(TaskTraits.BEST_EFFORT_MAY_BLOCK, () -> {
                 boolean isEligible =
                         InstantAppsHandler.getInstance().getInstantAppIntentForUrl(url) != null;
                 RecordHistogram.recordBooleanHistogram(
@@ -218,11 +221,23 @@ public class UmaSessionStats {
     }
 
     public static void registerExternalExperiment(String studyName, int[] experimentIds) {
+        assert isMetricsServiceAvailable();
         nativeRegisterExternalExperiment(studyName, experimentIds);
     }
 
     public static void registerSyntheticFieldTrial(String trialName, String groupName) {
+        assert isMetricsServiceAvailable();
         nativeRegisterSyntheticFieldTrial(trialName, groupName);
+    }
+
+    /**
+     * UmaSessionStats exposes two static methods on the metrics service. Namely {@link
+     * #registerExternalExperiment} and {@link #registerSyntheticFieldTrial}. However those can only
+     * be used in full-browser mode and as such you must check this before calling them.
+     */
+    public static boolean isMetricsServiceAvailable() {
+        return BrowserStartupController.get(LibraryProcessType.PROCESS_BROWSER)
+                .isStartupSuccessfullyCompleted();
     }
 
     private static native long nativeInit();

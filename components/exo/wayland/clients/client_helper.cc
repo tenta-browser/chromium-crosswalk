@@ -54,7 +54,7 @@ DEFAULT_DELETER(zwp_linux_buffer_release_v1,
                 zwp_linux_buffer_release_v1_destroy)
 DEFAULT_DELETER(zwp_fullscreen_shell_v1, zwp_fullscreen_shell_v1_destroy)
 DEFAULT_DELETER(zwp_input_timestamps_manager_v1,
-                zwp_input_timestamps_manager_v1_destroy);
+                zwp_input_timestamps_manager_v1_destroy)
 DEFAULT_DELETER(zwp_input_timestamps_v1, zwp_input_timestamps_v1_destroy)
 DEFAULT_DELETER(zwp_linux_buffer_params_v1, zwp_linux_buffer_params_v1_destroy)
 DEFAULT_DELETER(zwp_linux_dmabuf_v1, zwp_linux_dmabuf_v1_destroy)
@@ -62,6 +62,8 @@ DEFAULT_DELETER(zwp_linux_explicit_synchronization_v1,
                 zwp_linux_explicit_synchronization_v1_destroy)
 DEFAULT_DELETER(zwp_linux_surface_synchronization_v1,
                 zwp_linux_surface_synchronization_v1_destroy)
+DEFAULT_DELETER(zcr_vsync_feedback_v1, zcr_vsync_feedback_v1_destroy)
+DEFAULT_DELETER(zcr_vsync_timing_v1, zcr_vsync_timing_v1_destroy)
 
 #if defined(USE_GBM)
 DEFAULT_DELETER(gbm_bo, gbm_bo_destroy)

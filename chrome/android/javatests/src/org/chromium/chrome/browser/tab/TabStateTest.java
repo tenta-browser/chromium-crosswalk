@@ -101,9 +101,7 @@ public class TabStateTest {
         tabState.parentId = 2;
         tabState.openerAppId = "app";
         tabState.contentsState.setVersion(TabState.CONTENTS_STATE_CURRENT_VERSION);
-        tabState.shouldPreserve = true;
         tabState.themeColor = Color.BLACK;
-        tabState.mHasThemeColor = true;
         tabState.mIsIncognito = true;
 
         Bundle b = new Bundle();
@@ -117,9 +115,7 @@ public class TabStateTest {
         Assert.assertEquals(tabState.timestampMillis, restoredState.timestampMillis);
         Assert.assertEquals(
                 tabState.contentsState.version(), restoredState.contentsState.version());
-        Assert.assertEquals(tabState.shouldPreserve, restoredState.shouldPreserve);
         Assert.assertEquals(tabState.themeColor, restoredState.themeColor);
-        Assert.assertEquals(tabState.mHasThemeColor, restoredState.mHasThemeColor);
         Assert.assertEquals(tabState.mIsIncognito, restoredState.mIsIncognito);
     }
 }

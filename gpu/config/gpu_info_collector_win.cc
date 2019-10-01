@@ -320,18 +320,17 @@ bool BadAMDVulkanDriverVersion() {
   // 32-bit dll will be used to detect the AMD Vulkan driver.
   const base::FilePath kAmdDriver64(FILE_PATH_LITERAL("amdvlk64.dll"));
   const base::FilePath kAmdDriver32(FILE_PATH_LITERAL("amdvlk32.dll"));
-  auto file_version_info =
-      base::WrapUnique(FileVersionInfoWin::CreateFileVersionInfo(kAmdDriver64));
+  std::unique_ptr<FileVersionInfoWin> file_version_info =
+      FileVersionInfoWin::CreateFileVersionInfoWin(kAmdDriver64);
   if (!file_version_info) {
-    file_version_info.reset(
-        FileVersionInfoWin::CreateFileVersionInfo(kAmdDriver32));
+    file_version_info =
+        FileVersionInfoWin::CreateFileVersionInfoWin(kAmdDriver32);
     if (!file_version_info)
       return false;
   }
 
   const VS_FIXEDFILEINFO* fixed_file_info =
-      static_cast<FileVersionInfoWin*>(file_version_info.get())
-          ->fixed_file_info();
+      file_version_info->fixed_file_info();
   const int major = HIWORD(fixed_file_info->dwFileVersionMS);
   const int minor = LOWORD(fixed_file_info->dwFileVersionMS);
   const int minor_1 = HIWORD(fixed_file_info->dwFileVersionLS);
@@ -348,17 +347,14 @@ bool BadAMDVulkanDriverVersion() {
 }
 
 bool BadVulkanDllVersion() {
-  std::unique_ptr<FileVersionInfoWin> file_version_info(
-      static_cast<FileVersionInfoWin*>(
-          FileVersionInfoWin::CreateFileVersionInfo(
-              base::FilePath(FILE_PATH_LITERAL("vulkan-1.dll")))));
-
+  std::unique_ptr<FileVersionInfoWin> file_version_info =
+      FileVersionInfoWin::CreateFileVersionInfoWin(
+          base::FilePath(FILE_PATH_LITERAL("vulkan-1.dll")));
   if (!file_version_info)
     return false;
 
   const VS_FIXEDFILEINFO* fixed_file_info =
-      static_cast<FileVersionInfoWin*>(file_version_info.get())
-          ->fixed_file_info();
+      file_version_info->fixed_file_info();
   const int major = HIWORD(fixed_file_info->dwFileVersionMS);
   const int minor = LOWORD(fixed_file_info->dwFileVersionMS);
   const int build_1 = HIWORD(fixed_file_info->dwFileVersionLS);
@@ -561,13 +557,12 @@ void RecordGpuSupportedRuntimeVersionHistograms(Dx12VulkanVersionInfo* info) {
   }
 }
 
-bool CollectContextGraphicsInfo(GPUInfo* gpu_info,
-                                const GpuPreferences& gpu_preferences) {
+bool CollectContextGraphicsInfo(GPUInfo* gpu_info) {
   TRACE_EVENT0("gpu", "CollectGraphicsInfo");
 
   DCHECK(gpu_info);
 
-  if (!CollectGraphicsInfoGL(gpu_info, gpu_preferences))
+  if (!CollectGraphicsInfoGL(gpu_info))
     return false;
 
   // ANGLE's renderer strings are of the form:

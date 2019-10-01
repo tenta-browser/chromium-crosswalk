@@ -11,9 +11,10 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "chrome/browser/web_applications/components/app_registrar.h"
 #include "chrome/browser/web_applications/components/pending_app_manager.h"
 #include "chrome/browser/web_applications/components/web_app_helpers.h"
-#include "components/keyed_service/core/keyed_service.h"
+#include "chrome/browser/web_applications/components/web_app_provider_base.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 
@@ -32,23 +33,25 @@ namespace web_app {
 // Forward declarations of generalized interfaces.
 class PendingAppManager;
 class InstallManager;
+class InstallFinalizer;
 class WebAppAudioFocusIdMap;
 class WebAppTabHelperBase;
+class SystemWebAppManager;
+class AppRegistrar;
+class WebAppUiDelegate;
 
 // Forward declarations for new extension-independent subsystems.
 class WebAppDatabase;
 class WebAppDatabaseFactory;
 class WebAppIconManager;
-class WebAppRegistrar;
 
 // Forward declarations for legacy extension-based subsystems.
 class WebAppPolicyManager;
-class SystemWebAppManager;
 
 // Connects Web App features, such as the installation of default and
 // policy-managed web apps, with Profiles (as WebAppProvider is a
 // Profile-linked KeyedService) and their associated PrefService.
-class WebAppProvider : public KeyedService,
+class WebAppProvider : public WebAppProviderBase,
                        public content::NotificationObserver {
  public:
   static WebAppProvider* Get(Profile* profile);
@@ -57,27 +60,32 @@ class WebAppProvider : public KeyedService,
   explicit WebAppProvider(Profile* profile);
   ~WebAppProvider() override;
 
-  // 1st pass: Just create subsystems.
-  void CreateSubsystems();
-  // 2nd pass: Initialize subsystems.
+  // Create subsystems but do not start them (yet).
   void Init();
+  // Start registry. All subsystems depend on it.
+  void StartRegistry();
 
-  // Clients can use PendingAppManager to install, uninstall, and update
-  // Web Apps.
-  PendingAppManager& pending_app_manager() { return *pending_app_manager_; }
+  // WebAppProviderBase:
+  AppRegistrar& registrar() override;
+  InstallManager& install_manager() override;
+  PendingAppManager& pending_app_manager() override;
+  WebAppPolicyManager* policy_manager() override;
+  WebAppUiDelegate& ui_delegate() override;
+
+  // KeyedService:
+  void Shutdown() override;
+
+  SystemWebAppManager& system_web_app_manager() {
+    return *system_web_app_manager_;
+  }
+
+  void set_ui_delegate(WebAppUiDelegate* ui_delegate) {
+    ui_delegate_ = ui_delegate;
+  }
 
   static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
   static WebAppTabHelperBase* CreateTabHelper(
       content::WebContents* web_contents);
-
-  // Returns true if a bookmark can be installed for a given |web_contents|.
-  static bool CanInstallWebApp(content::WebContents* web_contents);
-
-  // Starts a bookmark installation process for a given |web_contents|.
-  static void InstallWebApp(content::WebContents* web_contents,
-                            bool force_shortcut_app);
-
-  void Reset();
 
   // content::NotificationObserver
   void Observe(int type,
@@ -85,7 +93,7 @@ class WebAppProvider : public KeyedService,
                const content::NotificationDetails& details) override;
 
   // Fires when app registry becomes ready.
-  // Consider to use base::ObserverList or extensions::OneShotEvent if many
+  // Consider to use base::ObserverList or base::OneShotEvent if many
   // subscribers needed.
   void SetRegistryReadyCallback(base::OnceClosure callback);
 
@@ -101,23 +109,28 @@ class WebAppProvider : public KeyedService,
 
   void OnRegistryReady();
 
-  void OnScanForExternalWebApps(
-      std::vector<web_app::PendingAppManager::AppInfo>);
+  void OnScanForExternalWebApps(std::vector<InstallOptions>);
+
+  // Called just before profile destruction. All WebContents must be destroyed
+  // by the end of this method.
+  void ProfileDestroyed();
 
   // New extension-independent subsystems:
   std::unique_ptr<WebAppAudioFocusIdMap> audio_focus_id_map_;
   std::unique_ptr<WebAppDatabaseFactory> database_factory_;
   std::unique_ptr<WebAppDatabase> database_;
-  std::unique_ptr<WebAppRegistrar> registrar_;
   std::unique_ptr<WebAppIconManager> icon_manager_;
+  WebAppUiDelegate* ui_delegate_ = nullptr;
 
   // New generalized subsystems:
+  std::unique_ptr<AppRegistrar> registrar_;
+  std::unique_ptr<InstallFinalizer> install_finalizer_;
   std::unique_ptr<InstallManager> install_manager_;
   std::unique_ptr<PendingAppManager> pending_app_manager_;
+  std::unique_ptr<SystemWebAppManager> system_web_app_manager_;
 
   // Legacy extension-based subsystems:
   std::unique_ptr<WebAppPolicyManager> web_app_policy_manager_;
-  std::unique_ptr<SystemWebAppManager> system_web_app_manager_;
 
   content::NotificationRegistrar notification_registrar_;
 

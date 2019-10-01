@@ -4,6 +4,7 @@
 
 #include "chrome/browser/android/explore_sites/explore_sites_service_impl.h"
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_macros.h"
@@ -71,7 +72,8 @@ ExploreSitesServiceImpl::~ExploreSitesServiceImpl() {}
 bool ExploreSitesServiceImpl::IsExploreSitesEnabled() {
   ExploreSitesVariation variation = GetExploreSitesVariation();
   return variation == ExploreSitesVariation::ENABLED ||
-         variation == ExploreSitesVariation::PERSONALIZED;
+         variation == ExploreSitesVariation::PERSONALIZED ||
+         variation == ExploreSitesVariation::MOST_LIKELY;
 }
 
 void ExploreSitesServiceImpl::GetCatalog(CatalogCallback callback) {
@@ -90,6 +92,16 @@ void ExploreSitesServiceImpl::GetCategoryImage(int category_id,
                                                BitmapCallback callback) {
   task_queue_.AddTask(std::make_unique<GetImagesTask>(
       explore_sites_store_.get(), category_id, kFaviconsPerCategoryImage,
+      base::BindOnce(&ExploreSitesServiceImpl::ComposeCategoryImage,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(callback),
+                     pixel_size)));
+}
+
+void ExploreSitesServiceImpl::GetSummaryImage(int pixel_size,
+                                              BitmapCallback callback) {
+  task_queue_.AddTask(std::make_unique<GetImagesTask>(
+      explore_sites_store_.get(), GetImagesTask::DataType::kSummary,
+      kFaviconsPerCategoryImage,
       base::BindOnce(&ExploreSitesServiceImpl::ComposeCategoryImage,
                      weak_ptr_factory_.GetWeakPtr(), std::move(callback),
                      pixel_size)));

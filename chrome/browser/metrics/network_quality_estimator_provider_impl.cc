@@ -4,6 +4,7 @@
 
 #include "chrome/browser/metrics/network_quality_estimator_provider_impl.h"
 
+#include "base/bind.h"
 #include "base/sequenced_task_runner.h"
 #include "base/task/post_task.h"
 #include "chrome/browser/browser_process.h"
@@ -17,7 +18,7 @@ NetworkQualityEstimatorProviderImpl::NetworkQualityEstimatorProviderImpl()
 }
 
 NetworkQualityEstimatorProviderImpl::~NetworkQualityEstimatorProviderImpl() {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   if (callback_) {
     g_browser_process->network_quality_tracker()
@@ -27,7 +28,7 @@ NetworkQualityEstimatorProviderImpl::~NetworkQualityEstimatorProviderImpl() {
 
 void NetworkQualityEstimatorProviderImpl::PostReplyOnNetworkQualityChanged(
     base::RepeatingCallback<void(net::EffectiveConnectionType)> callback) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   if (!content::BrowserThread::IsThreadInitialized(
           content::BrowserThread::IO)) {
     // IO thread is not yet initialized. Try again in the next message pump.
@@ -41,12 +42,11 @@ void NetworkQualityEstimatorProviderImpl::PostReplyOnNetworkQualityChanged(
   }
 
 #ifdef OS_ANDROID
-  // TODO(tbansal): https://crbug.com/898304: Tasks posted via
-  // content::BrowserThread::PostAfterStartupTask may take up to ~20 seconds to
-  // execute. Figure out a way to call
+  // TODO(tbansal): https://crbug.com/898304: Tasks posted at BEST_EFFORT
+  // may take up to ~20 seconds to execute. Figure out a way to call
   // g_browser_process->network_quality_tracker earlier rather than waiting for
-  // content::BrowserThread::PostAfterStartupTask.
-  content::BrowserThread::PostAfterStartupTask(
+  // BEST_EFFORT to run (which happens sometime after startup is completed)
+  content::BrowserThread::PostBestEffortTask(
       FROM_HERE, base::SequencedTaskRunnerHandle::Get(),
       base::BindOnce(&NetworkQualityEstimatorProviderImpl::
                          AddEffectiveConnectionTypeObserverNow,
@@ -64,7 +64,7 @@ void NetworkQualityEstimatorProviderImpl::PostReplyOnNetworkQualityChanged(
 
 void NetworkQualityEstimatorProviderImpl::AddEffectiveConnectionTypeObserverNow(
     base::RepeatingCallback<void(net::EffectiveConnectionType)> callback) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(!callback_);
 
   callback_ = callback;
@@ -75,7 +75,7 @@ void NetworkQualityEstimatorProviderImpl::AddEffectiveConnectionTypeObserverNow(
 
 void NetworkQualityEstimatorProviderImpl::OnEffectiveConnectionTypeChanged(
     net::EffectiveConnectionType type) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   callback_.Run(type);
 }
 

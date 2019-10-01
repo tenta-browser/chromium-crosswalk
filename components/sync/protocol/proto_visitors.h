@@ -209,7 +209,6 @@ VISIT_PROTO_FIELDS(const sync_pb::ChromiumExtensionsActivity& proto) {
 
 VISIT_PROTO_FIELDS(const sync_pb::ClientCommand& proto) {
   VISIT(set_sync_poll_interval);
-  VISIT(set_sync_long_poll_interval);
   VISIT(max_commit_batch_size);
   VISIT(sessions_commit_delay_seconds);
   VISIT(throttle_delay_seconds);
@@ -270,7 +269,6 @@ VISIT_PROTO_FIELDS(const sync_pb::CommitResponse::EntryResponse& proto) {
   VISIT_ENUM(response_type);
   VISIT(id_string);
   VISIT(parent_id_string);
-  VISIT(position_in_parent);
   VISIT(version);
   VISIT(name);
   VISIT(error_message);
@@ -337,6 +335,11 @@ VISIT_PROTO_FIELDS(const sync_pb::DeviceInfoSpecifics& proto) {
   VISIT(chrome_version);
   VISIT(signin_scoped_device_id);
   VISIT(last_updated_timestamp);
+  VISIT(feature_fields);
+}
+
+VISIT_PROTO_FIELDS(const sync_pb::FeatureSpecificFields& proto) {
+  VISIT(send_tab_to_self_receiving_enabled);
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::DictionarySpecifics& proto) {
@@ -368,7 +371,7 @@ VISIT_PROTO_FIELDS(const sync_pb::EntityMetadata& proto) {
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::EntitySpecifics& proto) {
-  static_assert(43 == MODEL_TYPE_COUNT,
+  static_assert(45 == ModelType::NUM_ENTRIES,
                 "When adding a new protocol type, you will likely need to add "
                 "it here as well.");
   VISIT(encrypted);
@@ -402,6 +405,7 @@ VISIT_PROTO_FIELDS(const sync_pb::EntitySpecifics& proto) {
   VISIT(priority_preference);
   VISIT(reading_list);
   VISIT(search_engine);
+  VISIT(security_event);
   VISIT(send_tab_to_self);
   VISIT(session);
   VISIT(synced_notification);
@@ -411,6 +415,7 @@ VISIT_PROTO_FIELDS(const sync_pb::EntitySpecifics& proto) {
   VISIT(user_consent);
   VISIT(user_event);
   VISIT(wallet_metadata);
+  VISIT(wifi_configuration);
   VISIT(wifi_credential);
 }
 
@@ -488,10 +493,12 @@ VISIT_PROTO_FIELDS(const sync_pb::GetUpdateTriggers& proto) {
   VISIT(invalidations_out_of_sync);
   VISIT(local_modification_nudges);
   VISIT(datatype_refresh_nudges);
+  VISIT(server_dropped_hints);
+  VISIT(initial_sync_in_progress);
+  VISIT(sync_for_resolve_conflict_in_progress);
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::GetUpdatesCallerInfo& proto) {
-  VISIT_ENUM(source);
   VISIT(notifications_enabled);
 }
 
@@ -523,6 +530,7 @@ VISIT_PROTO_FIELDS(const sync_pb::GlobalIdDirective& proto) {
 VISIT_PROTO_FIELDS(const sync_pb::HistoryDeleteDirectiveSpecifics& proto) {
   VISIT(global_id_directive);
   VISIT(time_range_directive);
+  VISIT(url_directive);
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::HistoryDeleteDirectives& proto) {
@@ -745,6 +753,7 @@ VISIT_PROTO_FIELDS(const sync_pb::SendTabToSelfSpecifics& proto) {
   VISIT(shared_time_usec);
   VISIT(navigation_time_usec);
   VISIT(device_name);
+  VISIT(target_device_sync_cache_guid);
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::SessionHeader& proto) {
@@ -818,8 +827,11 @@ VISIT_PROTO_FIELDS(const sync_pb::SyncedNotificationAppInfoSpecifics& proto) {}
 
 VISIT_PROTO_FIELDS(const sync_pb::SyncedNotificationSpecifics& proto) {}
 
-VISIT_PROTO_FIELDS(
-    const sync_pb::UserEventSpecifics::GaiaPasswordReuse& proto) {
+VISIT_PROTO_FIELDS(const sync_pb::SecurityEventSpecifics& proto) {
+  VISIT(gaia_password_reuse_event);
+}
+
+VISIT_PROTO_FIELDS(const sync_pb::GaiaPasswordReuse& proto) {
   VISIT(reuse_detected);
   VISIT(reuse_lookup);
   VISIT(dialog_interaction);
@@ -828,34 +840,31 @@ VISIT_PROTO_FIELDS(
 }
 
 VISIT_PROTO_FIELDS(
-    const sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordReuseDetected&
-        proto) {
+    const sync_pb::GaiaPasswordReuse::PasswordReuseDetected& proto) {
   VISIT(status);
 }
 
-VISIT_PROTO_FIELDS(const sync_pb::UserEventSpecifics::GaiaPasswordReuse::
-                       PasswordReuseDetected::SafeBrowsingStatus& proto) {
+VISIT_PROTO_FIELDS(
+    const sync_pb::GaiaPasswordReuse::PasswordReuseDetected::SafeBrowsingStatus&
+        proto) {
   VISIT(enabled);
   VISIT_ENUM(safe_browsing_reporting_population);
 }
 
-VISIT_PROTO_FIELDS(const sync_pb::UserEventSpecifics::GaiaPasswordReuse::
-                       PasswordReuseDialogInteraction& proto) {
+VISIT_PROTO_FIELDS(
+    const sync_pb::GaiaPasswordReuse::PasswordReuseDialogInteraction& proto) {
   VISIT_ENUM(interaction_result);
 }
 
 VISIT_PROTO_FIELDS(
-    const sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordReuseLookup&
-        proto) {
+    const sync_pb::GaiaPasswordReuse::PasswordReuseLookup& proto) {
   VISIT_ENUM(lookup_result);
   VISIT_ENUM(verdict);
   VISIT(verdict_token);
 }
 
 // TODO(markusheintz): Remove.
-VISIT_PROTO_FIELDS(
-    const sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordCaptured&
-        proto) {
+VISIT_PROTO_FIELDS(const sync_pb::GaiaPasswordReuse::PasswordCaptured& proto) {
   VISIT_ENUM(event_trigger);
 }
 
@@ -899,6 +908,10 @@ VISIT_PROTO_FIELDS(const sync_pb::ThemeSpecifics& proto) {
   VISIT(custom_theme_name);
   VISIT(custom_theme_id);
   VISIT(custom_theme_update_url);
+  VISIT(autogenerated_theme);
+}
+VISIT_PROTO_FIELDS(const sync_pb::ThemeSpecifics::AutogeneratedTheme& proto) {
+  VISIT(color);
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::TimeRangeDirective& proto) {
@@ -910,6 +923,11 @@ VISIT_PROTO_FIELDS(const sync_pb::UserEventSpecifics::Translation& proto) {
   VISIT(from_language_code);
   VISIT(to_language_code);
   VISIT_ENUM(interaction);
+}
+
+VISIT_PROTO_FIELDS(const sync_pb::UrlDirective& proto) {
+  VISIT(url);
+  VISIT(end_time_usec);
 }
 
 // TODO(vitaliii): Delete once UserEventSpecifics::UserConsent is completely
@@ -1065,6 +1083,30 @@ VISIT_PROTO_FIELDS(const sync_pb::WifiCredentialSpecifics& proto) {
   VISIT_BYTES(ssid);
   VISIT_ENUM(security_class);
   VISIT_BYTES(passphrase);
+}
+
+VISIT_PROTO_FIELDS(const sync_pb::WifiConfigurationSpecifics& proto) {
+  VISIT(encrypted);
+  VISIT(client_only_encrypted_data);
+}
+
+VISIT_PROTO_FIELDS(
+    const sync_pb::WifiConfigurationSpecificsData::ProxyConfiguration& proto) {
+  VISIT_ENUM(proxy_option);
+  VISIT(proxy_url);
+  VISIT(proxy_port);
+  VISIT_REP(whitelisted_domains);
+}
+
+VISIT_PROTO_FIELDS(const sync_pb::WifiConfigurationSpecificsData& proto) {
+  VISIT_BYTES(ssid);
+  VISIT_ENUM(security_type);
+  VISIT_BYTES(passphrase);
+  VISIT_ENUM(automatically_connect);
+  VISIT_ENUM(is_preferred);
+  VISIT(proxy_configuration);
+  VISIT_REP(custom_dns);
+  VISIT(last_update_timestamp);
 }
 
 }  // namespace syncer

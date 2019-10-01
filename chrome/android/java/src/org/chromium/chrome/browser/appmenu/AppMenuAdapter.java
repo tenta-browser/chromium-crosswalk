@@ -11,6 +11,7 @@ import android.animation.ObjectAnimator;
 import android.content.res.Resources;
 import android.graphics.drawable.Drawable;
 import android.support.annotation.IntDef;
+import android.support.v4.graphics.drawable.DrawableCompat;
 import android.support.v7.content.res.AppCompatResources;
 import android.text.TextUtils;
 import android.view.LayoutInflater;
@@ -106,7 +107,6 @@ class AppMenuAdapter extends BaseAdapter {
     private final int mNumMenuItems;
     private final Integer mHighlightedItemId;
     private final float mDpToPx;
-    private View mHighlightedView;
 
     public AppMenuAdapter(AppMenu appMenu, List<MenuItem> menuItems, LayoutInflater inflater,
             Integer highlightedItemId) {
@@ -208,13 +208,21 @@ class AppMenuAdapter extends BaseAdapter {
                     holder.text.setText(itemState.title);
                     holder.text.setContentDescription(resources.getString(itemState.title));
                     holder.text.setTextColor(
-                            ApiCompatibilityUtils.getColor(resources, itemState.titleColor));
+                            ApiCompatibilityUtils.getColor(resources, itemState.titleColorId));
 
                     if (!TextUtils.isEmpty(itemState.summary)) {
                         holder.summary.setText(itemState.summary);
+                        holder.summary.setVisibility(View.VISIBLE);
+                    } else {
+                        holder.summary.setText("");
+                        holder.summary.setVisibility(View.GONE);
                     }
 
                     holder.image.setImageResource(itemState.icon);
+                    if (itemState.iconTintId != 0) {
+                        DrawableCompat.setTint(holder.image.getDrawable(),
+                                ApiCompatibilityUtils.getColor(resources, itemState.iconTintId));
+                    }
                     convertView.setEnabled(itemState.enabled);
                 }
                 break;
@@ -289,19 +297,12 @@ class AppMenuAdapter extends BaseAdapter {
         }
 
         if (mHighlightedItemId != null && item.getItemId() == mHighlightedItemId) {
-            mHighlightedView = convertView;
             ViewHighlighter.turnOnHighlight(convertView, false);
         } else {
-            if (mHighlightedView == convertView) mHighlightedView = null;
             ViewHighlighter.turnOffHighlight(convertView);
         }
 
         return convertView;
-    }
-
-    /** @return The view currently highlighted. */
-    public View getHighlightedView() {
-        return mHighlightedView;
     }
 
     private void setupCheckBox(AppMenuItemIcon button, final MenuItem item) {
@@ -346,10 +347,8 @@ class AppMenuAdapter extends BaseAdapter {
         button.setOnLongClickListener(v -> mAppMenu.onItemLongClick(item, v));
 
         if (mHighlightedItemId != null && item.getItemId() == mHighlightedItemId) {
-            mHighlightedView = button;
             ViewHighlighter.turnOnHighlight(button, true);
         } else {
-            if (mHighlightedView == button) mHighlightedView = null;
             ViewHighlighter.turnOffHighlight(button);
         }
 

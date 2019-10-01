@@ -56,10 +56,6 @@ const user_manager::User* FakeUserManager::AddUserWithAffiliation(
   return user;
 }
 
-void FakeUserManager::OnProfileInitialized(User* user) {
-  user->set_profile_ever_initialized(true);
-}
-
 void FakeUserManager::RemoveUserFromList(const AccountId& account_id) {
   const user_manager::UserList::iterator it =
       std::find_if(users_.begin(), users_.end(),
@@ -88,6 +84,18 @@ user_manager::UserList FakeUserManager::GetUsersAllowedForMultiProfile() const {
       result.push_back(*it);
   }
   return result;
+}
+
+void FakeUserManager::UpdateUserAccountData(
+    const AccountId& account_id,
+    const UserAccountData& account_data) {
+  for (user_manager::User* user : users_) {
+    if (user->GetAccountId() == account_id) {
+      user->set_display_name(account_data.display_name());
+      user->set_given_name(account_data.given_name());
+      return;
+    }
+  }
 }
 
 void FakeUserManager::UserLoggedIn(const AccountId& account_id,
@@ -290,7 +298,7 @@ const std::string& FakeUserManager::GetApplicationLocale() const {
 }
 
 PrefService* FakeUserManager::GetLocalState() const {
-  return nullptr;
+  return local_state_;
 }
 
 bool FakeUserManager::IsEnterpriseManaged() const {

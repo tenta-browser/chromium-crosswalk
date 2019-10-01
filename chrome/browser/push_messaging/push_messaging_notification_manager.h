@@ -25,11 +25,7 @@ class Profile;
 namespace content {
 struct NotificationDatabaseData;
 class WebContents;
-}
-
-namespace blink {
-struct PlatformNotificationData;
-}
+}  // namespace content
 
 // Developers may be required to display a Web Notification in response to an
 // incoming push message in order to clarify to the user that something has
@@ -45,6 +41,9 @@ struct PlatformNotificationData;
 // https://crbug.com/437277
 class PushMessagingNotificationManager {
  public:
+  using EnforceRequirementsCallback =
+      base::OnceCallback<void(bool did_show_generic_notification)>;
+
   explicit PushMessagingNotificationManager(Profile* profile);
   ~PushMessagingNotificationManager();
 
@@ -53,7 +52,7 @@ class PushMessagingNotificationManager {
   void EnforceUserVisibleOnlyRequirements(
       const GURL& origin,
       int64_t service_worker_registration_id,
-      const base::Closure& message_handled_closure);
+      EnforceRequirementsCallback message_handled_callback);
 
  private:
   FRIEND_TEST_ALL_PREFIXES(PushMessagingNotificationManagerTest, IsTabVisible);
@@ -63,18 +62,10 @@ class PushMessagingNotificationManager {
       PushMessagingNotificationManagerTest,
       SkipEnforceUserVisibleOnlyRequirementsForAndroidMessages);
 
-  static void DidGetNotificationsFromDatabaseIOProxy(
-      const base::WeakPtr<PushMessagingNotificationManager>& ui_weak_ptr,
-      const GURL& origin,
-      int64_t service_worker_registration_id,
-      const base::Closure& message_handled_closure,
-      bool success,
-      const std::vector<content::NotificationDatabaseData>& data);
-
   void DidGetNotificationsFromDatabase(
       const GURL& origin,
       int64_t service_worker_registration_id,
-      const base::Closure& message_handled_closure,
+      EnforceRequirementsCallback message_handled_callback,
       bool success,
       const std::vector<content::NotificationDatabaseData>& data);
 
@@ -87,21 +78,11 @@ class PushMessagingNotificationManager {
 
   void ProcessSilentPush(const GURL& origin,
                          int64_t service_worker_registration_id,
-                         const base::Closure& message_handled_closure,
+                         EnforceRequirementsCallback message_handled_callback,
                          bool silent_push_allowed);
 
-  static void DidWriteNotificationDataIOProxy(
-      const base::WeakPtr<PushMessagingNotificationManager>& ui_weak_ptr,
-      const GURL& origin,
-      const blink::PlatformNotificationData& notification_data,
-      const base::Closure& message_handled_closure,
-      bool success,
-      const std::string& notification_id);
-
   void DidWriteNotificationData(
-      const GURL& origin,
-      const blink::PlatformNotificationData& notification_data,
-      const base::Closure& message_handled_closure,
+      EnforceRequirementsCallback message_handled_callback,
       bool success,
       const std::string& notification_id);
 

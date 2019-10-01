@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/macros.h"
+#include "base/timer/timer.h"
 #include "chromeos/services/assistant/public/mojom/assistant.mojom.h"
 #include "mojo/public/cpp/bindings/binding.h"
 
@@ -22,6 +23,7 @@ class TestAssistantService : public chromeos::assistant::mojom::Assistant {
 
   // mojom::Assistant overrides:
   void StartCachedScreenContextInteraction() override {}
+  void StartEditReminderInteraction(const std::string& client_id) override {}
   void StartMetalayerInteraction(const gfx::Rect& region) override {}
   void StartTextInteraction(const std::string& query, bool allow_tts) override {
   }
@@ -38,10 +40,12 @@ class TestAssistantService : public chromeos::assistant::mojom::Assistant {
   void DismissNotification(chromeos::assistant::mojom::AssistantNotificationPtr
                                notification) override {}
   void CacheScreenContext(CacheScreenContextCallback callback) override;
-  void ClearScreenContextCache() override{};
+  void ClearScreenContextCache() override {}
   void OnAccessibilityStatusChanged(bool spoken_feedback_enabled) override {}
   void SendAssistantFeedback(
       chromeos::assistant::mojom::AssistantFeedbackPtr feedback) override {}
+  void StopAlarmTimerRinging() override {}
+  void CreateTimer(base::TimeDelta duration) override {}
 
  private:
   mojo::Binding<chromeos::assistant::mojom::Assistant> binding_;

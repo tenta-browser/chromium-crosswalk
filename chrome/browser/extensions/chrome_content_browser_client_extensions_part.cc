@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/debug/alias.h"
 #include "base/debug/dump_without_crashing.h"
@@ -280,6 +281,28 @@ bool HasEffectiveUrl(content::BrowserContext* browser_context,
              Profile::FromBrowserContext(browser_context), url) != url;
 }
 
+const ExtensionSet* GetEnabledExtensions(content::BrowserContext* context) {
+  ExtensionRegistry* registry = ExtensionRegistry::Get(context);
+  return &registry->enabled_extensions();
+}
+
+const ExtensionSet* GetEnabledExtensions(content::ResourceContext* context) {
+  ProfileIOData* profile = ProfileIOData::FromResourceContext(context);
+  if (!profile)
+    return nullptr;
+
+  return &profile->GetExtensionInfoMap()->extensions();
+}
+
+const ExtensionSet* GetEnabledExtensions(
+    content::BrowserOrResourceContext context) {
+  if (content::BrowserThread::CurrentlyOn(content::BrowserThread::UI)) {
+    return GetEnabledExtensions(context.ToBrowserContext());
+  }
+  DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::IO));
+  return GetEnabledExtensions(context.ToResourceContext());
+}
+
 }  // namespace
 
 ChromeContentBrowserClientExtensionsPart::
@@ -384,25 +407,12 @@ bool ChromeContentBrowserClientExtensionsPart::ShouldUseSpareRenderProcessHost(
 
 // static
 bool ChromeContentBrowserClientExtensionsPart::DoesSiteRequireDedicatedProcess(
-    content::BrowserContext* browser_context,
+    content::BrowserOrResourceContext browser_or_resource_context,
     const GURL& effective_site_url) {
-  const Extension* extension = ExtensionRegistry::Get(browser_context)
-                                   ->enabled_extensions()
-                                   .GetExtensionOrAppByURL(effective_site_url);
-  if (!extension)
-    return false;
-
-  // Always isolate Chrome Web Store.
-  if (extension->id() == kWebStoreAppId)
-    return true;
-
-  // Extensions should be isolated, except for hosted apps. Isolating hosted
-  // apps is a good idea, but ought to be a separate knob.
-  if (extension->is_hosted_app())
-    return false;
-
+  const Extension* extension = GetEnabledExtensions(browser_or_resource_context)
+                                   ->GetExtensionOrAppByURL(effective_site_url);
   // Isolate all extensions.
-  return true;
+  return extension != nullptr;
 }
 
 // static
@@ -688,7 +698,8 @@ void ChromeContentBrowserClientExtensionsPart::OverrideNavigationParams(
     content::SiteInstance* site_instance,
     ui::PageTransition* transition,
     bool* is_renderer_initiated,
-    content::Referrer* referrer) {
+    content::Referrer* referrer,
+    base::Optional<url::Origin>* initiator_origin) {
   const Extension* extension =
       ExtensionRegistry::Get(site_instance->GetBrowserContext())
           ->enabled_extensions()
@@ -696,8 +707,11 @@ void ChromeContentBrowserClientExtensionsPart::OverrideNavigationParams(
   if (!extension)
     return;
 
-  // Hide the referrer for extension pages. We don't want sites to see a
+  // Hide the |referrer| for extension pages. We don't want sites to see a
   // referrer of chrome-extension://<...>.
+  //
+  // OTOH, don't change |initiator_origin| - SameSite-cookies and Sec-Fetch-Site
+  // should still see the request as cross-site.
   if (extension->is_extension())
     *referrer = content::Referrer();
 }
@@ -759,7 +773,7 @@ bool ChromeContentBrowserClientExtensionsPart::ShouldAllowOpenURL(
     return true;
   }
 
-  // Navigations from chrome://, chrome-search:// and chrome-devtools:// pages
+  // Navigations from chrome://, chrome-search:// and devtools:// pages
   // need to be allowed, even if |to_url| is not web-accessible. See
   // https://crbug.com/662602.
   //
@@ -857,7 +871,7 @@ void ChromeContentBrowserClientExtensionsPart::
   // Log that CORB would have blocked in a meaningful way a request that was
   // initiated by a content script.
   UMA_HISTOGRAM_ENUMERATION("SiteIsolation.XSD.Browser.Allowed.ContentScript",
-                            resource_type, content::RESOURCE_TYPE_LAST_TYPE);
+                            resource_type);
   rappor::SampleString(rappor::GetDefaultService(),
                        "Extensions.CrossOriginFetchFromContentScript2",
                        rappor::UMA_RAPPOR_TYPE, extension_id);

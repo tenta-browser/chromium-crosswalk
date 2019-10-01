@@ -88,13 +88,8 @@ class CORE_EXPORT InspectorPageAgent final
     kOtherResource
   };
 
-  static InspectorPageAgent* Create(InspectedFrames*,
-                                    Client*,
-                                    InspectorResourceContentLoader*,
-                                    v8_inspector::V8InspectorSession*);
-
   static HeapVector<Member<Document>> ImportsForFrame(LocalFrame*);
-  static bool CachedResourceContent(Resource*,
+  static bool CachedResourceContent(const Resource*,
                                     String* result,
                                     bool* base64_encoded);
   static bool SharedBufferContent(scoped_refptr<const SharedBuffer>,
@@ -177,13 +172,16 @@ class CORE_EXPORT InspectorPageAgent final
   // InspectorInstrumentation API
   void DidClearDocumentOfWindowObject(LocalFrame*);
   void DidNavigateWithinDocument(LocalFrame*);
-  void DOMContentLoadedEventFired(LocalFrame*);
+  void DomContentLoadedEventFired(LocalFrame*);
   void LoadEventFired(LocalFrame*);
   void WillCommitLoad(LocalFrame*, DocumentLoader*);
   void FrameAttachedToParent(LocalFrame*);
   void FrameDetachedFromParent(LocalFrame*);
   void FrameStartedLoading(LocalFrame*);
   void FrameStoppedLoading(LocalFrame*);
+  void FrameRequestedNavigation(Frame* target_frame,
+                                const KURL&,
+                                ClientNavigationReason);
   void FrameScheduledNavigation(LocalFrame*,
                                 const KURL&,
                                 double delay,

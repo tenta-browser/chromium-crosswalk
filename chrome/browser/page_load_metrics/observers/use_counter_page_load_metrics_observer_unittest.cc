@@ -11,7 +11,7 @@
 #include "base/test/metrics/histogram_tester.h"
 #include "chrome/browser/page_load_metrics/observers/page_load_metrics_observer_test_harness.h"
 #include "chrome/browser/page_load_metrics/page_load_tracker.h"
-#include "third_party/blink/public/platform/web_feature.mojom.h"
+#include "third_party/blink/public/mojom/web_feature/web_feature.mojom.h"
 #include "url/gurl.h"
 
 namespace {
@@ -169,7 +169,7 @@ TEST_F(UseCounterPageLoadMetricsObserverTest, CountDuplicatedFeatures) {
 }
 
 TEST_F(UseCounterPageLoadMetricsObserverTest, RecordCSSProperties) {
-  // CSSPropertyFont (5), CSSPropertyZoom (19)
+  // CSSPropertyID::kFont (5), CSSPropertyID::kZoom (19)
   page_load_metrics::mojom::PageLoadFeatures page_load_features_0;
   page_load_metrics::mojom::PageLoadFeatures page_load_features_1;
   page_load_features_0.css_properties = {5, 19};
@@ -178,7 +178,7 @@ TEST_F(UseCounterPageLoadMetricsObserverTest, RecordCSSProperties) {
 }
 
 TEST_F(UseCounterPageLoadMetricsObserverTest, RecordAnimatedCSSProperties) {
-  // CSSPropertyFont (5), CSSPropertyZoom (19)
+  // CSSPropertyID::kFont (5), CSSPropertyID::kZoom (19)
   page_load_metrics::mojom::PageLoadFeatures page_load_features_0;
   page_load_metrics::mojom::PageLoadFeatures page_load_features_1;
   page_load_features_0.css_properties = {5, 19};

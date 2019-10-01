@@ -12,6 +12,7 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "content/browser/cache_storage/cache_storage_cache_handle.h"
+#include "content/browser/cache_storage/scoped_writable_entry.h"
 #include "content/common/content_export.h"
 #include "net/disk_cache/disk_cache.h"
 #include "storage/browser/blob/blob_data_builder.h"
@@ -35,7 +36,8 @@ struct PutContext {
              blink::mojom::BlobPtr blob,
              uint64_t blob_size,
              blink::mojom::BlobPtr side_data_blob,
-             uint64_t side_data_blob_size);
+             uint64_t side_data_blob_size,
+             int64_t trace_id);
 
   ~PutContext();
 
@@ -46,10 +48,11 @@ struct PutContext {
   uint64_t blob_size;
   blink::mojom::BlobPtr side_data_blob;
   uint64_t side_data_blob_size;
+  int64_t trace_id;
 
   // Provided while writing to the cache.
   ErrorCallback callback;
-  disk_cache::ScopedEntryPtr cache_entry;
+  ScopedWritableEntry cache_entry;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(PutContext);
@@ -89,7 +92,8 @@ class CONTENT_EXPORT CacheStorageCacheEntryHandler {
 
   virtual std::unique_ptr<PutContext> CreatePutContext(
       blink::mojom::FetchAPIRequestPtr request,
-      blink::mojom::FetchAPIResponsePtr response) = 0;
+      blink::mojom::FetchAPIResponsePtr response,
+      int64_t trace_id) = 0;
   virtual void PopulateResponseBody(
       scoped_refptr<BlobDataHandle> data_handle,
       blink::mojom::FetchAPIResponse* response) = 0;

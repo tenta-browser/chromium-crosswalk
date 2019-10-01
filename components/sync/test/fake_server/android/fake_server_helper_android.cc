@@ -91,9 +91,7 @@ jboolean FakeServerHelperAndroid::VerifySessions(
     jlong fake_server,
     const JavaParamRef<jobjectArray>& url_array) {
   std::multiset<std::string> tab_urls;
-  for (int i = 0; i < env->GetArrayLength(url_array); i++) {
-    base::android::ScopedJavaLocalRef<jstring> j_string(
-        env, static_cast<jstring>(env->GetObjectArrayElement(url_array, i)));
+  for (auto j_string : url_array.ReadElements<jstring>()) {
     tab_urls.insert(base::android::ConvertJavaStringToUTF8(env, j_string));
   }
   fake_server::SessionsHierarchy expected_sessions;
@@ -138,7 +136,8 @@ void FakeServerHelperAndroid::InjectUniqueClientEntity(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj,
     jlong fake_server,
-    const JavaParamRef<jstring>& name,
+    const JavaParamRef<jstring>& non_unique_name,
+    const JavaParamRef<jstring>& client_tag,
     const JavaParamRef<jbyteArray>& serialized_entity_specifics) {
   fake_server::FakeServer* fake_server_ptr =
       reinterpret_cast<fake_server::FakeServer*>(fake_server);
@@ -149,9 +148,10 @@ void FakeServerHelperAndroid::InjectUniqueClientEntity(
 
   int64_t now = syncer::TimeToProtoTime(base::Time::Now());
   fake_server_ptr->InjectEntity(
-      syncer::PersistentUniqueClientEntity::CreateFromEntitySpecifics(
-          base::android::ConvertJavaStringToUTF8(env, name), entity_specifics,
-          /*creation_time=*/now, /*last_modified_time=*/now));
+      syncer::PersistentUniqueClientEntity::CreateFromSpecificsForTesting(
+          base::android::ConvertJavaStringToUTF8(env, non_unique_name),
+          base::android::ConvertJavaStringToUTF8(env, client_tag),
+          entity_specifics, /*creation_time=*/now, /*last_modified_time=*/now));
 }
 
 void FakeServerHelperAndroid::SetWalletData(
@@ -321,13 +321,12 @@ void FakeServerHelperAndroid::DeleteEntity(
     const JavaParamRef<jobject>& obj,
     jlong fake_server,
     const JavaParamRef<jstring>& id,
-    const base::android::JavaParamRef<jstring>& client_defined_unique_tag) {
+    const base::android::JavaParamRef<jstring>& client_tag_hash) {
   fake_server::FakeServer* fake_server_ptr =
       reinterpret_cast<fake_server::FakeServer*>(fake_server);
   std::string native_id = base::android::ConvertJavaStringToUTF8(env, id);
   fake_server_ptr->InjectEntity(syncer::PersistentTombstoneEntity::CreateNew(
-      native_id,
-      base::android::ConvertJavaStringToUTF8(env, client_defined_unique_tag)));
+      native_id, base::android::ConvertJavaStringToUTF8(env, client_tag_hash)));
 }
 
 void FakeServerHelperAndroid::ClearServerData(JNIEnv* env,

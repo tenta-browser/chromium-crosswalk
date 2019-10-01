@@ -4,11 +4,13 @@
 
 #include "content/renderer/media_capture_from_element/html_audio_element_capturer_source.h"
 
+#include <utility>
+
+#include "base/bind.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "media/base/audio_parameters.h"
 #include "media/base/audio_renderer_sink.h"
 #include "media/blink/webaudiosourceprovider_impl.h"
-#include "media/blink/webmediaplayer_impl.h"
 #include "third_party/blink/public/platform/web_media_player.h"
 
 namespace content {
@@ -16,16 +18,20 @@ namespace content {
 //static
 HtmlAudioElementCapturerSource*
 HtmlAudioElementCapturerSource::CreateFromWebMediaPlayerImpl(
-    blink::WebMediaPlayer* player) {
+    blink::WebMediaPlayer* player,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
   DCHECK(player);
   return new HtmlAudioElementCapturerSource(
       static_cast<media::WebAudioSourceProviderImpl*>(
-          player->GetAudioSourceProvider()));
+          player->GetAudioSourceProvider()),
+      std::move(task_runner));
 }
 
 HtmlAudioElementCapturerSource::HtmlAudioElementCapturerSource(
-    media::WebAudioSourceProviderImpl* audio_source)
-    : MediaStreamAudioSource(true /* is_local_source */),
+    media::WebAudioSourceProviderImpl* audio_source,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner)
+    : blink::MediaStreamAudioSource(std::move(task_runner),
+                                    true /* is_local_source */),
       audio_source_(audio_source),
       is_started_(false),
       last_sample_rate_(0),
@@ -57,7 +63,7 @@ void HtmlAudioElementCapturerSource::SetAudioCallback() {
   if (audio_source_ && is_started_) {
     // base:Unretained() is safe here since EnsureSourceIsStopped() guarantees
     // no more calls to OnAudioBus().
-    audio_source_->SetCopyAudioCallback(base::Bind(
+    audio_source_->SetCopyAudioCallback(base::BindRepeating(
         &HtmlAudioElementCapturerSource::OnAudioBus, base::Unretained(this)));
   }
 }
@@ -86,7 +92,7 @@ void HtmlAudioElementCapturerSource::OnAudioBus(
   if (sample_rate != last_sample_rate_ ||
       audio_bus->channels() != last_num_channels_ ||
       audio_bus->frames() != last_bus_frames_) {
-    MediaStreamAudioSource::SetFormat(
+    blink::MediaStreamAudioSource::SetFormat(
         media::AudioParameters(media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
                                media::GuessChannelLayout(audio_bus->channels()),
                                sample_rate, audio_bus->frames()));
@@ -95,7 +101,7 @@ void HtmlAudioElementCapturerSource::OnAudioBus(
     last_bus_frames_ = audio_bus->frames();
   }
 
-  MediaStreamAudioSource::DeliverDataToTracks(*audio_bus, capture_time);
+  blink::MediaStreamAudioSource::DeliverDataToTracks(*audio_bus, capture_time);
 }
 
 }  // namespace content

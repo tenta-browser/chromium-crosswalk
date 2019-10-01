@@ -3,12 +3,20 @@
 // found in the LICENSE file.
 
 UI.ARIAUtils = {};
+UI.ARIAUtils._id = 0;
 
 /**
  * @param {!Element} element
  */
 UI.ARIAUtils.markAsButton = function(element) {
   element.setAttribute('role', 'button');
+};
+
+/**
+ * @param {!Element} element
+ */
+UI.ARIAUtils.markAsCheckbox = function(element) {
+  element.setAttribute('role', 'checkbox');
 };
 
 /**
@@ -76,6 +84,15 @@ UI.ARIAUtils.markAsHidden = function(element) {
 
 /**
  * @param {!Element} element
+ * @param {number} level
+ */
+UI.ARIAUtils.markAsHeading = function(element, level) {
+  element.setAttribute('role', 'heading');
+  element.setAttribute('aria-level', level);
+};
+
+/**
+ * @param {!Element} element
  * @param {?string} placeholder
  */
 UI.ARIAUtils.setPlaceholder = function(element, placeholder) {
@@ -94,6 +111,22 @@ UI.ARIAUtils.markAsPresentation = function(element) {
 
 /**
  * @param {!Element} element
+ */
+UI.ARIAUtils.ensureId = function(element) {
+  if (!element.id)
+    element.id = UI.ARIAUtils.nextId('ariaElement');
+};
+
+/**
+ * @param {string} prefix
+ * @return {string}
+ */
+UI.ARIAUtils.nextId = function(prefix) {
+  return (prefix || '') + ++UI.ARIAUtils._id;
+};
+
+/**
+ * @param {!Element} element
  * @param {?Element} controlledElement
  */
 UI.ARIAUtils.setControls = function(element, controlledElement) {
@@ -106,6 +139,14 @@ UI.ARIAUtils.setControls = function(element, controlledElement) {
     throw new Error('Controlled element must have ID');
 
   element.setAttribute('aria-controls', controlledElement.id);
+};
+
+/**
+ * @param {!Element} element
+ * @param {boolean} value
+ */
+UI.ARIAUtils.setChecked = function(element, value) {
+  element.setAttribute('aria-checked', !!value);
 };
 
 /**
@@ -151,6 +192,15 @@ UI.ARIAUtils.setPressed = function(element, value) {
  */
 UI.ARIAUtils.setAccessibleName = function(element, name) {
   element.setAttribute('aria-label', name);
+};
+
+/**
+ * @param {!Element} element
+ * @param {!Element} labelElement
+ */
+UI.ARIAUtils.setLabelledBy = function(element, labelElement) {
+  UI.ARIAUtils.ensureId(labelElement);
+  element.setAttribute('aria-labelledby', labelElement.id);
 };
 
 /**

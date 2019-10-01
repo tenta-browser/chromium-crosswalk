@@ -27,14 +27,31 @@ group("test_scripts_shared") {
   ]
 }
 
+if (is_mac || is_win) {
+  group("rendering_representative_perf_tests") {
+    testonly = true
+    deps = [
+      "//tools/perf/chrome_telemetry_build:telemetry_chrome_test",
+    ]
+    data = [
+      "//build/android/pylib",
+      "//chrome/test/data/perf",
+      "//components/variations/service/generate_ui_string_overrider.py",
+      "//testing/scripts",
+      "//testing/test_env.py",
+      "//testing/xvfb.py",
+      "//third_party/catapult",
+      "//tools",
+    ]
+  }
+}
+
 group("run_perf_test") {
   data = [
     "//testing/scripts/common.py",
-    "//testing/scripts/run_gtest_perf_test.py",
     "//testing/scripts/run_performance_tests.py",
-    "//testing/scripts/run_performance_tests_wrapper.py",
-    "//testing/scripts/run_telemetry_benchmark_as_googletest.py",
     "//tools/perf/generate_legacy_perf_dashboard_json.py",
+    "//tools/perf/core/results_merger.py",
   ]
 
   data_deps = [

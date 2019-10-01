@@ -16,6 +16,7 @@
 #include "third_party/blink/renderer/core/html/html_document.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/html/html_html_element.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 
@@ -24,9 +25,9 @@ class RuleFeatureSetTest : public testing::Test {
   RuleFeatureSetTest() = default;
 
   void SetUp() override {
-    document_ = HTMLDocument::CreateForTest();
-    HTMLHtmlElement* html = HTMLHtmlElement::Create(*document_);
-    html->AppendChild(HTMLBodyElement::Create(*document_));
+    document_ = MakeGarbageCollected<HTMLDocument>();
+    auto* html = MakeGarbageCollected<HTMLHtmlElement>(*document_);
+    html->AppendChild(MakeGarbageCollected<HTMLBodyElement>(*document_));
     document_->AppendChild(html);
 
     document_->body()->SetInnerHTMLFromString("<b><i></i></b>");
@@ -44,9 +45,9 @@ class RuleFeatureSetTest : public testing::Test {
       indices.push_back(selector_list.SelectorIndex(*s));
     }
 
-    StyleRule* style_rule = StyleRule::Create(
+    auto* style_rule = MakeGarbageCollected<StyleRule>(
         std::move(selector_list),
-        MutableCSSPropertyValueSet::Create(kHTMLStandardMode));
+        MakeGarbageCollected<MutableCSSPropertyValueSet>(kHTMLStandardMode));
 
     RuleFeatureSet::SelectorPreMatch result =
         RuleFeatureSet::SelectorPreMatch::kSelectorNeverMatches;
@@ -206,8 +207,8 @@ class RuleFeatureSetTest : public testing::Test {
       const AtomicString& sibling_name,
       InvalidationSetVector& invalidation_sets) {
     EXPECT_EQ(1u, invalidation_sets.size());
-    const SiblingInvalidationSet& sibling_invalidation_set =
-        ToSiblingInvalidationSet(*invalidation_sets[0]);
+    const auto& sibling_invalidation_set =
+        To<SiblingInvalidationSet>(*invalidation_sets[0]);
     HashSet<AtomicString> classes = ClassSet(sibling_invalidation_set);
     EXPECT_EQ(1u, classes.size());
     EXPECT_TRUE(classes.Contains(sibling_name));
@@ -219,8 +220,8 @@ class RuleFeatureSetTest : public testing::Test {
                                    const AtomicString& sibling_name,
                                    InvalidationSetVector& invalidation_sets) {
     EXPECT_EQ(1u, invalidation_sets.size());
-    const SiblingInvalidationSet& sibling_invalidation_set =
-        ToSiblingInvalidationSet(*invalidation_sets[0]);
+    const auto& sibling_invalidation_set =
+        To<SiblingInvalidationSet>(*invalidation_sets[0]);
     HashSet<AtomicString> ids = IdSet(*invalidation_sets[0]);
     EXPECT_EQ(1u, ids.size());
     EXPECT_TRUE(ids.Contains(sibling_name));
@@ -234,8 +235,8 @@ class RuleFeatureSetTest : public testing::Test {
       const AtomicString& descendant_name,
       InvalidationSetVector& invalidation_sets) {
     EXPECT_EQ(1u, invalidation_sets.size());
-    const SiblingInvalidationSet& sibling_invalidation_set =
-        ToSiblingInvalidationSet(*invalidation_sets[0]);
+    const auto& sibling_invalidation_set =
+        To<SiblingInvalidationSet>(*invalidation_sets[0]);
     HashSet<AtomicString> classes = ClassSet(sibling_invalidation_set);
     EXPECT_EQ(1u, classes.size());
     EXPECT_TRUE(classes.Contains(sibling_name));
@@ -316,9 +317,9 @@ class RuleFeatureSetTest : public testing::Test {
 
       // For SiblingInvalidationSets, we also require that the inner
       // InvalidationSets either don't exist, or have a refcount of 1.
-      if (it->value->GetType() == kInvalidateSiblings) {
-        const SiblingInvalidationSet& sibling_invalidation_set =
-            ToSiblingInvalidationSet(*it->value);
+      if (it->value->IsSiblingInvalidationSet()) {
+        const auto& sibling_invalidation_set =
+            To<SiblingInvalidationSet>(*it->value);
         bool sibling_descendants_has_one_ref =
             !sibling_invalidation_set.SiblingDescendants() ||
             sibling_invalidation_set.SiblingDescendants()->HasOneRef();

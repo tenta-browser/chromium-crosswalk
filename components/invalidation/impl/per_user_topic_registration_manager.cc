@@ -13,10 +13,13 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/feature_list.h"
 #include "base/rand_util.h"
 #include "base/stl_util.h"
+#include "base/strings/strcat.h"
 #include "base/strings/stringprintf.h"
+#include "base/values.h"
 #include "components/gcm_driver/instance_id/instance_id_driver.h"
 #include "components/invalidation/impl/invalidation_switches.h"
 #include "components/invalidation/public/identity_provider.h"
@@ -29,11 +32,17 @@ namespace syncer {
 
 namespace {
 
-const char kTypeRegisteredForInvalidation[] =
+const char kTypeRegisteredForInvalidationsDeprecated[] =
     "invalidation.registered_for_invalidation";
 
-const char kActiveRegistrationToken[] =
+const char kTypeRegisteredForInvalidations[] =
+    "invalidation.per_sender_registered_for_invalidation";
+
+const char kActiveRegistrationTokenDeprecated[] =
     "invalidation.active_registration_token";
+
+const char kActiveRegistrationTokens[] =
+    "invalidation.per_sender_active_registration_tokens";
 
 const char kInvalidationRegistrationScope[] =
     "https://firebaseperusertopics-pa.googleapis.com";
@@ -73,19 +82,68 @@ static const net::BackoffEntry::Policy kBackoffPolicy = {
     false,
 };
 
+class PerProjectDictionaryPrefUpdate {
+ public:
+  explicit PerProjectDictionaryPrefUpdate(PrefService* prefs,
+                                          const std::string& project_id)
+      : update_(prefs, kTypeRegisteredForInvalidations) {
+    per_sender_pref_ = update_->FindDictKey(project_id);
+    if (!per_sender_pref_) {
+      update_->SetDictionary(project_id,
+                             std::make_unique<base::DictionaryValue>());
+      per_sender_pref_ = update_->FindDictKey(project_id);
+    }
+    DCHECK(per_sender_pref_);
+  }
+
+  base::Value& operator*() { return *per_sender_pref_; }
+
+  base::Value* operator->() { return per_sender_pref_; }
+
+ private:
+  DictionaryPrefUpdate update_;
+  base::Value* per_sender_pref_;
+};
+
+// Added in M76.
+void MigratePrefs(PrefService* prefs, const std::string& project_id) {
+  if (!prefs->HasPrefPath(kActiveRegistrationTokenDeprecated)) {
+    return;
+  }
+  {
+    DictionaryPrefUpdate token_update(prefs, kActiveRegistrationTokens);
+    token_update->SetString(
+        project_id, prefs->GetString(kActiveRegistrationTokenDeprecated));
+  }
+
+  auto* old_registrations =
+      prefs->GetDictionary(kTypeRegisteredForInvalidationsDeprecated);
+  {
+    PerProjectDictionaryPrefUpdate update(prefs, project_id);
+    *update = old_registrations->Clone();
+  }
+  prefs->ClearPref(kActiveRegistrationTokenDeprecated);
+  prefs->ClearPref(kTypeRegisteredForInvalidationsDeprecated);
+}
+
 }  // namespace
 
 // static
 void PerUserTopicRegistrationManager::RegisterProfilePrefs(
     PrefRegistrySimple* registry) {
-  registry->RegisterDictionaryPref(kTypeRegisteredForInvalidation);
-  registry->RegisterStringPref(kActiveRegistrationToken, std::string());
+  registry->RegisterDictionaryPref(kTypeRegisteredForInvalidationsDeprecated);
+  registry->RegisterStringPref(kActiveRegistrationTokenDeprecated,
+                               std::string());
+
+  registry->RegisterDictionaryPref(kTypeRegisteredForInvalidations);
+  registry->RegisterDictionaryPref(kActiveRegistrationTokens);
 }
 
 struct PerUserTopicRegistrationManager::RegistrationEntry {
   RegistrationEntry(const Topic& id,
                     SubscriptionFinishedCallback completion_callback,
-                    PerUserTopicRegistrationRequest::RequestType type);
+                    PerUserTopicRegistrationRequest::RequestType type,
+                    bool topic_is_public = false);
   ~RegistrationEntry();
 
   void RegistrationFinished(const Status& code,
@@ -94,6 +152,7 @@ struct PerUserTopicRegistrationManager::RegistrationEntry {
 
   // The object for which this is the status.
   const Topic topic;
+  const bool topic_is_public;
   SubscriptionFinishedCallback completion_callback;
   PerUserTopicRegistrationRequest::RequestType type;
 
@@ -108,8 +167,10 @@ struct PerUserTopicRegistrationManager::RegistrationEntry {
 PerUserTopicRegistrationManager::RegistrationEntry::RegistrationEntry(
     const Topic& topic,
     SubscriptionFinishedCallback completion_callback,
-    PerUserTopicRegistrationRequest::RequestType type)
+    PerUserTopicRegistrationRequest::RequestType type,
+    bool topic_is_public)
     : topic(topic),
+      topic_is_public(topic_is_public),
       completion_callback(std::move(completion_callback)),
       type(type),
       request_backoff_(&kBackoffPolicy) {}
@@ -133,28 +194,37 @@ PerUserTopicRegistrationManager::PerUserTopicRegistrationManager(
     PrefService* local_state,
     network::mojom::URLLoaderFactory* url_loader_factory,
     const ParseJSONCallback& parse_json,
-    const std::string& project_id)
+    const std::string& project_id,
+    bool migrate_prefs)
     : local_state_(local_state),
       identity_provider_(identity_provider),
       request_access_token_backoff_(&kBackoffPolicy),
       parse_json_(parse_json),
       url_loader_factory_(url_loader_factory),
-      project_id_(project_id) {}
+      project_id_(project_id),
+      migrate_prefs_(migrate_prefs) {}
 
 PerUserTopicRegistrationManager::~PerUserTopicRegistrationManager() {}
 
 void PerUserTopicRegistrationManager::Init() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  const base::Value* pref_data =
-      local_state_->Get(kTypeRegisteredForInvalidation);
+  if (migrate_prefs_) {
+    MigratePrefs(local_state_, project_id_);
+  }
+  PerProjectDictionaryPrefUpdate update(local_state_, project_id_);
+  if (update->DictEmpty()) {
+    return;
+  }
+
   std::vector<std::string> keys_to_remove;
   // Load registered ids from prefs.
-  for (const auto& it : pref_data->DictItems()) {
+  for (const auto& it : update->DictItems()) {
     Topic topic = it.first;
     std::string private_topic_name;
     if (it.second.GetAsString(&private_topic_name) &&
         !private_topic_name.empty()) {
       topic_to_private_topic_[topic] = private_topic_name;
+      private_topic_to_topic_[private_topic_name] = topic;
       continue;
     }
     // Remove saved pref.
@@ -162,31 +232,30 @@ void PerUserTopicRegistrationManager::Init() {
   }
 
   // Delete prefs, which weren't decoded successfully.
-  DictionaryPrefUpdate update(local_state_, kTypeRegisteredForInvalidation);
-  base::DictionaryValue* pref_update = update.Get();
   for (const std::string& key : keys_to_remove) {
-    pref_update->RemoveKey(key);
+    update->RemoveKey(key);
   }
 }
 
 void PerUserTopicRegistrationManager::UpdateRegisteredTopics(
-    const TopicSet& topics,
+    const Topics& topics,
     const std::string& instance_id_token) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   token_ = instance_id_token;
   DropAllSavedRegistrationsOnTokenChange(instance_id_token);
   for (const auto& topic : topics) {
     // If id isn't registered, schedule the registration.
-    if (topic_to_private_topic_.find(topic) == topic_to_private_topic_.end()) {
-      auto it = registration_statuses_.find(topic);
+    if (topic_to_private_topic_.find(topic.first) ==
+        topic_to_private_topic_.end()) {
+      auto it = registration_statuses_.find(topic.first);
       if (it != registration_statuses_.end())
         it->second->Cancel();
-      registration_statuses_[topic] = std::make_unique<RegistrationEntry>(
-          topic,
+      registration_statuses_[topic.first] = std::make_unique<RegistrationEntry>(
+          topic.first,
           base::BindOnce(
               &PerUserTopicRegistrationManager::RegistrationFinishedForTopic,
               base::Unretained(this)),
-          PerUserTopicRegistrationRequest::SUBSCRIBE);
+          PerUserTopicRegistrationRequest::SUBSCRIBE, topic.second.is_public);
     }
   }
 
@@ -203,10 +272,11 @@ void PerUserTopicRegistrationManager::UpdateRegisteredTopics(
               &PerUserTopicRegistrationManager::RegistrationFinishedForTopic,
               base::Unretained(this)),
           PerUserTopicRegistrationRequest::UNSUBSCRIBE);
+      private_topic_to_topic_.erase(it->second);
       it = topic_to_private_topic_.erase(it);
       // The descision to unregister from the invalidations for the |topic| was
       // made, the preferences should be cleaned up immediatelly.
-      DictionaryPrefUpdate update(local_state_, kTypeRegisteredForInvalidation);
+      PerProjectDictionaryPrefUpdate update(local_state_, project_id_);
       update->RemoveKey(topic);
     } else {
       ++it;
@@ -238,6 +308,7 @@ void PerUserTopicRegistrationManager::StartRegistrationRequest(
                                 "Bearer %s", access_token_.c_str()))
                             .SetProjectId(project_id_)
                             .SetType(it->second->type)
+                            .SetTopicIsPublic(it->second->topic_is_public)
                             .Build();
   it->second->request->Start(
       base::BindOnce(&PerUserTopicRegistrationManager::RegistrationEntry::
@@ -254,9 +325,10 @@ void PerUserTopicRegistrationManager::ActOnSuccesfullRegistration(
   it->second->request_backoff_.InformOfRequest(true);
   registration_statuses_.erase(it);
   if (type == PerUserTopicRegistrationRequest::SUBSCRIBE) {
-    DictionaryPrefUpdate update(local_state_, kTypeRegisteredForInvalidation);
+    PerProjectDictionaryPrefUpdate update(local_state_, project_id_);
     update->SetKey(topic, base::Value(private_topic_name));
     topic_to_private_topic_[topic] = private_topic_name;
+    private_topic_to_topic_[private_topic_name] = topic;
     local_state_->CommitPendingWrite();
   }
   bool all_subscription_completed = true;
@@ -269,7 +341,7 @@ void PerUserTopicRegistrationManager::ActOnSuccesfullRegistration(
   if (all_subscription_completed &&
       base::FeatureList::IsEnabled(
           invalidation::switches::kFCMInvalidationsConservativeEnabling)) {
-    NotifySubscriptionChannelStateChange(INVALIDATIONS_ENABLED);
+    NotifySubscriptionChannelStateChange(SubscriptionChannelState::ENABLED);
   }
 }
 
@@ -307,7 +379,8 @@ void PerUserTopicRegistrationManager::RegistrationFinishedForTopic(
       if (type == PerUserTopicRegistrationRequest::SUBSCRIBE &&
           base::FeatureList::IsEnabled(
               invalidation::switches::kFCMInvalidationsConservativeEnabling)) {
-        NotifySubscriptionChannelStateChange(SUBSCRIPTION_FAILURE);
+        NotifySubscriptionChannelStateChange(
+            SubscriptionChannelState::SUBSCRIPTION_FAILURE);
       }
       if (!code.ShouldRetry()) {
         registration_statuses_.erase(it);
@@ -373,14 +446,15 @@ void PerUserTopicRegistrationManager::OnAccessTokenRequestSucceeded(
   request_access_token_backoff_.Reset();
   access_token_ = access_token;
   // Emit ENABLED when successfully got the token.
-  NotifySubscriptionChannelStateChange(INVALIDATIONS_ENABLED);
+  NotifySubscriptionChannelStateChange(SubscriptionChannelState::ENABLED);
   DoRegistrationUpdate();
 }
 
 void PerUserTopicRegistrationManager::OnAccessTokenRequestFailed(
     GoogleServiceAuthError error) {
   DCHECK_NE(error.state(), GoogleServiceAuthError::NONE);
-  NotifySubscriptionChannelStateChange(INVALIDATION_CREDENTIALS_REJECTED);
+  NotifySubscriptionChannelStateChange(
+      SubscriptionChannelState::ACCESS_TOKEN_FAILURE);
   request_access_token_backoff_.InformOfRequest(false);
   request_access_token_retry_timer_.Start(
       FROM_HERE, request_access_token_backoff_.GetTimeUntilRelease(),
@@ -390,49 +464,63 @@ void PerUserTopicRegistrationManager::OnAccessTokenRequestFailed(
 
 void PerUserTopicRegistrationManager::DropAllSavedRegistrationsOnTokenChange(
     const std::string& instance_id_token) {
-  std::string current_token = local_state_->GetString(kActiveRegistrationToken);
-  if (current_token.empty()) {
-    local_state_->SetString(kActiveRegistrationToken, instance_id_token);
-    return;
+  {
+    DictionaryPrefUpdate token_update(local_state_, kActiveRegistrationTokens);
+    std::string current_token;
+    token_update->GetString(project_id_, &current_token);
+    if (current_token.empty()) {
+      token_update->SetString(project_id_, instance_id_token);
+      return;
+    }
+    if (current_token == instance_id_token) {
+      return;
+    }
+    token_update->SetString(project_id_, instance_id_token);
   }
-  if (current_token == instance_id_token) {
-    return;
-  }
-  local_state_->SetString(kActiveRegistrationToken, instance_id_token);
-  DictionaryPrefUpdate update(local_state_, kTypeRegisteredForInvalidation);
-  for (const auto& topic : topic_to_private_topic_) {
-    update->RemoveKey(topic.first);
-  }
+
+  PerProjectDictionaryPrefUpdate update(local_state_, project_id_);
+  *update = base::Value(base::Value::Type::DICTIONARY);
   topic_to_private_topic_.clear();
+  private_topic_to_topic_.clear();
   // TODO(melandory): Figure out if the unsubscribe request should be
   // sent with the old token.
 }
 
 void PerUserTopicRegistrationManager::NotifySubscriptionChannelStateChange(
-    InvalidatorState invalidator_state) {
-  // TRANSIENT_INVALIDATION_ERROR is the default state of the subscription
+    SubscriptionChannelState state) {
+  // NOT_STARTED is the default state of the subscription
   // channel and shouldn't explicitly issued.
-  DCHECK(invalidator_state != TRANSIENT_INVALIDATION_ERROR);
-  if (last_issued_state_ == invalidator_state) {
+  DCHECK(state != SubscriptionChannelState::NOT_STARTED);
+  if (last_issued_state_ == state) {
     // Notify only on state change.
     return;
   }
 
-  last_issued_state_ = invalidator_state;
-  for (auto& observer : observers_)
-    observer.OnSubscriptionChannelStateChanged(invalidator_state);
+  last_issued_state_ = state;
+  for (auto& observer : observers_) {
+    observer.OnSubscriptionChannelStateChanged(state);
+  }
 }
 
-std::unique_ptr<base::DictionaryValue>
-PerUserTopicRegistrationManager::CollectDebugData() const {
-  std::unique_ptr<base::DictionaryValue> return_value(
-      new base::DictionaryValue());
+base::DictionaryValue PerUserTopicRegistrationManager::CollectDebugData()
+    const {
+  base::DictionaryValue status;
   for (const auto& topic_to_private_topic : topic_to_private_topic_) {
-    return_value->SetString(topic_to_private_topic.first,
-                            topic_to_private_topic.second);
+    status.SetString(topic_to_private_topic.first,
+                     topic_to_private_topic.second);
   }
-  return_value->SetString("Instance id token", token_);
-  return return_value;
+  status.SetString("Instance id token", token_);
+  return status;
+}
+
+base::Optional<Topic>
+PerUserTopicRegistrationManager::LookupRegisteredPublicTopicByPrivateTopic(
+    const std::string& private_topic) const {
+  auto it = private_topic_to_topic_.find(private_topic);
+  if (it == private_topic_to_topic_.end()) {
+    return base::nullopt;
+  }
+  return it->second;
 }
 
 }  // namespace syncer

@@ -16,6 +16,8 @@
 #include "third_party/blink/renderer/core/input_type_names.h"
 #include "third_party/blink/renderer/modules/media_controls/elements/media_control_toggle_closed_captions_button_element.h"
 #include "third_party/blink/renderer/modules/media_controls/media_controls_impl.h"
+#include "third_party/blink/renderer/modules/media_controls/media_controls_text_track_manager.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/text/platform_locale.h"
 
 namespace blink {
@@ -51,7 +53,7 @@ bool HasDuplicateLabel(TextTrack* current_track) {
 
 MediaControlTextTrackListElement::MediaControlTextTrackListElement(
     MediaControlsImpl& media_controls)
-    : MediaControlPopupMenuElement(media_controls, kMediaTextTrackList) {
+    : MediaControlPopupMenuElement(media_controls) {
   setAttribute(html_names::kRoleAttr, "menu");
   setAttribute(html_names::kAriaLabelAttr,
                WTF::AtomicString(GetLocale().QueryString(
@@ -89,15 +91,19 @@ void MediaControlTextTrackListElement::DefaultEventHandler(Event& event) {
     if (!target || !target->IsElementNode())
       return;
 
-    GetMediaControls().DisableShowingTextTracks();
+    GetMediaControls().GetTextTrackManager().DisableShowingTextTracks();
     int track_index =
         ToElement(target)->GetIntegralAttribute(TrackIndexAttrName());
     if (track_index != kTrackIndexOffValue) {
       DCHECK_GE(track_index, 0);
-      GetMediaControls().ShowTextTrackAtIndex(track_index);
+      GetMediaControls().GetTextTrackManager().ShowTextTrackAtIndex(
+          track_index);
       MediaElement().DisableAutomaticTextTrackSelection();
     }
 
+    // Close the text track list,
+    // since we don't support selecting multiple tracks
+    SetIsWanted(false);
     event.SetDefaultHandled();
   }
   MediaControlPopupMenuElement::DefaultEventHandler(event);
@@ -108,11 +114,11 @@ void MediaControlTextTrackListElement::DefaultEventHandler(Event& event) {
 Element* MediaControlTextTrackListElement::CreateTextTrackListItem(
     TextTrack* track) {
   int track_index = track ? track->TrackIndex() : kTrackIndexOffValue;
-  HTMLLabelElement* track_item = HTMLLabelElement::Create(GetDocument());
+  auto* track_item = MakeGarbageCollected<HTMLLabelElement>(GetDocument());
   track_item->SetShadowPseudoId(
       AtomicString("-internal-media-controls-text-track-list-item"));
-  auto* track_item_input =
-      HTMLInputElement::Create(GetDocument(), CreateElementFlags());
+  auto* track_item_input = MakeGarbageCollected<HTMLInputElement>(
+      GetDocument(), CreateElementFlags());
   track_item_input->SetShadowPseudoId(
       AtomicString("-internal-media-controls-text-track-list-item-input"));
   track_item_input->setAttribute(html_names::kAriaHiddenAttr, "true");
@@ -145,8 +151,9 @@ Element* MediaControlTextTrackListElement::CreateTextTrackListItem(
 
   // Set track label into an aria-hidden span so that aria will not repeat the
   // contents twice.
-  String track_label = GetMediaControls().GetTextTrackLabel(track);
-  HTMLSpanElement* track_label_span = HTMLSpanElement::Create(GetDocument());
+  String track_label =
+      GetMediaControls().GetTextTrackManager().GetTextTrackLabel(track);
+  auto* track_label_span = MakeGarbageCollected<HTMLSpanElement>(GetDocument());
   track_label_span->setInnerText(track_label, ASSERT_NO_EXCEPTION);
   track_label_span->setAttribute(html_names::kAriaHiddenAttr, "true");
   track_item->setAttribute(html_names::kAriaLabelAttr,
@@ -158,7 +165,8 @@ Element* MediaControlTextTrackListElement::CreateTextTrackListItem(
   // Add a track kind marker icon if there are multiple tracks with the same
   // label or if the track has no label.
   if (track && (track->label().IsEmpty() || HasDuplicateLabel(track))) {
-    HTMLSpanElement* track_kind_marker = HTMLSpanElement::Create(GetDocument());
+    auto* track_kind_marker =
+        MakeGarbageCollected<HTMLSpanElement>(GetDocument());
     if (track->kind() == track->CaptionsKeyword()) {
       track_kind_marker->SetShadowPseudoId(AtomicString(
           "-internal-media-controls-text-track-list-kind-captions"));
@@ -173,7 +181,7 @@ Element* MediaControlTextTrackListElement::CreateTextTrackListItem(
 }
 
 Element* MediaControlTextTrackListElement::CreateTextTrackHeaderItem() {
-  HTMLLabelElement* header_item = HTMLLabelElement::Create(GetDocument());
+  auto* header_item = MakeGarbageCollected<HTMLLabelElement>(GetDocument());
   header_item->SetShadowPseudoId(
       "-internal-media-controls-text-track-list-header");
   header_item->ParserAppendChild(

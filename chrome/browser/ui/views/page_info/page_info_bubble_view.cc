@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/i18n/rtl.h"
 #include "base/macros.h"
 #include "base/strings/string16.h"
@@ -20,6 +21,7 @@
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ssl/security_state_tab_helper.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/page_info/page_info.h"
@@ -36,13 +38,14 @@
 #include "chrome/browser/ui/views/location_bar/location_icon_view.h"
 #include "chrome/browser/ui/views/page_info/chosen_object_view.h"
 #include "chrome/browser/ui/views/page_info/permission_selector_row.h"
+#include "chrome/browser/vr/vr_tab_helper.h"
 #include "chrome/common/url_constants.h"
 #include "components/content_settings/core/common/content_settings_types.h"
-#include "components/security_state/core/security_state.h"
 #include "components/strings/grit/components_chromium_strings.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "device/vr/buildflags/buildflags.h"
 #include "extensions/common/constants.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/models/simple_menu_model.h"
@@ -70,13 +73,13 @@
 #include "ui/views/window/dialog_client_view.h"
 #include "url/gurl.h"
 
-#if defined(SAFE_BROWSING_DB_LOCAL)
+#if defined(FULL_SAFE_BROWSING)
 #include "chrome/browser/safe_browsing/chrome_password_protection_service.h"
 #endif
 
 using bubble_anchor_util::AnchorConfiguration;
-using bubble_anchor_util::GetPageInfoAnchorRect;
 using bubble_anchor_util::GetPageInfoAnchorConfiguration;
+using bubble_anchor_util::GetPageInfoAnchorRect;
 
 namespace {
 
@@ -136,7 +139,7 @@ std::unique_ptr<HoverButton> CreateMoreInfoButton(
     button->SetTitleTextWithHintRange(title_text, secondary_text_range);
   }
 
-  button->set_id(click_target_id);
+  button->SetID(click_target_id);
   button->SetTooltipText(tooltip_text);
   return button;
 }
@@ -185,19 +188,16 @@ class BubbleHeaderView : public views::View {
   // The label that displays the status of the identity check for this site.
   // Includes a link to open the Chrome Help Center article about connection
   // security.
-  views::StyledLabel* security_details_label_;
+  views::StyledLabel* security_details_label_ = nullptr;
 
   // A container for the styled label with a link for resetting cert decisions.
   // This is only shown sometimes, so we use a container to keep track of
   // where to place it (if needed).
-  views::View* reset_decisions_label_container_;
-  views::StyledLabel* reset_cert_decisions_label_;
+  views::View* reset_decisions_label_container_ = nullptr;
 
   // A container for the label buttons used to change password or mark the site
   // as safe.
-  views::View* password_reuse_button_container_;
-  views::LabelButton* change_password_button_;
-  views::LabelButton* whitelist_password_reuse_button_;
+  views::View* password_reuse_button_container_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(BubbleHeaderView);
 };
@@ -228,13 +228,7 @@ BubbleHeaderView::BubbleHeaderView(
     views::StyledLabelListener* styled_label_listener,
     int side_margin)
     : button_listener_(button_listener),
-      styled_label_listener_(styled_label_listener),
-      security_details_label_(nullptr),
-      reset_decisions_label_container_(nullptr),
-      reset_cert_decisions_label_(nullptr),
-      password_reuse_button_container_(nullptr),
-      change_password_button_(nullptr),
-      whitelist_password_reuse_button_(nullptr) {
+      styled_label_listener_(styled_label_listener) {
   views::GridLayout* layout =
       SetLayoutManager(std::make_unique<views::GridLayout>(this));
 
@@ -245,7 +239,7 @@ BubbleHeaderView::BubbleHeaderView(
 
   security_details_label_ =
       new views::StyledLabel(base::string16(), styled_label_listener);
-  security_details_label_->set_id(
+  security_details_label_->SetID(
       PageInfoBubbleView::VIEW_ID_PAGE_INFO_LABEL_SECURITY_DETAILS);
   layout->AddView(security_details_label_, 1.0, 1.0, views::GridLayout::FILL,
                   views::GridLayout::LEADING);
@@ -285,6 +279,11 @@ void BubbleHeaderView::SetDetails(const base::string16& details_text) {
 }
 
 void BubbleHeaderView::AddResetDecisionsLabel() {
+  if (!reset_decisions_label_container_->children().empty()) {
+    // Ensure all old content is removed from the container before re-adding it.
+    reset_decisions_label_container_->RemoveAllChildViews(true);
+  }
+
   std::vector<base::string16> subst;
   subst.push_back(
       l10n_util::GetStringUTF16(IDS_PAGE_INFO_INVALID_CERTIFICATE_DESCRIPTION));
@@ -295,9 +294,9 @@ void BubbleHeaderView::AddResetDecisionsLabel() {
 
   base::string16 text = base::ReplaceStringPlaceholders(
       base::ASCIIToUTF16("$1 $2"), subst, &offsets);
-  reset_cert_decisions_label_ =
-      new views::StyledLabel(text, styled_label_listener_);
-  reset_cert_decisions_label_->set_id(
+  auto reset_cert_decisions_label =
+      std::make_unique<views::StyledLabel>(text, styled_label_listener_);
+  reset_cert_decisions_label->SetID(
       PageInfoBubbleView::VIEW_ID_PAGE_INFO_LABEL_RESET_CERTIFICATE_DECISIONS);
   gfx::Range link_range(offsets[1], text.length());
 
@@ -305,10 +304,11 @@ void BubbleHeaderView::AddResetDecisionsLabel() {
       views::StyledLabel::RangeStyleInfo::CreateForLink();
   link_style.disable_line_wrapping = false;
 
-  reset_cert_decisions_label_->AddStyleRange(link_range, link_style);
+  reset_cert_decisions_label->AddStyleRange(link_range, link_style);
   // Fit the styled label to occupy available width.
-  reset_cert_decisions_label_->SizeToFit(0);
-  reset_decisions_label_container_->AddChildView(reset_cert_decisions_label_);
+  reset_cert_decisions_label->SizeToFit(0);
+  reset_decisions_label_container_->AddChildView(
+      std::move(reset_cert_decisions_label));
 
   // Now that it contains a label, the container needs padding at the top.
   reset_decisions_label_container_->SetBorder(views::CreateEmptyBorder(
@@ -318,16 +318,22 @@ void BubbleHeaderView::AddResetDecisionsLabel() {
 }
 
 void BubbleHeaderView::AddPasswordReuseButtons() {
-  change_password_button_ = views::MdTextButton::CreateSecondaryUiBlueButton(
-      button_listener_,
-      l10n_util::GetStringUTF16(IDS_PAGE_INFO_CHANGE_PASSWORD_BUTTON));
-  change_password_button_->set_id(
+  if (!password_reuse_button_container_->children().empty()) {
+    // Ensure all old content is removed from the container before re-adding it.
+    password_reuse_button_container_->RemoveAllChildViews(true /* delete */);
+  }
+
+  auto change_password_button =
+      views::MdTextButton::CreateSecondaryUiBlueButton(
+          button_listener_,
+          l10n_util::GetStringUTF16(IDS_PAGE_INFO_CHANGE_PASSWORD_BUTTON));
+  change_password_button->SetID(
       PageInfoBubbleView::VIEW_ID_PAGE_INFO_BUTTON_CHANGE_PASSWORD);
-  whitelist_password_reuse_button_ =
+  auto whitelist_password_reuse_button =
       views::MdTextButton::CreateSecondaryUiButton(
           button_listener_, l10n_util::GetStringUTF16(
                                 IDS_PAGE_INFO_WHITELIST_PASSWORD_REUSE_BUTTON));
-  whitelist_password_reuse_button_->set_id(
+  whitelist_password_reuse_button->SetID(
       PageInfoBubbleView::VIEW_ID_PAGE_INFO_BUTTON_WHITELIST_PASSWORD_REUSE);
 
   int kSpacingBetweenButtons = 8;
@@ -335,25 +341,27 @@ void BubbleHeaderView::AddPasswordReuseButtons() {
   // If these two buttons cannot fit into a single line, stack them vertically.
   bool can_fit_in_one_line =
       (password_reuse_button_container_->width() - kSpacingBetweenButtons) >=
-      (change_password_button_->CalculatePreferredSize().width() +
-       whitelist_password_reuse_button_->CalculatePreferredSize().width());
+      (change_password_button->CalculatePreferredSize().width() +
+       whitelist_password_reuse_button->CalculatePreferredSize().width());
   auto layout = std::make_unique<views::BoxLayout>(
       can_fit_in_one_line ? views::BoxLayout::kHorizontal
                           : views::BoxLayout::kVertical,
       gfx::Insets(), kSpacingBetweenButtons);
   // Make buttons left-aligned. For RTL languages, buttons will automatically
   // become right-aligned.
-  layout->set_main_axis_alignment(views::BoxLayout::MAIN_AXIS_ALIGNMENT_START);
+  layout->set_main_axis_alignment(views::BoxLayout::MainAxisAlignment::kStart);
   password_reuse_button_container_->SetLayoutManager(std::move(layout));
 
 #if defined(OS_WIN) || defined(OS_CHROMEOS)
-  password_reuse_button_container_->AddChildView(change_password_button_);
   password_reuse_button_container_->AddChildView(
-      whitelist_password_reuse_button_);
+      std::move(change_password_button));
+  password_reuse_button_container_->AddChildView(
+      std::move(whitelist_password_reuse_button));
 #else
   password_reuse_button_container_->AddChildView(
-      whitelist_password_reuse_button_);
-  password_reuse_button_container_->AddChildView(change_password_button_);
+      std::move(whitelist_password_reuse_button));
+  password_reuse_button_container_->AddChildView(
+      std::move(change_password_button));
 #endif
 
   // Add padding at the top.
@@ -426,7 +434,9 @@ views::BubbleDialogDelegateView* PageInfoBubbleView::CreatePageInfoBubble(
     Profile* profile,
     content::WebContents* web_contents,
     const GURL& url,
-    const security_state::SecurityInfo& security_info) {
+    security_state::SecurityLevel security_level,
+    const security_state::VisibleSecurityState& visible_security_state,
+    PageInfoClosingCallback closing_callback) {
   gfx::NativeView parent_view = platform_util::GetViewForWindow(parent_window);
 
   if (url.SchemeIs(content::kChromeUIScheme) ||
@@ -438,8 +448,9 @@ views::BubbleDialogDelegateView* PageInfoBubbleView::CreatePageInfoBubble(
                                           web_contents, url);
   }
 
-  return new PageInfoBubbleView(anchor_view, anchor_rect, parent_view, profile,
-                                web_contents, url, security_info);
+  return new PageInfoBubbleView(
+      anchor_view, anchor_rect, parent_view, profile, web_contents, url,
+      security_level, visible_security_state, std::move(closing_callback));
 }
 
 PageInfoBubbleView::PageInfoBubbleView(
@@ -449,17 +460,18 @@ PageInfoBubbleView::PageInfoBubbleView(
     Profile* profile,
     content::WebContents* web_contents,
     const GURL& url,
-    const security_state::SecurityInfo& security_info)
+    security_state::SecurityLevel security_level,
+    const security_state::VisibleSecurityState& visible_security_state,
+    PageInfoClosingCallback closing_callback)
     : PageInfoBubbleViewBase(anchor_view,
                              anchor_rect,
                              parent_window,
                              PageInfoBubbleViewBase::BUBBLE_PAGE_INFO,
                              web_contents),
       profile_(profile),
-      header_(nullptr),
-      site_settings_view_(nullptr),
-      cookie_button_(nullptr),
-      weak_factory_(this) {
+      closing_callback_(std::move(closing_callback)) {
+  DCHECK(closing_callback_);
+
   // Capture the default bubble margin, and move it to the Layout classes. This
   // is necessary so that the views::Separator can extend the full width of the
   // bubble.
@@ -500,10 +512,17 @@ PageInfoBubbleView::PageInfoBubbleView(
   site_settings_view_ = CreateSiteSettingsView();
   layout->AddView(site_settings_view_);
 
-  layout->StartRowWithPadding(views::GridLayout::kFixedSize, kColumnId,
-                              views::GridLayout::kFixedSize, 0);
-  if (!profile->IsGuestSession())
+  if (!profile->IsGuestSession()) {
+    layout->StartRowWithPadding(views::GridLayout::kFixedSize, kColumnId,
+                                views::GridLayout::kFixedSize, 0);
     layout->AddView(CreateSiteSettingsLink(side_margin, this).release());
+  }
+
+#if defined(OS_WIN) && BUILDFLAG(ENABLE_VR)
+  layout->StartRow(views::GridLayout::kFixedSize, kColumnId);
+  page_feature_info_view_ = new views::View;
+  layout->AddView(page_feature_info_view_);
+#endif
 
   views::BubbleDialogDelegateView::CreateBubble(this);
 
@@ -513,7 +532,7 @@ PageInfoBubbleView::PageInfoBubbleView(
 
   presenter_.reset(new PageInfo(
       this, profile, TabSpecificContentSettings::FromWebContents(web_contents),
-      web_contents, url, security_info));
+      web_contents, url, security_level, visible_security_state));
 }
 
 void PageInfoBubbleView::WebContentsDestroyed() {
@@ -537,29 +556,14 @@ void PageInfoBubbleView::OnChosenObjectDeleted(
 
 void PageInfoBubbleView::OnWidgetDestroying(views::Widget* widget) {
   PageInfoBubbleViewBase::OnWidgetDestroying(widget);
-  presenter_->OnUIClosing();
-
-  // If we're closing the bubble because the user pressed ESC or because the
-  // user clicked Close (rather than the user clicking directly on something
-  // else), we should refocus the Omnibox. This lets the user tab into the
-  // "You should reload this page" infobar rather than dumping them back out
-  // into a stale webpage.
-  const views::Widget::ClosedReason closed_reason =
-      GetWidget()->closed_reason();
-  if (closed_reason == views::Widget::ClosedReason::kEscKeyPressed ||
-      closed_reason == views::Widget::ClosedReason::kCloseButtonClicked) {
-    // Because of how this bubble shows, the anchor is always in the toolbar,
-    // which means the infobar with the reload prompt is just after in the focus
-    // order.
-    View* const anchor = GetAnchorView();
-    if (anchor)
-      anchor->GetFocusManager()->SetFocusedView(anchor);
-  }
+  bool reload_prompt;
+  presenter_->OnUIClosing(&reload_prompt);
+  std::move(closing_callback_).Run(widget->closed_reason(), reload_prompt);
 }
 
 void PageInfoBubbleView::ButtonPressed(views::Button* button,
                                        const ui::Event& event) {
-  switch (button->id()) {
+  switch (button->GetID()) {
     case PageInfoBubbleView::VIEW_ID_PAGE_INFO_BUTTON_CLOSE:
       GetWidget()->Close();
       break;
@@ -575,6 +579,15 @@ void PageInfoBubbleView::ButtonPressed(views::Button* button,
     case PageInfoBubbleView::
         VIEW_ID_PAGE_INFO_LINK_OR_BUTTON_CERTIFICATE_VIEWER:
       HandleMoreInfoRequest(button);
+      break;
+    case PageInfoBubbleView::VIEW_ID_PAGE_INFO_HOVER_BUTTON_VR_PRESENTATION:
+      // Ignore clicks on the "VR is presenting" row.
+      break;
+    case PageInfoBubbleView::VIEW_ID_PAGE_INFO_BUTTON_END_VR:
+      GetWidget()->Close();
+#if BUILDFLAG(ENABLE_VR)
+      vr::VrTabHelper::ExitVrPresentation();
+#endif
       break;
     default:
       NOTREACHED();
@@ -660,60 +673,23 @@ void PageInfoBubbleView::SetPermissionInfo(
   // case that can be recovered from by closing & reopening the bubble.
   // TODO(patricialor): Investigate removing callsites to this method other than
   // the constructor.
-  if (permissions_view_->has_children())
+  if (!permissions_view_->children().empty())
     return;
 
   views::GridLayout* layout = permissions_view_->SetLayoutManager(
       std::make_unique<views::GridLayout>(permissions_view_));
-
-  ChromeLayoutProvider* layout_provider = ChromeLayoutProvider::Get();
-  const int list_item_padding =
-      layout_provider->GetDistanceMetric(DISTANCE_CONTROL_LIST_VERTICAL);
-  if (!permission_info_list.empty() || !chosen_object_info_list.empty()) {
-    layout->AddPaddingRow(views::GridLayout::kFixedSize, list_item_padding);
-  } else {
-    // If nothing to show, just add padding above the separator and exit.
-    layout->AddPaddingRow(views::GridLayout::kFixedSize,
-                          layout_provider->GetDistanceMetric(
-                              views::DISTANCE_UNRELATED_CONTROL_VERTICAL));
-    return;
-  }
-
-  int side_margin =
-      layout_provider->GetInsetsMetric(views::INSETS_DIALOG).left();
-  // A permissions row will have an icon, title, and combobox, with a padding
-  // column on either side to match the dialog insets. Note the combobox can be
-  // variable widths depending on the text inside.
-  // *----------------------------------------------*
-  // |++| Icon | Permission Title     | Combobox |++|
-  // *----------------------------------------------*
-  views::ColumnSet* permissions_set =
-      layout->AddColumnSet(kPermissionColumnSetId);
-  permissions_set->AddPaddingColumn(views::GridLayout::kFixedSize, side_margin);
-  permissions_set->AddColumn(views::GridLayout::CENTER,
-                             views::GridLayout::CENTER,
-                             views::GridLayout::kFixedSize,
-                             views::GridLayout::FIXED, kIconColumnWidth, 0);
-  permissions_set->AddPaddingColumn(
-      views::GridLayout::kFixedSize,
-      layout_provider->GetDistanceMetric(
-          views::DISTANCE_RELATED_LABEL_HORIZONTAL));
-  permissions_set->AddColumn(
-      views::GridLayout::LEADING, views::GridLayout::CENTER, 1.0,
-      views::GridLayout::USE_PREF, views::GridLayout::kFixedSize, 0);
-  permissions_set->AddPaddingColumn(
-      views::GridLayout::kFixedSize,
-      layout_provider->GetDistanceMetric(
-          views::DISTANCE_RELATED_CONTROL_HORIZONTAL));
-  permissions_set->AddColumn(
-      views::GridLayout::TRAILING, views::GridLayout::FILL,
-      views::GridLayout::kFixedSize, views::GridLayout::USE_PREF,
-      views::GridLayout::kFixedSize, 0);
-  permissions_set->AddPaddingColumn(views::GridLayout::kFixedSize, side_margin);
+  const bool is_list_empty =
+      permission_info_list.empty() && chosen_object_info_list.empty();
+  LayoutPermissionsLikeUiRow(layout, is_list_empty, kPermissionColumnSetId);
 
   // |ChosenObjectView| will layout itself, so just add the missing padding
   // here.
   constexpr int kChosenObjectSectionId = 1;
+  ChromeLayoutProvider* layout_provider = ChromeLayoutProvider::Get();
+  const int list_item_padding =
+      layout_provider->GetDistanceMetric(DISTANCE_CONTROL_LIST_VERTICAL);
+  const int side_margin =
+      layout_provider->GetInsetsMetric(views::INSETS_DIALOG).left();
   views::ColumnSet* chosen_object_set =
       layout->AddColumnSet(kChosenObjectSectionId);
   chosen_object_set->AddPaddingColumn(views::GridLayout::kFixedSize,
@@ -751,9 +727,9 @@ void PageInfoBubbleView::SetPermissionInfo(
     int curr_width = selector->GetComboboxWidth();
     if (maximum_width >= curr_width)
       combobox_width = std::max(combobox_width, curr_width);
-    }
-    for (const auto& selector : selector_rows_)
-      selector->SetMinComboboxWidth(combobox_width);
+  }
+  for (const auto& selector : selector_rows_)
+    selector->SetMinComboboxWidth(combobox_width);
 
   for (auto& object : chosen_object_info_list) {
     // Since chosen objects are presented after permissions in the same list,
@@ -779,18 +755,18 @@ void PageInfoBubbleView::SetIdentityInfo(const IdentityInfo& identity_info) {
   // Set the bubble title, update the title label text, then apply color.
   set_window_title(security_description->summary);
   GetBubbleFrameView()->UpdateWindowTitle();
-    int text_style = views::style::STYLE_PRIMARY;
-    switch (security_description->summary_style) {
-      case SecuritySummaryColor::RED:
-        text_style = STYLE_RED;
-        break;
-      case SecuritySummaryColor::GREEN:
-        text_style = STYLE_GREEN;
-        break;
-    }
-    static_cast<views::Label*>(GetBubbleFrameView()->title())
-        ->SetEnabledColor(views::style::GetColor(
-            *this, views::style::CONTEXT_DIALOG_TITLE, text_style));
+  int text_style = views::style::STYLE_PRIMARY;
+  switch (security_description->summary_style) {
+    case SecuritySummaryColor::RED:
+      text_style = STYLE_RED;
+      break;
+    case SecuritySummaryColor::GREEN:
+      text_style = STYLE_GREEN;
+      break;
+  }
+  static_cast<views::Label*>(GetBubbleFrameView()->title())
+      ->SetEnabledColor(views::style::GetColor(
+          *this, views::style::CONTEXT_DIALOG_TITLE, text_style));
 
   if (identity_info.certificate) {
     certificate_ = identity_info.certificate;
@@ -817,14 +793,26 @@ void PageInfoBubbleView::SetIdentityInfo(const IdentityInfo& identity_info) {
     // Add the Certificate Section.
     const gfx::ImageSkia icon =
         PageInfoUI::GetCertificateIcon(GetRelatedTextColor());
-      const base::string16 secondary_text = l10n_util::GetStringUTF16(
-          valid_identity ? IDS_PAGE_INFO_CERTIFICATE_VALID_PARENTHESIZED
-                         : IDS_PAGE_INFO_CERTIFICATE_INVALID_PARENTHESIZED);
-      std::unique_ptr<HoverButton> certificate_button = CreateMoreInfoButton(
-          this, icon, IDS_PAGE_INFO_CERTIFICATE_BUTTON_TEXT, secondary_text,
-          VIEW_ID_PAGE_INFO_LINK_OR_BUTTON_CERTIFICATE_VIEWER, tooltip);
-      certificate_button->set_auto_compute_tooltip(false);
-      site_settings_view_->AddChildView(certificate_button.release());
+    const base::string16 secondary_text = l10n_util::GetStringUTF16(
+        valid_identity ? IDS_PAGE_INFO_CERTIFICATE_VALID_PARENTHESIZED
+                       : IDS_PAGE_INFO_CERTIFICATE_INVALID_PARENTHESIZED);
+
+    // If the certificate button has been added previously, remove the old one
+    // before recreating it. Re-adding it bumps it to the bottom of the
+    // container, but its unlikely that the user will notice, since other things
+    // are changing too.
+    if (certificate_button_) {
+      site_settings_view_->RemoveChildView(certificate_button_);
+      auto to_delete = std::make_unique<HoverButton*>(certificate_button_);
+    }
+
+    certificate_button_ =
+        CreateMoreInfoButton(
+            this, icon, IDS_PAGE_INFO_CERTIFICATE_BUTTON_TEXT, secondary_text,
+            VIEW_ID_PAGE_INFO_LINK_OR_BUTTON_CERTIFICATE_VIEWER, tooltip)
+            .release();
+    certificate_button_->set_auto_compute_tooltip(false);
+    site_settings_view_->AddChildView(certificate_button_);
   }
 
   if (identity_info.show_change_password_buttons) {
@@ -837,7 +825,102 @@ void PageInfoBubbleView::SetIdentityInfo(const IdentityInfo& identity_info) {
   SizeToContents();
 }
 
-#if defined(SAFE_BROWSING_DB_LOCAL)
+void PageInfoBubbleView::SetPageFeatureInfo(const PageFeatureInfo& info) {
+#if defined(OS_WIN) && BUILDFLAG(ENABLE_VR)
+  // For now, this has only VR settings.
+  if (!info.is_vr_presentation_in_headset)
+    return;
+
+  auto* layout = page_feature_info_view_->SetLayoutManager(
+      std::make_unique<views::BoxLayout>(views::BoxLayout::kVertical));
+  layout->set_cross_axis_alignment(
+      views::BoxLayout::CrossAxisAlignment::kStretch);
+
+  auto icon = std::make_unique<NonAccessibleImageView>();
+  icon->SetImage(PageInfoUI::GetVrSettingsIcon(GetRelatedTextColor()));
+
+  std::unique_ptr<views::MdTextButton> exit_button(views::MdTextButton::Create(
+      this, l10n_util::GetStringUTF16(IDS_PAGE_INFO_VR_TURN_OFF_BUTTON_TEXT)));
+  exit_button->SetID(VIEW_ID_PAGE_INFO_BUTTON_END_VR);
+  exit_button->SetProminent(true);
+
+  auto button = std::make_unique<HoverButton>(
+      this, std::move(icon),
+      l10n_util::GetStringUTF16(IDS_PAGE_INFO_VR_PRESENTING_TEXT),
+      base::string16(), std::move(exit_button),
+      false,  // Try not to change the row height while adding secondary view
+      true);  // Secondary view can handle events.
+  button->SetID(VIEW_ID_PAGE_INFO_HOVER_BUTTON_VR_PRESENTATION);
+
+  page_feature_info_view_->AddChildView(button.release());
+
+  Layout();
+  SizeToContents();
+#endif
+}
+
+void PageInfoBubbleView::LayoutPermissionsLikeUiRow(views::GridLayout* layout,
+                                                    bool is_list_empty,
+                                                    int column_id) {
+  ChromeLayoutProvider* layout_provider = ChromeLayoutProvider::Get();
+  if (is_list_empty) {
+    // If nothing to show, just add padding above the separator and exit.
+    layout->AddPaddingRow(views::GridLayout::kFixedSize,
+                          layout_provider->GetDistanceMetric(
+                              views::DISTANCE_UNRELATED_CONTROL_VERTICAL));
+    return;
+  }
+
+  const int list_item_padding =
+      layout_provider->GetDistanceMetric(DISTANCE_CONTROL_LIST_VERTICAL);
+  layout->AddPaddingRow(views::GridLayout::kFixedSize, list_item_padding);
+
+  const int side_margin =
+      layout_provider->GetInsetsMetric(views::INSETS_DIALOG).left();
+  // A permissions row will have an icon, title, and combobox, with a padding
+  // column on either side to match the dialog insets. Note the combobox can be
+  // variable widths depending on the text inside.
+  // *----------------------------------------------*
+  // |++| Icon | Permission Title     | Combobox |++|
+  // *----------------------------------------------*
+  views::ColumnSet* permissions_set = layout->AddColumnSet(column_id);
+  permissions_set->AddPaddingColumn(views::GridLayout::kFixedSize, side_margin);
+  permissions_set->AddColumn(views::GridLayout::CENTER,
+                             views::GridLayout::CENTER,
+                             views::GridLayout::kFixedSize,
+                             views::GridLayout::FIXED, kIconColumnWidth, 0);
+  permissions_set->AddPaddingColumn(
+      views::GridLayout::kFixedSize,
+      layout_provider->GetDistanceMetric(
+          views::DISTANCE_RELATED_LABEL_HORIZONTAL));
+  permissions_set->AddColumn(
+      views::GridLayout::LEADING, views::GridLayout::CENTER, 1.0,
+      views::GridLayout::USE_PREF, views::GridLayout::kFixedSize, 0);
+  permissions_set->AddPaddingColumn(
+      views::GridLayout::kFixedSize,
+      layout_provider->GetDistanceMetric(
+          views::DISTANCE_RELATED_CONTROL_HORIZONTAL));
+  permissions_set->AddColumn(
+      views::GridLayout::TRAILING, views::GridLayout::FILL,
+      views::GridLayout::kFixedSize, views::GridLayout::USE_PREF,
+      views::GridLayout::kFixedSize, 0);
+  permissions_set->AddPaddingColumn(views::GridLayout::kFixedSize, side_margin);
+}
+
+void PageInfoBubbleView::DidChangeVisibleSecurityState() {
+  content::WebContents* contents = web_contents();
+  if (!contents)
+    return;
+
+  SecurityStateTabHelper* helper =
+      SecurityStateTabHelper::FromWebContents(contents);
+  DCHECK(helper);
+
+  presenter_->UpdateSecurityState(helper->GetSecurityLevel(),
+                                  *helper->GetVisibleSecurityState());
+}
+
+#if defined(FULL_SAFE_BROWSING)
 std::unique_ptr<PageInfoUI::SecurityDescription>
 PageInfoBubbleView::CreateSecurityDescriptionForPasswordReuse(
     bool is_enterprise_password) const {
@@ -864,7 +947,7 @@ views::View* PageInfoBubbleView::CreateSiteSettingsView() {
   auto* box_layout = site_settings_view->SetLayoutManager(
       std::make_unique<views::BoxLayout>(views::BoxLayout::kVertical));
   box_layout->set_cross_axis_alignment(
-      views::BoxLayout::CROSS_AXIS_ALIGNMENT_STRETCH);
+      views::BoxLayout::CrossAxisAlignment::kStretch);
 
   return site_settings_view;
 }
@@ -876,7 +959,7 @@ void PageInfoBubbleView::HandleMoreInfoRequest(views::View* source) {
   base::PostTaskWithTraits(
       FROM_HERE, {content::BrowserThread::UI},
       base::BindOnce(&PageInfoBubbleView::HandleMoreInfoRequestAsync,
-                     weak_factory_.GetWeakPtr(), source->id()));
+                     weak_factory_.GetWeakPtr(), source->GetID()));
 }
 
 void PageInfoBubbleView::HandleMoreInfoRequestAsync(int view_id) {
@@ -912,7 +995,7 @@ void PageInfoBubbleView::HandleMoreInfoRequestAsync(int view_id) {
 void PageInfoBubbleView::StyledLabelLinkClicked(views::StyledLabel* label,
                                                 const gfx::Range& range,
                                                 int event_flags) {
-  switch (label->id()) {
+  switch (label->GetID()) {
     case PageInfoBubbleView::VIEW_ID_PAGE_INFO_LABEL_SECURITY_DETAILS:
       web_contents()->OpenURL(content::OpenURLParams(
           GURL(chrome::kPageInfoHelpCenterURL), content::Referrer(),
@@ -931,11 +1014,14 @@ void PageInfoBubbleView::StyledLabelLinkClicked(views::StyledLabel* label,
   }
 }
 
-void ShowPageInfoDialogImpl(Browser* browser,
-                            content::WebContents* web_contents,
-                            const GURL& virtual_url,
-                            const security_state::SecurityInfo& security_info,
-                            bubble_anchor_util::Anchor anchor) {
+void ShowPageInfoDialogImpl(
+    Browser* browser,
+    content::WebContents* web_contents,
+    const GURL& virtual_url,
+    security_state::SecurityLevel security_level,
+    const security_state::VisibleSecurityState& visible_security_state,
+    bubble_anchor_util::Anchor anchor,
+    PageInfoClosingCallback closing_callback) {
   AnchorConfiguration configuration =
       GetPageInfoAnchorConfiguration(browser, anchor);
   gfx::Rect anchor_rect =
@@ -944,7 +1030,8 @@ void ShowPageInfoDialogImpl(Browser* browser,
   views::BubbleDialogDelegateView* bubble =
       PageInfoBubbleView::CreatePageInfoBubble(
           configuration.anchor_view, anchor_rect, parent_window,
-          browser->profile(), web_contents, virtual_url, security_info);
+          browser->profile(), web_contents, virtual_url, security_level,
+          visible_security_state, std::move(closing_callback));
   bubble->SetHighlightedButton(configuration.highlighted_button);
   bubble->SetArrow(configuration.bubble_arrow);
   bubble->GetWidget()->Show();

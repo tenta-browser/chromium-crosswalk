@@ -12,13 +12,16 @@
 #include "base/optional.h"
 #include "base/time/time.h"
 #include "chrome/browser/page_load_metrics/page_load_metrics_observer.h"
+#include "chrome/browser/page_load_metrics/page_load_metrics_observer_delegate.h"
 #include "chrome/browser/page_load_metrics/page_load_metrics_update_dispatcher.h"
-#include "chrome/browser/page_load_metrics/user_input_tracker.h"
+#include "chrome/browser/page_load_metrics/resource_tracker.h"
+#include "chrome/browser/scoped_visibility_tracker.h"
 #include "chrome/common/page_load_metrics/page_load_timing.h"
 #include "content/public/browser/global_request_id.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "services/metrics/public/cpp/ukm_source.h"
 #include "ui/base/page_transition_types.h"
+#include "ui/gfx/geometry/size.h"
 
 class GURL;
 
@@ -28,6 +31,7 @@ class WebInputEvent;
 
 namespace content {
 class NavigationHandle;
+class WebContents;
 }  // namespace content
 
 namespace page_load_metrics {
@@ -157,7 +161,8 @@ bool IsNavigationUserInitiated(content::NavigationHandle* handle);
 // provisional load, until a new navigation commits or the navigation fails.
 // MetricsWebContentsObserver manages a set of provisional PageLoadTrackers, as
 // well as a committed PageLoadTracker.
-class PageLoadTracker : public PageLoadMetricsUpdateDispatcher::Client {
+class PageLoadTracker : public PageLoadMetricsUpdateDispatcher::Client,
+                        public PageLoadMetricsObserverDelegate {
  public:
   // Caller must guarantee that the embedder_interface pointer outlives this
   // class. The PageLoadTracker must not hold on to
@@ -176,14 +181,30 @@ class PageLoadTracker : public PageLoadMetricsUpdateDispatcher::Client {
   void OnTimingChanged() override;
   void OnSubFrameTimingChanged(content::RenderFrameHost* rfh,
                                const mojom::PageLoadTiming& timing) override;
+  void OnSubFrameRenderDataChanged(
+      content::RenderFrameHost* rfh,
+      const mojom::FrameRenderDataUpdate& render_data) override;
   void OnMainFrameMetadataChanged() override;
-  void OnSubframeMetadataChanged() override;
+  void OnSubframeMetadataChanged(
+      content::RenderFrameHost* rfh,
+      const mojom::PageLoadMetadata& metadata) override;
   void UpdateFeaturesUsage(
       content::RenderFrameHost* rfh,
       const mojom::PageLoadFeatures& new_features) override;
   void UpdateResourceDataUse(
-      int frame_tree_node_id,
+      content::RenderFrameHost* rfh,
       const std::vector<mojom::ResourceDataUpdatePtr>& resources) override;
+  void OnNewDeferredResourceCounts(
+      const mojom::DeferredResourceCounts& new_deferred_resource_data) override;
+  void UpdateFrameCpuTiming(content::RenderFrameHost* rfh,
+                            const mojom::CpuTiming& timing) override;
+
+  // PageLoadMetricsDelegate implementation:
+  content::WebContents* GetWebContents() const override;
+  base::TimeTicks GetNavigationStart() const override;
+  bool DidCommit() const override;
+  const ScopedVisibilityTracker& GetVisibilityTracker() const override;
+  const ResourceTracker& GetResourceTracker() const override;
 
   void Redirect(content::NavigationHandle* navigation_handle);
   void WillProcessNavigationResponse(
@@ -192,12 +213,14 @@ class PageLoadTracker : public PageLoadMetricsUpdateDispatcher::Client {
   void DidCommitSameDocumentNavigation(
       content::NavigationHandle* navigation_handle);
   void DidInternalNavigationAbort(content::NavigationHandle* navigation_handle);
+  void ReadyToCommitNavigation(content::NavigationHandle* navigation_handle);
   void DidFinishSubFrameNavigation(
       content::NavigationHandle* navigation_handle);
   void FailedProvisionalLoad(content::NavigationHandle* navigation_handle,
                              base::TimeTicks failed_load_time);
   void WebContentsHidden();
   void WebContentsShown();
+  void FrameDeleted(content::RenderFrameHost* rfh);
 
   void OnInputEvent(const blink::WebInputEvent& event);
 
@@ -207,12 +230,21 @@ class PageLoadTracker : public PageLoadMetricsUpdateDispatcher::Client {
   // notification.
   void FlushMetricsOnAppEnterBackground();
 
+  // Replaces the |visibility_tracker_| for testing, which can mock a clock.
+  void SetVisibilityTrackerForTesting(const ScopedVisibilityTracker& tracker) {
+    visibility_tracker_ = tracker;
+  }
+
   void NotifyClientRedirectTo(const PageLoadTracker& destination);
 
   void OnLoadedResource(
       const ExtraRequestCompleteInfo& extra_request_complete_info);
 
   void FrameReceivedFirstUserActivation(content::RenderFrameHost* rfh);
+  void FrameDisplayStateChanged(content::RenderFrameHost* render_frame_host,
+                                bool is_display_none);
+  void FrameSizeChanged(content::RenderFrameHost* render_frame_host,
+                        const gfx::Size& frame_size);
 
   // Signals that we should stop tracking metrics for the associated page load.
   // We may stop tracking a page load if it doesn't meet the criteria for
@@ -265,8 +297,6 @@ class PageLoadTracker : public PageLoadMetricsUpdateDispatcher::Client {
 
   UserInitiatedInfo user_initiated_info() const { return user_initiated_info_; }
 
-  UserInputTracker* input_tracker() { return &input_tracker_; }
-
   PageLoadMetricsUpdateDispatcher* metrics_update_dispatcher() {
     return &metrics_update_dispatcher_;
   }
@@ -282,7 +312,7 @@ class PageLoadTracker : public PageLoadMetricsUpdateDispatcher::Client {
   // Invoked when a media element starts playing.
   void MediaStartedPlaying(
       const content::WebContentsObserver::MediaPlayerInfo& video_type,
-      bool is_in_main_frame);
+      content::RenderFrameHost* render_frame_host);
 
   // Informs the observers that the event corresponding to |event_key| has
   // occurred.
@@ -307,8 +337,6 @@ class PageLoadTracker : public PageLoadMetricsUpdateDispatcher::Client {
   // committed load.
   void LogAbortChainHistograms(content::NavigationHandle* final_navigation);
 
-  UserInputTracker input_tracker_;
-
   // Whether we stopped tracking this navigation after it was initiated. We may
   // stop tracking a navigation if it doesn't meet the criteria for tracking
   // metrics in DidFinishNavigation.
@@ -327,6 +355,8 @@ class PageLoadTracker : public PageLoadMetricsUpdateDispatcher::Client {
 
   // The start URL for this page load (before redirects).
   GURL start_url_;
+
+  ScopedVisibilityTracker visibility_tracker_;
 
   // Whether this page load committed.
   bool did_commit_;
@@ -377,6 +407,9 @@ class PageLoadTracker : public PageLoadMetricsUpdateDispatcher::Client {
   // always be less than or equal to |aborted_chain_size_|.
   const int aborted_chain_size_same_url_;
 
+  // Keeps track of actively loading resources on the page.
+  ResourceTracker resource_tracker_;
+
   // Interface to chrome features. Must outlive the class.
   PageLoadMetricsEmbedderInterface* const embedder_interface_;
 
@@ -385,6 +418,8 @@ class PageLoadTracker : public PageLoadMetricsUpdateDispatcher::Client {
   PageLoadMetricsUpdateDispatcher metrics_update_dispatcher_;
 
   const ukm::SourceId source_id_;
+
+  content::WebContents* const web_contents_;
 
   DISALLOW_COPY_AND_ASSIGN(PageLoadTracker);
 };

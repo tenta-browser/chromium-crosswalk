@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
@@ -106,8 +107,8 @@ std::string GetAvatarImage(const ProfileAttributesEntry* entry) {
   // it will be pixelated when displayed in the User Manager, so we should
   // return the placeholder avatar instead.
   gfx::Image avatar_image = entry->GetAvatarIcon();
-  if (avatar_image.Width() <= profiles::kAvatarIconWidth ||
-      avatar_image.Height() <= profiles::kAvatarIconHeight ) {
+  if (avatar_image.Width() <= profiles::kAvatarIconSize ||
+      avatar_image.Height() <= profiles::kAvatarIconSize) {
     avatar_image = ui::ResourceBundle::GetSharedInstance().GetImageNamed(
         profiles::GetPlaceholderAvatarIconResourceID());
   }
@@ -630,8 +631,6 @@ void UserManagerScreenHandler::GetLocalizedValues(
   localized_strings->SetString("cancel", l10n_util::GetStringUTF16(IDS_CANCEL));
   localized_strings->SetString(
       "browseAsGuest", l10n_util::GetStringUTF16(IDS_BROWSE_AS_GUEST_BUTTON));
-  localized_strings->SetString("signOutUser",
-      l10n_util::GetStringUTF16(IDS_SCREEN_LOCK_SIGN_OUT));
   localized_strings->SetString("addSupervisedUser",
       l10n_util::GetStringUTF16(IDS_CREATE_LEGACY_SUPERVISED_USER_MENU_LABEL));
 
@@ -732,7 +731,6 @@ void UserManagerScreenHandler::GetLocalizedValues(
   localized_strings->SetString("publicSessionSelectLanguage", "");
   localized_strings->SetString("publicSessionSelectKeyboard", "");
   localized_strings->SetString("signinBannerText", "");
-  localized_strings->SetString("launchAppButton", "");
   localized_strings->SetString("multiProfilesRestrictedPolicyTitle", "");
   localized_strings->SetString("multiProfilesNotAllowedPolicyMsg", "");
   localized_strings->SetString("multiProfilesPrimaryOnlyPolicyMsg", "");

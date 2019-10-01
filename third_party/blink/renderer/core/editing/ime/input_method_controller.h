@@ -57,11 +57,9 @@ class CORE_EXPORT InputMethodController final
     kKeepSelection,
   };
 
-  static InputMethodController* Create(LocalFrame&);
-
   explicit InputMethodController(LocalFrame&);
   virtual ~InputMethodController();
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
   // international text input composition
   bool HasComposition() const;
@@ -169,6 +167,7 @@ class CORE_EXPORT InputMethodController final
       int selection_end,
       size_t text_length) const;
   int TextInputFlags() const;
+  ui::TextInputAction InputActionOfFocusedElement() const;
   WebTextInputMode InputModeOfFocusedElement() const;
 
   // Implements |DocumentShutdownObserver|.

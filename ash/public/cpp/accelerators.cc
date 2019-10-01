@@ -4,9 +4,22 @@
 
 #include "ash/public/cpp/accelerators.h"
 
+#include "base/callback.h"
+#include "base/no_destructor.h"
 #include "base/stl_util.h"
 
 namespace ash {
+
+namespace {
+
+AcceleratorController* g_instance = nullptr;
+
+base::RepeatingClosure* GetVolumeAdjustmentCallback() {
+  static base::NoDestructor<base::RepeatingClosure> callback;
+  return callback.get();
+}
+
+}  // namespace
 
 const AcceleratorData kAcceleratorData[] = {
     {true, ui::VKEY_SPACE, ui::EF_CONTROL_DOWN, SWITCH_TO_LAST_USED_IME},
@@ -16,6 +29,8 @@ const AcceleratorData kAcceleratorData[] = {
      CYCLE_BACKWARD_MRU},
     {true, ui::VKEY_MEDIA_LAUNCH_APP1, ui::EF_NONE, TOGGLE_OVERVIEW},
     {true, ui::VKEY_BROWSER_SEARCH, ui::EF_NONE, TOGGLE_APP_LIST},
+    {true, ui::VKEY_BROWSER_SEARCH, ui::EF_SHIFT_DOWN,
+     TOGGLE_APP_LIST_FULLSCREEN},
     {true, ui::VKEY_WLAN, ui::EF_NONE, TOGGLE_WIFI},
     {true, ui::VKEY_KBD_BRIGHTNESS_DOWN, ui::EF_NONE, KEYBOARD_BRIGHTNESS_DOWN},
     {true, ui::VKEY_KBD_BRIGHTNESS_UP, ui::EF_NONE, KEYBOARD_BRIGHTNESS_UP},
@@ -106,6 +121,7 @@ const AcceleratorData kAcceleratorData[] = {
     // act on release instead of press when using Search as a modifier key for
     // extended keyboard shortcuts.
     {false, ui::VKEY_LWIN, ui::EF_NONE, TOGGLE_APP_LIST},
+    {false, ui::VKEY_LWIN, ui::EF_SHIFT_DOWN, TOGGLE_APP_LIST_FULLSCREEN},
     {true, ui::VKEY_MEDIA_LAUNCH_APP2, ui::EF_NONE, TOGGLE_FULLSCREEN},
     {true, ui::VKEY_MEDIA_LAUNCH_APP2, ui::EF_SHIFT_DOWN, TOGGLE_FULLSCREEN},
     {true, ui::VKEY_ESCAPE, ui::EF_SHIFT_DOWN | ui::EF_COMMAND_DOWN, UNPIN},
@@ -167,6 +183,9 @@ const AcceleratorData kAcceleratorData[] = {
     {true, ui::VKEY_A, ui::EF_COMMAND_DOWN, START_VOICE_INTERACTION},
     {true, ui::VKEY_ASSISTANT, ui::EF_NONE, START_VOICE_INTERACTION},
 
+    // IME mode change key.
+    {true, ui::VKEY_MODECHANGE, ui::EF_NONE, SWITCH_TO_NEXT_IME},
+
     // Debugging shortcuts that need to be available to end-users in
     // release builds.
     {true, ui::VKEY_U, kDebugModifier, PRINT_UI_HIERARCHIES},
@@ -176,5 +195,33 @@ const AcceleratorData kAcceleratorData[] = {
 };
 
 const size_t kAcceleratorDataLength = base::size(kAcceleratorData);
+
+// static
+AcceleratorController* AcceleratorController::Get() {
+  return g_instance;
+}
+
+// static
+void AcceleratorController::SetVolumeAdjustmentSoundCallback(
+    const base::RepeatingClosure& closure) {
+  DCHECK(GetVolumeAdjustmentCallback()->is_null() || closure.is_null());
+  *GetVolumeAdjustmentCallback() = std::move(closure);
+}
+
+// static
+void AcceleratorController::PlayVolumeAdjustmentSound() {
+  if (*GetVolumeAdjustmentCallback())
+    GetVolumeAdjustmentCallback()->Run();
+}
+
+AcceleratorController::AcceleratorController() {
+  DCHECK_EQ(nullptr, g_instance);
+  g_instance = this;
+}
+
+AcceleratorController::~AcceleratorController() {
+  DCHECK_EQ(this, g_instance);
+  g_instance = nullptr;
+}
 
 }  // namespace ash

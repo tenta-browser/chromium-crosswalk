@@ -7,6 +7,7 @@
 #include "third_party/blink/renderer/core/dom/element_traversal.h"
 #include "third_party/blink/renderer/core/dom/flat_tree_traversal_forbidden_scope.h"
 #include "third_party/blink/renderer/core/dom/node.h"
+#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/node_traversal.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/dom/slot_assignment_engine.h"
@@ -214,7 +215,7 @@ void SlotAssignment::DidChangeHostChildSlotName(const AtomicString& old_value,
 }
 
 SlotAssignment::SlotAssignment(ShadowRoot& owner)
-    : slot_map_(TreeOrderedMap::Create()),
+    : slot_map_(MakeGarbageCollected<TreeOrderedMap>()),
       owner_(&owner),
       needs_collect_slots_(false),
       slot_count_(0) {
@@ -289,7 +290,7 @@ void SlotAssignment::RecalcAssignment() {
     } else {
       if (RuntimeEnabledFeatures::FastFlatTreeTraversalEnabled())
         child.ClearFlatTreeNodeData();
-      child.LazyReattachIfAttached();
+      child.RemovedFromFlatTree();
     }
   }
 

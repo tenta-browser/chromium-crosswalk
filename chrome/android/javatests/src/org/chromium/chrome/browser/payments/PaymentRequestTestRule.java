@@ -12,6 +12,7 @@ import android.view.inputmethod.EditorInfo;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.Spinner;
+import android.widget.TextView;
 
 import org.junit.Assert;
 import org.junit.runner.Description;
@@ -19,11 +20,11 @@ import org.junit.runners.model.Statement;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.task.PostTask;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeFeatureList;
-import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.autofill.CardUnmaskPrompt;
 import org.chromium.chrome.browser.autofill.CardUnmaskPrompt.CardUnmaskObserverForTest;
 import org.chromium.chrome.browser.payments.PaymentRequestImpl.PaymentRequestServiceObserverForTest;
@@ -33,11 +34,13 @@ import org.chromium.chrome.browser.payments.ui.PaymentRequestUI;
 import org.chromium.chrome.browser.payments.ui.PaymentRequestUI.PaymentRequestObserverForTest;
 import org.chromium.chrome.browser.widget.prefeditor.EditorObserverForTest;
 import org.chromium.chrome.browser.widget.prefeditor.EditorTextField;
-import org.chromium.chrome.test.ChromeActivityTestRule;
+import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.browser.test.util.Criteria;
 import org.chromium.content_public.browser.test.util.CriteriaHelper;
 import org.chromium.content_public.browser.test.util.DOMUtils;
+import org.chromium.content_public.browser.test.util.JavaScriptUtils;
 import org.chromium.payments.mojom.PaymentDetailsModifier;
 import org.chromium.payments.mojom.PaymentItem;
 import org.chromium.payments.mojom.PaymentMethodData;
@@ -50,15 +53,13 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Custom ActivityTestRule for integration test for payments.
  */
-public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedActivity>
+public class PaymentRequestTestRule extends ChromeTabbedActivityTestRule
         implements PaymentRequestObserverForTest, PaymentRequestServiceObserverForTest,
                    CardUnmaskObserverForTest, EditorObserverForTest {
     /** Flag for installing a payment app without instruments. */
@@ -104,6 +105,7 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
     final PaymentsCallbackHelper<CardUnmaskPrompt> mReadyForUnmaskInput;
     final PaymentsCallbackHelper<CardUnmaskPrompt> mReadyToUnmask;
     final PaymentsCallbackHelper<CardUnmaskPrompt> mUnmaskValidationDone;
+    final PaymentsCallbackHelper<CardUnmaskPrompt> mSubmitRejected;
     final CallbackHelper mReadyToEdit;
     final CallbackHelper mEditorValidationError;
     final CallbackHelper mEditorTextUpdate;
@@ -112,7 +114,10 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
     final CallbackHelper mBillingAddressChangeProcessed;
     final CallbackHelper mShowFailed;
     final CallbackHelper mCanMakePaymentQueryResponded;
+    final CallbackHelper mHasEnrolledInstrumentQueryResponded;
     final CallbackHelper mExpirationMonthChange;
+    final CallbackHelper mPaymentResponseReady;
+    PaymentRequestImpl mPaymentRequest;
     PaymentRequestUI mUI;
 
     private final AtomicReference<WebContents> mWebContentsRef;
@@ -124,7 +129,7 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
     private final MainActivityStartCallback mCallback;
 
     public PaymentRequestTestRule(String testFileName, MainActivityStartCallback callback) {
-        super(ChromeTabbedActivity.class);
+        super();
         mReadyForInput = new PaymentsCallbackHelper<>();
         mReadyToPay = new PaymentsCallbackHelper<>();
         mSelectionChecked = new PaymentsCallbackHelper<>();
@@ -132,6 +137,7 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
         mReadyForUnmaskInput = new PaymentsCallbackHelper<>();
         mReadyToUnmask = new PaymentsCallbackHelper<>();
         mUnmaskValidationDone = new PaymentsCallbackHelper<>();
+        mSubmitRejected = new PaymentsCallbackHelper<>();
         mReadyToEdit = new CallbackHelper();
         mEditorValidationError = new CallbackHelper();
         mEditorTextUpdate = new CallbackHelper();
@@ -139,13 +145,15 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
         mUnableToAbort = new CallbackHelper();
         mBillingAddressChangeProcessed = new CallbackHelper();
         mExpirationMonthChange = new CallbackHelper();
+        mPaymentResponseReady = new CallbackHelper();
         mShowFailed = new CallbackHelper();
         mCanMakePaymentQueryResponded = new CallbackHelper();
+        mHasEnrolledInstrumentQueryResponded = new CallbackHelper();
         mWebContentsRef = new AtomicReference<>();
-        mTestFilePath = testFileName.startsWith("data:")
+        mTestFilePath = testFileName.equals("about:blank") || testFileName.startsWith("data:")
                 ? testFileName
                 : UrlUtils.getIsolatedTestFilePath(
-                          String.format("components/test/data/payments/%s", testFileName));
+                        String.format("components/test/data/payments/%s", testFileName));
         mCallback = callback;
     }
 
@@ -157,7 +165,7 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
         startMainActivityWithURL(mTestFilePath);
     }
 
-    private void openPage() throws InterruptedException, ExecutionException, TimeoutException {
+    protected void openPage() throws InterruptedException, TimeoutException {
         onMainActivityStarted();
         ThreadUtils.runOnUiThreadBlocking(() -> {
             mWebContentsRef.set(getActivity().getCurrentWebContents());
@@ -190,6 +198,9 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
     public PaymentsCallbackHelper<CardUnmaskPrompt> getUnmaskValidationDone() {
         return mUnmaskValidationDone;
     }
+    public PaymentsCallbackHelper<CardUnmaskPrompt> getSubmitRejected() {
+        return mSubmitRejected;
+    }
     public CallbackHelper getReadyToEdit() {
         return mReadyToEdit;
     }
@@ -215,43 +226,43 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
         return mCanMakePaymentQueryResponded;
     }
     public CallbackHelper getHasEnrolledInstrumentQueryResponded() {
-        // TODO(https://crbug.com/915907): return mHasEnrolledInstrumentQueryResponded once
-        // hasEnrolledInstrument is exposed in the PaymentRequest JavaScript API and browser tests
-        // are switched over to use the new API.
-        return mCanMakePaymentQueryResponded;
+        return mHasEnrolledInstrumentQueryResponded;
     }
     public CallbackHelper getExpirationMonthChange() {
         return mExpirationMonthChange;
+    }
+    public CallbackHelper getPaymentResponseReady() {
+        return mPaymentResponseReady;
     }
     public PaymentRequestUI getPaymentRequestUI() {
         return mUI;
     }
 
     protected void triggerUIAndWait(PaymentsCallbackHelper<PaymentRequestUI> helper)
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         openPageAndClickNodeAndWait("buy", helper);
         mUI = helper.getTarget();
     }
 
     protected void openPageAndClickNodeAndWait(String nodeId, CallbackHelper helper)
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         openPage();
         clickNodeAndWait(nodeId, helper);
     }
 
     protected void openPageAndClickBuyAndWait(CallbackHelper helper)
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         openPageAndClickNodeAndWait("buy", helper);
     }
 
     protected void openPageAndClickNode(String nodeId)
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         openPage();
-        DOMUtils.clickNode(mWebContentsRef.get(), nodeId);
+        clickNode(nodeId);
     }
 
     protected void triggerUIAndWait(String nodeId, PaymentsCallbackHelper<PaymentRequestUI> helper)
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         openPageAndClickNodeAndWait(nodeId, helper);
         mUI = helper.getTarget();
     }
@@ -263,20 +274,54 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
         mUI = helper.getTarget();
     }
 
+    protected void retryPaymentRequest(String validationErrors, CallbackHelper helper)
+            throws InterruptedException, TimeoutException {
+        int callCount = helper.getCallCount();
+        JavaScriptUtils.executeJavaScriptAndWaitForResult(
+                mWebContentsRef.get(), "retry(" + validationErrors + ");");
+        helper.waitForCallback(callCount);
+    }
+
+    protected String executeJavaScriptAndWaitForResult(String script)
+            throws InterruptedException, TimeoutException {
+        return JavaScriptUtils.executeJavaScriptAndWaitForResult(mWebContentsRef.get(), script);
+    }
+
     /** Clicks on an HTML node. */
     protected void clickNodeAndWait(String nodeId, CallbackHelper helper)
             throws InterruptedException, TimeoutException {
         int callCount = helper.getCallCount();
-        DOMUtils.clickNode(mWebContentsRef.get(), nodeId);
+        clickNode(nodeId);
         helper.waitForCallback(callCount);
     }
 
+    /** Clicks on an HTML node. */
+    protected void clickNode(String nodeId) throws InterruptedException, TimeoutException {
+        DOMUtils.clickNode(mWebContentsRef.get(), nodeId);
+    }
+
     /** Clicks on an element in the payments UI. */
-    protected void clickAndWait(final int resourceId, CallbackHelper helper)
+    protected void clickAndWait(int resourceId, CallbackHelper helper)
             throws InterruptedException, TimeoutException {
         int callCount = helper.getCallCount();
-        ThreadUtils.runOnUiThreadBlocking(
-                (Runnable) () -> mUI.getDialogForTest().findViewById(resourceId).performClick());
+        CriteriaHelper.pollUiThread(new Criteria() {
+            @Override
+            public boolean isSatisfied() {
+                boolean canClick = mUI.isAcceptingUserInput();
+                if (canClick) mUI.getDialogForTest().findViewById(resourceId).performClick();
+                return canClick;
+            }
+        });
+        helper.waitForCallback(callCount);
+    }
+
+    /** Clicks on an element in the "Order summary" section of the payments UI. */
+    protected void clickInOrderSummaryAndWait(CallbackHelper helper)
+            throws InterruptedException, TimeoutException {
+        int callCount = helper.getCallCount();
+        ThreadUtils.runOnUiThreadBlocking(() -> {
+            mUI.getOrderSummarySectionForTest().findViewById(R.id.payments_section).performClick();
+        });
         helper.waitForCallback(callCount);
     }
 
@@ -284,9 +329,9 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
     protected void clickInShippingAddressAndWait(final int resourceId, CallbackHelper helper)
             throws InterruptedException, TimeoutException {
         int callCount = helper.getCallCount();
-        ThreadUtils.runOnUiThreadBlocking(
-                (Runnable) () -> mUI.getShippingAddressSectionForTest().findViewById(
-                        resourceId).performClick());
+        ThreadUtils.runOnUiThreadBlocking(() -> {
+            mUI.getShippingAddressSectionForTest().findViewById(resourceId).performClick();
+        });
         helper.waitForCallback(callCount);
     }
 
@@ -294,9 +339,9 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
     protected void clickInPaymentMethodAndWait(final int resourceId, CallbackHelper helper)
             throws InterruptedException, TimeoutException {
         int callCount = helper.getCallCount();
-        ThreadUtils.runOnUiThreadBlocking(
-                (Runnable) () -> mUI.getPaymentMethodSectionForTest().findViewById(
-                        resourceId).performClick());
+        ThreadUtils.runOnUiThreadBlocking(() -> {
+            mUI.getPaymentMethodSectionForTest().findViewById(resourceId).performClick();
+        });
         helper.waitForCallback(callCount);
     }
 
@@ -304,9 +349,9 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
     protected void clickInContactInfoAndWait(final int resourceId, CallbackHelper helper)
             throws InterruptedException, TimeoutException {
         int callCount = helper.getCallCount();
-        ThreadUtils.runOnUiThreadBlocking(
-                (Runnable) () -> mUI.getContactDetailsSectionForTest().findViewById(
-                        resourceId).performClick());
+        ThreadUtils.runOnUiThreadBlocking(() -> {
+            mUI.getContactDetailsSectionForTest().findViewById(resourceId).performClick();
+        });
         helper.waitForCallback(callCount);
     }
 
@@ -315,7 +360,7 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
             throws InterruptedException, TimeoutException {
         int callCount = helper.getCallCount();
         ThreadUtils.runOnUiThreadBlocking(
-                (Runnable) () -> mUI.getCardEditorDialog().findViewById(resourceId).performClick());
+                () -> { mUI.getCardEditorDialog().findViewById(resourceId).performClick(); });
         helper.waitForCallback(callCount);
     }
 
@@ -324,14 +369,14 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
             throws InterruptedException, TimeoutException {
         int callCount = helper.getCallCount();
         ThreadUtils.runOnUiThreadBlocking(
-                (Runnable) () -> mUI.getEditorDialog().findViewById(resourceId).performClick());
+                () -> { mUI.getEditorDialog().findViewById(resourceId).performClick(); });
         helper.waitForCallback(callCount);
     }
 
     protected void clickAndroidBackButtonInEditorAndWait(CallbackHelper helper)
             throws InterruptedException, TimeoutException {
         int callCount = helper.getCallCount();
-        ThreadUtils.runOnUiThread(() -> {
+        PostTask.runOrPostTask(UiThreadTaskTraits.DEFAULT, () -> {
             mUI.getEditorDialog().dispatchKeyEvent(
                     new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK));
             mUI.getEditorDialog().dispatchKeyEvent(
@@ -351,30 +396,40 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
         helper.waitForCallback(callCount);
     }
 
+    /** Gets the retry error message. */
+    protected String getRetryErrorMessage() {
+        return ThreadUtils.runOnUiThreadBlockingNoException(
+                ()
+                        -> ((TextView) mUI.getDialogForTest().findViewById(R.id.retry_error))
+                                   .getText()
+                                   .toString());
+    }
+
     /** Gets the button state for the shipping summary section. */
-    protected int getShippingAddressSectionButtonState() throws ExecutionException {
-        return ThreadUtils.runOnUiThreadBlocking(
+    protected int getShippingAddressSectionButtonState() {
+        return ThreadUtils.runOnUiThreadBlockingNoException(
                 () -> mUI.getShippingAddressSectionForTest().getEditButtonState());
     }
 
     /** Gets the button state for the contact details section. */
-    protected int getContactDetailsButtonState() throws ExecutionException {
-        return ThreadUtils.runOnUiThreadBlocking(
+    protected int getContactDetailsButtonState() {
+        return ThreadUtils.runOnUiThreadBlockingNoException(
                 () -> mUI.getContactDetailsSectionForTest().getEditButtonState());
     }
 
     /** Returns the label corresponding to the payment instrument at the specified |index|. */
-    protected String getPaymentInstrumentLabel(final int index) throws ExecutionException {
-        return ThreadUtils.runOnUiThreadBlocking(
-                () -> ((OptionSection) mUI.getPaymentMethodSectionForTest())
-                        .getOptionLabelsForTest(index)
-                        .getText()
-                        .toString());
+    protected String getPaymentInstrumentLabel(final int index) {
+        return ThreadUtils.runOnUiThreadBlockingNoException(
+                ()
+                        -> ((OptionSection) mUI.getPaymentMethodSectionForTest())
+                                   .getOptionLabelsForTest(index)
+                                   .getText()
+                                   .toString());
     }
 
     /** Returns the label of the selected payment instrument. */
-    protected String getSelectedPaymentInstrumentLabel() throws ExecutionException {
-        return ThreadUtils.runOnUiThreadBlocking(() -> {
+    protected String getSelectedPaymentInstrumentLabel() {
+        return ThreadUtils.runOnUiThreadBlockingNoException(() -> {
             OptionSection section = ((OptionSection) mUI.getPaymentMethodSectionForTest());
             int size = section.getNumberOfOptionLabelsForTest();
             for (int i = 0; i < size; i++) {
@@ -387,71 +442,115 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
     }
 
     /** Returns the total amount in order summary section. */
-    protected String getOrderSummaryTotal() throws ExecutionException {
-        return ThreadUtils.runOnUiThreadBlocking(
+    protected String getOrderSummaryTotal() {
+        return ThreadUtils.runOnUiThreadBlockingNoException(
                 () -> mUI.getOrderSummaryTotalTextViewForTest().getText().toString());
+    }
+
+    /** Returns the amount text corresponding to the line item at the specified |index|. */
+    protected String getLineItemAmount(int index) {
+        return ThreadUtils.runOnUiThreadBlockingNoException(
+                ()
+                        -> mUI.getOrderSummarySectionForTest()
+                                   .getLineItemAmountForTest(index)
+                                   .getText()
+                                   .toString()
+                                   .trim());
+    }
+
+    /** Returns the amount text corresponding to the line item at the specified |index|. */
+    protected int getNumberOfLineItems() {
+        return ThreadUtils.runOnUiThreadBlockingNoException(
+                () -> mUI.getOrderSummarySectionForTest().getNumberOfLineItemsForTest());
     }
 
     /**
      * Returns the label corresponding to the contact detail suggestion at the specified
      * |suggestionIndex|.
      */
-    protected String getContactDetailsSuggestionLabel(final int suggestionIndex)
-            throws ExecutionException {
-        return ThreadUtils.runOnUiThreadBlocking(
-                () -> ((OptionSection) mUI.getContactDetailsSectionForTest())
-                        .getOptionLabelsForTest(suggestionIndex)
-                        .getText()
-                        .toString());
+    protected String getContactDetailsSuggestionLabel(final int suggestionIndex) {
+        return ThreadUtils.runOnUiThreadBlockingNoException(
+                ()
+                        -> ((OptionSection) mUI.getContactDetailsSectionForTest())
+                                   .getOptionLabelsForTest(suggestionIndex)
+                                   .getText()
+                                   .toString());
     }
 
     /** Returns the number of payment instruments. */
-    protected int getNumberOfPaymentInstruments() throws ExecutionException {
-        return ThreadUtils.runOnUiThreadBlocking(
-                () -> ((OptionSection) mUI.getPaymentMethodSectionForTest())
-                        .getNumberOfOptionLabelsForTest());
+    protected int getNumberOfPaymentInstruments() {
+        return ThreadUtils.runOnUiThreadBlockingNoException(
+                ()
+                        -> ((OptionSection) mUI.getPaymentMethodSectionForTest())
+                                   .getNumberOfOptionLabelsForTest());
     }
 
     /** Returns the number of contact detail suggestions. */
-    protected int getNumberOfContactDetailSuggestions() throws ExecutionException {
-        return ThreadUtils.runOnUiThreadBlocking(
-                () -> ((OptionSection) mUI.getContactDetailsSectionForTest())
-                        .getNumberOfOptionLabelsForTest());
+    protected int getNumberOfContactDetailSuggestions() {
+        return ThreadUtils.runOnUiThreadBlockingNoException(
+                ()
+                        -> ((OptionSection) mUI.getContactDetailsSectionForTest())
+                                   .getNumberOfOptionLabelsForTest());
     }
 
     /**
      * Returns the label corresponding to the shipping address suggestion at the specified
      * |suggestionIndex|.
      */
-    protected String getShippingAddressSuggestionLabel(final int suggestionIndex)
-            throws ExecutionException {
+    protected String getShippingAddressSuggestionLabel(final int suggestionIndex) {
         Assert.assertTrue(suggestionIndex < getNumberOfShippingAddressSuggestions());
 
-        return ThreadUtils.runOnUiThreadBlocking(() -> mUI.getShippingAddressSectionForTest()
-                .getOptionLabelsForTest(suggestionIndex)
-                .getText()
-                .toString());
+        return ThreadUtils.runOnUiThreadBlockingNoException(
+                ()
+                        -> mUI.getShippingAddressSectionForTest()
+                                   .getOptionLabelsForTest(suggestionIndex)
+                                   .getText()
+                                   .toString());
     }
 
-    protected String getShippingAddressSummary() throws ExecutionException {
-        return ThreadUtils.runOnUiThreadBlocking(() -> mUI.getShippingAddressSectionForTest()
-                .getLeftSummaryLabelForTest()
-                .getText()
-                .toString());
+    protected String getShippingAddressSummary() {
+        return ThreadUtils.runOnUiThreadBlockingNoException(
+                ()
+                        -> mUI.getShippingAddressSectionForTest()
+                                   .getLeftSummaryLabelForTest()
+                                   .getText()
+                                   .toString());
     }
 
-    protected String getShippingOptionSummary() throws ExecutionException {
-        return ThreadUtils.runOnUiThreadBlocking(() -> mUI.getShippingOptionSectionForTest()
-                .getLeftSummaryLabelForTest()
-                .getText()
-                .toString());
+    protected String getShippingOptionSummary() {
+        return ThreadUtils.runOnUiThreadBlockingNoException(
+                ()
+                        -> mUI.getShippingOptionSectionForTest()
+                                   .getLeftSummaryLabelForTest()
+                                   .getText()
+                                   .toString());
     }
 
-    protected String getShippingOptionCostSummaryOnBottomSheet() throws ExecutionException {
-        return ThreadUtils.runOnUiThreadBlocking(() -> mUI.getShippingOptionSectionForTest()
-                .getRightSummaryLabelForTest()
-                .getText()
-                .toString());
+    protected String getShippingOptionCostSummaryOnBottomSheet() {
+        return ThreadUtils.runOnUiThreadBlockingNoException(
+                ()
+                        -> mUI.getShippingOptionSectionForTest()
+                                   .getRightSummaryLabelForTest()
+                                   .getText()
+                                   .toString());
+    }
+
+    protected String getShippingAddressWarningLabel() {
+        return ThreadUtils.runOnUiThreadBlockingNoException(() -> {
+            View view = mUI.getShippingAddressSectionForTest().findViewById(
+                    R.id.payments_warning_label);
+            return view != null && view instanceof TextView ? ((TextView) view).getText().toString()
+                                                            : null;
+        });
+    }
+
+    protected String getShippingAddressDescriptionLabel() {
+        return ThreadUtils.runOnUiThreadBlockingNoException(() -> {
+            View view = mUI.getShippingAddressSectionForTest().findViewById(
+                    R.id.payments_description_label);
+            return view != null && view instanceof TextView ? ((TextView) view).getText().toString()
+                                                            : null;
+        });
     }
 
     /** Returns the focused view in the card editor view. */
@@ -464,16 +563,16 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
      * |suggestionIndex|.
      * @throws InterruptedException
      */
-    protected void clickOnShippingAddressSuggestionOptionAndWait(
-            final int suggestionIndex, CallbackHelper helper)
-            throws ExecutionException, TimeoutException, InterruptedException {
+    protected void clickOnShippingAddressSuggestionOptionAndWait(final int suggestionIndex,
+            CallbackHelper helper) throws TimeoutException, InterruptedException {
         Assert.assertTrue(suggestionIndex < getNumberOfShippingAddressSuggestions());
 
         int callCount = helper.getCallCount();
-        ThreadUtils.runOnUiThreadBlocking(
-                (Runnable) () -> ((OptionSection) mUI.getShippingAddressSectionForTest())
-                        .getOptionLabelsForTest(suggestionIndex)
-                        .performClick());
+        ThreadUtils.runOnUiThreadBlocking(() -> {
+            ((OptionSection) mUI.getShippingAddressSectionForTest())
+                    .getOptionLabelsForTest(suggestionIndex)
+                    .performClick();
+        });
         helper.waitForCallback(callCount);
     }
 
@@ -482,16 +581,16 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
      * |suggestionIndex|.
      * @throws InterruptedException
      */
-    protected void clickOnPaymentMethodSuggestionOptionAndWait(
-            final int suggestionIndex, CallbackHelper helper)
-            throws ExecutionException, TimeoutException, InterruptedException {
+    protected void clickOnPaymentMethodSuggestionOptionAndWait(final int suggestionIndex,
+            CallbackHelper helper) throws TimeoutException, InterruptedException {
         Assert.assertTrue(suggestionIndex < getNumberOfPaymentInstruments());
 
         int callCount = helper.getCallCount();
-        ThreadUtils.runOnUiThreadBlocking(
-                (Runnable) () -> ((OptionSection) mUI.getPaymentMethodSectionForTest())
-                        .getOptionLabelsForTest(suggestionIndex)
-                        .performClick());
+        ThreadUtils.runOnUiThreadBlocking(() -> {
+            ((OptionSection) mUI.getPaymentMethodSectionForTest())
+                    .getOptionLabelsForTest(suggestionIndex)
+                    .performClick();
+        });
         helper.waitForCallback(callCount);
     }
 
@@ -500,16 +599,16 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
      * |suggestionIndex|.
      * @throws InterruptedException
      */
-    protected void clickOnContactInfoSuggestionOptionAndWait(
-            final int suggestionIndex, CallbackHelper helper)
-            throws ExecutionException, TimeoutException, InterruptedException {
+    protected void clickOnContactInfoSuggestionOptionAndWait(final int suggestionIndex,
+            CallbackHelper helper) throws TimeoutException, InterruptedException {
         Assert.assertTrue(suggestionIndex < getNumberOfContactDetailSuggestions());
 
         int callCount = helper.getCallCount();
-        ThreadUtils.runOnUiThreadBlocking(
-                (Runnable) () -> ((OptionSection) mUI.getContactDetailsSectionForTest())
-                        .getOptionLabelsForTest(suggestionIndex)
-                        .performClick());
+        ThreadUtils.runOnUiThreadBlocking(() -> {
+            ((OptionSection) mUI.getContactDetailsSectionForTest())
+                    .getOptionLabelsForTest(suggestionIndex)
+                    .performClick();
+        });
         helper.waitForCallback(callCount);
     }
 
@@ -517,86 +616,90 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
      * Clicks on the edit icon corresponding to the payment method suggestion at the specified
      * |suggestionIndex|.
      */
-    protected void clickOnPaymentMethodSuggestionEditIconAndWait(
-            final int suggestionIndex, CallbackHelper helper)
-            throws ExecutionException, TimeoutException, InterruptedException {
+    protected void clickOnPaymentMethodSuggestionEditIconAndWait(final int suggestionIndex,
+            CallbackHelper helper) throws TimeoutException, InterruptedException {
         Assert.assertTrue(suggestionIndex < getNumberOfPaymentInstruments());
 
         int callCount = helper.getCallCount();
-        ThreadUtils.runOnUiThreadBlocking(
-                (Runnable) () -> ((OptionSection) mUI.getPaymentMethodSectionForTest())
-                        .getOptionRowAtIndex(suggestionIndex)
-                        .getEditIconForTest()
-                        .performClick());
+        ThreadUtils.runOnUiThreadBlocking(() -> {
+            ((OptionSection) mUI.getPaymentMethodSectionForTest())
+                    .getOptionRowAtIndex(suggestionIndex)
+                    .getEditIconForTest()
+                    .performClick();
+        });
         helper.waitForCallback(callCount);
     }
 
     /**
      * Returns the summary text of the shipping address section.
      */
-    protected String getShippingAddressSummaryLabel() throws ExecutionException {
+    protected String getShippingAddressSummaryLabel() {
         return getShippingAddressSummary();
     }
 
     /**
      * Returns the summary text of the shipping option section.
      */
-    protected String getShippingOptionSummaryLabel() throws ExecutionException {
+    protected String getShippingOptionSummaryLabel() {
         return getShippingOptionSummary();
     }
 
     /**
      * Returns the cost text of the shipping option section on the bottom sheet.
      */
-    protected String getShippingOptionCostSummaryLabelOnBottomSheet() throws ExecutionException {
+    protected String getShippingOptionCostSummaryLabelOnBottomSheet() {
         return getShippingOptionCostSummaryOnBottomSheet();
     }
-
 
     /**
      * Returns the number of shipping address suggestions.
      */
-    protected int getNumberOfShippingAddressSuggestions() throws ExecutionException {
-        return ThreadUtils.runOnUiThreadBlocking(
-                () -> ((OptionSection) mUI.getShippingAddressSectionForTest())
-                        .getNumberOfOptionLabelsForTest());
+    protected int getNumberOfShippingAddressSuggestions() {
+        return ThreadUtils.runOnUiThreadBlockingNoException(
+                ()
+                        -> ((OptionSection) mUI.getShippingAddressSectionForTest())
+                                   .getNumberOfOptionLabelsForTest());
     }
 
     /** Returns the {@link OptionRow} at the given index for the shipping address section. */
-    protected OptionRow getShippingAddressOptionRowAtIndex(final int index)
-            throws ExecutionException {
-        return ThreadUtils.runOnUiThreadBlocking(
-                () -> ((OptionSection) mUI.getShippingAddressSectionForTest())
-                        .getOptionRowAtIndex(index));
+    protected OptionRow getShippingAddressOptionRowAtIndex(final int index) {
+        return ThreadUtils.runOnUiThreadBlockingNoException(
+                ()
+                        -> ((OptionSection) mUI.getShippingAddressSectionForTest())
+                                   .getOptionRowAtIndex(index));
     }
 
     /** Returns the selected spinner value in the editor UI for credit cards. */
-    protected String getSpinnerSelectionTextInCardEditor(final int dropdownIndex)
-            throws ExecutionException {
-        return ThreadUtils.runOnUiThreadBlocking(() -> mUI.getCardEditorDialog()
-                .getDropdownFieldsForTest()
-                .get(dropdownIndex)
-                .getSelectedItem()
-                .toString());
+    protected String getSpinnerSelectionTextInCardEditor(final int dropdownIndex) {
+        return ThreadUtils.runOnUiThreadBlockingNoException(
+                ()
+                        -> mUI.getCardEditorDialog()
+                                   .getDropdownFieldsForTest()
+                                   .get(dropdownIndex)
+                                   .getSelectedItem()
+                                   .toString());
     }
 
     /** Returns the spinner value at the specified position in the editor UI for credit cards. */
     protected String getSpinnerTextAtPositionInCardEditor(
-            final int dropdownIndex, final int itemPosition) throws ExecutionException {
-        return ThreadUtils.runOnUiThreadBlocking(() -> mUI.getCardEditorDialog()
-                .getDropdownFieldsForTest()
-                .get(dropdownIndex)
-                .getItemAtPosition(itemPosition)
-                .toString());
+            final int dropdownIndex, final int itemPosition) {
+        return ThreadUtils.runOnUiThreadBlockingNoException(
+                ()
+                        -> mUI.getCardEditorDialog()
+                                   .getDropdownFieldsForTest()
+                                   .get(dropdownIndex)
+                                   .getItemAtPosition(itemPosition)
+                                   .toString());
     }
 
     /** Returns the number of items offered by the spinner in the editor UI for credit cards. */
-    protected int getSpinnerItemCountInCardEditor(final int dropdownIndex)
-            throws ExecutionException {
-        return ThreadUtils.runOnUiThreadBlocking(() -> mUI.getCardEditorDialog()
-                .getDropdownFieldsForTest()
-                .get(dropdownIndex)
-                .getCount());
+    protected int getSpinnerItemCountInCardEditor(final int dropdownIndex) {
+        return ThreadUtils.runOnUiThreadBlockingNoException(
+                ()
+                        -> mUI.getCardEditorDialog()
+                                   .getDropdownFieldsForTest()
+                                   .get(dropdownIndex)
+                                   .getCount());
     }
 
     /** Returns the error message visible to the user in the credit card unmask prompt. */
@@ -621,9 +724,10 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
     protected void setSpinnerSelectionInEditorAndWait(final int selection, CallbackHelper helper)
             throws InterruptedException, TimeoutException {
         int callCount = helper.getCallCount();
-        ThreadUtils.runOnUiThreadBlocking(() -> ((Spinner) mUI.getEditorDialog().findViewById(
-                R.id.spinner))
-                .setSelection(selection));
+        ThreadUtils.runOnUiThreadBlocking(
+                ()
+                        -> ((Spinner) mUI.getEditorDialog().findViewById(R.id.spinner))
+                                   .setSelection(selection));
         helper.waitForCallback(callCount);
     }
 
@@ -652,6 +756,7 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
         ThreadUtils.runOnUiThreadBlocking(() -> {
             List<EditText> fields = mUI.getEditorDialog().getEditableTextFieldsForTest();
             for (int i = 0; i < values.length; i++) {
+                fields.get(i).requestFocus();
                 fields.get(i).setText(values[i]);
             }
         });
@@ -662,9 +767,10 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
     protected void selectCheckboxAndWait(final int resourceId, final boolean isChecked,
             CallbackHelper helper) throws InterruptedException, TimeoutException {
         int callCount = helper.getCallCount();
-        ThreadUtils.runOnUiThreadBlocking(() -> ((CheckBox) mUI.getCardEditorDialog().findViewById(
-                resourceId))
-                .setChecked(isChecked));
+        ThreadUtils.runOnUiThreadBlocking(
+                ()
+                        -> ((CheckBox) mUI.getCardEditorDialog().findViewById(resourceId))
+                                   .setChecked(isChecked));
         helper.waitForCallback(callCount);
     }
 
@@ -727,8 +833,8 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
                     }
                     for (int i = 0; i < contents.length; i++) {
                         if (!result.contains(contents[i])) {
-                            updateFailureReason(
-                                    String.format("Result should contain '%s'", contents[i]));
+                            updateFailureReason(String.format(
+                                    "Result '" + result + "' should contain '%s'", contents[i]));
                             return false;
                         }
                     }
@@ -808,12 +914,8 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
     }
 
     /* package */ View getPaymentRequestView() throws Throwable {
-        return ThreadUtils.runOnUiThreadBlocking(new Callable<View>() {
-            @Override
-            public View call() {
-                return mUI.getDialogForTest().findViewById(R.id.payment_request);
-            }
-        });
+        return ThreadUtils.runOnUiThreadBlockingNoException(
+                () -> mUI.getDialogForTest().findViewById(R.id.payment_request));
     }
 
     /* package */ View getCardUnmaskView() throws Throwable {
@@ -822,6 +924,17 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
                         -> mCardUnmaskPrompt.getDialogForTest()
                                    .get(ModalDialogProperties.CUSTOM_VIEW)
                                    .findViewById(R.id.autofill_card_unmask_prompt));
+    }
+
+    /* package */ View getEditorDialogView() throws Throwable {
+        return ThreadUtils.runOnUiThreadBlocking(
+                () -> mUI.getEditorDialog().findViewById(R.id.editor_container));
+    }
+
+    /** Allows to skip UI into paymenthandler for"basic-card". */
+    protected void enableSkipUIForBasicCard() {
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> mPaymentRequest.setSkipUIForNonURLPaymentMethodIdentifiersForTest());
     }
 
     @Override
@@ -873,6 +986,12 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
     }
 
     @Override
+    public void onPaymentRequestCreated(PaymentRequestImpl paymentRequest) {
+        ThreadUtils.assertOnUiThread();
+        mPaymentRequest = paymentRequest;
+    }
+
+    @Override
     public void onPaymentRequestServiceUnableToAbort() {
         ThreadUtils.assertOnUiThread();
         mUnableToAbort.notifyCalled();
@@ -905,10 +1024,7 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
     @Override
     public void onPaymentRequestServiceHasEnrolledInstrumentQueryResponded() {
         ThreadUtils.assertOnUiThread();
-        // TODO(https://crbug.com/915907): return mHasEnrolledInstrumentQueryResponded once
-        // hasEnrolledInstrument is exposed in the PaymentRequest JavaScript API and browser tests
-        // are switched over to use the new API.
-        mCanMakePaymentQueryResponded.notifyCalled();
+        mHasEnrolledInstrumentQueryResponded.notifyCalled();
     }
 
     @Override
@@ -928,6 +1044,18 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
     public void onCardUnmaskPromptValidationDone(CardUnmaskPrompt prompt) {
         ThreadUtils.assertOnUiThread();
         mUnmaskValidationDone.notifyCalled(prompt);
+    }
+
+    @Override
+    public void onCardUnmaskPromptSubmitRejected(CardUnmaskPrompt prompt) {
+        ThreadUtils.assertOnUiThread();
+        mSubmitRejected.notifyCalled(prompt);
+    }
+
+    @Override
+    public void onPaymentResponseReady() {
+        ThreadUtils.assertOnUiThread();
+        mPaymentResponseReady.notifyCalled();
     }
 
     /**
@@ -1094,15 +1222,15 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
                 Map<String, PaymentMethodData> methodData, PaymentItem total,
                 List<PaymentItem> displayItems, Map<String, PaymentDetailsModifier> modifiers,
                 InstrumentDetailsCallback detailsCallback) {
-            detailsCallback.onInstrumentDetailsReady(mDefaultMethodName, "{\"transaction\": 1337}");
+            detailsCallback.onInstrumentDetailsReady(mDefaultMethodName,
+                    "{\"transaction\": 1337, \"total\": \"" + total.amount.value + "\"}");
         }
 
         @Override
         public void dismissInstrument() {}
     }
 
-    public void onMainActivityStarted()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void onMainActivityStarted() throws InterruptedException, TimeoutException {
         if (mCallback != null) {
             mCallback.onMainActivityStarted();
         }
@@ -1122,7 +1250,6 @@ public class PaymentRequestTestRule extends ChromeActivityTestRule<ChromeTabbedA
     /** The interface for being notified of the main activity startup. */
     public interface MainActivityStartCallback {
         /** Called when the main activity has started up. */
-        void onMainActivityStarted() throws
-                InterruptedException, ExecutionException, TimeoutException;
+        void onMainActivityStarted() throws InterruptedException, TimeoutException;
     }
 }

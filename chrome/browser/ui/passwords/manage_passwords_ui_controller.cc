@@ -16,6 +16,7 @@
 #include "chrome/browser/password_manager/chrome_password_manager_client.h"
 #include "chrome/browser/password_manager/password_store_factory.h"
 #include "chrome/browser/signin/signin_ui_util.h"
+#include "chrome/browser/ui/autofill/payments/autofill_ui_util.h"
 #include "chrome/browser/ui/browser_command_controller.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_finder.h"
@@ -35,6 +36,7 @@
 #include "components/password_manager/core/browser/password_bubble_experiment.h"
 #include "components/password_manager/core/browser/password_form_manager_for_ui.h"
 #include "components/password_manager/core/browser/password_manager_constants.h"
+#include "components/password_manager/core/browser/password_ui_utils.h"
 #include "components/password_manager/core/browser/statistics_table.h"
 #include "components/password_manager/core/common/credential_manager_types.h"
 #include "content/public/browser/navigation_handle.h"
@@ -390,35 +392,9 @@ void ManagePasswordsUIController::OnPasswordsRevealed() {
 
 void ManagePasswordsUIController::SavePassword(const base::string16& username,
                                                const base::string16& password) {
-  const auto& pending_credentials =
-      passwords_data_.form_manager()->GetPendingCredentials();
-  bool username_edited = pending_credentials.username_value != username;
-  bool password_changed = pending_credentials.password_value != password;
-  if (username_edited) {
-    passwords_data_.form_manager()->UpdateUsername(username);
-    if (GetPasswordFormMetricsRecorder()) {
-      GetPasswordFormMetricsRecorder()->RecordDetailedUserAction(
-          password_manager::PasswordFormMetricsRecorder::DetailedUserAction::
-              kEditedUsernameInBubble);
-    }
-  }
-  if (password_changed) {
-    passwords_data_.form_manager()->UpdatePasswordValue(password);
-    if (GetPasswordFormMetricsRecorder()) {
-      GetPasswordFormMetricsRecorder()->RecordDetailedUserAction(
-          password_manager::PasswordFormMetricsRecorder::DetailedUserAction::
-              kSelectedDifferentPasswordInBubble);
-    }
-  }
+  UpdatePasswordFormUsernameAndPassword(username, password,
+                                        passwords_data_.form_manager());
 
-  // Values of this histogram are a bit mask. Only the lower two bits are used:
-  // 0001 to indicate that the user has edited the username in the password
-  //      save bubble.
-  // 0010 to indicate that the user has changed the password in the password
-  //      save bubble.
-  // The maximum possible value is defined by OR-ing these values.
-  UMA_HISTOGRAM_ENUMERATION("PasswordManager.EditsInSaveBubble",
-                            username_edited + 2 * password_changed, 4);
   UMA_HISTOGRAM_BOOLEAN("PasswordManager.PasswordSavedWithManualFallback",
                         BubbleIsManualFallbackForSaving());
   if (GetPasswordFormMetricsRecorder() && BubbleIsManualFallbackForSaving()) {
@@ -501,15 +477,7 @@ bool ManagePasswordsUIController::ArePasswordsRevealedWhenBubbleIsOpened()
 }
 
 void ManagePasswordsUIController::SavePasswordInternal() {
-  password_manager::PasswordStore* password_store =
-      GetPasswordStore(web_contents());
-  password_manager::PasswordFormManagerForUI* form_manager =
-      passwords_data_.form_manager();
-  for (auto* form : form_manager->GetBlacklistedMatches()) {
-    password_store->RemoveLogin(*form);
-  }
-
-  form_manager->Save();
+  passwords_data_.form_manager()->Save();
 }
 
 void ManagePasswordsUIController::NeverSavePasswordInternal() {
@@ -532,8 +500,8 @@ void ManagePasswordsUIController::UpdateBubbleAndIconVisibility() {
   if (!browser)
     return;
 
-  browser->window()->GetPageActionIconContainer()->UpdatePageActionIcon(
-      PageActionIconType::kManagePasswords);
+  ::autofill::UpdatePageActionIcon(PageActionIconType::kManagePasswords,
+                                   web_contents());
 }
 
 AccountChooserPrompt* ManagePasswordsUIController::CreateAccountChooser(

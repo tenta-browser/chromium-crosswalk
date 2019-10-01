@@ -67,12 +67,12 @@ bool LogMessageToAsl(
     return false;
 
   if (asl_set(asl_message.get(), ASL_KEY_LEVEL,
-              base::IntToString(level).c_str()) != 0)
+              base::NumberToString(level).c_str()) != 0)
     return false;
 
   // Restrict read access to the message to root and the current user.
   if (asl_set(asl_message.get(), ASL_KEY_READ_UID,
-              base::IntToString(geteuid()).c_str()) != 0)
+              base::NumberToString(geteuid()).c_str()) != 0)
     return false;
 
   if (asl_set(asl_message.get(), ASL_KEY_MSG,
@@ -90,7 +90,8 @@ bool LogMessageToAsl(
 void InitHostLogging() {
   // Write logs to the system debug log.
   logging::LoggingSettings settings;
-  settings.logging_dest = logging::LOG_TO_SYSTEM_DEBUG_LOG;
+  settings.logging_dest =
+      logging::LOG_TO_SYSTEM_DEBUG_LOG | logging::LOG_TO_STDERR;
   logging::InitLogging(settings);
 
   // Write logs to syslog as well.

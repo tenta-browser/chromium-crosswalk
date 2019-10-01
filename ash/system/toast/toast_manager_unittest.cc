@@ -5,11 +5,12 @@
 #include "ash/system/toast/toast_manager.h"
 
 #include "ash/screen_util.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shelf/shelf.h"
 #include "ash/shelf/shelf_constants.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
+#include "ash/wm/work_area_insets.h"
 #include "base/run_loop.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
@@ -84,7 +85,7 @@ class ToastManagerTest : public AshTestBase {
   std::string ShowToast(const std::string& text,
                         int32_t duration,
                         bool visible_on_lock_screen = false) {
-    std::string id = "TOAST_ID_" + base::UintToString(serial_++);
+    std::string id = "TOAST_ID_" + base::NumberToString(serial_++);
     manager()->Show(ToastData(id, base::ASCIIToUTF16(text), duration,
                               base::string16(), visible_on_lock_screen));
     return id;
@@ -98,7 +99,7 @@ class ToastManagerTest : public AshTestBase {
     if (dismiss_text.has_value())
       localized_dismiss = base::ASCIIToUTF16(dismiss_text.value());
 
-    std::string id = "TOAST_ID_" + base::UintToString(serial_++);
+    std::string id = "TOAST_ID_" + base::NumberToString(serial_++);
     manager()->Show(
         ToastData(id, base::ASCIIToUTF16(text), duration, localized_dismiss));
     return id;
@@ -107,10 +108,10 @@ class ToastManagerTest : public AshTestBase {
   void CancelToast(const std::string& id) { manager()->Cancel(id); }
 
   void ChangeLockState(bool lock) {
-    mojom::SessionInfoPtr info_ptr = mojom::SessionInfo::New();
-    info_ptr->state = lock ? session_manager::SessionState::LOCKED
-                           : session_manager::SessionState::ACTIVE;
-    Shell::Get()->session_controller()->SetSessionInfo(std::move(info_ptr));
+    SessionInfo info;
+    info.state = lock ? session_manager::SessionState::LOCKED
+                      : session_manager::SessionState::ACTIVE;
+    Shell::Get()->session_controller()->SetSessionInfo(info);
   }
 
  private:
@@ -141,7 +142,8 @@ TEST_F(ToastManagerTest, ShowAndCloseManually) {
   EXPECT_EQ(nullptr, GetCurrentOverlay());
 }
 
-TEST_F(ToastManagerTest, ShowAndCloseManuallyDuringAnimation) {
+// TODO(crbug.com/959781): Test is flaky.
+TEST_F(ToastManagerTest, DISABLED_ShowAndCloseManuallyDuringAnimation) {
   ui::ScopedAnimationDurationScaleMode slow_animation_duration(
       ui::ScopedAnimationDurationScaleMode::SLOW_DURATION);
 
@@ -162,13 +164,15 @@ TEST_F(ToastManagerTest, ShowAndCloseManuallyDuringAnimation) {
   EXPECT_TRUE(GetCurrentOverlay() != nullptr);
 }
 
-TEST_F(ToastManagerTest, NullMessageHasNoDismissButton) {
+// TODO(crbug.com/959781): Test is flaky.
+TEST_F(ToastManagerTest, DISABLED_NullMessageHasNoDismissButton) {
   ShowToastWithDismiss("DUMMY", 10, base::Optional<std::string>());
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(GetDismissButton());
 }
 
-TEST_F(ToastManagerTest, QueueMessage) {
+// TODO(crbug.com/959781): Test is flaky.
+TEST_F(ToastManagerTest, DISABLED_QueueMessage) {
   ShowToast("DUMMY1", 10);
   ShowToast("DUMMY2", 10);
   ShowToast("DUMMY3", 10);
@@ -199,7 +203,8 @@ TEST_F(ToastManagerTest, PositionWithVisibleBottomShelf) {
   gfx::Rect root_bounds =
       screen_util::GetDisplayBoundsWithShelf(shelf->GetWindow());
 
-  EXPECT_TRUE(toast_bounds.Intersects(shelf->GetUserWorkAreaBounds()));
+  EXPECT_TRUE(toast_bounds.Intersects(
+      GetPrimaryWorkAreaInsets()->user_work_area_bounds()));
   EXPECT_NEAR(root_bounds.CenterPoint().x(), toast_bounds.CenterPoint().x(), 1);
 
   gfx::Rect shelf_bounds = shelf->GetIdealBounds();
@@ -226,7 +231,8 @@ TEST_F(ToastManagerTest, PositionWithAutoHiddenBottomShelf) {
   gfx::Rect root_bounds =
       screen_util::GetDisplayBoundsWithShelf(shelf->GetWindow());
 
-  EXPECT_TRUE(toast_bounds.Intersects(shelf->GetUserWorkAreaBounds()));
+  EXPECT_TRUE(toast_bounds.Intersects(
+      GetPrimaryWorkAreaInsets()->user_work_area_bounds()));
   EXPECT_NEAR(root_bounds.CenterPoint().x(), toast_bounds.CenterPoint().x(), 1);
   EXPECT_EQ(root_bounds.bottom() - kHiddenShelfInScreenPortion -
                 ToastOverlay::kOffset,
@@ -246,7 +252,8 @@ TEST_F(ToastManagerTest, PositionWithHiddenBottomShelf) {
   gfx::Rect root_bounds =
       screen_util::GetDisplayBoundsWithShelf(shelf->GetWindow());
 
-  EXPECT_TRUE(toast_bounds.Intersects(shelf->GetUserWorkAreaBounds()));
+  EXPECT_TRUE(toast_bounds.Intersects(
+      GetPrimaryWorkAreaInsets()->user_work_area_bounds()));
   EXPECT_NEAR(root_bounds.CenterPoint().x(), toast_bounds.CenterPoint().x(), 1);
   EXPECT_EQ(root_bounds.bottom() - ToastOverlay::kOffset,
             toast_bounds.bottom());
@@ -265,7 +272,8 @@ TEST_F(ToastManagerTest, PositionWithVisibleLeftShelf) {
   gfx::Rect root_bounds =
       screen_util::GetDisplayBoundsWithShelf(shelf->GetWindow());
 
-  EXPECT_TRUE(toast_bounds.Intersects(shelf->GetUserWorkAreaBounds()));
+  EXPECT_TRUE(toast_bounds.Intersects(
+      GetPrimaryWorkAreaInsets()->user_work_area_bounds()));
   EXPECT_EQ(root_bounds.bottom() - ToastOverlay::kOffset,
             toast_bounds.bottom());
 
@@ -291,7 +299,8 @@ TEST_F(ToastManagerTest, PositionWithUnifiedDesktop) {
   gfx::Rect root_bounds =
       screen_util::GetDisplayBoundsWithShelf(shelf->GetWindow());
 
-  EXPECT_TRUE(toast_bounds.Intersects(shelf->GetUserWorkAreaBounds()));
+  EXPECT_TRUE(toast_bounds.Intersects(
+      GetPrimaryWorkAreaInsets()->user_work_area_bounds()));
   EXPECT_TRUE(root_bounds.Contains(toast_bounds));
   EXPECT_NEAR(root_bounds.CenterPoint().x(), toast_bounds.CenterPoint().x(), 1);
 

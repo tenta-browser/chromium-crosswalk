@@ -26,8 +26,15 @@ class VULKAN_EXPORT VulkanInstance {
   // The extensions in |required_extensions| and the layers in |required_layers|
   // will be enabled in the created instance. See the "Extended Functionality"
   // section of vulkan specification for more information.
+  // TODO(samans): Remove |using_swiftshader| once Vulkan Swiftshader is more
+  // developed and the workarounds that were added can be deleted.
+  // https://crbug.com/963988
   bool Initialize(const std::vector<const char*>& required_extensions,
-                  const std::vector<const char*>& required_layers);
+                  const std::vector<const char*>& required_layers,
+                  bool using_swiftshader = false);
+
+  // VkApplicationInfo.apiVersion value used to initialize the instance.
+  uint32_t api_version() const { return api_version_; }
 
   const gfx::ExtensionSet& enabled_extensions() const {
     return enabled_extensions_;
@@ -37,6 +44,8 @@ class VULKAN_EXPORT VulkanInstance {
 
  private:
   void Destroy();
+
+  uint32_t api_version_;
 
   VkInstance vk_instance_ = VK_NULL_HANDLE;
   gfx::ExtensionSet enabled_extensions_;

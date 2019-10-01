@@ -39,10 +39,13 @@ print_preview.LocalDestinationInfo;
  *   documentHasSelection: boolean,
  *   shouldPrintSelectionOnly: boolean,
  *   printerName: string,
- *   headerFooter: ?boolean,
+ *   headerFooter: (boolean | undefined),
  *   isHeaderFooterManaged: boolean,
  *   serializedAppStateStr: ?string,
  *   serializedDefaultDestinationSelectionRulesStr: ?string,
+ *   cloudPrintURL: (string | undefined),
+ *   userAccounts: (Array<string> | undefined),
+ *   syncAvailable: boolean
  * }}
  * @see corresponding field name definitions in print_preview_handler.cc
  */
@@ -213,9 +216,17 @@ cr.define('print_preview', function() {
       return cr.sendWithPromise('getPreview', printTicket);
     }
 
-    /** Opens the chrome://settings printing page. */
+    /**
+     * Opens the chrome://settings printing page. For Chrome OS, open the
+     *  printing settings in the Settings App.
+     */
     openSettingsPrintPage() {
+      // <if expr="chromeos">
+      chrome.send('openPrinterSettings');
+      // </if>
+      // <if expr="not chromeos">
       window.open('chrome://settings/printing');
+      // </if>
     }
 
     /**
@@ -269,15 +280,13 @@ cr.define('print_preview', function() {
     }
 
     /**
-     * Opens the Google Cloud Print sign-in tab. The DESTINATIONS_RELOAD event
-     *     will be dispatched in response.
+     * Opens the Google Cloud Print sign-in tab. If the user signs in
+     * successfully, the user-accounts-updated event will be sent in response.
      * @param {boolean} addAccount Whether to open an 'add a new account' or
      *     default sign in page.
-     * @return {!Promise} Promise that resolves when the sign in tab has been
-     *     closed and the destinations should be reloaded.
      */
     signIn(addAccount) {
-      return cr.sendWithPromise('signIn', addAccount);
+      chrome.send('signIn', [addAccount]);
     }
 
     /**

@@ -91,7 +91,7 @@ void FormatBlockCommand::FormatRange(const Position& start,
   Node* node_after_insertion_position = outer_block;
   const EphemeralRange range(start, end_of_selection);
 
-  GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
+  GetDocument().UpdateStyleAndLayout();
   if (IsElementForFormatBlock(ref_element->TagQName()) &&
       CreateVisiblePosition(start).DeepEquivalent() ==
           StartOfBlock(CreateVisiblePosition(start)).DeepEquivalent() &&
@@ -114,7 +114,7 @@ void FormatBlockCommand::FormatRange(const Position& start,
                      editing_state);
     if (editing_state->IsAborted())
       return;
-    GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
+    GetDocument().UpdateStyleAndLayout();
   }
 
   Position last_paragraph_in_block_node =
@@ -141,13 +141,14 @@ void FormatBlockCommand::FormatRange(const Position& start,
   // Copy the inline style of the original block element to the newly created
   // block-style element.
   if (outer_block != node_after_insertion_position &&
-      ToHTMLElement(node_after_insertion_position)->hasAttribute(kStyleAttr)) {
-    block_element->setAttribute(
-        kStyleAttr,
-        ToHTMLElement(node_after_insertion_position)->getAttribute(kStyleAttr));
+      To<HTMLElement>(node_after_insertion_position)
+          ->hasAttribute(kStyleAttr)) {
+    block_element->setAttribute(kStyleAttr,
+                                To<HTMLElement>(node_after_insertion_position)
+                                    ->getAttribute(kStyleAttr));
   }
 
-  GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
+  GetDocument().UpdateStyleAndLayout();
 
   if (was_end_of_paragraph &&
       !IsEndOfParagraph(CreateVisiblePosition(last_paragraph_in_block_node)) &&

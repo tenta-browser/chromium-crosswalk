@@ -16,6 +16,7 @@
 #include "components/previews/content/hint_cache_store.h"
 
 namespace previews {
+class HintUpdateData;
 
 using HintLoadedCallback =
     base::OnceCallback<void(const optimization_guide::proto::Hint*)>;
@@ -42,21 +43,48 @@ class HintCache {
   // pre-existing data and begin in a clean state.
   void Initialize(bool purge_existing_data, base::OnceClosure callback);
 
-  // Returns a ComponentUpdateData created by the store, based upon the provided
-  // component version. During component processing, hints from the component
-  // are moved into the component update data. After component processing
-  // completes, the component update data is provided to the backing store in
-  // UpdateComponentData() and used to update its component hints. In the case
-  // the provided component version is not newer than the store's version,
-  // nullptr will be returned by the call.
-  std::unique_ptr<HintCacheStore::ComponentUpdateData>
-  MaybeCreateComponentUpdateData(const base::Version& version) const;
+  // Returns a HintUpdateData. During component processing, hints from the
+  // component are moved into the HintUpdateData. After component
+  // processing completes, the component update data is provided to the backing
+  // store in UpdateComponentHints() and used to update its component hints. In
+  // the case the provided component version is not newer than the store's
+  // version, nullptr will be returned by the call.
+  std::unique_ptr<HintUpdateData> MaybeCreateUpdateDataForComponentHints(
+      const base::Version& version) const;
 
-  // Updates the store's component data using the provided ComponentUpdateData
+  // Returns an UpdateData created by the store to hold updates for fetched
+  // hints. No version is needed nor applicable for fetched hints. During
+  // processing of the GetHintsResponse, hints are moved into the update data.
+  // After processing is complete, the update data is provided to the backing
+  // store to update hints. |update_time| specifies when the hints within the
+  // created update data will be scheduled to be updated. |expiry_time|
+  // specifies when the hints within the created update data will be expired
+  // from the store.
+  std::unique_ptr<HintUpdateData> CreateUpdateDataForFetchedHints(
+      base::Time update_time,
+      base::Time expiry_time) const;
+
+  // Updates the store's component data using the provided HintUpdateData
   // and asynchronously runs the provided callback after the update finishes.
-  void UpdateComponentData(
-      std::unique_ptr<HintCacheStore::ComponentUpdateData> component_data,
+  void UpdateComponentHints(std::unique_ptr<HintUpdateData> component_data,
+                            base::OnceClosure callback);
+
+  // Process |get_hints_response| to be stored in the hint cache store. Returns
+  // true if processing |get_hints_response| is successful and applicable hints
+  // can be stored. Returns false if there are no applicable hints in
+  // |get_hints_response| or it cannot be processed. |callback| is
+  // asynchronously run when the hints are successfully stored or if the store
+  // is not available. |update_time| specifies when the hints within
+  // |get_hints_response| will need to be updated next.
+  bool UpdateFetchedHints(
+      std::unique_ptr<optimization_guide::proto::GetHintsResponse>
+          get_hints_response,
+      base::Time update_time,
       base::OnceClosure callback);
+
+  // Purge fetched hints from the owned |hint_store_| and reset
+  // the |memory_cache_|.
+  void ClearFetchedHints();
 
   // Returns whether the cache has a hint data for |host| locally (whether
   // in memory or persisted on disk).
@@ -65,6 +93,11 @@ class HintCache {
   // Requests that hint data for |host| be loaded asynchronously and passed to
   // |callback| if/when loaded.
   void LoadHint(const std::string& host, HintLoadedCallback callback);
+
+  // Returns the update time provided by |hint_store_|, which specifies when the
+  // fetched hints within the store are ready to be updated. If |hint_store_| is
+  // not initialized, base::Time() is returned.
+  base::Time FetchedHintsUpdateTime() const;
 
   // Returns the hint data for |host| if found in memory, otherwise nullptr.
   const optimization_guide::proto::Hint* GetHintIfLoaded(
@@ -86,12 +119,6 @@ class HintCache {
   void OnLoadStoreHint(HintLoadedCallback callback,
                        const HintCacheStore::EntryKey& store_hint_entry_key,
                        std::unique_ptr<optimization_guide::proto::Hint> hint);
-
-  // Finds the most specific host suffix of the host name for which the store
-  // has a hint and populates |out_hint_entry_key| with the hint's corresponding
-  // entry key. Returns true if a hint was successfully found.
-  bool FindHintEntryKey(const std::string& host,
-                        HintCacheStore::EntryKey* out_hint_entry_key) const;
 
   // The backing store used with this hint cache. Set during construction.
   const std::unique_ptr<HintCacheStore> hint_store_;

@@ -14,6 +14,10 @@
 #include "ui/gfx/paint_throbber.h"
 #include "ui/views/view.h"
 
+namespace base {
+class TickClock;
+}
+
 class GURL;
 struct TabRendererData;
 
@@ -119,6 +123,8 @@ class TabIcon : public views::View, public gfx::AnimationDelegate {
   bool is_crashed_ = false;
   int attention_types_ = 0;  // Bitmask of AttentionType.
 
+  const bool use_new_loading_animation_;
+
   // Value from last call to SetNetworkState. When true, the network loading
   // animation will not be shown.
   bool inhibit_loading_animation_ = false;
@@ -156,6 +162,8 @@ class TabIcon : public views::View, public gfx::AnimationDelegate {
   bool can_paint_to_layer_ = false;
 
   SkColor bg_color_ = SK_ColorBLACK;
+
+  bool has_tab_renderer_data_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(TabIcon);
 };

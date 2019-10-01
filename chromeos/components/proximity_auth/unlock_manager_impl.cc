@@ -8,32 +8,36 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "base/time/default_clock.h"
 #include "base/time/time.h"
 #include "chromeos/components/multidevice/logging/logging.h"
 #include "chromeos/components/multidevice/remote_device_ref.h"
 #include "chromeos/components/proximity_auth/messenger.h"
 #include "chromeos/components/proximity_auth/metrics.h"
 #include "chromeos/components/proximity_auth/proximity_auth_client.h"
-#include "chromeos/components/proximity_auth/proximity_auth_pref_manager.h"
 #include "chromeos/components/proximity_auth/proximity_monitor_impl.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/services/secure_channel/public/cpp/client/client_channel.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
-
-using chromeos::DBusThreadManager;
 
 namespace proximity_auth {
 namespace {
 
 // The maximum amount of time, in seconds, that the unlock manager can stay in
 // the 'waking up' state after resuming from sleep.
-const int kWakingUpDurationSecs = 15;
+constexpr base::TimeDelta kWakingUpDuration = base::TimeDelta::FromSeconds(15);
 
 // The limit, in seconds, on the elapsed time for an auth attempt. If an auth
 // attempt exceeds this limit, it will time out and be rejected. This is
 // provided as a failsafe, in case something goes wrong.
-const int kAuthAttemptTimeoutSecs = 5;
+constexpr base::TimeDelta kAuthAttemptTimeout = base::TimeDelta::FromSeconds(5);
+
+constexpr base::TimeDelta kMinGetUnlockableRemoteStatusDuration =
+    base::TimeDelta::FromMilliseconds(1);
+constexpr base::TimeDelta kMaxGetUnlockableRemoteStatusDuration =
+    base::TimeDelta::FromSeconds(15);
+const int kNumDurationMetricBuckets = 100;
 
 // Returns the remote device's security settings state, for metrics,
 // corresponding to a remote status update.
@@ -99,25 +103,19 @@ void RecordAuthResultFailure(
 
 }  // namespace
 
-class ProximityAuthPrefManager;
-
 UnlockManagerImpl::UnlockManagerImpl(
     ProximityAuthSystem::ScreenlockType screenlock_type,
-    ProximityAuthClient* proximity_auth_client,
-    ProximityAuthPrefManager* pref_manager)
+    ProximityAuthClient* proximity_auth_client)
     : screenlock_type_(screenlock_type),
       life_cycle_(nullptr),
       proximity_auth_client_(proximity_auth_client),
-      pref_manager_(pref_manager),
       is_attempting_auth_(false),
-      is_waking_up_(false),
+      is_performing_initial_scan_(false),
       screenlock_state_(ScreenlockState::INACTIVE),
-      clear_waking_up_state_weak_ptr_factory_(this),
+      initial_scan_timeout_weak_ptr_factory_(this),
       reject_auth_attempt_weak_ptr_factory_(this),
       weak_ptr_factory_(this) {
-  DBusThreadManager::Get()->GetPowerManagerClient()->AddObserver(this);
-
-  SetWakingUpState(true /* is_waking_up */);
+  chromeos::PowerManagerClient::Get()->AddObserver(this);
 
   if (device::BluetoothAdapterFactory::IsBluetoothSupported()) {
     device::BluetoothAdapterFactory::GetAdapter(
@@ -133,7 +131,7 @@ UnlockManagerImpl::~UnlockManagerImpl() {
   if (proximity_monitor_)
     proximity_monitor_->RemoveObserver(this);
 
-  DBusThreadManager::Get()->GetPowerManagerClient()->RemoveObserver(this);
+  chromeos::PowerManagerClient::Get()->RemoveObserver(this);
 
   if (bluetooth_adapter_)
     bluetooth_adapter_->RemoveObserver(this);
@@ -152,14 +150,22 @@ bool UnlockManagerImpl::IsUnlockAllowed() {
 
 void UnlockManagerImpl::SetRemoteDeviceLifeCycle(
     RemoteDeviceLifeCycle* life_cycle) {
+  PA_LOG(VERBOSE) << "Request received to change scan state to: "
+                  << (life_cycle == nullptr ? "inactive" : "active") << ".";
+
   if (GetMessenger())
     GetMessenger()->RemoveObserver(this);
 
   life_cycle_ = life_cycle;
   if (life_cycle_) {
+    attempt_secure_connection_start_time_ =
+        base::DefaultClock::GetInstance()->Now();
+
     AttemptToStartRemoteDeviceLifecycle();
-    SetWakingUpState(true /* is_waking_up */);
+    SetIsPerformingInitialScan(true /* is_performing_initial_scan */);
   } else {
+    ResetPerformanceMetricsTimestamps();
+
     if (proximity_monitor_)
       proximity_monitor_->RemoveObserver(this);
     proximity_monitor_.reset();
@@ -176,11 +182,14 @@ void UnlockManagerImpl::OnLifeCycleStateChanged() {
     DCHECK(life_cycle_->GetChannel());
     DCHECK(GetMessenger());
     if (!proximity_monitor_) {
-      proximity_monitor_ = CreateProximityMonitor(life_cycle_, pref_manager_);
+      proximity_monitor_ = CreateProximityMonitor(life_cycle_);
       proximity_monitor_->AddObserver(this);
       proximity_monitor_->Start();
     }
     GetMessenger()->AddObserver(this);
+
+    attempt_get_remote_status_start_time_ =
+        base::DefaultClock::GetInstance()->Now();
   } else if (proximity_monitor_) {
     proximity_monitor_->RemoveObserver(this);
     proximity_monitor_->Stop();
@@ -188,7 +197,7 @@ void UnlockManagerImpl::OnLifeCycleStateChanged() {
   }
 
   if (state == RemoteDeviceLifeCycle::State::AUTHENTICATION_FAILED)
-    SetWakingUpState(false /* is_waking_up */);
+    SetIsPerformingInitialScan(false /* is_performing_initial_scan */);
 
   UpdateLockScreen();
 }
@@ -222,7 +231,7 @@ void UnlockManagerImpl::OnRemoteStatusUpdate(
       GetScreenlockStateFromRemoteUpdate(status_update)));
 
   // This also calls |UpdateLockScreen()|
-  SetWakingUpState(false /* is_waking_up */);
+  SetIsPerformingInitialScan(false /* is_performing_initial_scan */);
 }
 
 void UnlockManagerImpl::OnDecryptResponse(const std::string& decrypted_bytes) {
@@ -303,7 +312,7 @@ void UnlockManagerImpl::AdapterPoweredChanged(device::BluetoothAdapter* adapter,
 }
 
 void UnlockManagerImpl::SuspendDone(const base::TimeDelta& sleep_duration) {
-  SetWakingUpState(true /* is_waking_up */);
+  SetIsPerformingInitialScan(true /* is_performing_initial_scan */);
 }
 
 bool UnlockManagerImpl::IsBluetoothPresentAndPowered() const {
@@ -356,7 +365,7 @@ void UnlockManagerImpl::OnAuthAttempted(mojom::AuthType auth_type) {
           reject_auth_attempt_weak_ptr_factory_.GetWeakPtr(),
           SmartLockMetricsRecorder::SmartLockAuthResultFailureReason::
               kAuthAttemptTimedOut),
-      base::TimeDelta::FromSeconds(kAuthAttemptTimeoutSecs));
+      kAuthAttemptTimeout);
 
   if (screenlock_type_ == ProximityAuthSystem::SIGN_IN) {
     SendSignInChallenge();
@@ -372,14 +381,13 @@ void UnlockManagerImpl::OnAuthAttempted(mojom::AuthType auth_type) {
 }
 
 void UnlockManagerImpl::CancelConnectionAttempt() {
-  SetWakingUpState(false /* is_waking_up */);
+  SetIsPerformingInitialScan(false /* is_performing_initial_scan */);
 }
 
 std::unique_ptr<ProximityMonitor> UnlockManagerImpl::CreateProximityMonitor(
-    RemoteDeviceLifeCycle* life_cycle,
-    ProximityAuthPrefManager* pref_manager) {
-  return std::make_unique<ProximityMonitorImpl>(
-      life_cycle->GetRemoteDevice(), life_cycle->GetChannel(), pref_manager);
+    RemoteDeviceLifeCycle* life_cycle) {
+  return std::make_unique<ProximityMonitorImpl>(life_cycle->GetRemoteDevice(),
+                                                life_cycle->GetChannel());
 }
 
 void UnlockManagerImpl::SendSignInChallenge() {
@@ -430,14 +438,14 @@ ScreenlockState UnlockManagerImpl::GetScreenlockState() {
   if (life_cycle_state == RemoteDeviceLifeCycle::State::AUTHENTICATION_FAILED)
     return ScreenlockState::PHONE_NOT_AUTHENTICATED;
 
-  if (is_waking_up_)
+  if (is_performing_initial_scan_)
     return ScreenlockState::BLUETOOTH_CONNECTING;
 
   Messenger* messenger = GetMessenger();
 
   // Show a timeout state if we can not connect to the remote device in a
   // reasonable amount of time.
-  if (!is_waking_up_ && !messenger)
+  if (!is_performing_initial_scan_ && !messenger)
     return ScreenlockState::NO_PHONE;
 
   if (screenlock_type_ == ProximityAuthSystem::SIGN_IN && messenger &&
@@ -473,6 +481,11 @@ ScreenlockState UnlockManagerImpl::GetScreenlockState() {
     }
   }
 
+  if (messenger) {
+    PA_LOG(WARNING) << "Connection to host established, but remote screenlock "
+                    << "state was either malformed or not received.";
+  }
+
   return ScreenlockState::NO_PHONE;
 }
 
@@ -485,27 +498,38 @@ void UnlockManagerImpl::UpdateLockScreen() {
 
   PA_LOG(INFO) << "Updating screenlock state from " << screenlock_state_
                << " to " << new_state;
+
+  if (new_state == ScreenlockState::AUTHENTICATED)
+    RecordUnlockableRemoteStatusReceived();
+
   proximity_auth_client_->UpdateScreenlockState(new_state);
   screenlock_state_ = new_state;
 }
 
-void UnlockManagerImpl::SetWakingUpState(bool is_waking_up) {
-  is_waking_up_ = is_waking_up;
+void UnlockManagerImpl::SetIsPerformingInitialScan(
+    bool is_performing_initial_scan) {
+  PA_LOG(VERBOSE) << "Initial scan state is ["
+                  << (is_performing_initial_scan_ ? "active" : "inactive")
+                  << "]. Requesting state ["
+                  << (is_performing_initial_scan ? "active" : "inactive")
+                  << "].";
+
+  is_performing_initial_scan_ = is_performing_initial_scan;
 
   // Clear the waking up state after a timeout.
-  clear_waking_up_state_weak_ptr_factory_.InvalidateWeakPtrs();
-  if (is_waking_up_) {
+  initial_scan_timeout_weak_ptr_factory_.InvalidateWeakPtrs();
+  if (is_performing_initial_scan_) {
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE,
-        base::BindOnce(&UnlockManagerImpl::OnConnectionAttemptTimeOut,
-                       clear_waking_up_state_weak_ptr_factory_.GetWeakPtr()),
-        base::TimeDelta::FromSeconds(kWakingUpDurationSecs));
+        base::BindOnce(&UnlockManagerImpl::OnInitialScanTimeout,
+                       initial_scan_timeout_weak_ptr_factory_.GetWeakPtr()),
+        kWakingUpDuration);
   }
 
   UpdateLockScreen();
 }
 
-void UnlockManagerImpl::OnConnectionAttemptTimeOut() {
+void UnlockManagerImpl::OnInitialScanTimeout() {
   if (IsBluetoothPresentAndPowered()) {
     if (life_cycle_ &&
         life_cycle_->GetState() ==
@@ -528,7 +552,8 @@ void UnlockManagerImpl::OnConnectionAttemptTimeOut() {
             kTimedOutBluetoothDisabled);
   }
 
-  SetWakingUpState(false /* is_waking_up */);
+  PA_LOG(INFO) << "Failed to connect to host within allotted time.";
+  SetIsPerformingInitialScan(false /* is_performing_initial_scan */);
 }
 
 void UnlockManagerImpl::FinalizeAuthAttempt(
@@ -586,6 +611,42 @@ Messenger* UnlockManagerImpl::GetMessenger() {
   if (!life_cycle_)
     return nullptr;
   return life_cycle_->GetMessenger();
+}
+
+void UnlockManagerImpl::RecordUnlockableRemoteStatusReceived() {
+  if (attempt_secure_connection_start_time_.is_null() ||
+      attempt_get_remote_status_start_time_.is_null()) {
+    PA_LOG(WARNING) << "Attempted to RecordUnlockableRemoteStatusReceived() "
+                       "without initial timestamps recorded.";
+    NOTREACHED();
+  }
+
+  base::Time now = base::DefaultClock::GetInstance()->Now();
+  if (screenlock_type_ == ProximityAuthSystem::SESSION_LOCK) {
+    // Use a custom |max| to account for Smart Lock's timeout (larger than the
+    // default 10 seconds).
+    base::UmaHistogramCustomTimes(
+        "SmartLock.Performance.StartScanToReceiveUnlockableRemoteStatus."
+        "Duration.Unlock",
+        now - attempt_secure_connection_start_time_ /* sample */,
+        kMinGetUnlockableRemoteStatusDuration /* min */,
+        kMaxGetUnlockableRemoteStatusDuration /* max */,
+        kNumDurationMetricBuckets /* buckets */);
+
+    base::UmaHistogramTimes(
+        "SmartLock.Performance.AuthenticationToReceiveUnlockableRemoteStatus."
+        "Duration.Unlock",
+        now - attempt_get_remote_status_start_time_);
+  }
+
+  // TODO(crbug.com/905438): Implement similar SignIn metrics.
+
+  ResetPerformanceMetricsTimestamps();
+}
+
+void UnlockManagerImpl::ResetPerformanceMetricsTimestamps() {
+  attempt_secure_connection_start_time_ = base::Time();
+  attempt_get_remote_status_start_time_ = base::Time();
 }
 
 }  // namespace proximity_auth

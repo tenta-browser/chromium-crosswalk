@@ -12,22 +12,18 @@ namespace blink {
 WebViewFrameWidget::WebViewFrameWidget(WebWidgetClient& client,
                                        WebViewImpl& web_view)
     : WebFrameWidgetBase(client), web_view_(&web_view), self_keep_alive_(this) {
-  // TODO(danakj): SetLayerTreeView() here as well, then we can Close() the
-  // WebViewImpl's widget bits in Close().
-  web_view_->SetWebWidgetClient(&client);
 }
 
 WebViewFrameWidget::~WebViewFrameWidget() = default;
 
 void WebViewFrameWidget::Close() {
-  // TODO(danakj): Close() the WebViewImpl here, when we reset the LayerTreeView
-  // in the constructor.
-  web_view_->SetWebWidgetClient(nullptr);
+  // Closing the WebViewFrameWidget happens in response to the local main frame
+  // being detached from the Page/WebViewImpl.
+  // TODO(danakj): Close the WebWidget parts of WebViewImpl here. This should
+  // drop the WebWidgetClient from it as well. For now, WebViewImpl requires a
+  // WebWidgetClient to always be present so this does nothing.
   web_view_ = nullptr;
   WebFrameWidgetBase::Close();
-
-  // Note: this intentionally does not forward to WebView::close(), to make it
-  // easier to untangle the cleanup logic later.
   self_keep_alive_.Clear();
 }
 
@@ -56,8 +52,41 @@ void WebViewFrameWidget::SetSuppressFrameRequestsWorkaroundFor704763Only(
   web_view_->SetSuppressFrameRequestsWorkaroundFor704763Only(
       suppress_frame_requests);
 }
-void WebViewFrameWidget::BeginFrame(base::TimeTicks last_frame_time) {
-  web_view_->BeginFrame(last_frame_time);
+void WebViewFrameWidget::BeginFrame(base::TimeTicks last_frame_time,
+                                    bool record_main_frame_metrics) {
+  web_view_->BeginFrame(last_frame_time, record_main_frame_metrics);
+}
+
+void WebViewFrameWidget::DidBeginFrame() {
+  web_view_->DidBeginFrame();
+}
+
+void WebViewFrameWidget::BeginRafAlignedInput() {
+  web_view_->BeginRafAlignedInput();
+}
+
+void WebViewFrameWidget::EndRafAlignedInput() {
+  web_view_->EndRafAlignedInput();
+}
+
+void WebViewFrameWidget::BeginUpdateLayers() {
+  web_view_->BeginUpdateLayers();
+}
+
+void WebViewFrameWidget::EndUpdateLayers() {
+  web_view_->EndUpdateLayers();
+}
+
+void WebViewFrameWidget::BeginCommitCompositorFrame() {
+  web_view_->BeginCommitCompositorFrame();
+}
+
+void WebViewFrameWidget::EndCommitCompositorFrame() {
+  web_view_->EndCommitCompositorFrame();
+}
+
+void WebViewFrameWidget::RecordStartOfFrameMetrics() {
+  web_view_->RecordStartOfFrameMetrics();
 }
 
 void WebViewFrameWidget::RecordEndOfFrameMetrics(
@@ -68,16 +97,6 @@ void WebViewFrameWidget::RecordEndOfFrameMetrics(
 void WebViewFrameWidget::UpdateLifecycle(LifecycleUpdate requested_update,
                                          LifecycleUpdateReason reason) {
   web_view_->UpdateLifecycle(requested_update, reason);
-}
-
-void WebViewFrameWidget::PaintContent(cc::PaintCanvas* canvas,
-                                      const WebRect& view_port) {
-  web_view_->PaintContent(canvas, view_port);
-}
-
-void WebViewFrameWidget::CompositeAndReadbackAsync(
-    base::OnceCallback<void(const SkBitmap&)> callback) {
-  web_view_->CompositeAndReadbackAsync(std::move(callback));
 }
 
 void WebViewFrameWidget::ThemeChanged() {
@@ -95,6 +114,10 @@ WebInputEventResult WebViewFrameWidget::DispatchBufferedTouchEvents() {
 
 void WebViewFrameWidget::SetCursorVisibilityState(bool is_visible) {
   web_view_->SetCursorVisibilityState(is_visible);
+}
+
+void WebViewFrameWidget::OnFallbackCursorModeToggled(bool is_on) {
+  web_view_->OnFallbackCursorModeToggled(is_on);
 }
 
 void WebViewFrameWidget::ApplyViewportChanges(
@@ -136,10 +159,6 @@ bool WebViewFrameWidget::IsAcceleratedCompositingActive() const {
   return web_view_->IsAcceleratedCompositingActive();
 }
 
-void WebViewFrameWidget::WillCloseLayerTreeView() {
-  web_view_->WillCloseLayerTreeView();
-}
-
 WebURL WebViewFrameWidget::GetURLForDebugTrace() {
   return web_view_->GetURLForDebugTrace();
 }
@@ -153,18 +172,11 @@ bool WebViewFrameWidget::ScrollFocusedEditableElementIntoView() {
   return web_view_->ScrollFocusedEditableElementIntoView();
 }
 
-void WebViewFrameWidget::Initialize() {}
-
-void WebViewFrameWidget::SetLayerTreeView(WebLayerTreeView*) {
+void WebViewFrameWidget::SetLayerTreeView(WebLayerTreeView*,
+                                          cc::AnimationHost*) {
   // The WebViewImpl already has its LayerTreeView, the WebWidgetClient
   // thus does not initialize and set another one here.
   NOTREACHED();
-}
-
-base::WeakPtr<AnimationWorkletMutatorDispatcherImpl>
-WebViewFrameWidget::EnsureCompositorMutatorDispatcher(
-    scoped_refptr<base::SingleThreadTaskRunner>* mutator_task_runner) {
-  return web_view_->EnsureCompositorMutatorDispatcher(mutator_task_runner);
 }
 
 void WebViewFrameWidget::SetRootGraphicsLayer(GraphicsLayer* layer) {
@@ -183,7 +195,7 @@ WebLayerTreeView* WebViewFrameWidget::GetLayerTreeView() const {
   return web_view_->LayerTreeView();
 }
 
-CompositorAnimationHost* WebViewFrameWidget::AnimationHost() const {
+cc::AnimationHost* WebViewFrameWidget::AnimationHost() const {
   return web_view_->AnimationHost();
 }
 

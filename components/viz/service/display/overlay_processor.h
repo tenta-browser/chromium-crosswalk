@@ -9,6 +9,7 @@
 
 #include "base/containers/flat_map.h"
 #include "base/macros.h"
+#include "components/viz/common/display/overlay_strategy.h"
 #include "components/viz/common/quads/render_pass.h"
 #include "components/viz/service/display/ca_layer_overlay.h"
 #include "components/viz/service/display/dc_layer_overlay.h"
@@ -20,24 +21,18 @@ class DisplayResourceProvider;
 }
 
 namespace viz {
-class OutputSurface;
+class OverlayCandidateValidator;
 
 class VIZ_SERVICE_EXPORT OverlayProcessor {
  public:
-  // Enum used for UMA histogram. These enum values must not be changed or
-  // reused.
-  enum class StrategyType {
-    kUnknown = 0,
-    kNoStrategyUsed = 1,
-    kFullscreen = 2,
-    kSingleOnTop = 3,
-    kUnderlay = 4,
-    kUnderlayCast = 5,
-    kMaxValue = kUnderlayCast,
-  };
-
   using FilterOperationsMap =
       base::flat_map<RenderPassId, cc::FilterOperations*>;
+
+  static void RecordOverlayDamageRectHistograms(
+      bool is_overlay,
+      bool has_occluding_surface_damage,
+      bool zero_damage_rect,
+      bool occluding_damage_equal_to_damage_rect);
 
   class VIZ_SERVICE_EXPORT Strategy {
    public:
@@ -55,16 +50,25 @@ class VIZ_SERVICE_EXPORT OverlayProcessor {
         OverlayCandidateList* candidates,
         std::vector<gfx::Rect>* content_bounds) = 0;
 
-    virtual StrategyType GetUMAEnum() const;
+    virtual OverlayStrategy GetUMAEnum() const;
   };
   using StrategyList = std::vector<std::unique_ptr<Strategy>>;
 
-  explicit OverlayProcessor(OutputSurface* surface);
+  explicit OverlayProcessor(const ContextProvider* context_provider);
   virtual ~OverlayProcessor();
-  // Virtual to allow testing different strategies.
-  virtual void Initialize();
+
+  void SetOverlayCandidateValidator(
+      std::unique_ptr<OverlayCandidateValidator> overlay_validator);
 
   gfx::Rect GetAndResetOverlayDamage();
+
+  const OverlayCandidateValidator* GetOverlayCandidateValidator() const {
+    return overlay_validator_.get();
+  }
+
+  bool NeedsSurfaceOccludingDamageRect() const;
+  void SetDisplayTransformHint(gfx::OverlayTransform transform);
+  void SetValidatorViewportSize(const gfx::Size& size);
 
   // Attempt to replace quads from the specified root render pass with overlays
   // or CALayers. This must be called every frame.
@@ -81,12 +85,12 @@ class VIZ_SERVICE_EXPORT OverlayProcessor {
       std::vector<gfx::Rect>* content_bounds);
 
   void SetDCHasHwOverlaySupportForTesting() {
-    dc_processor_.SetHasHwOverlaySupport();
+    dc_processor_->SetHasHwOverlaySupport();
   }
 
  protected:
   StrategyList strategies_;
-  OutputSurface* surface_;
+  std::unique_ptr<OverlayCandidateValidator> overlay_validator_;
   gfx::Rect overlay_damage_rect_;
   gfx::Rect previous_frame_underlay_rect_;
   bool previous_frame_underlay_was_unoccluded_ = false;
@@ -112,9 +116,10 @@ class VIZ_SERVICE_EXPORT OverlayProcessor {
   void UpdateDamageRect(OverlayCandidateList* candidates,
                         const gfx::Rect& previous_frame_underlay_rect,
                         bool previous_frame_underlay_was_unoccluded,
+                        const QuadList* quad_list,
                         gfx::Rect* damage_rect);
 
-  DCLayerOverlayProcessor dc_processor_;
+  std::unique_ptr<DCLayerOverlayProcessor> dc_processor_;
 
   DISALLOW_COPY_AND_ASSIGN(OverlayProcessor);
 };

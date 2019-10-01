@@ -18,6 +18,7 @@
 #import "ios/chrome/browser/ui/util/dynamic_type_util.h"
 #import "ios/chrome/browser/ui/util/uikit_ui_util.h"
 #import "ios/chrome/common/ui_util/constraints_ui_util.h"
+#include "ui/gfx/ios/uikit_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -151,7 +152,27 @@
   [self setUpProgressBar];
   [self setUpCollapsedToolbarButton];
 
+  // Add the separator here as there is no need to have a property.
+  UIView* separator = [[UIView alloc] init];
+  separator.backgroundColor = [UIColor colorWithWhite:0
+                                                alpha:kToolbarSeparatorAlpha];
+  separator.translatesAutoresizingMaskIntoConstraints = NO;
+  [self addSubview:separator];
+  [NSLayoutConstraint activateConstraints:@[
+    [separator.leadingAnchor constraintEqualToAnchor:self.leadingAnchor],
+    [separator.trailingAnchor constraintEqualToAnchor:self.trailingAnchor],
+    [separator.topAnchor constraintEqualToAnchor:self.bottomAnchor],
+    [separator.heightAnchor
+        constraintEqualToConstant:ui::AlignValueToUpperPixel(
+                                      kToolbarSeparatorHeight)],
+  ]];
+
   [self setUpConstraints];
+
+  // Make sure that the trait collection is taken into account.
+  if (@available(iOS 13, *)) {
+    [self updateLayoutForPreviousTraitCollection:nil];
+  }
 }
 
 - (void)addFakeOmniboxTarget {
@@ -176,14 +197,7 @@
 
 - (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
   [super traitCollectionDidChange:previousTraitCollection];
-  if (IsRegularXRegularSizeClass(self)) {
-    self.backgroundColor =
-        self.buttonFactory.toolbarConfiguration.backgroundColor;
-    self.blur.alpha = 0;
-  } else {
-    self.backgroundColor = [UIColor clearColor];
-    self.blur.alpha = 1;
-  }
+  [self updateLayoutForPreviousTraitCollection:previousTraitCollection];
 }
 
 #pragma mark - Setup
@@ -447,6 +461,20 @@
 
 - (ToolbarButton*)omniboxButton {
   return nil;
+}
+
+#pragma mark - Private
+
+- (void)updateLayoutForPreviousTraitCollection:
+    (UITraitCollection*)previousTraitCollection {
+  if (IsRegularXRegularSizeClass(self)) {
+    self.backgroundColor =
+        self.buttonFactory.toolbarConfiguration.backgroundColor;
+    self.blur.alpha = 0;
+  } else {
+    self.backgroundColor = [UIColor clearColor];
+    self.blur.alpha = 1;
+  }
 }
 
 @end

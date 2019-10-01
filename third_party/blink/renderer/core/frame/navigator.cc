@@ -23,6 +23,7 @@
 
 #include "third_party/blink/renderer/core/frame/navigator.h"
 
+#include "third_party/blink/public/common/user_agent/user_agent_metadata.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_controller.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
@@ -33,7 +34,7 @@
 #include "third_party/blink/renderer/core/page/chrome_client.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/platform/language.h"
-#include "third_party/blink/renderer/platform/memory_coordinator.h"
+#include "third_party/blink/renderer/platform/memory_pressure_listener.h"
 
 namespace blink {
 
@@ -57,10 +58,14 @@ String Navigator::vendorSub() const {
 }
 
 String Navigator::platform() const {
+  // TODO(955620): Consider changing devtools overrides to only allow overriding
+  // the platform with a frozen platform to distinguish between
+  // mobile and desktop when FreezeUserAgent is enabled.
   if (GetFrame() &&
       !GetFrame()->GetSettings()->GetNavigatorPlatformOverride().IsEmpty()) {
     return GetFrame()->GetSettings()->GetNavigatorPlatformOverride();
   }
+
   return NavigatorID::platform();
 }
 
@@ -70,6 +75,14 @@ String Navigator::userAgent() const {
     return String();
 
   return GetFrame()->Loader().UserAgent();
+}
+
+UserAgentMetadata Navigator::GetUserAgentMetadata() const {
+  // If the frame is already detached it no longer has a meaningful useragent.
+  if (!GetFrame() || !GetFrame()->GetPage())
+    return blink::UserAgentMetadata();
+
+  return GetFrame()->Loader().UserAgentMetadata();
 }
 
 bool Navigator::cookieEnabled() const {

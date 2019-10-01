@@ -6,10 +6,12 @@
 
 #include <memory>
 
+#include "android_webview/browser/aw_browser_context.h"
 #include "base/android/jni_android.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/ref_counted.h"
 #include "base/task/post_task.h"
+#include "base/test/scoped_feature_list.h"
 #include "components/prefs/testing_pref_service.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -30,6 +32,7 @@
 #include "net/test/url_request/url_request_failed_job.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_job_factory.h"
+#include "services/network/public/cpp/features.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/boringssl/src/include/openssl/pool.h"
 
@@ -58,13 +61,16 @@ class AwURLRequestContextGetterTest : public ::testing::Test {
 
  protected:
   void SetUp() override {
+    // These are the pre-network service tests. Forcing network service to be
+    // disabled and these tests will be deleted in a future CL.
+    scoped_feature_list_.InitWithFeatures({},
+                                          {network::features::kNetworkService});
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
     env_ = base::android::AttachCurrentThread();
     ASSERT_TRUE(env_);
 
     pref_service_ = std::make_unique<TestingPrefServiceSimple>();
-    android_webview::AwURLRequestContextGetter::RegisterPrefs(
-        pref_service_->registry());
+    AwBrowserContext::RegisterPrefs(pref_service_->registry());
 
     std::unique_ptr<net::ProxyConfigServiceAndroid> config_service_android;
     config_service_android.reset(static_cast<net::ProxyConfigServiceAndroid*>(
@@ -74,8 +80,8 @@ class AwURLRequestContextGetterTest : public ::testing::Test {
             .release()));
 
     getter_ = base::MakeRefCounted<android_webview::AwURLRequestContextGetter>(
-        temp_dir_.GetPath(), temp_dir_.GetPath().AppendASCII("ChannelID"),
-        std::move(config_service_android), pref_service_.get(), &net_log_);
+        temp_dir_.GetPath(), std::move(config_service_android),
+        pref_service_.get(), &net_log_);
 
     // AwURLRequestContextGetter implicitly depends on having protocol handlers
     // provided for url::kBlobScheme, url::kFileSystemScheme, and
@@ -89,6 +95,7 @@ class AwURLRequestContextGetterTest : public ::testing::Test {
                                         std::move(interceptors));
   }
 
+  base::test::ScopedFeatureList scoped_feature_list_;
   content::TestBrowserThreadBundle thread_bundle_;
   base::ScopedTempDir temp_dir_;
   JNIEnv* env_;
@@ -123,7 +130,8 @@ TEST_F(AwURLRequestContextGetterTest, SymantecPoliciesExempted) {
   std::unique_ptr<net::CertVerifier::Request> request;
   int error = context->cert_verifier()->Verify(
       net::CertVerifier::RequestParams(cert, "www.ahrn.com", flags,
-                                       std::string()),
+                                       /*ocsp_response=*/std::string(),
+                                       /*sct_list=*/std::string()),
       &result, callback.callback(), &request, net::NetLogWithSource());
   EXPECT_THAT(error, net::test::IsError(net::ERR_IO_PENDING));
   EXPECT_TRUE(request);
@@ -160,7 +168,9 @@ TEST_F(AwURLRequestContextGetterTest, SHA1LocalAnchorsAllowed) {
   net::TestCompletionCallback callback;
   std::unique_ptr<net::CertVerifier::Request> request;
   int error = context->cert_verifier()->Verify(
-      net::CertVerifier::RequestParams(cert, "127.0.0.1", flags, std::string()),
+      net::CertVerifier::RequestParams(cert, "127.0.0.1", flags,
+                                       /*ocsp_response=*/std::string(),
+                                       /*sct_list=*/std::string()),
       &result, callback.callback(), &request, net::NetLogWithSource());
   EXPECT_THAT(error, net::test::IsError(net::ERR_IO_PENDING));
   EXPECT_TRUE(request);

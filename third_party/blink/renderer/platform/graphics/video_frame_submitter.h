@@ -18,11 +18,12 @@
 #include "mojo/public/cpp/bindings/binding.h"
 #include "mojo/public/cpp/system/buffer.h"
 #include "services/viz/public/interfaces/compositing/compositor_frame_sink.mojom-blink.h"
-#include "third_party/blink/public/platform/modules/frame_sinks/embedded_frame_sink.mojom-blink.h"
+#include "third_party/blink/public/mojom/frame_sinks/embedded_frame_sink.mojom-blink.h"
 #include "third_party/blink/public/platform/web_video_frame_submitter.h"
 #include "third_party/blink/renderer/platform/graphics/video_frame_resource_provider.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
+#include "ui/gfx/mojo/presentation_feedback.mojom-blink.h"
 
 namespace blink {
 
@@ -85,7 +86,7 @@ class PLATFORM_EXPORT VideoFrameSubmitter
   // requested.
   void OnReceivedContextProvider(
       bool use_gpu_compositing,
-      scoped_refptr<viz::ContextProvider> context_provider);
+      scoped_refptr<viz::RasterContextProvider> context_provider);
 
   // Starts submission and calls UpdateSubmissionState(); which may submit.
   void StartSubmitting();
@@ -93,6 +94,9 @@ class PLATFORM_EXPORT VideoFrameSubmitter
   // Sets CompositorFrameSink::SetNeedsBeginFrame() state and submits a frame if
   // visible or an empty frame if not.
   void UpdateSubmissionState();
+
+  // Will submit an empty frame to clear resource usage if it's safe.
+  void SubmitEmptyFrameIfNeeded();
 
   // Returns whether a frame was submitted.
   bool SubmitFrame(const viz::BeginFrameAck&, scoped_refptr<media::VideoFrame>);
@@ -123,7 +127,7 @@ class PLATFORM_EXPORT VideoFrameSubmitter
       scoped_refptr<media::VideoFrame> video_frame);
 
   cc::VideoFrameProvider* video_frame_provider_ = nullptr;
-  scoped_refptr<viz::ContextProvider> context_provider_;
+  scoped_refptr<viz::RasterContextProvider> context_provider_;
   viz::mojom::blink::CompositorFrameSinkPtr compositor_frame_sink_;
   mojom::blink::SurfaceEmbedderPtr surface_embedder_;
   mojo::Binding<viz::mojom::blink::CompositorFrameSinkClient> binding_;
@@ -166,6 +170,9 @@ class PLATFORM_EXPORT VideoFrameSubmitter
   viz::FrameTokenGenerator next_frame_token_;
 
   THREAD_CHECKER(thread_checker_);
+
+  // Weak factory that's used to cancel empty frame callbacks.
+  base::WeakPtrFactory<VideoFrameSubmitter> empty_frame_weak_ptr_factory_;
 
   base::WeakPtrFactory<VideoFrameSubmitter> weak_ptr_factory_;
 

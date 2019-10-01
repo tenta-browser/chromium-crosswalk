@@ -4,6 +4,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
+#include <functional>
 #include <utility>
 
 #include "base/bind.h"
@@ -27,6 +29,7 @@
 #include "content/browser/browser_main_loop.h"
 #include "content/browser/indexed_db/indexed_db_class_factory.h"
 #include "content/browser/indexed_db/indexed_db_context_impl.h"
+#include "content/browser/indexed_db/indexed_db_factory_impl.h"
 #include "content/browser/indexed_db/mock_browsertest_indexed_db_class_factory.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/browser_context.h"
@@ -62,7 +65,7 @@ namespace content {
 
 namespace {
 const Origin kFileOrigin = Origin::Create(GURL("file:///"));
-};
+}
 
 // This browser test is aimed towards exercising the IndexedDB bindings and
 // the actual implementation that lives in the browser side.
@@ -656,18 +659,17 @@ std::unique_ptr<net::test_server::HttpResponse> ServePath(
 
 void CompactIndexedDBBackingStore(scoped_refptr<IndexedDBContextImpl> context,
                                   const Origin& origin) {
-  IndexedDBFactory* factory = context->GetIDBFactory();
+  IndexedDBFactoryImpl* factory = context->GetIDBFactory();
 
-  std::pair<IndexedDBFactory::OriginDBMapIterator,
-            IndexedDBFactory::OriginDBMapIterator>
-      range = factory->GetOpenDatabasesForOrigin(origin);
+  std::vector<IndexedDBDatabase*> databases =
+      factory->GetOpenDatabasesForOrigin(origin);
 
-  if (range.first == range.second)  // If no open db's for this origin
+  if (databases.empty())
     return;
 
   // Compact the first db's backing store since all the db's are in the same
   // backing store.
-  IndexedDBDatabase* db = range.first->second;
+  IndexedDBDatabase* db = databases[0];
   IndexedDBBackingStore* backing_store = db->backing_store();
   backing_store->Compact();
 }
@@ -737,9 +739,8 @@ std::unique_ptr<net::test_server::HttpResponse> CorruptDBRequestHandler(
         base::WaitableEvent::ResetPolicy::AUTOMATIC,
         base::WaitableEvent::InitialState::NOT_SIGNALED);
     context->TaskRunner()->PostTask(
-        FROM_HERE,
-        base::BindOnce(&CorruptIndexedDBDatabase, base::ConstRef(context),
-                       origin, &signal_when_finished));
+        FROM_HERE, base::BindOnce(&CorruptIndexedDBDatabase, std::cref(context),
+                                  origin, &signal_when_finished));
     signal_when_finished.Wait();
 
     std::unique_ptr<net::test_server::BasicHttpResponse> http_response(
@@ -761,17 +762,9 @@ std::unique_ptr<net::test_server::HttpResponse> CorruptDBRequestHandler(
       std::string escaped_value(
           request_query.substr(value_pos.begin, value_pos.len));
 
-      std::string key = net::UnescapeURLComponent(
-          escaped_key,
-          net::UnescapeRule::NORMAL | net::UnescapeRule::SPACES |
-              net::UnescapeRule::PATH_SEPARATORS |
-              net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS);
+      std::string key = net::UnescapeBinaryURLComponent(escaped_key);
 
-      std::string value = net::UnescapeURLComponent(
-          escaped_value,
-          net::UnescapeRule::NORMAL | net::UnescapeRule::SPACES |
-              net::UnescapeRule::PATH_SEPARATORS |
-              net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS);
+      std::string value = net::UnescapeBinaryURLComponent(escaped_value);
 
       if (key == "method")
         fail_method = value;
@@ -850,14 +843,14 @@ IN_PROC_BROWSER_TEST_P(IndexedDBBrowserTest, OperationOnCorruptedOpenDatabase) {
   SimpleTest(embedded_test_server()->GetURL(test_file));
 }
 
-INSTANTIATE_TEST_CASE_P(IndexedDBBrowserTestInstantiation,
-                        IndexedDBBrowserTest,
-                        ::testing::Values("failGetBlobJournal",
-                                          "get",
-                                          "getAll",
-                                          "iterate",
-                                          "failTransactionCommit",
-                                          "clearObjectStore"));
+INSTANTIATE_TEST_SUITE_P(IndexedDBBrowserTestInstantiation,
+                         IndexedDBBrowserTest,
+                         ::testing::Values("failGetBlobJournal",
+                                           "get",
+                                           "getAll",
+                                           "iterate",
+                                           "failTransactionCommit",
+                                           "clearObjectStore"));
 
 IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, DeleteCompactsBackingStore) {
   const GURL test_url = GetTestUrl("indexeddb", "delete_compact.html");

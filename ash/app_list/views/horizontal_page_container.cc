@@ -4,13 +4,14 @@
 
 #include "ash/app_list/views/horizontal_page_container.h"
 
-#include "ash/app_list/pagination_controller.h"
+#include "ash/app_list/app_list_metrics.h"
 #include "ash/app_list/views/app_list_view.h"
 #include "ash/app_list/views/apps_container_view.h"
 #include "ash/app_list/views/contents_view.h"
 #include "ash/app_list/views/search_box_view.h"
 #include "ash/app_list/views/search_result_page_view.h"
-#include "ash/public/cpp/app_list/app_list_constants.h"
+#include "ash/public/cpp/app_list/app_list_config.h"
+#include "ash/public/cpp/pagination/pagination_controller.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/chromeos/search_box/search_box_constants.h"
 #include "ui/views/controls/label.h"
@@ -20,11 +21,14 @@ namespace app_list {
 HorizontalPageContainer::HorizontalPageContainer(ContentsView* contents_view,
                                                  AppListModel* model)
     : contents_view_(contents_view) {
-  pagination_model_.SetTransitionDurations(kPageTransitionDurationInMs,
-                                           kOverscrollPageTransitionDurationMs);
+  pagination_model_.SetTransitionDurations(
+      AppListConfig::instance().page_transition_duration_ms(),
+      AppListConfig::instance().overscroll_page_transition_duration_ms());
   pagination_model_.AddObserver(this);
-  pagination_controller_ = std::make_unique<PaginationController>(
-      &pagination_model_, PaginationController::SCROLL_AXIS_HORIZONTAL);
+  pagination_controller_ = std::make_unique<ash::PaginationController>(
+      &pagination_model_, ash::PaginationController::SCROLL_AXIS_HORIZONTAL,
+      base::BindRepeating(&RecordPageSwitcherSourceByEventType),
+      contents_view_->app_list_view()->is_tablet_mode());
 
   // Add horizontal pages.
   apps_container_view_ = new AppsContainerView(contents_view_, model);
@@ -62,6 +66,10 @@ void HorizontalPageContainer::Layout() {
 void HorizontalPageContainer::OnGestureEvent(ui::GestureEvent* event) {
   if (pagination_controller_->OnGestureEvent(*event, GetContentsBounds()))
     event->SetHandled();
+}
+
+const char* HorizontalPageContainer::GetClassName() const {
+  return "HorizontalPageContainer";
 }
 
 void HorizontalPageContainer::OnWillBeHidden() {
@@ -102,13 +110,11 @@ gfx::Rect HorizontalPageContainer::GetSearchBoxBoundsForState(
 
 gfx::Rect HorizontalPageContainer::GetPageBoundsForState(
     ash::AppListState state) const {
-  gfx::Rect onscreen_bounds = GetDefaultContentsBounds();
+  const gfx::Rect onscreen_bounds = GetDefaultContentsBounds();
 
-  // Both STATE_START and STATE_APPS are AppsContainerView page.
-  if (state == ash::AppListState::kStateApps ||
-      state == ash::AppListState::kStateStart) {
+  // kStateApps is the AppsContainerView page.
+  if (state == ash::AppListState::kStateApps)
     return onscreen_bounds;
-  }
 
   return GetBelowContentsOffscreenBounds(onscreen_bounds.size());
 }
@@ -123,6 +129,10 @@ views::View* HorizontalPageContainer::GetLastFocusableView() {
 
 bool HorizontalPageContainer::ShouldShowSearchBox() const {
   return GetSelectedPage()->ShouldShowSearchBox();
+}
+
+void HorizontalPageContainer::OnTabletModeChanged(bool started) {
+  pagination_controller_->set_is_tablet_mode(started);
 }
 
 void HorizontalPageContainer::TotalPagesChanged() {}
@@ -142,7 +152,7 @@ void HorizontalPageContainer::TransitionChanged() {
   // Transition the search box opacity.
   const int current_page = pagination_model_.selected_page();
   DCHECK(pagination_model_.is_valid_page(current_page));
-  const PaginationModel::Transition& transition =
+  const ash::PaginationModel::Transition& transition =
       pagination_model_.transition();
   const bool is_valid = pagination_model_.is_valid_page(transition.target_page);
   float search_box_opacity =
@@ -191,7 +201,7 @@ const HorizontalPage* HorizontalPageContainer::GetSelectedPage() const {
 gfx::Vector2d HorizontalPageContainer::GetOffsetForPageIndex(int index) const {
   const int current_page = pagination_model_.selected_page();
   DCHECK(pagination_model_.is_valid_page(current_page));
-  const PaginationModel::Transition& transition =
+  const ash::PaginationModel::Transition& transition =
       pagination_model_.transition();
   const bool is_valid = pagination_model_.is_valid_page(transition.target_page);
   const int dir = transition.target_page > current_page ? -1 : 1;

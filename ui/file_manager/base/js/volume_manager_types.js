@@ -5,14 +5,14 @@
 /**
  * Namespace for common types.
  */
-var VolumeManagerCommon = {};
+const VolumeManagerCommon = {};
 
 /**
  * Paths that can be handled by the dialog opener in native code.
  * @enum {string}
  * @const
  */
-var AllowedPaths = {
+const AllowedPaths = {
   NATIVE_PATH: 'nativePath',
   NATIVE_OR_DRIVE_PATH: 'nativeOrDrivePath',
   ANY_PATH: 'anyPath',
@@ -65,11 +65,11 @@ VolumeManagerCommon.RootType = {
   // Root for a drive volume.
   DRIVE: 'drive',
 
-  // The grand root entry of Team Drives in Drive volume.
-  TEAM_DRIVES_GRAND_ROOT: 'team_drives_grand_root',
+  // The grand root entry of Shared Drives in Drive volume.
+  SHARED_DRIVES_GRAND_ROOT: 'shared_drives_grand_root',
 
-  // Root directory of a Team Drive.
-  TEAM_DRIVE: 'team_drive',
+  // Root directory of a Shared Drive.
+  SHARED_DRIVE: 'team_drive',
 
   // Root for a MTP volume.
   MTP: 'mtp',
@@ -140,8 +140,8 @@ VolumeManagerCommon.RootTypesForUMA = [
   VolumeManagerCommon.RootType.ARCHIVE,                           // 1
   VolumeManagerCommon.RootType.REMOVABLE,                         // 2
   VolumeManagerCommon.RootType.DRIVE,                             // 3
-  VolumeManagerCommon.RootType.TEAM_DRIVES_GRAND_ROOT,            // 4
-  VolumeManagerCommon.RootType.TEAM_DRIVE,                        // 5
+  VolumeManagerCommon.RootType.SHARED_DRIVES_GRAND_ROOT,          // 4
+  VolumeManagerCommon.RootType.SHARED_DRIVE,                      // 5
   VolumeManagerCommon.RootType.MTP,                               // 6
   VolumeManagerCommon.RootType.PROVIDED,                          // 7
   VolumeManagerCommon.RootType.DRIVE_OTHER,                       // 8
@@ -263,7 +263,7 @@ VolumeManagerCommon.Source = {
  * @param {VolumeManagerCommon.VolumeType} type
  * @return {boolean}
  */
-VolumeManagerCommon.VolumeType.isNative = function(type) {
+VolumeManagerCommon.VolumeType.isNative = type => {
   return type === VolumeManagerCommon.VolumeType.DOWNLOADS ||
       type === VolumeManagerCommon.VolumeType.ANDROID_FILES ||
       type === VolumeManagerCommon.VolumeType.CROSTINI ||
@@ -278,7 +278,7 @@ Object.freeze(VolumeManagerCommon.VolumeType);
  * @param {VolumeManagerCommon.RootType} rootType RootType
  * @return {VolumeManagerCommon.VolumeType}
  */
-VolumeManagerCommon.getVolumeTypeFromRootType = function(rootType) {
+VolumeManagerCommon.getVolumeTypeFromRootType = rootType => {
   switch (rootType) {
     case VolumeManagerCommon.RootType.DOWNLOADS:
       return VolumeManagerCommon.VolumeType.DOWNLOADS;
@@ -287,8 +287,8 @@ VolumeManagerCommon.getVolumeTypeFromRootType = function(rootType) {
     case VolumeManagerCommon.RootType.REMOVABLE:
       return VolumeManagerCommon.VolumeType.REMOVABLE;
     case VolumeManagerCommon.RootType.DRIVE:
-    case VolumeManagerCommon.RootType.TEAM_DRIVES_GRAND_ROOT:
-    case VolumeManagerCommon.RootType.TEAM_DRIVE:
+    case VolumeManagerCommon.RootType.SHARED_DRIVES_GRAND_ROOT:
+    case VolumeManagerCommon.RootType.SHARED_DRIVE:
     case VolumeManagerCommon.RootType.DRIVE_OTHER:
     case VolumeManagerCommon.RootType.DRIVE_OFFLINE:
     case VolumeManagerCommon.RootType.DRIVE_SHARED_WITH_ME:
@@ -320,7 +320,7 @@ VolumeManagerCommon.getVolumeTypeFromRootType = function(rootType) {
  * @param {VolumeManagerCommon.VolumeType} volumeType .
  * @return {VolumeManagerCommon.RootType}
  */
-VolumeManagerCommon.getRootTypeFromVolumeType = function(volumeType) {
+VolumeManagerCommon.getRootTypeFromVolumeType = volumeType => {
   switch (volumeType) {
     case VolumeManagerCommon.VolumeType.ANDROID_FILES:
       return VolumeManagerCommon.RootType.ANDROID_FILES;
@@ -376,7 +376,7 @@ Object.freeze(VolumeManagerCommon.MediaViewRootType);
  * @param {string} volumeId Volume ID.
  * @return {VolumeManagerCommon.MediaViewRootType}
  */
-VolumeManagerCommon.getMediaViewRootTypeFromVolumeId = function(volumeId) {
+VolumeManagerCommon.getMediaViewRootTypeFromVolumeId = volumeId => {
   return /** @type {VolumeManagerCommon.MediaViewRootType} */ (
       volumeId.split(':', 2)[1]);
 };
@@ -388,9 +388,9 @@ VolumeManagerCommon.getMediaViewRootTypeFromVolumeId = function(volumeId) {
  */
 VolumeManagerCommon.VOLUME_ALREADY_MOUNTED = 'volume_already_mounted';
 
-VolumeManagerCommon.TEAM_DRIVES_DIRECTORY_NAME = 'team_drives';
-VolumeManagerCommon.TEAM_DRIVES_DIRECTORY_PATH =
-    '/' + VolumeManagerCommon.TEAM_DRIVES_DIRECTORY_NAME;
+VolumeManagerCommon.SHARED_DRIVES_DIRECTORY_NAME = 'team_drives';
+VolumeManagerCommon.SHARED_DRIVES_DIRECTORY_PATH =
+    '/' + VolumeManagerCommon.SHARED_DRIVES_DIRECTORY_NAME;
 
 /**
  * This is the top level directory name for Computers in drive that are using
@@ -411,9 +411,9 @@ VolumeManagerCommon.ARCHIVE_OPENED_EVENT_TYPE = 'archive_opened';
  * file is newly mounted, or when opened a one already mounted.
  * @param {!DirectoryEntry} mountPoint The root directory of the mounted
  *     volume.
- * @return {!CustomEvent}
+ * @return {!CustomEvent<!DirectoryEntry>}
  */
-VolumeManagerCommon.createArchiveOpenedEvent = function(mountPoint) {
+VolumeManagerCommon.createArchiveOpenedEvent = mountPoint => {
   return new CustomEvent(
       VolumeManagerCommon.ARCHIVE_OPENED_EVENT_TYPE,
       {detail: {mountPoint: mountPoint}});

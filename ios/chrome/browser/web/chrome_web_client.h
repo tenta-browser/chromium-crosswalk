@@ -34,8 +34,10 @@ class ChromeWebClient : public web::WebClient {
       int resource_id,
       ui::ScaleFactor scale_factor) const override;
   base::RefCountedMemory* GetDataResourceBytes(int resource_id) const override;
+  bool IsDataResourceGzipped(int resource_id) const override;
   base::Optional<service_manager::Manifest> GetServiceManifestOverlay(
       base::StringPiece name) override;
+  std::vector<service_manager::Manifest> GetExtraServiceManifests() override;
   void GetAdditionalWebUISchemes(
       std::vector<std::string>* additional_schemes) override;
   void PostBrowserURLRewriterCreation(
@@ -51,18 +53,24 @@ class ChromeWebClient : public web::WebClient {
       const GURL& request_url,
       bool overridable,
       const base::Callback<void(bool)>& callback) override;
-  void PrepareErrorPage(NSError* error,
+  void PrepareErrorPage(web::WebState* web_state,
+                        const GURL& url,
+                        NSError* error,
                         bool is_post,
                         bool is_off_the_record,
                         NSString** error_html) override;
   std::unique_ptr<service_manager::Service> HandleServiceRequest(
       const std::string& service_name,
       service_manager::mojom::ServiceRequest request) override;
+  UIView* GetWindowedContainer() override;
 
  private:
   // Returns a string describing the product name and version, of the
   // form "productname/version". Used as part of the user agent string.
   std::string GetProduct() const;
+
+  // Reference to a view that is attached to a window.
+  UIView* windowed_container_ = nil;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeWebClient);
 };

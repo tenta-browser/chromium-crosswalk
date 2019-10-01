@@ -14,7 +14,7 @@
  * has completed.
  * @type {boolean}
  */
-var tilesAreLoaded = false;
+let tilesAreLoaded = false;
 
 
 /**
@@ -53,14 +53,14 @@ function disableIframesAndVoiceSearchForTesting() {
  *
  * @type {{
  *   numTitleLines: number,
- *   titleColor: string,
- *   titleColorAgainstDark: string,
+ *   titleColor: Array<number>,
+ *   titleColorAgainstDark: Array<number>,
  * }}
  */
-var NTP_DESIGN = {
+const NTP_DESIGN = {
   numTitleLines: 1,
-  titleColor: [50, 50, 50, 255],
-  titleColorAgainstDark: [210, 210, 210, 255],
+  titleColor: [60, 64, 67, 255],               /** GG800 */
+  titleColorAgainstDark: [248, 249, 250, 255], /** GG050 */
 };
 
 
@@ -69,18 +69,25 @@ var NTP_DESIGN = {
  * @enum {string}
  * @const
  */
-var CLASSES = {
+const CLASSES = {
+  // Shows a Google search style fakebox.
+  ALTERNATE_FAKEBOX: 'alternate-fakebox',
+  // Shows a rectangular Google search style fakebox with rounded corners.
+  ALTERNATE_FAKEBOX_RECT: 'alternate-fakebox-rect',
   ALTERNATE_LOGO: 'alternate-logo',  // Shows white logo if required by theme
   // Applies styles to dialogs used in customization.
   CUSTOMIZE_DIALOG: 'customize-dialog',
   DARK: 'dark',
   DEFAULT_THEME: 'default-theme',
   DELAYED_HIDE_NOTIFICATION: 'mv-notice-delayed-hide',
+  FAKEBOX_ICON_COLOR: 'color',       // Use a blue search icon for the fakebox.
   FAKEBOX_FOCUS: 'fakebox-focused',  // Applies focus styles to the fakebox
-  SHOW_EDIT_DIALOG: 'show',          // Displays the edit custom link dialog.
-  HIDE_BODY_OVERFLOW: 'hidden',      // Prevents scrolling while the edit custom
-                                     // link dialog is open.
+  // Shows a search icon in the fakebox.
+  SHOW_FAKEBOX_ICON: 'show-fakebox-icon',
+  // Applied when the fakebox placeholder text should not be hidden on focus.
+  SHOW_PLACEHOLDER: 'show-placeholder',
   // Applies float animations to the Most Visited notification
+  FLOAT_DOWN: 'float-down',
   FLOAT_UP: 'float-up',
   // Applies drag focus style to the fakebox
   FAKEBOX_DRAG_FOCUS: 'fakebox-drag-focused',
@@ -90,12 +97,12 @@ var CLASSES = {
   HIDE_NOTIFICATION: 'notice-hide',
   INITED: 'inited',  // Reveals the <body> once init() is done.
   LEFT_ALIGN_ATTRIBUTION: 'left-align-attribution',
-  MATERIAL_DESIGN_ICONS:
-      'md-icons',  // Applies Material Design styles to Most Visited.
   // Vertically centers the most visited section for a non-Google provided page.
   NON_GOOGLE_PAGE: 'non-google-page',
   NON_WHITE_BG: 'non-white-bg',
-  RTL: 'rtl',  // Right-to-left language text.
+  REMOVE_FAKEBOX: 'remove-fakebox',  // Hides the fakebox from the page.
+  RTL: 'rtl',                        // Right-to-left language text.
+  SHOW_ELEMENT: 'show-element',
   // Applied when the doodle notifier should be shown instead of the doodle.
   USE_NOTIFIER: 'use-notifier',
 };
@@ -106,9 +113,10 @@ var CLASSES = {
  * @enum {string}
  * @const
  */
-var IDS = {
+const IDS = {
   ATTRIBUTION: 'attribution',
   ATTRIBUTION_TEXT: 'attribution-text',
+  CUSTOM_BG: 'custom-bg',
   CUSTOM_LINKS_EDIT_IFRAME: 'custom-links-edit',
   CUSTOM_LINKS_EDIT_IFRAME_DIALOG: 'custom-links-edit-dialog',
   ERROR_NOTIFICATION: 'error-notice',
@@ -116,34 +124,23 @@ var IDS = {
   ERROR_NOTIFICATION_LINK: 'error-notice-link',
   ERROR_NOTIFICATION_MSG: 'error-notice-msg',
   FAKEBOX: 'fakebox',
+  FAKEBOX_ICON: 'fakebox-search-icon',
   FAKEBOX_INPUT: 'fakebox-input',
   FAKEBOX_TEXT: 'fakebox-text',
   FAKEBOX_MICROPHONE: 'fakebox-microphone',
-  LOGO: 'logo',
   MOST_VISITED: 'most-visited',
   NOTIFICATION: 'mv-notice',
   NOTIFICATION_CONTAINER: 'mv-notice-container',
-  NOTIFICATION_CLOSE_BUTTON: 'mv-notice-x',
   NOTIFICATION_MESSAGE: 'mv-msg',
   NTP_CONTENTS: 'ntp-contents',
+  OGB: 'one-google',
   PROMO: 'promo',
   RESTORE_ALL_LINK: 'mv-restore',
   SUGGESTIONS: 'suggestions',
   TILES: 'mv-tiles',
   TILES_IFRAME: 'mv-single',
   UNDO_LINK: 'mv-undo',
-};
-
-
-/**
- * Counterpart of search_provider_logos::LogoType.
- * @enum {string}
- * @const
- */
-var LOGO_TYPE = {
-  SIMPLE: 'SIMPLE',
-  ANIMATED: 'ANIMATED',
-  INTERACTIVE: 'INTERACTIVE',
+  USER_CONTENT: 'user-content',
 };
 
 
@@ -155,7 +152,7 @@ var LOGO_TYPE = {
  * @enum {number}
  * @const
  */
-var LOG_TYPE = {
+const LOG_TYPE = {
   // A static Doodle was shown, coming from cache.
   NTP_STATIC_LOGO_SHOWN_FROM_CACHE: 30,
   // A static Doodle was shown, coming from the network.
@@ -179,6 +176,11 @@ var LOG_TYPE = {
   NTP_CUSTOMIZE_SHORTCUT_CANCEL: 54,
   // 'Done' was clicked in the 'Edit shortcut' dialog.
   NTP_CUSTOMIZE_SHORTCUT_DONE: 55,
+
+  // A middle slot promo was shown.
+  NTP_MIDDLE_SLOT_PROMO_SHOWN: 60,
+  // A promo link was clicked.
+  NTP_MIDDLE_SLOT_PROMO_LINK_CLICKED: 61,
 };
 
 
@@ -206,7 +208,7 @@ const MAX_NUM_TILES_CUSTOM_LINKS = 10;
  * @type {Array<string>}
  * @const
  */
-var WHITE_BACKGROUND_COLORS = ['rgba(255,255,255,1)', 'rgba(0,0,0,0)'];
+const WHITE_BACKGROUND_COLORS = ['rgba(255,255,255,1)', 'rgba(0,0,0,0)'];
 
 
 /**
@@ -223,7 +225,7 @@ const DARK_MODE_BACKGROUND_COLOR = 'rgba(50,54,57,1)';
  * @enum {number}
  * @const
  */
-var KEYCODE = {ENTER: 13, SPACE: 32};
+const KEYCODE = {ENTER: 13, SPACE: 32};
 
 
 /**
@@ -234,11 +236,19 @@ const NOTIFICATION_TIMEOUT = 10000;
 
 
 /**
+ * The period of time (ms) before transitions can be applied to a toast
+ * notification after modifying the "display" property.
+ * @type {number}
+ */
+const DISPLAY_TIMEOUT = 20;
+
+
+/**
  * The last blacklisted tile rid if any, which by definition should not be
  * filler.
  * @type {?number}
  */
-var lastBlacklistedTile = null;
+let lastBlacklistedTile = null;
 
 
 /**
@@ -246,14 +256,22 @@ var lastBlacklistedTile = null;
  * set if a notification is visible.
  * @type {?Object}
  */
-let delayedHideNotification;
+let delayedHideNotification = null;
+
+
+/**
+ * The currently visible notification element. Null if no notification is
+ * present.
+ * @type {?Object}
+ */
+let currNotification = null;
 
 
 /**
  * The browser embeddedSearch.newTabPage object.
  * @type {Object}
  */
-var ntpApiHandle;
+let ntpApiHandle;
 
 
 /**
@@ -264,24 +282,42 @@ let isDarkModeEnabled = false;
 
 
 /**
- * Returns a timeout that can be executed early.
- * @param {!Function} timeout The timeout function.
+ * True if dark colored chips should be used instead of light mode chips when
+ * dark mode is enabled.
+ * @type {boolean}
+ */
+let useDarkChips = false;
+
+
+/**
+ * Returns a timeout that can be executed early. Calls back true if this was
+ * an early execution, false otherwise.
+ * @param {!Function} timeout The timeout function. Requires a boolean param.
  * @param {number} delay The timeout delay.
- * @param {Object} previousContainer The pre-existing notification container.
  * @return {Object}
  */
-function createExecutableTimeout(timeout, delay, previousContainer) {
-  let timeoutId = window.setTimeout(timeout, delay);
+function createExecutableTimeout(timeout, delay) {
+  const timeoutId = window.setTimeout(() => {
+    timeout(/*executedEarly=*/ false);
+  }, delay);
   return {
-    previousContainer: previousContainer,
     clear: () => {
       window.clearTimeout(timeoutId);
     },
     trigger: () => {
       window.clearTimeout(timeoutId);
-      return timeout();
+      return timeout(/*executedEarly=*/ true);
     }
   };
+}
+
+
+/**
+ * Called by tests to override the executable timeout with a test timeout.
+ * @param {!Function} timeout The timeout function. Requires a boolean param.
+ */
+function overrideExecutableTimeoutForTesting(timeout) {
+  createExecutableTimeout = timeout;
 }
 
 
@@ -297,10 +333,6 @@ function getThemeBackgroundInfo() {
       alternateLogo: false,
       backgroundColorRgba:
           (isDarkModeEnabled ? [50, 54, 57, 255] : [255, 255, 255, 255]),
-      colorRgba: [255, 255, 255, 255],
-      headerColorRgba: [150, 150, 150, 255],
-      linkColorRgba: [6, 55, 116, 255],
-      sectionBorderColorRgba: [150, 150, 150, 255],
       textColorLightRgba: [102, 102, 102, 255],
       textColorRgba: [0, 0, 0, 255],
       usingDarkMode: isDarkModeEnabled,
@@ -312,51 +344,38 @@ function getThemeBackgroundInfo() {
 
 
 /**
- * Heuristic to determine whether a theme should be considered to be dark, so
- * the colors of various UI elements can be adjusted.
+ * Determine whether dark chips should be used if dark mode is enabled. This is
+ * is the case when dark mode is enabled and a background image (from a custom
+ * background or user theme) is not set.
  *
- * The user theme/custom background will always take precedence over dark mode
- * when considering darkness. Therefore, dark mode should only be checked if
- * this is the default NTP. Dark mode is considered a dark theme if enabled.
- *
- * @param {ThemeBackgroundInfo|undefined} info Theme background information.
- * @return {boolean} Whether the theme is dark.
+ * @param {!Object} info Theme background information.
+ * @return {boolean} Whether the chips should be dark.
  * @private
  */
-function getIsThemeDark() {
-  var info = getThemeBackgroundInfo();
-  // Only check for dark mode if this is the default NTP (i.e. no theme or
-  // custom background set).
-  if (!info || info.usingDefaultTheme && !info.customBackgroundConfigured) {
-    // Dark mode is always considered a dark theme.
-    return isDarkModeEnabled;
-  }
-
-  // Heuristic: light text implies dark theme.
-  var rgba = info.textColorRgba;
-  var luminance = 0.3 * rgba[0] + 0.59 * rgba[1] + 0.11 * rgba[2];
-  return luminance >= 128;
+function getUseDarkChips(info) {
+  return info.usingDarkMode && !info.imageUrl;
 }
+
 
 /**
  * Updates the NTP based on the current theme.
  * @private
  */
 function renderTheme() {
-  $(IDS.NTP_CONTENTS).classList.toggle(CLASSES.DARK, getIsThemeDark());
-
-  var info = getThemeBackgroundInfo();
+  const info = getThemeBackgroundInfo();
   if (!info) {
     return;
   }
 
-  const useDarkMode = !!info.usingDarkMode;
-  if (isDarkModeEnabled != useDarkMode) {
-    document.documentElement.setAttribute('darkmode', useDarkMode);
-    isDarkModeEnabled = useDarkMode;
-  }
+  $(IDS.NTP_CONTENTS).classList.toggle(CLASSES.DARK, info.isNtpBackgroundDark);
 
-  var background = [
+  // Update dark mode styling.
+  isDarkModeEnabled = info.usingDarkMode;
+  useDarkChips = getUseDarkChips(info);
+  document.documentElement.setAttribute('darkmode', isDarkModeEnabled);
+  document.body.classList.toggle('light-chip', !useDarkChips);
+
+  const background = [
     convertToRGBAColor(info.backgroundColorRgba), info.imageUrl,
     info.imageTiling, info.imageHorizontalAlignment, info.imageVerticalAlignment
   ].join(' ').trim();
@@ -385,11 +404,11 @@ function renderTheme() {
   setCustomThemeStyle(info);
 
   if (info.customBackgroundConfigured) {
-    var imageWithOverlay = [
+    const imageWithOverlay = [
       customBackgrounds.CUSTOM_BACKGROUND_OVERLAY, 'url(' + info.imageUrl + ')'
     ].join(',').trim();
 
-    if (imageWithOverlay != document.body.style.backgroundImage) {
+    if (imageWithOverlay != $(IDS.CUSTOM_BG).style.backgroundImage) {
       customBackgrounds.closeCustomizationDialog();
       customBackgrounds.clearAttribution();
     }
@@ -397,19 +416,19 @@ function renderTheme() {
     // |image| and |imageWithOverlay| use the same url as their source. Waiting
     // to display the custom background until |image| is fully loaded ensures
     // that |imageWithOverlay| is also loaded.
-    $('custom-bg').style.backgroundImage = imageWithOverlay;
-    var image = new Image();
+    $(IDS.CUSTOM_BG).style.backgroundImage = imageWithOverlay;
+    const image = new Image();
     image.onload = function() {
-      $('custom-bg').style.opacity = '1';
+      $(IDS.CUSTOM_BG).style.opacity = '1';
     };
     image.src = info.imageUrl;
 
     customBackgrounds.setAttribution(
         info.attribution1, info.attribution2, info.attributionActionUrl);
   } else {
-    $('custom-bg').style.opacity = '0';
+    $(IDS.CUSTOM_BG).style.opacity = '0';
     window.setTimeout(function() {
-      $('custom-bg').style.backgroundImage = '';
+      $(IDS.CUSTOM_BG).style.backgroundImage = '';
     }, 1000);
     customBackgrounds.clearAttribution();
   }
@@ -420,6 +439,11 @@ function renderTheme() {
           !info.customBackgroundConfigured);
   $(customBackgrounds.IDS.RESTORE_DEFAULT).tabIndex =
       (info.customBackgroundConfigured ? 0 : -1);
+
+  $(customBackgrounds.IDS.EDIT_BG)
+      .classList.toggle(
+          customBackgrounds.CLASSES.ENTRY_POINT_ENHANCED,
+          !info.customBackgroundConfigured);
 
   if (configData.isGooglePage) {
     // Hide the settings menu or individual options if the related features are
@@ -433,27 +457,49 @@ function renderTheme() {
  * @private
  */
 function sendThemeInfoToMostVisitedIframe() {
-  var info = getThemeBackgroundInfo();
+  const info = getThemeBackgroundInfo();
   if (!info) {
     return;
   }
 
-  var isThemeDark = getIsThemeDark();
+  const message = {cmd: 'updateTheme'};
+  message.isThemeDark = info.isNtpBackgroundDark;
+  message.customBackground = info.customBackgroundConfigured;
+  message.useTitleContainer = info.useTitleContainer;
+  message.isDarkMode = getUseDarkChips(info);
+  message.iconBackgroundColor = convertToRGBAColor(info.iconBackgroundColor);
+  message.useWhiteAddIcon = info.useWhiteAddIcon;
 
-  var message = {cmd: 'updateTheme'};
-  message.isThemeDark = isThemeDark;
-  message.isUsingTheme = !info.usingDefaultTheme;
-  message.isDarkMode = !!info.usingDarkMode;
-
-  var titleColor = NTP_DESIGN.titleColor;
+  let titleColor = NTP_DESIGN.titleColor;
   if (!info.usingDefaultTheme && info.textColorRgba) {
     titleColor = info.textColorRgba;
-  } else if (isThemeDark) {
+  } else if (info.isNtpBackgroundDark) {
     titleColor = NTP_DESIGN.titleColorAgainstDark;
   }
   message.tileTitleColor = convertToRGBAColor(titleColor);
 
   $(IDS.TILES_IFRAME).contentWindow.postMessage(message, '*');
+}
+
+
+/**
+ * Sends the current theme info to the edit custom link iframe.
+ * @private
+ */
+function sendThemeInfoToEditCustomLinkIframe() {
+  if (!configData.isGooglePage) {
+    return;
+  }
+
+  const info = getThemeBackgroundInfo();
+  if (!info) {
+    return;
+  }
+
+  const message = {cmd: 'updateTheme'};
+  message.isDarkMode = info.usingDarkMode;
+
+  $(IDS.CUSTOM_LINKS_EDIT_IFRAME).contentWindow.postMessage(message, '*');
 }
 
 
@@ -467,12 +513,11 @@ function renderOneGoogleBarTheme() {
     return;
   }
   try {
-    var oneGoogleBarApi = window.gbar.a;
-    var oneGoogleBarPromise = oneGoogleBarApi.bf();
+    const oneGoogleBarApi = window.gbar.a;
+    const oneGoogleBarPromise = oneGoogleBarApi.bf();
     oneGoogleBarPromise.then(function(oneGoogleBar) {
-      var isThemeDark = getIsThemeDark();
-      var setForegroundStyle = oneGoogleBar.pc.bind(oneGoogleBar);
-      setForegroundStyle(isThemeDark ? 1 : 0);
+      const setForegroundStyle = oneGoogleBar.pc.bind(oneGoogleBar);
+      setForegroundStyle(getThemeBackgroundInfo().isNtpBackgroundDark ? 1 : 0);
     });
   } catch (err) {
     console.log('Failed setting OneGoogleBar theme:\n' + err);
@@ -486,15 +531,16 @@ function renderOneGoogleBarTheme() {
  */
 function onThemeChange() {
   // Save the current dark mode state to check if dark mode has changed.
-  const usingDarkMode = isDarkModeEnabled;
+  const usingDarkChips = useDarkChips;
 
   renderTheme();
   renderOneGoogleBarTheme();
   sendThemeInfoToMostVisitedIframe();
+  sendThemeInfoToEditCustomLinkIframe();
 
   // If dark mode has been changed, refresh the MV tiles to render the
   // appropriate icon.
-  if (usingDarkMode != isDarkModeEnabled) {
+  if (usingDarkChips != useDarkChips) {
     reloadTiles();
   }
 }
@@ -506,9 +552,9 @@ function onThemeChange() {
  * @private
  */
 function setCustomThemeStyle(themeInfo) {
-  var textColor = null;
-  var textColorLight = null;
-  var mvxFilter = null;
+  let textColor = '';
+  let textColorLight = '';
+  let mvxFilter = '';
   if (!themeInfo.usingDefaultTheme) {
     textColor = convertToRGBAColor(themeInfo.textColorRgba);
     textColorLight = convertToRGBAColor(themeInfo.textColorLightRgba);
@@ -522,8 +568,6 @@ function setCustomThemeStyle(themeInfo) {
   document.body.style.setProperty('--text-color-light', textColorLight);
   // Themes reuse the "light" text color for links too.
   document.body.style.setProperty('--text-color-link', textColorLight);
-  $(IDS.NOTIFICATION_CLOSE_BUTTON)
-      .style.setProperty('--theme-filter', mvxFilter);
 }
 
 
@@ -540,8 +584,8 @@ function updateThemeAttribution(url, themeBackgroundAlignment) {
     return;
   }
 
-  var attribution = $(IDS.ATTRIBUTION);
-  var attributionImage = attribution.querySelector('img');
+  const attribution = $(IDS.ATTRIBUTION);
+  let attributionImage = attribution.querySelector('img');
   if (!attributionImage) {
     attributionImage = new Image();
     attribution.appendChild(attributionImage);
@@ -601,12 +645,12 @@ function reloadTiles() {
     return;
   }
 
-  var pages = ntpApiHandle.mostVisited;
-  var cmds = [];
-  let maxNumTiles = configData.isGooglePage ? MAX_NUM_TILES_CUSTOM_LINKS :
-                                              MAX_NUM_TILES_MOST_VISITED;
-  for (var i = 0; i < Math.min(maxNumTiles, pages.length); ++i) {
-    cmds.push({cmd: 'tile', rid: pages[i].rid, darkMode: isDarkModeEnabled});
+  const pages = ntpApiHandle.mostVisited;
+  const cmds = [];
+  const maxNumTiles = configData.isGooglePage ? MAX_NUM_TILES_CUSTOM_LINKS :
+                                                MAX_NUM_TILES_MOST_VISITED;
+  for (let i = 0; i < Math.min(maxNumTiles, pages.length); ++i) {
+    cmds.push({cmd: 'tile', rid: pages[i].rid, darkMode: useDarkChips});
   }
   cmds.push({cmd: 'show'});
 
@@ -623,7 +667,8 @@ function onAddCustomLinkDone(success) {
   if (success) {
     showNotification(configData.translatedStrings.linkAddedMsg);
   } else {
-    showErrorNotification(configData.translatedStrings.linkCantCreate);
+    showErrorNotification(
+        configData.translatedStrings.linkCantCreate, null, null);
   }
   ntpApiHandle.logEvent(LOG_TYPE.NTP_CUSTOMIZE_SHORTCUT_DONE);
 }
@@ -639,7 +684,8 @@ function onUpdateCustomLinkDone(success) {
   if (success) {
     showNotification(configData.translatedStrings.linkEditedMsg);
   } else {
-    showErrorNotification(configData.translatedStrings.linkCantEdit);
+    showErrorNotification(
+        configData.translatedStrings.linkCantEdit, null, null);
   }
 }
 
@@ -654,7 +700,8 @@ function onDeleteCustomLinkDone(success) {
   if (success) {
     showNotification(configData.translatedStrings.linkRemovedMsg);
   } else {
-    showErrorNotification(configData.translatedStrings.linkCantRemove);
+    showErrorNotification(
+        configData.translatedStrings.linkCantRemove, null, null);
   }
 }
 
@@ -666,17 +713,7 @@ function onDeleteCustomLinkDone(success) {
  */
 function showNotification(msg) {
   $(IDS.NOTIFICATION_MESSAGE).textContent = msg;
-
-  if (configData.isGooglePage) {
-    floatUpNotification($(IDS.NOTIFICATION), $(IDS.NOTIFICATION_CONTAINER));
-  } else {
-    var notification = $(IDS.NOTIFICATION);
-    notification.classList.remove(CLASSES.HIDE_NOTIFICATION);
-    notification.classList.remove(CLASSES.DELAYED_HIDE_NOTIFICATION);
-    notification.scrollTop;
-    notification.classList.add(CLASSES.DELAYED_HIDE_NOTIFICATION);
-  }
-
+  floatUpNotification($(IDS.NOTIFICATION), $(IDS.NOTIFICATION_CONTAINER));
   $(IDS.UNDO_LINK).focus();
 }
 
@@ -685,13 +722,8 @@ function showNotification(msg) {
  * Hides the Most Visited pop-up notification.
  */
 function hideNotification() {
-  if (configData.isGooglePage) {
-    floatDownNotification($(IDS.NOTIFICATION), $(IDS.NOTIFICATION_CONTAINER));
-  } else {
-    var notification = $(IDS.NOTIFICATION);
-    notification.classList.add(CLASSES.HIDE_NOTIFICATION);
-    notification.classList.remove(CLASSES.DELAYED_HIDE_NOTIFICATION);
-  }
+  floatDownNotification(
+      $(IDS.NOTIFICATION), $(IDS.NOTIFICATION_CONTAINER), /*showPromo=*/ true);
 }
 
 
@@ -705,10 +737,10 @@ function hideNotification() {
  * @param {?Function} linkOnClick The error link onclick handler.
  */
 function showErrorNotification(msg, linkName, linkOnClick) {
-  let notification = $(IDS.ERROR_NOTIFICATION);
+  const notification = $(IDS.ERROR_NOTIFICATION);
   $(IDS.ERROR_NOTIFICATION_MSG).textContent = msg;
   if (linkName && linkOnClick) {
-    let notificationLink = $(IDS.ERROR_NOTIFICATION_LINK);
+    const notificationLink = $(IDS.ERROR_NOTIFICATION_LINK);
     notificationLink.textContent = linkName;
     notificationLink.onclick = linkOnClick;
     notification.classList.add(CLASSES.HAS_LINK);
@@ -723,19 +755,20 @@ function showErrorNotification(msg, linkName, linkOnClick) {
  * Animates the specified notification to float up. Automatically hides any
  * pre-existing notification and sets a delayed timer to hide the new
  * notification.
- * @param {!Element} notification The notification element.
- * @param {!Element} notificationContainer The notification container element.
+ * @param {?Element} notification The notification element.
+ * @param {?Element} notificationContainer The notification container element.
  */
 function floatUpNotification(notification, notificationContainer) {
-  // Show middle-slot promo if one is present.
-  if ($(IDS.PROMO) !== null) {
-    $(IDS.PROMO).classList.add(CLASSES.HIDE_NOTIFICATION);
+  if (!notification || !notificationContainer) {
+    return;
   }
 
-  // Hide pre-existing notification if it was different type. Clear timeout and
-  // replace it with the new timeout and new message if it was the same type.
+  // Hide any pre-existing notification.
   if (delayedHideNotification) {
-    if (delayedHideNotification.previousContainer === notificationContainer) {
+    // Hide the current notification if it's a different type (i.e. error vs
+    // success). Otherwise, simply clear the notification timeout and reset it
+    // later.
+    if (currNotification === notificationContainer) {
       delayedHideNotification.clear();
     } else {
       delayedHideNotification.trigger();
@@ -743,55 +776,89 @@ function floatUpNotification(notification, notificationContainer) {
     delayedHideNotification = null;
   }
 
+  // Hide middle-slot promo if one is present.
+  const promo = $(IDS.PROMO);
+  if (promo) {
+    promo.classList.add(CLASSES.FLOAT_DOWN);
+    // Prevent keyboard focus once the promo is hidden.
+    promo.addEventListener('transitionend', (event) => {
+      if (event.propertyName === 'bottom' &&
+          promo.classList.contains(CLASSES.FLOAT_DOWN)) {
+        promo.classList.add(CLASSES.HIDE_NOTIFICATION);
+      }
+    }, {once: true});
+  }
+
   notification.classList.remove(CLASSES.HIDE_NOTIFICATION);
-  // Timeout is required for the "float up" transition to work. Modifying the
-  // "display" property prevents transitions from activating.
+  // Timeout is required for the "float" transition to work. Modifying the
+  // "display" property prevents transitions from activating for a brief period
+  // of time.
   window.setTimeout(() => {
     notificationContainer.classList.add(CLASSES.FLOAT_UP);
-  }, 20);
+  }, DISPLAY_TIMEOUT);
 
   // Automatically hide the notification after a period of time.
-  delayedHideNotification = createExecutableTimeout(() => {
-    floatDownNotification(notification, notificationContainer);
-  }, NOTIFICATION_TIMEOUT, notificationContainer);
+  delayedHideNotification = createExecutableTimeout((executedEarly) => {
+    // Early execution occurs if another notification should be shown. In this
+    // case, we do not want to re-show the promo yet.
+    floatDownNotification(notification, notificationContainer, !executedEarly);
+  }, NOTIFICATION_TIMEOUT);
+  currNotification = notificationContainer;
 }
 
 
 /**
  * Animates the pop-up notification to float down, and clears the timeout to
  * hide the notification.
- * @param {!Element} notification The notification element.
- * @param {!Element} notificationContainer The notification container element.
+ * @param {?Element} notification The notification element.
+ * @param {?Element} notificationContainer The notification container element.
+ * @param {boolean} showPromo Do show the promo if present.
  */
-function floatDownNotification(notification, notificationContainer) {
-  if (!notificationContainer.classList.contains(CLASSES.FLOAT_UP)) {
+function floatDownNotification(notification, notificationContainer, showPromo) {
+  if (!notification || !notificationContainer) {
     return;
   }
 
-  // Hide middle-slot promo if one is present.
-  if ($(IDS.PROMO) !== null) {
-    $(IDS.PROMO).classList.remove(CLASSES.HIDE_NOTIFICATION);
+  if (!notificationContainer.classList.contains(CLASSES.FLOAT_UP)) {
+    return;
   }
 
   // Clear the timeout to hide the notification.
   if (delayedHideNotification) {
     delayedHideNotification.clear();
     delayedHideNotification = null;
+    currNotification = null;
+  }
+
+  if (showPromo) {
+    // Show middle-slot promo if one is present.
+    const promo = $(IDS.PROMO);
+    if (promo) {
+      promo.classList.remove(CLASSES.HIDE_NOTIFICATION);
+      // Timeout is required for the "float" transition to work. Modifying the
+      // "display" property prevents transitions from activating for a brief
+      // period of time.
+      window.setTimeout(() => {
+        promo.classList.remove(CLASSES.FLOAT_DOWN);
+      }, DISPLAY_TIMEOUT);
+    }
   }
 
   // Reset notification visibility once the animation is complete.
-  notificationContainer.classList.remove(CLASSES.FLOAT_UP);
-  let afterHide = (event) => {
-    if (event.propertyName === 'bottom') {
-      notification.classList.add(CLASSES.HIDE_NOTIFICATION);
-      notification.classList.remove(CLASSES.HAS_LINK);
-      notificationContainer.removeEventListener('transitionend', afterHide);
-    }
+  notificationContainer.addEventListener('transitionend', (event) => {
     // Blur the hidden items.
     $(IDS.UNDO_LINK).blur();
     $(IDS.RESTORE_ALL_LINK).blur();
-  };
-  notificationContainer.addEventListener('transitionend', afterHide);
+    if (notification.classList.contains(CLASSES.HAS_LINK)) {
+      notification.classList.remove(CLASSES.HAS_LINK);
+      $(IDS.ERROR_NOTIFICATION_LINK).blur();
+    }
+    // Hide the notification
+    if (!notification.classList.contains(CLASSES.FLOAT_UP)) {
+      notification.classList.add(CLASSES.HIDE_NOTIFICATION);
+    }
+  }, {once: true});
+  notificationContainer.classList.remove(CLASSES.FLOAT_UP);
 }
 
 
@@ -877,8 +944,9 @@ function isFakeboxFocused() {
  * @return {boolean} True if the click occurred in an enabled fakebox.
  */
 function isFakeboxClick(event) {
-  return $(IDS.FAKEBOX).contains(event.target) &&
-      !$(IDS.FAKEBOX_MICROPHONE).contains(event.target);
+  return $(IDS.FAKEBOX).contains(/** @type HTMLElement */ (event.target)) &&
+      !$(IDS.FAKEBOX_MICROPHONE)
+           .contains(/** @type HTMLElement */ (event.target));
 }
 
 
@@ -909,43 +977,28 @@ function registerKeyHandler(element, keycode, handler) {
  * @param {Event} event Event received.
  */
 function handlePostMessage(event) {
-  var cmd = event.data.cmd;
-  var args = event.data;
+  const cmd = event.data.cmd;
+  const args = event.data;
   if (cmd === 'loaded') {
     tilesAreLoaded = true;
     if (configData.isGooglePage) {
-      // Show search suggestions if they were previously hidden.
+      // Show search suggestions, promo, and the OGB if they were previously
+      // hidden.
       if ($(IDS.SUGGESTIONS)) {
         $(IDS.SUGGESTIONS).style.visibility = 'visible';
       }
-      if (!$('one-google-loader')) {
-        // Load the OneGoogleBar script. It'll create a global variable name
-        // "og" which is a dict corresponding to the native OneGoogleBarData
-        // type. We do this only after all the tiles have loaded, to avoid
-        // slowing down the main page load.
-        var ogScript = document.createElement('script');
-        ogScript.id = 'one-google-loader';
-        ogScript.src = 'chrome-search://local-ntp/one-google.js';
-        document.body.appendChild(ogScript);
-        ogScript.onload = function() {
-          injectOneGoogleBar(og);
-        };
+      if ($(IDS.PROMO)) {
+        $(IDS.PROMO).classList.add(CLASSES.SHOW_ELEMENT);
       }
-      if (!$('promo-loader')) {
-        var promoScript = document.createElement('script');
-        promoScript.id = 'promo-loader';
-        promoScript.src = 'chrome-search://local-ntp/promo.js';
-        document.body.appendChild(promoScript);
-        promoScript.onload = function() {
-          injectPromo(promo);
-        };
+      if (!configData.hideShortcuts) {
+        $(customBackgrounds.IDS.CUSTOM_LINKS_RESTORE_DEFAULT)
+            .classList.toggle(
+                customBackgrounds.CLASSES.OPTION_DISABLED,
+                !args.showRestoreDefault);
+        $(customBackgrounds.IDS.CUSTOM_LINKS_RESTORE_DEFAULT).tabIndex =
+            (args.showRestoreDefault ? 0 : -1);
       }
-      $(customBackgrounds.IDS.CUSTOM_LINKS_RESTORE_DEFAULT)
-          .classList.toggle(
-              customBackgrounds.CLASSES.OPTION_DISABLED,
-              !args.showRestoreDefault);
-      $(customBackgrounds.IDS.CUSTOM_LINKS_RESTORE_DEFAULT).tabIndex =
-          (args.showRestoreDefault ? 0 : -1);
+      $(IDS.OGB).classList.add(CLASSES.SHOW_ELEMENT);
     }
   } else if (cmd === 'tileBlacklisted') {
     if (configData.isGooglePage) {
@@ -976,31 +1029,45 @@ function handlePostMessage(event) {
   }
 }
 
-function showSearchSuggestions() {
-  // Inject search suggestions as early as possible to avoid shifting of other
-  // elements.
+/**
+ * Request data for search suggestions, promo, and the OGB. Insert it into
+ * the page once it's available. For search suggestions this should be almost
+ * immediately as cached data is always used. Promos and the OGB may need
+ * to wait for the asynchronous network request to complete.
+ */
+function requestAndInsertGoogleResources() {
   if (!$('search-suggestions-loader')) {
-    var ssScript = document.createElement('script');
+    const ssScript = document.createElement('script');
     ssScript.id = 'search-suggestions-loader';
     ssScript.src = 'chrome-search://local-ntp/search-suggestions.js';
     ssScript.async = false;
     document.body.appendChild(ssScript);
     ssScript.onload = function() {
-      injectSearchSuggestions(search_suggestions);
+      injectSearchSuggestions(searchSuggestions);
+    };
+  }
+  if (!$('one-google-loader')) {
+    // Load the OneGoogleBar script. It'll create a global variable |og| which
+    // is a JSON object corresponding to the native OneGoogleBarData type.
+    const ogScript = document.createElement('script');
+    ogScript.id = 'one-google-loader';
+    ogScript.src = 'chrome-search://local-ntp/one-google.js';
+    document.body.appendChild(ogScript);
+    ogScript.onload = function() {
+      injectOneGoogleBar(og);
+    };
+  }
+  if (!$('promo-loader')) {
+    const promoScript = document.createElement('script');
+    promoScript.id = 'promo-loader';
+    promoScript.src = 'chrome-search://local-ntp/promo.js';
+    document.body.appendChild(promoScript);
+    promoScript.onload = function() {
+      injectPromo(promo);
     };
   }
 }
 
-
-/**
- * Enables Material Design styles for the Most Visited section. Implicitly
- * enables Material Design for the rest of NTP.
- */
-function enableMDIcons() {
-  $(IDS.MOST_VISITED).classList.add(CLASSES.MATERIAL_DESIGN_ICONS);
-  $(IDS.TILES).classList.add(CLASSES.MATERIAL_DESIGN_ICONS);
-  animations.addRippleAnimations();
-}
 
 /**
  * Prepares the New Tab Page by adding listeners, the most visited pages
@@ -1015,7 +1082,7 @@ function init() {
 
   // Hide notifications after fade out, so we can't focus on links via keyboard.
   $(IDS.NOTIFICATION).addEventListener('transitionend', (event) => {
-    if (event.properyName === 'opacity') {
+    if (event.propertyName === 'opacity') {
       hideNotification();
     }
   });
@@ -1023,13 +1090,13 @@ function init() {
   $(IDS.NOTIFICATION_MESSAGE).textContent =
       configData.translatedStrings.thumbnailRemovedNotification;
 
-  var undoLink = $(IDS.UNDO_LINK);
+  const undoLink = $(IDS.UNDO_LINK);
   undoLink.addEventListener('click', onUndo);
   registerKeyHandler(undoLink, KEYCODE.ENTER, onUndo);
   registerKeyHandler(undoLink, KEYCODE.SPACE, onUndo);
   undoLink.textContent = configData.translatedStrings.undoThumbnailRemove;
 
-  var restoreAllLink = $(IDS.RESTORE_ALL_LINK);
+  const restoreAllLink = $(IDS.RESTORE_ALL_LINK);
   restoreAllLink.addEventListener('click', onRestoreAll);
   registerKeyHandler(restoreAllLink, KEYCODE.ENTER, onRestoreAll);
   registerKeyHandler(restoreAllLink, KEYCODE.SPACE, onRestoreAll);
@@ -1041,9 +1108,7 @@ function init() {
   $(IDS.ATTRIBUTION_TEXT).textContent =
       configData.translatedStrings.attributionIntro;
 
-  $(IDS.NOTIFICATION_CLOSE_BUTTON).addEventListener('click', hideNotification);
-
-  var embeddedSearchApiHandle = window.chrome.embeddedSearch;
+  const embeddedSearchApiHandle = window.chrome.embeddedSearch;
 
   ntpApiHandle = embeddedSearchApiHandle.newTabPage;
   ntpApiHandle.onthemechange = onThemeChange;
@@ -1051,11 +1116,11 @@ function init() {
 
   renderTheme();
 
-  var searchboxApiHandle = embeddedSearchApiHandle.searchBox;
+  const searchboxApiHandle = embeddedSearchApiHandle.searchBox;
 
   if (configData.isGooglePage) {
-    showSearchSuggestions();
-    enableMDIcons();
+    requestAndInsertGoogleResources();
+    animations.addRippleAnimations();
 
     ntpApiHandle.onaddcustomlinkdone = onAddCustomLinkDone;
     ntpApiHandle.onupdatecustomlinkdone = onUpdateCustomLinkDone;
@@ -1063,76 +1128,102 @@ function init() {
 
     customBackgrounds.init(showErrorNotification, hideNotification);
 
-    // Set up the fakebox (which only exists on the Google NTP).
-    ntpApiHandle.oninputstart = onInputStart;
-    ntpApiHandle.oninputcancel = onInputCancel;
-
-    if (ntpApiHandle.isInputInProgress) {
-      onInputStart();
+    if (configData.alternateFakebox) {
+      document.body.classList.add(CLASSES.ALTERNATE_FAKEBOX);
+    }
+    if (configData.alternateFakeboxRect) {
+      document.body.classList.add(CLASSES.ALTERNATE_FAKEBOX_RECT);
+    }
+    if (configData.fakeboxSearchIcon) {
+      document.body.classList.add(CLASSES.SHOW_FAKEBOX_ICON);
+    }
+    if (configData.fakeboxSearchIconColor) {
+      $(IDS.FAKEBOX_ICON).classList.add(CLASSES.FAKEBOX_ICON_COLOR);
+    }
+    if (configData.showFakeboxPlaceholderOnFocus) {
+      $(IDS.FAKEBOX_TEXT).classList.add(CLASSES.SHOW_PLACEHOLDER);
     }
 
-    $(IDS.FAKEBOX_TEXT).textContent =
-        configData.translatedStrings.searchboxPlaceholder;
+    if (configData.removeFakebox) {
+      document.body.classList.add(CLASSES.REMOVE_FAKEBOX);
+    } else {
+      // Set up the fakebox (which only exists on the Google NTP).
+      ntpApiHandle.oninputstart = onInputStart;
+      ntpApiHandle.oninputcancel = onInputCancel;
 
-    if (!iframesAndVoiceSearchDisabledForTesting) {
-      speech.init(
-          configData.googleBaseUrl, configData.translatedStrings,
-          $(IDS.FAKEBOX_MICROPHONE), searchboxApiHandle);
-    }
-
-    // Listener for updating the key capture state.
-    document.body.onmousedown = function(event) {
-      if (isFakeboxClick(event)) {
-        searchboxApiHandle.startCapturingKeyStrokes();
-      } else if (isFakeboxFocused()) {
-        searchboxApiHandle.stopCapturingKeyStrokes();
+      if (ntpApiHandle.isInputInProgress) {
+        onInputStart();
       }
-    };
-    searchboxApiHandle.onkeycapturechange = function() {
+
+      $(IDS.FAKEBOX_TEXT).textContent =
+          configData.translatedStrings.searchboxPlaceholder;
+
+      if (!iframesAndVoiceSearchDisabledForTesting) {
+        speech.init(
+            configData.googleBaseUrl, configData.translatedStrings,
+            $(IDS.FAKEBOX_MICROPHONE), searchboxApiHandle);
+      }
+
+      // Listener for updating the key capture state.
+      document.body.onmousedown = function(event) {
+        if (isFakeboxClick(event)) {
+          searchboxApiHandle.startCapturingKeyStrokes();
+        } else if (isFakeboxFocused()) {
+          searchboxApiHandle.stopCapturingKeyStrokes();
+        }
+      };
+      searchboxApiHandle.onkeycapturechange = function() {
+        setFakeboxFocus(searchboxApiHandle.isKeyCaptureEnabled);
+      };
+      const inputbox = $(IDS.FAKEBOX_INPUT);
+      inputbox.onpaste = function(event) {
+        event.preventDefault();
+        // Send pasted text to Omnibox.
+        const text = event.clipboardData.getData('text/plain');
+        if (text) {
+          searchboxApiHandle.paste(text);
+        }
+      };
+      inputbox.ondrop = function(event) {
+        event.preventDefault();
+        const text = event.dataTransfer.getData('text/plain');
+        if (text) {
+          searchboxApiHandle.paste(text);
+        }
+        setFakeboxDragFocus(false);
+      };
+      inputbox.ondragenter = function() {
+        setFakeboxDragFocus(true);
+      };
+      inputbox.ondragleave = function() {
+        setFakeboxDragFocus(false);
+      };
+      utils.disableOutlineOnMouseClick($(IDS.FAKEBOX_MICROPHONE));
+
+      // Update the fakebox style to match the current key capturing state.
       setFakeboxFocus(searchboxApiHandle.isKeyCaptureEnabled);
-    };
-    var inputbox = $(IDS.FAKEBOX_INPUT);
-    inputbox.onpaste = function(event) {
-      event.preventDefault();
-      // Send pasted text to Omnibox.
-      var text = event.clipboardData.getData('text/plain');
-      if (text) {
-        searchboxApiHandle.paste(text);
+      // Also tell the browser that we're capturing, otherwise it's possible
+      // that both fakebox and Omnibox have visible focus at the same time, see
+      // crbug.com/792850.
+      if (searchboxApiHandle.isKeyCaptureEnabled) {
+        searchboxApiHandle.startCapturingKeyStrokes();
       }
-    };
-    inputbox.ondrop = function(event) {
-      event.preventDefault();
-      var text = event.dataTransfer.getData('text/plain');
-      if (text) {
-        searchboxApiHandle.paste(text);
-      }
-      setFakeboxDragFocus(false);
-    };
-    inputbox.ondragenter = function() {
-      setFakeboxDragFocus(true);
-    };
-    inputbox.ondragleave = function() {
-      setFakeboxDragFocus(false);
-    };
-    utils.disableOutlineOnMouseClick($(IDS.FAKEBOX_MICROPHONE));
-
-    // Update the fakebox style to match the current key capturing state.
-    setFakeboxFocus(searchboxApiHandle.isKeyCaptureEnabled);
-    // Also tell the browser that we're capturing, otherwise it's possible that
-    // both fakebox and Omnibox have visible focus at the same time, see
-    // crbug.com/792850.
-    if (searchboxApiHandle.isKeyCaptureEnabled) {
-      searchboxApiHandle.startCapturingKeyStrokes();
     }
 
     doodles.init();
+
+    $(customBackgrounds.IDS.EDIT_BG_TEXT).textContent =
+        configData.translatedStrings.customizeButtonLabel;
   } else {
     document.body.classList.add(CLASSES.NON_GOOGLE_PAGE);
   }
 
   if (searchboxApiHandle.rtl) {
     $(IDS.NOTIFICATION).dir = 'rtl';
-    // Grabbing the root HTML element.
+    // Grabbing the root HTML element. TODO(dbeam): could this just be <html ...
+    // dir="$i18n{textdirection}"> in the .html file instead? It could result in
+    // less flicker for RTL users (as HTML/CSS can render before JavaScript has
+    // the chance to run).
     document.documentElement.setAttribute('dir', 'rtl');
     // Add class for setting alignments based on language directionality.
     document.documentElement.classList.add(CLASSES.RTL);
@@ -1142,6 +1233,8 @@ function init() {
     createIframes();
   }
 
+  utils.setPlatformClass(document.body);
+  utils.disableOutlineOnMouseClick($(customBackgrounds.IDS.EDIT_BG));
   document.body.classList.add(CLASSES.INITED);
 }
 
@@ -1151,9 +1244,9 @@ function init() {
  */
 function createIframes() {
   // Collect arguments for the most visited iframe.
-  var args = [];
+  const args = [];
 
-  var searchboxApiHandle = window.chrome.embeddedSearch.searchBox;
+  const searchboxApiHandle = window.chrome.embeddedSearch.searchBox;
 
   if (searchboxApiHandle.rtl) {
     args.push('rtl=1');
@@ -1168,12 +1261,11 @@ function createIframes() {
   args.push('removeTooltip=' +
       encodeURIComponent(configData.translatedStrings.removeThumbnailTooltip));
 
-  if (isDarkModeEnabled) {
-    args.push('enableDarkMode=1');
-  }
-
   if (configData.isGooglePage) {
     args.push('enableCustomLinks=1');
+    if (configData.enableShortcutsGrid) {
+      args.push('enableGrid=1');
+    }
     args.push(
         'addLink=' +
         encodeURIComponent(configData.translatedStrings.addLinkTitle));
@@ -1186,7 +1278,7 @@ function createIframes() {
   }
 
   // Create the most visited iframe.
-  var iframe = document.createElement('iframe');
+  const iframe = document.createElement('iframe');
   iframe.id = IDS.TILES_IFRAME;
   iframe.name = IDS.TILES_IFRAME;
   iframe.title = configData.translatedStrings.mostVisitedTitle;
@@ -1194,20 +1286,16 @@ function createIframes() {
   $(IDS.TILES).appendChild(iframe);
 
   iframe.onload = function() {
-    reloadTiles();
     sendThemeInfoToMostVisitedIframe();
+    reloadTiles();
   };
 
   if (configData.isGooglePage) {
     // Collect arguments for the edit custom link iframe.
-    let clArgs = [];
+    const clArgs = [];
 
     if (searchboxApiHandle.rtl) {
       clArgs.push('rtl=1');
-    }
-
-    if (isDarkModeEnabled) {
-      clArgs.push('enableDarkMode=1');
     }
 
     clArgs.push(
@@ -1236,16 +1324,25 @@ function createIframes() {
         encodeURIComponent(configData.translatedStrings.invalidUrl));
 
     // Create the edit custom link iframe.
-    let clIframe = document.createElement('iframe');
+    const clIframe = document.createElement('iframe');
     clIframe.id = IDS.CUSTOM_LINKS_EDIT_IFRAME;
     clIframe.name = IDS.CUSTOM_LINKS_EDIT_IFRAME;
     clIframe.title = configData.translatedStrings.editLinkTitle;
     clIframe.src = 'chrome-search://most-visited/edit.html?' + clArgs.join('&');
-    let clIframeDialog = document.createElement('dialog');
+    const clIframeDialog = document.createElement('dialog');
     clIframeDialog.id = IDS.CUSTOM_LINKS_EDIT_IFRAME_DIALOG;
     clIframeDialog.classList.add(CLASSES.CUSTOMIZE_DIALOG);
     clIframeDialog.appendChild(clIframe);
     document.body.appendChild(clIframeDialog);
+
+    clIframe.onload = () => {
+      sendThemeInfoToEditCustomLinkIframe();
+    };
+
+    if (configData.hideShortcuts) {
+      $(IDS.TILES).style.display = 'none';
+      clIframeDialog.style.display = 'none';
+    }
   }
 
   window.addEventListener('message', handlePostMessage);
@@ -1269,13 +1366,22 @@ function injectPromo(promo) {
     return;
   }
 
-  let promoContainer = document.createElement('div');
+  const promoContainer = document.createElement('div');
   promoContainer.id = IDS.PROMO;
   promoContainer.innerHTML += promo.promoHtml;
   $(IDS.NTP_CONTENTS).appendChild(promoContainer);
 
   if (promo.promoLogUrl) {
     navigator.sendBeacon(promo.promoLogUrl);
+  }
+
+  ntpApiHandle.logEvent(LOG_TYPE.NTP_MIDDLE_SLOT_PROMO_SHOWN);
+
+  const links = promoContainer.getElementsByTagName('a');
+  if (links[0]) {
+    links[0].onclick = function() {
+      ntpApiHandle.logEvent(LOG_TYPE.NTP_MIDDLE_SLOT_PROMO_LINK_CLICKED);
+    };
   }
 }
 
@@ -1289,13 +1395,13 @@ function injectSearchSuggestions(suggestions) {
     return;
   }
 
-  let suggestionsContainer = document.createElement('div');
+  const suggestionsContainer = document.createElement('div');
   suggestionsContainer.id = IDS.SUGGESTIONS;
   suggestionsContainer.style.visibility = 'hidden';
   suggestionsContainer.innerHTML += suggestions.suggestionsHtml;
-  $(IDS.NTP_CONTENTS).insertBefore(suggestionsContainer, $('most-visited'));
+  $(IDS.USER_CONTENT).insertAdjacentElement('afterbegin', suggestionsContainer);
 
-  let endOfBodyScript = document.createElement('script');
+  const endOfBodyScript = document.createElement('script');
   endOfBodyScript.type = 'text/javascript';
   endOfBodyScript.appendChild(
       document.createTextNode(suggestions.suggestionsEndOfBodyScript));
@@ -1308,30 +1414,33 @@ function injectSearchSuggestions(suggestions) {
  * doesn't block the main page load.
  */
 function injectOneGoogleBar(ogb) {
-  var inHeadStyle = document.createElement('style');
+  if (ogb.barHtml === '') {
+    return;
+  }
+
+  const inHeadStyle = document.createElement('style');
   inHeadStyle.type = 'text/css';
   inHeadStyle.appendChild(document.createTextNode(ogb.inHeadStyle));
   document.head.appendChild(inHeadStyle);
 
-  var inHeadScript = document.createElement('script');
+  const inHeadScript = document.createElement('script');
   inHeadScript.type = 'text/javascript';
   inHeadScript.appendChild(document.createTextNode(ogb.inHeadScript));
   document.head.appendChild(inHeadScript);
 
   renderOneGoogleBarTheme();
 
-  var ogElem = $('one-google');
+  const ogElem = $('one-google');
   ogElem.innerHTML = ogb.barHtml;
-  ogElem.classList.remove('hidden');
 
-  var afterBarScript = document.createElement('script');
+  const afterBarScript = document.createElement('script');
   afterBarScript.type = 'text/javascript';
   afterBarScript.appendChild(document.createTextNode(ogb.afterBarScript));
   ogElem.parentNode.insertBefore(afterBarScript, ogElem.nextSibling);
 
   $('one-google-end-of-body').innerHTML = ogb.endOfBodyHtml;
 
-  var endOfBodyScript = document.createElement('script');
+  const endOfBodyScript = document.createElement('script');
   endOfBodyScript.type = 'text/javascript';
   endOfBodyScript.appendChild(document.createTextNode(ogb.endOfBodyScript));
   document.body.appendChild(endOfBodyScript);
@@ -1343,9 +1452,10 @@ function injectOneGoogleBar(ogb) {
 return {
   init: init,  // Exposed for testing.
   listen: listen,
-  disableIframesAndVoiceSearchForTesting: disableIframesAndVoiceSearchForTesting
+  disableIframesAndVoiceSearchForTesting:
+      disableIframesAndVoiceSearchForTesting,
+  overrideExecutableTimeoutForTesting: overrideExecutableTimeoutForTesting
 };
-
 }
 
 if (!window.localNTPUnitTest) {

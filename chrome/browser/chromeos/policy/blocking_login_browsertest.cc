@@ -11,11 +11,11 @@
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/chromeos/login/screens/gaia_view.h"
 #include "chrome/browser/chromeos/login/test/oobe_base_test.h"
 #include "chrome/browser/chromeos/login/ui/login_display_host.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
+#include "chrome/browser/ui/webui/chromeos/login/gaia_screen_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/signin_screen_handler.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -150,7 +150,7 @@ class BlockingLoginTest
 
     LoginDisplayHost::default_host()
         ->GetOobeUI()
-        ->GetGaiaScreenView()
+        ->GetView<GaiaScreenHandler>()
         ->ShowSigninScreenForTest(username, "password", "[]");
 
     // Wait for the session to start after submitting the credentials. This
@@ -208,7 +208,7 @@ class BlockingLoginTest
   // Returns the body of the fetch response from the policy server.
   std::string GetPolicyResponse() {
     em::DeviceManagementResponse response;
-    response.mutable_policy_response()->add_response();
+    response.mutable_policy_response()->add_responses();
     std::string data;
     EXPECT_TRUE(response.SerializeToString(&data));
     return data;
@@ -328,8 +328,8 @@ const BlockingLoginTestParam kBlockinLoginTestCases[] = {
 
 // TODO(poromov): Disabled because it has become flaky due to incorrect mock
 // network requests - re-enable this when https://crbug.com/580537 is fixed.
-INSTANTIATE_TEST_CASE_P(DISABLED_BlockingLoginTestInstance,
-                        BlockingLoginTest,
-                        testing::ValuesIn(kBlockinLoginTestCases));
+INSTANTIATE_TEST_SUITE_P(DISABLED_BlockingLoginTestInstance,
+                         BlockingLoginTest,
+                         testing::ValuesIn(kBlockinLoginTestCases));
 
 }  // namespace chromeos

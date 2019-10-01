@@ -6,17 +6,17 @@
 
 #include <stddef.h>
 
+#include "base/bind.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/values.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/password_form.h"
 #include "components/autofill/core/common/password_form_fill_data.h"
-#include "components/autofill/ios/browser/autofill_switches.h"
 #include "components/autofill/ios/browser/autofill_util.h"
 #include "components/password_manager/core/browser/form_parsing/ios_form_parser.h"
 #include "components/password_manager/ios/account_select_fill_data.h"
 #include "components/password_manager/ios/js_password_manager.h"
-#import "ios/web/public/web_state/web_frame.h"
+#import "ios/web/public/js_messaging/web_frame.h"
 #import "ios/web/public/web_state/web_state.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -174,8 +174,7 @@ constexpr char kCommandPrefix[] = "passwordForm";
                            inFrame:(web::WebFrame*)frame {
   DCHECK_EQ(_webState, webState);
   GURL pageURL = webState->GetLastCommittedURL();
-  if (autofill::switches::IsAutofillIFrameMessagingEnabled() &&
-      pageURL.GetOrigin() != frame->GetSecurityOrigin()) {
+  if (pageURL.GetOrigin() != frame->GetSecurityOrigin()) {
     // Passwords is only supported on main frame and iframes with the same
     // origin.
     return;
@@ -407,20 +406,65 @@ constexpr char kCommandPrefix[] = "passwordForm";
             const std::vector<autofill::PasswordForm>& forms) {
     PasswordFormHelper* strongSelf = weakSelf;
     for (const auto& form : forms) {
-      autofill::PasswordFormFillData formData;
       std::map<base::string16, const autofill::PasswordForm*> matches;
-      // Initialize |matches| to satisfy the expectation from
-      // InitPasswordFormFillData() that the preferred match (3rd parameter)
-      // should be one of the |matches|.
+      // Initialize |matches| to satisfy the expectation from the constructor
+      // that the preferred match (3rd parameter) should be one of the
+      // |matches|.
       matches.insert(std::make_pair(form.username_value, &form));
-      autofill::InitPasswordFormFillData(form, matches, &form, false,
-                                         &formData);
+      autofill::PasswordFormFillData formData(form, matches, form, false);
       [strongSelf fillPasswordForm:formData
                       withUsername:base::SysNSStringToUTF16(username)
                           password:base::SysNSStringToUTF16(password)
                  completionHandler:completionHandler];
     }
   }];
+}
+
+// Finds the password form named |formName| and calls
+// |completionHandler| with the populated |FormData| data structure. |found| is
+// YES if the current form was found successfully, NO otherwise.
+- (void)extractPasswordFormData:(NSString*)formName
+              completionHandler:(void (^)(BOOL found, const FormData& form))
+                                    completionHandler {
+  DCHECK(completionHandler);
+
+  if (!_webState) {
+    return;
+  }
+
+  GURL pageURL;
+  if (!GetPageURLAndCheckTrustLevel(_webState, &pageURL)) {
+    completionHandler(NO, FormData());
+    return;
+  }
+
+  id extractFormDataCompletionHandler = ^(NSString* jsonString) {
+    std::unique_ptr<base::Value> formValue = autofill::ParseJson(jsonString);
+    if (!formValue) {
+      completionHandler(NO, FormData());
+      return;
+    }
+
+    FormData formData;
+    if (!autofill::ExtractFormData(*formValue, false, base::string16(), pageURL,
+                                   pageURL.GetOrigin(), &formData)) {
+      completionHandler(NO, FormData());
+      return;
+    }
+
+    completionHandler(YES, formData);
+  };
+
+  [self.jsPasswordManager extractForm:formName
+                    completionHandler:extractFormDataCompletionHandler];
+}
+
+- (void)focusOnForm:(NSString*)formName
+      fieldIdentifier:(NSString*)fieldIdentifier
+    completionHandler:(nullable void (^)(BOOL))completionHandler {
+  [self.jsPasswordManager focusOnForm:formName
+                      fieldIdentifier:fieldIdentifier
+                    completionHandler:completionHandler];
 }
 
 @end

@@ -102,15 +102,18 @@ const char* const kPublicSessionWhitelist[] = {
     "lpmakjfjcconjeehbidjclhdlpjmfjjj",  // Highlights app
     "iggildboghmjpbjcpmobahnkmoefkike",  // Highlights app (eve)
     "elhbopodaklenjkeihkdhhfaghalllba",  // Highlights app (nocturne)
+    "gjeelkjnolfmhphfhhjokaijbicopfln",  // Highlights app (other)
     "mnoijifedipmbjaoekhadjcijipaijjc",  // Screensaver
     "gdobaoeekhiklaljmhladjfdfkigampc",  // Screensaver (eve)
     "lminefdanffajachfahfpmphfkhahcnj",  // Screensaver (nocturne)
+    "bnabjkecnachpogjlfilfcnlpcmacglh",  // Screensaver (other)
 
     // Testing extensions:
     "ongnjlefhnoajpbodoldndkbkdgfomlp",  // Show Managed Storage
     "ilnpadgckeacioehlommkaafedibdeob",  // Enterprise DeviceAttributes
     "oflckobdemeldmjddmlbaiaookhhcngo",  // Citrix Receiver QA version
     "ljacajndfccfgnfohlgkdphmbnpkjflk",  // Chrome Remote Desktop (Dev Build)
+    "behllobkkfkfnphdnhnkndlbkcpglgmj",  // Autotest
 
     // Google Apps:
     "mclkkofklkfljcocdinagocijmpgbhab",  // Google input tools

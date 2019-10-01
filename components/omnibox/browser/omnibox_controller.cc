@@ -4,6 +4,7 @@
 
 #include "components/omnibox/browser/omnibox_controller.h"
 
+#include "base/bind.h"
 #include "base/metrics/histogram.h"
 #include "components/omnibox/browser/autocomplete_classifier.h"
 #include "components/omnibox/browser/autocomplete_match.h"
@@ -33,9 +34,10 @@ void OmniboxController::StartAutocomplete(
     const AutocompleteInput& input) const {
   ClearPopupKeywordMode();
 
-  if (client_->GetOmniboxControllerEmitter())
+  if (client_->GetOmniboxControllerEmitter()) {
     client_->GetOmniboxControllerEmitter()->NotifyOmniboxQuery(
-        autocomplete_controller_.get());
+        autocomplete_controller_.get(), input.text());
+  }
 
   // We don't explicitly clear OmniboxPopupModel::manually_selected_match, as
   // Start ends up invoking OmniboxPopupModel::OnResultChanged which clears it.
@@ -76,8 +78,8 @@ void OmniboxController::OnResultChanged(bool default_match_changed) {
   // passed in to eliminate the potential for crashes on shutdown.
   client_->OnResultChanged(
       result(), default_match_changed,
-      base::Bind(&OmniboxController::SetRichSuggestionBitmap,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindRepeating(&OmniboxController::SetRichSuggestionBitmap,
+                          weak_ptr_factory_.GetWeakPtr()));
 }
 
 void OmniboxController::InvalidateCurrentMatch() {

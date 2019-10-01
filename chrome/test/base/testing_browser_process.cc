@@ -4,6 +4,7 @@
 
 #include "chrome/test/base/testing_browser_process.h"
 
+#include "base/bind.h"
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
 #include "base/time/default_clock.h"
@@ -197,6 +198,10 @@ PrefService* TestingBrowserProcess::local_state() {
 }
 
 variations::VariationsService* TestingBrowserProcess::variations_service() {
+  return nullptr;
+}
+
+StartupData* TestingBrowserProcess::startup_data() {
   return nullptr;
 }
 

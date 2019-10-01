@@ -4,14 +4,11 @@
 
 #include "chrome/browser/signin/identity_test_environment_profile_adaptor.h"
 
-#include "chrome/browser/signin/account_tracker_service_factory.h"
-#include "chrome/browser/signin/fake_gaia_cookie_manager_service_builder.h"
-#include "chrome/browser/signin/fake_profile_oauth2_token_service_builder.h"
-#include "chrome/browser/signin/fake_signin_manager_builder.h"
-#include "chrome/browser/signin/gaia_cookie_manager_service_factory.h"
+#include "base/bind.h"
+#include "chrome/browser/signin/chrome_signin_client_factory.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
-#include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
+#include "components/signin/core/browser/fake_profile_oauth2_token_service.h"
+#include "components/signin/core/browser/identity_manager_wrapper.h"
 
 // static
 std::unique_ptr<TestingProfile> IdentityTestEnvironmentProfileAdaptor::
@@ -67,28 +64,21 @@ void IdentityTestEnvironmentProfileAdaptor::
 // static
 TestingProfile::TestingFactories
 IdentityTestEnvironmentProfileAdaptor::GetIdentityTestEnvironmentFactories() {
-  return {{GaiaCookieManagerServiceFactory::GetInstance(),
-           base::BindRepeating(&BuildFakeGaiaCookieManagerService)},
-          {ProfileOAuth2TokenServiceFactory::GetInstance(),
-           base::BindRepeating(&BuildFakeProfileOAuth2TokenService)},
-          {SigninManagerFactory::GetInstance(),
-           base::BindRepeating(&BuildFakeSigninManagerForTesting)}};
+  return {{IdentityManagerFactory::GetInstance(),
+           base::BindRepeating(&BuildIdentityManagerForTests)}};
+}
+
+// static
+std::unique_ptr<KeyedService>
+IdentityTestEnvironmentProfileAdaptor::BuildIdentityManagerForTests(
+    content::BrowserContext* context) {
+  Profile* profile = Profile::FromBrowserContext(context);
+
+  return identity::IdentityTestEnvironment::BuildIdentityManagerForTests(
+      ChromeSigninClientFactory::GetForProfile(profile), profile->GetPrefs(),
+      profile->GetPath());
 }
 
 IdentityTestEnvironmentProfileAdaptor::IdentityTestEnvironmentProfileAdaptor(
     Profile* profile)
-    : identity_test_env_(
-          AccountTrackerServiceFactory::GetForProfile(profile),
-          static_cast<FakeProfileOAuth2TokenService*>(
-              ProfileOAuth2TokenServiceFactory::GetForProfile(profile)),
-#if defined(OS_CHROMEOS)
-          static_cast<FakeSigninManagerBase*>(
-              SigninManagerFactory::GetForProfile(profile)),
-#else
-          static_cast<FakeSigninManager*>(
-              SigninManagerFactory::GetForProfile(profile)),
-#endif
-          static_cast<FakeGaiaCookieManagerService*>(
-              GaiaCookieManagerServiceFactory::GetForProfile(profile)),
-          IdentityManagerFactory::GetForProfile(profile)) {
-}
+    : identity_test_env_(IdentityManagerFactory::GetForProfile(profile)) {}

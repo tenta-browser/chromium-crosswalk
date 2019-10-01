@@ -28,6 +28,13 @@ void PageLoadMetricsTestWaiter::AddPageExpectation(TimingField field) {
   }
 }
 
+void PageLoadMetricsTestWaiter::AddFrameSizeExpectation(const gfx::Size& size) {
+  // If we have already seen this size, don't add it to the expectations.
+  if (observed_frame_sizes_.find(size) != observed_frame_sizes_.end())
+    return;
+  expected_frame_sizes_.insert(size);
+}
+
 void PageLoadMetricsTestWaiter::AddSubFrameExpectation(TimingField field) {
   CHECK_NE(field, TimingField::kLoadTimingInfo)
       << "LOAD_TIMING_INFO should only be used as a page-level expectation";
@@ -61,8 +68,18 @@ void PageLoadMetricsTestWaiter::AddMinimumNetworkBytesExpectation(
   expected_minimum_network_bytes_ = expected_minimum_network_bytes;
 }
 
+void PageLoadMetricsTestWaiter::AddMinimumAggregateCpuTimeExpectation(
+    base::TimeDelta minimum) {
+  expected_minimum_aggregate_cpu_time_ = minimum;
+}
+
 bool PageLoadMetricsTestWaiter::DidObserveInPage(TimingField field) const {
   return observed_page_fields_.IsSet(field);
+}
+
+bool PageLoadMetricsTestWaiter::DidObserveWebFeature(
+    blink::mojom::WebFeature feature) const {
+  return observed_web_features_.test(static_cast<size_t>(feature));
 }
 
 void PageLoadMetricsTestWaiter::Wait() {
@@ -96,6 +113,16 @@ void PageLoadMetricsTestWaiter::OnTimingUpdated(
     run_loop_->Quit();
 }
 
+void PageLoadMetricsTestWaiter::OnCpuTimingUpdated(
+    content::RenderFrameHost* subframe_rfh,
+    const page_load_metrics::mojom::CpuTiming& timing) {
+  if (ExpectationsSatisfied())
+    return;
+  current_aggregate_cpu_time_ += timing.task_time;
+  if (ExpectationsSatisfied() && run_loop_)
+    run_loop_->Quit();
+}
+
 void PageLoadMetricsTestWaiter::OnLoadedResource(
     const page_load_metrics::ExtraRequestCompleteInfo&
         extra_request_complete_info) {
@@ -103,7 +130,7 @@ void PageLoadMetricsTestWaiter::OnLoadedResource(
     return;
 
   if (extra_request_complete_info.resource_type !=
-      content::RESOURCE_TYPE_MAIN_FRAME) {
+      content::ResourceType::kMainFrame) {
     // The waiter confirms loading timing for the main frame only.
     return;
   }
@@ -119,18 +146,11 @@ void PageLoadMetricsTestWaiter::OnLoadedResource(
 }
 
 void PageLoadMetricsTestWaiter::OnResourceDataUseObserved(
-    FrameTreeNodeId frame_tree_node_id,
+    content::RenderFrameHost* rfh,
     const std::vector<page_load_metrics::mojom::ResourceDataUpdatePtr>&
         resources) {
   for (auto const& resource : resources) {
-    auto it = page_resources_.find(resource->request_id);
-    if (it != page_resources_.end()) {
-      it->second = resource.Clone();
-    } else {
-      page_resources_.emplace(std::piecewise_construct,
-                              std::forward_as_tuple(resource->request_id),
-                              std::forward_as_tuple(resource->Clone()));
-    }
+    HandleResourceUpdate(resource);
     if (resource->is_complete) {
       current_complete_resources_++;
       if (!resource->was_fetched_via_cache)
@@ -161,12 +181,22 @@ void PageLoadMetricsTestWaiter::OnFeaturesUsageObserved(
 }
 
 void PageLoadMetricsTestWaiter::OnDidFinishSubFrameNavigation(
-    content::NavigationHandle* navigation_handle) {
+    content::NavigationHandle* navigation_handle,
+    const page_load_metrics::PageLoadExtraInfo& extra_info) {
   if (SubframeNavigationExpectationsSatisfied())
     return;
 
   ++observed_subframe_navigations_;
 
+  if (ExpectationsSatisfied() && run_loop_)
+    run_loop_->Quit();
+}
+
+void PageLoadMetricsTestWaiter::FrameSizeChanged(
+    content::RenderFrameHost* render_frame_host,
+    const gfx::Size& frame_size) {
+  observed_frame_sizes_.insert(frame_size);
+  expected_frame_sizes_.erase(frame_size);
   if (ExpectationsSatisfied() && run_loop_)
     run_loop_->Quit();
 }
@@ -228,6 +258,10 @@ void PageLoadMetricsTestWaiter::OnCommit(
   did_add_observer_ = true;
 }
 
+bool PageLoadMetricsTestWaiter::CpuTimeExpectationsSatisfied() const {
+  return current_aggregate_cpu_time_ >= expected_minimum_aggregate_cpu_time_;
+}
+
 bool PageLoadMetricsTestWaiter::ResourceUseExpectationsSatisfied() const {
   return (expected_minimum_complete_resources_ == 0 ||
           current_complete_resources_ >=
@@ -254,7 +288,8 @@ bool PageLoadMetricsTestWaiter::ExpectationsSatisfied() const {
   return subframe_expected_fields_.Empty() && page_expected_fields_.Empty() &&
          ResourceUseExpectationsSatisfied() &&
          WebFeaturesExpectationsSatisfied() &&
-         SubframeNavigationExpectationsSatisfied();
+         SubframeNavigationExpectationsSatisfied() &&
+         expected_frame_sizes_.empty() && CpuTimeExpectationsSatisfied();
 }
 
 PageLoadMetricsTestWaiter::WaiterMetricsObserver::~WaiterMetricsObserver() {}
@@ -271,6 +306,13 @@ void PageLoadMetricsTestWaiter::WaiterMetricsObserver::OnTimingUpdate(
     waiter_->OnTimingUpdated(subframe_rfh, timing, extra_info);
 }
 
+void PageLoadMetricsTestWaiter::WaiterMetricsObserver::OnCpuTimingUpdate(
+    content::RenderFrameHost* subframe_rfh,
+    const page_load_metrics::mojom::CpuTiming& timing) {
+  if (waiter_)
+    waiter_->OnCpuTimingUpdated(subframe_rfh, timing);
+}
+
 void PageLoadMetricsTestWaiter::WaiterMetricsObserver::OnLoadedResource(
     const page_load_metrics::ExtraRequestCompleteInfo&
         extra_request_complete_info) {
@@ -280,11 +322,11 @@ void PageLoadMetricsTestWaiter::WaiterMetricsObserver::OnLoadedResource(
 
 void PageLoadMetricsTestWaiter::WaiterMetricsObserver::
     OnResourceDataUseObserved(
-        FrameTreeNodeId frame_tree_node_id,
+        content::RenderFrameHost* rfh,
         const std::vector<page_load_metrics::mojom::ResourceDataUpdatePtr>&
             resources) {
   if (waiter_)
-    waiter_->OnResourceDataUseObserved(frame_tree_node_id, resources);
+    waiter_->OnResourceDataUseObserved(rfh, resources);
 }
 
 void PageLoadMetricsTestWaiter::WaiterMetricsObserver::OnFeaturesUsageObserved(
@@ -297,9 +339,24 @@ void PageLoadMetricsTestWaiter::WaiterMetricsObserver::OnFeaturesUsageObserved(
 
 void PageLoadMetricsTestWaiter::WaiterMetricsObserver::
     OnDidFinishSubFrameNavigation(
-        content::NavigationHandle* navigation_handle) {
+        content::NavigationHandle* navigation_handle,
+        const page_load_metrics::PageLoadExtraInfo& extra_info) {
   if (waiter_)
-    waiter_->OnDidFinishSubFrameNavigation(navigation_handle);
+    waiter_->OnDidFinishSubFrameNavigation(navigation_handle, extra_info);
+}
+
+void PageLoadMetricsTestWaiter::WaiterMetricsObserver::FrameSizeChanged(
+    content::RenderFrameHost* render_frame_host,
+    const gfx::Size& frame_size) {
+  if (waiter_)
+    waiter_->FrameSizeChanged(render_frame_host, frame_size);
+}
+
+bool PageLoadMetricsTestWaiter::FrameSizeComparator::operator()(
+    const gfx::Size a,
+    const gfx::Size b) const {
+  return a.width() < b.width() ||
+         (a.width() == b.width() && a.height() < b.height());
 }
 
 }  // namespace page_load_metrics

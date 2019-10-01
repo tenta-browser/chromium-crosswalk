@@ -10,7 +10,8 @@
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/platform/fonts/font_cache.h"
-#include "third_party/blink/renderer/platform/memory_coordinator.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/memory_pressure_listener.h"
 
 namespace {
 
@@ -43,13 +44,14 @@ CanvasFontCache::~CanvasFontCache() {
 }
 
 unsigned CanvasFontCache::MaxFonts() {
-  return MemoryCoordinator::IsLowEndDevice() ? CanvasFontCacheMaxFontsLowEnd
-                                             : CanvasFontCacheMaxFonts;
+  return MemoryPressureListenerRegistry::IsLowEndDevice()
+             ? CanvasFontCacheMaxFontsLowEnd
+             : CanvasFontCacheMaxFonts;
 }
 
 unsigned CanvasFontCache::HardMaxFonts() {
   return document_->hidden() ? CanvasFontCacheHiddenMaxFonts
-                             : (MemoryCoordinator::IsLowEndDevice()
+                             : (MemoryPressureListenerRegistry::IsLowEndDevice()
                                     ? CanvasFontCacheHardMaxFontsLowEnd
                                     : CanvasFontCacheHardMaxFonts);
 }
@@ -88,8 +90,9 @@ MutableCSSPropertyValueSet* CanvasFontCache::ParseFont(
     DCHECK(!add_result.is_new_entry);
     parsed_style = i->value;
   } else {
-    parsed_style = MutableCSSPropertyValueSet::Create(kHTMLStandardMode);
-    CSSParser::ParseValue(parsed_style, CSSPropertyFont, font_string, true,
+    parsed_style =
+        MakeGarbageCollected<MutableCSSPropertyValueSet>(kHTMLStandardMode);
+    CSSParser::ParseValue(parsed_style, CSSPropertyID::kFont, font_string, true,
                           document_->GetSecureContextMode());
     if (parsed_style->IsEmpty())
       return nullptr;
@@ -97,7 +100,7 @@ MutableCSSPropertyValueSet* CanvasFontCache::ParseFont(
     // http://lists.w3.org/Archives/Public/public-html/2009Jul/0947.html,
     // the "inherit", "initial" and "unset" values must be ignored.
     const CSSValue* font_value =
-        parsed_style->GetPropertyCSSValue(CSSPropertyFontSize);
+        parsed_style->GetPropertyCSSValue(CSSPropertyID::kFontSize);
     if (font_value && font_value->IsCSSWideKeyword())
       return nullptr;
     fetched_fonts_.insert(font_string, parsed_style);

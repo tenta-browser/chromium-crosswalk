@@ -20,6 +20,7 @@
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/supports_user_data.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/default_tick_clock.h"
 #include "base/time/tick_clock.h"
 #include "base/trace_event/trace_event.h"
@@ -33,6 +34,7 @@
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
 #include "services/network/public/cpp/features.h"
+#include "services/network/public/mojom/network_context.mojom.h"
 #include "url/scheme_host_port.h"
 
 namespace network {
@@ -361,10 +363,12 @@ void ResourceScheduler::RequestQueue::Insert(
 // Each client represents a tab.
 class ResourceScheduler::Client : public net::EffectiveConnectionTypeObserver {
  public:
-  Client(net::NetworkQualityEstimator* network_quality_estimator,
+  Client(bool is_browser_client,
+         net::NetworkQualityEstimator* network_quality_estimator,
          ResourceScheduler* resource_scheduler,
          const base::TickClock* tick_clock)
-      : in_flight_delayable_count_(0),
+      : is_browser_client_(is_browser_client),
+        in_flight_delayable_count_(0),
         total_layout_blocking_count_(0),
         num_skipped_scans_due_to_scheduled_start_(0),
         network_quality_estimator_(network_quality_estimator),
@@ -400,6 +404,10 @@ class ResourceScheduler::Client : public net::EffectiveConnectionTypeObserver {
       pending_requests_.Erase(request);
       DCHECK(!base::ContainsKey(in_flight_requests_, request));
     } else {
+      // Record metrics.
+      if (!RequestAttributesAreSet(request->attributes(), kAttributeDelayable))
+        last_non_delayable_request_end_ = tick_clock_->NowTicks();
+      RecordNetworkContentionMetrics(*request);
       EraseInFlightRequest(request);
 
       // Removing this request may have freed up another to load.
@@ -471,6 +479,10 @@ class ResourceScheduler::Client : public net::EffectiveConnectionTypeObserver {
   }
 
   bool HasNoPendingRequests() const { return pending_requests_.IsEmpty(); }
+
+  bool IsActiveResourceSchedulerClient() const {
+    return (!pending_requests_.IsEmpty() || !in_flight_requests_.empty());
+  }
 
  private:
   enum ShouldStartReqResult {
@@ -664,9 +676,74 @@ class ResourceScheduler::Client : public net::EffectiveConnectionTypeObserver {
     return false;
   }
 
+  void RecordMetricsOnStartRequest(const ScheduledResourceRequestImpl& request,
+                                   base::TimeTicks ticks_now) const {
+    const size_t non_delayable_requests_in_flight_count =
+        in_flight_requests_.size() - in_flight_delayable_count_;
+
+    // Record the number of delayable requests in-flight when a non-delayable
+    // request starts.
+    if (!RequestAttributesAreSet(request.attributes(), kAttributeDelayable)) {
+      if (non_delayable_requests_in_flight_count > 0) {
+        if (last_non_delayable_request_start_) {
+          UMA_HISTOGRAM_MEDIUM_TIMES(
+              "ResourceScheduler.NonDelayableLastStartToNonDelayableStart."
+              "NonDelayableInFlight",
+              ticks_now - last_non_delayable_request_start_.value());
+        }
+      } else {
+        if (last_non_delayable_request_end_) {
+          UMA_HISTOGRAM_MEDIUM_TIMES(
+              "ResourceScheduler.NonDelayableLastEndToNonDelayableStart."
+              "NonDelayableNotInFlight",
+              ticks_now - last_non_delayable_request_end_.value());
+        }
+      }
+
+      UMA_HISTOGRAM_COUNTS_100(
+          "ResourceScheduler.NumDelayableRequestsInFlightAtStart.NonDelayable",
+          in_flight_delayable_count_);
+      if (last_non_delayable_request_start_.has_value()) {
+        UMA_HISTOGRAM_MEDIUM_TIMES(
+            "ResourceScheduler.NonDelayableLastStartToNonDelayableStart",
+            ticks_now - last_non_delayable_request_start_.value());
+      }
+      if (last_non_delayable_request_end_.has_value()) {
+        UMA_HISTOGRAM_MEDIUM_TIMES(
+            "ResourceScheduler.NonDelayableLastEndToNonDelayableStart",
+            ticks_now - last_non_delayable_request_end_.value());
+      }
+
+      // Record time since last non-delayable request start or end, whichever
+      // happened later.
+      base::Optional<base::TimeTicks> last_non_delayable_request_start_or_end;
+      if (last_non_delayable_request_start_.has_value() &&
+          !last_non_delayable_request_end_.has_value()) {
+        last_non_delayable_request_start_or_end =
+            last_non_delayable_request_start_;
+      } else if (!last_non_delayable_request_start_.has_value() &&
+                 last_non_delayable_request_end_.has_value()) {
+        last_non_delayable_request_start_or_end =
+            last_non_delayable_request_end_;
+      } else if (last_non_delayable_request_start_.has_value() &&
+                 last_non_delayable_request_end_.has_value()) {
+        last_non_delayable_request_start_or_end =
+            std::max(last_non_delayable_request_start_.value(),
+                     last_non_delayable_request_end_.value());
+      }
+
+      if (last_non_delayable_request_start_or_end) {
+        UMA_HISTOGRAM_MEDIUM_TIMES(
+            "ResourceScheduler.NonDelayableLastStartOrEndToNonDelayableStart",
+            ticks_now - last_non_delayable_request_start_or_end.value());
+      }
+    }
+  }
+
   void StartRequest(ScheduledResourceRequestImpl* request,
                     StartMode start_mode,
                     RequestStartTrigger trigger) {
+    const base::TimeTicks ticks_now = tick_clock_->NowTicks();
     // Only log on requests that were blocked by the ResourceScheduler.
     if (start_mode == START_ASYNC) {
       DCHECK_NE(RequestStartTrigger::NONE, trigger);
@@ -675,21 +752,21 @@ class ResourceScheduler::Client : public net::EffectiveConnectionTypeObserver {
           net::NetLog::StringCallback("trigger",
                                       RequestStartTriggerString(trigger)));
     }
-    // Record the number of delayable requests in-flight when a non-delayable
-    // request starts.
-    if (!RequestAttributesAreSet(request->attributes(), kAttributeDelayable)) {
-      UMA_HISTOGRAM_COUNTS_100(
-          "ResourceScheduler.NumDelayableRequestsInFlightAtStart.NonDelayable",
-          in_flight_delayable_count_);
-    }
+    if (request)
+      RecordMetricsOnStartRequest(*request, ticks_now);
 
     DCHECK(!request->url_request()->creation_time().is_null());
     base::TimeDelta queuing_duration =
-        base::TimeTicks::Now() - request->url_request()->creation_time();
+        ticks_now - request->url_request()->creation_time();
     base::UmaHistogramMediumTimes(
         "ResourceScheduler.RequestQueuingDuration.Priority" +
-            base::IntToString(request->get_request_priority_params().priority),
+            base::NumberToString(
+                request->get_request_priority_params().priority),
         queuing_duration);
+
+    // Update the start time of the non-delayble request.
+    if (!RequestAttributesAreSet(request->attributes(), kAttributeDelayable))
+      last_non_delayable_request_start_ = ticks_now;
 
     InsertInFlightRequest(request);
     request->Start(start_mode);
@@ -731,6 +808,10 @@ class ResourceScheduler::Client : public net::EffectiveConnectionTypeObserver {
 
   ShouldStartReqResult ShouldStartRequest(
       ScheduledResourceRequestImpl* request) const {
+    // Currently, browser initiated requests are not throttled.
+    if (is_browser_client_)
+      return START_REQUEST;
+
     if (!resource_scheduler_->enabled())
       return START_REQUEST;
 
@@ -878,12 +959,51 @@ class ResourceScheduler::Client : public net::EffectiveConnectionTypeObserver {
     }
   }
 
+  // If |request| was delayable, this method records how long after |request|
+  // started, a non-delayable request also started. This is the duration of time
+  // that |request| should have been queued for so as to avoid any network
+  // contention with all later-arriving non-delayable requests. Must be called
+  // after |request| is finished.
+  void RecordNetworkContentionMetrics(
+      const ScheduledResourceRequestImpl& request) const {
+    if (!RequestAttributesAreSet(request.attributes(), kAttributeDelayable))
+      return;
+
+    base::TimeDelta ideal_duration_to_wait;
+    if (!last_non_delayable_request_start_) {
+      // No non-delayable request has been started in this client so far.
+      // |request| did not have to wait at all to avoid network contention.
+      ideal_duration_to_wait = base::TimeDelta();
+    } else if (request.url_request()->creation_time() >
+               last_non_delayable_request_start_) {
+      // Last non-delayable request in this client started before |request|
+      // was created. |request| did not have to wait at all to avoid network
+      // contention with non-delayable requests.
+      ideal_duration_to_wait = base::TimeDelta();
+    } else {
+      // The latest non-delayable request started at
+      // |last_non_delayable_request_start_| which happened after the
+      // creation of |request|.
+      ideal_duration_to_wait = last_non_delayable_request_start_.value() -
+                               request.url_request()->creation_time();
+    }
+
+    UMA_HISTOGRAM_MEDIUM_TIMES(
+        "ResourceScheduler.DelayableRequests."
+        "WaitTimeToAvoidContentionWithNonDelayableRequest",
+        ideal_duration_to_wait);
+  }
+
   // Tracks if the main HTML parser has reached the body which marks the end of
   // layout-blocking resources.
   // This is disabled and the is always true when kRendererSideResourceScheduler
   // is enabled.
   RequestQueue pending_requests_;
   RequestSet in_flight_requests_;
+
+  // True if |this| client is created for browser initiated requests.
+  const bool is_browser_client_;
+
   // The number of delayable in-flight requests.
   size_t in_flight_delayable_count_;
   // The number of layout-blocking in-flight requests.
@@ -908,6 +1028,12 @@ class ResourceScheduler::Client : public net::EffectiveConnectionTypeObserver {
 
   // Guaranteed to be non-null.
   const base::TickClock* tick_clock_;
+
+  // Time when the last non-delayble request started in this client.
+  base::Optional<base::TimeTicks> last_non_delayable_request_start_;
+
+  // Time when the last non-delayble request ended in this client.
+  base::Optional<base::TimeTicks> last_non_delayable_request_end_;
 
   base::WeakPtrFactory<ResourceScheduler::Client> weak_ptr_factory_;
 };
@@ -985,7 +1111,11 @@ void ResourceScheduler::OnClientCreated(
   DCHECK(!base::ContainsKey(client_map_, client_id));
 
   client_map_[client_id] =
-      std::make_unique<Client>(network_quality_estimator, this, tick_clock_);
+      std::make_unique<Client>(child_id == mojom::kBrowserProcessId,
+                               network_quality_estimator, this, tick_clock_);
+
+  UMA_HISTOGRAM_COUNTS_100("ResourceScheduler.ActiveSchedulerClientsCount",
+                           ActiveSchedulerClientsCounter());
 }
 
 void ResourceScheduler::OnClientDeleted(int child_id, int route_id) {
@@ -1000,9 +1130,7 @@ void ResourceScheduler::OnClientDeleted(int child_id, int route_id) {
   Client* client = it->second.get();
   // TODO(crbug.com/873959): Remove this CHECK once the investigation is done.
   CHECK(client);
-  DCHECK(!base::FeatureList::IsEnabled(
-             features::kUnthrottleRequestsAfterLongQueuingDelay) ||
-         client->HasNoPendingRequests() ||
+  DCHECK(client->HasNoPendingRequests() ||
          IsLongQueuedRequestsDispatchTimerRunning());
   // ResourceDispatcherHost cancels all requests except for cross-renderer
   // navigations, async revalidations and detachable requests after
@@ -1016,6 +1144,16 @@ void ResourceScheduler::OnClientDeleted(int child_id, int route_id) {
   client_map_.erase(it);
 }
 
+size_t ResourceScheduler::ActiveSchedulerClientsCounter() const {
+  size_t active_scheduler_clients_count = 0;
+  for (const auto& client : client_map_) {
+    if (client.second->IsActiveResourceSchedulerClient()) {
+      ++active_scheduler_clients_count;
+    }
+  }
+  return active_scheduler_clients_count;
+}
+
 ResourceScheduler::Client* ResourceScheduler::GetClient(int child_id,
                                                         int route_id) {
   ClientId client_id = MakeClientId(child_id, route_id);
@@ -1026,11 +1164,6 @@ ResourceScheduler::Client* ResourceScheduler::GetClient(int child_id,
 }
 
 void ResourceScheduler::StartLongQueuedRequestsDispatchTimerIfNeeded() {
-  if (!base::FeatureList::IsEnabled(
-          features::kUnthrottleRequestsAfterLongQueuingDelay)) {
-    return;
-  }
-
   bool pending_request_found = false;
   for (const auto& client : client_map_) {
     if (!client.second->HasNoPendingRequests()) {

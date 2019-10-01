@@ -16,7 +16,7 @@ namespace blink {
 
 MediaControlPlayButtonElement::MediaControlPlayButtonElement(
     MediaControlsImpl& media_controls)
-    : MediaControlInputElement(media_controls, kMediaIgnore) {
+    : MediaControlInputElement(media_controls) {
   setType(input_type_names::kButton);
   SetShadowPseudoId(AtomicString("-webkit-media-controls-play-button"));
 }
@@ -48,13 +48,17 @@ bool MediaControlPlayButtonElement::HasOverflowButton() const {
   return true;
 }
 
+bool MediaControlPlayButtonElement::IsControlPanelButton() const {
+  return true;
+}
+
 const char* MediaControlPlayButtonElement::GetNameForHistograms() const {
   return IsOverflowElement() ? "PlayPauseOverflowButton" : "PlayPauseButton";
 }
 
 void MediaControlPlayButtonElement::DefaultEventHandler(Event& event) {
-  if (event.type() == event_type_names::kClick ||
-      event.type() == event_type_names::kGesturetap) {
+  if (!IsDisabled() && (event.type() == event_type_names::kClick ||
+                        event.type() == event_type_names::kGesturetap)) {
     if (MediaElement().paused()) {
       Platform::Current()->RecordAction(
           UserMetricsAction("Media.Controls.Play"));

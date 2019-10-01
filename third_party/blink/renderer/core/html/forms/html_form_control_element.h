@@ -119,7 +119,7 @@ class CORE_EXPORT HTMLFormControlElement : public HTMLElement,
   void CloneNonAttributePropertiesFrom(const Element&,
                                        CloneChildrenFlag) override;
 
-  FormAssociated* ToFormAssociatedOrNull() override { return this; };
+  FormAssociated* ToFormAssociatedOrNull() override { return this; }
   void AssociateWith(HTMLFormElement*) override;
 
   bool BlocksFormSubmission() const { return blocks_form_submission_; }
@@ -146,11 +146,8 @@ class CORE_EXPORT HTMLFormControlElement : public HTMLElement,
   bool SupportsFocus() const override;
   bool IsKeyboardFocusable() const override;
   bool ShouldHaveFocusAppearance() const final;
-  void DispatchBlurEvent(Element* new_focused_element,
-                         WebFocusType,
-                         InputDeviceCapabilities* source_capabilities) override;
 
-  void DidRecalcStyle(StyleRecalcChange) override;
+  void DidRecalcStyle(const StyleRecalcChange) override;
 
   virtual void ResetImpl() {}
   virtual bool SupportsAutofocus() const;

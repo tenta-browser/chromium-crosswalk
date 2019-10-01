@@ -4,8 +4,8 @@
 
 #include "base/run_loop.h"
 #include "base/win/windows_version.h"
+#include "chrome/browser/ui/views/test/view_event_test_base.h"
 #include "chrome/test/base/testing_profile.h"
-#include "chrome/test/base/view_event_test_base.h"
 #include "ui/aura/env.h"
 #include "ui/aura/test/env_test_helper.h"
 #include "ui/aura/window.h"
@@ -156,7 +156,7 @@ class TouchEventsViewTest : public ViewEventTestBase {
   void DoTestOnMessageLoop() override {
     // ui_controls::SendTouchEvents which uses InjectTouchInput API only works
     // on Windows 8 and up.
-    if (base::win::GetVersion() <= base::win::VERSION_WIN7) {
+    if (base::win::GetVersion() <= base::win::Version::WIN7) {
       Done();
       return;
     }
@@ -203,7 +203,7 @@ class TouchEventsRecursiveViewTest : public TouchEventsViewTest {
   void DoTestOnMessageLoop() override {
     // ui_controls::SendTouchEvents which uses InjectTouchInput API only works
     // on Windows 8 and up.
-    if (base::win::GetVersion() <= base::win::VERSION_WIN7) {
+    if (base::win::GetVersion() <= base::win::Version::WIN7) {
       Done();
       return;
     }

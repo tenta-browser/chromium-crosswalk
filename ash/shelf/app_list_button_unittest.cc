@@ -8,23 +8,29 @@
 #include <string>
 
 #include "ash/app_list/test/app_list_test_helper.h"
+#include "ash/app_list/views/app_list_view.h"
 #include "ash/assistant/assistant_controller.h"
 #include "ash/assistant/assistant_ui_controller.h"
 #include "ash/assistant/model/assistant_ui_model.h"
 #include "ash/assistant/test/test_assistant_service.h"
+#include "ash/kiosk_next/kiosk_next_shell_test_util.h"
+#include "ash/kiosk_next/mock_kiosk_next_shell_client.h"
+#include "ash/public/cpp/ash_features.h"
 #include "ash/root_window_controller.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shelf/shelf.h"
-#include "ash/shelf/shelf_layout_manager.h"
+#include "ash/shelf/shelf_constants.h"
 #include "ash/shelf/shelf_view.h"
 #include "ash/shelf/shelf_view_test_api.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/voice_interaction/voice_interaction_controller.h"
+#include "ash/wm/overview/overview_controller.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "base/command_line.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_command_line.h"
+#include "base/test/scoped_feature_list.h"
 #include "chromeos/constants/chromeos_switches.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
 #include "ui/events/test/event_generator.h"
@@ -35,6 +41,7 @@ ui::GestureEvent CreateGestureEvent(ui::GestureEventDetails details) {
   return ui::GestureEvent(0, 0, ui::EF_NONE, base::TimeTicks(), details);
 }
 
+// TODO(michaelpg): Rename AppListButtonTest => HomeButtonTest.
 class AppListButtonTest : public AshTestBase {
  public:
   AppListButtonTest() = default;
@@ -43,12 +50,13 @@ class AppListButtonTest : public AshTestBase {
   // AshTestBase:
   void SetUp() override {
     AshTestBase::SetUp();
-    app_list_button_ =
-        GetPrimaryShelf()->GetShelfViewForTesting()->GetAppListButton();
   }
 
   void SendGestureEvent(ui::GestureEvent* event) {
-    app_list_button_->OnGestureEvent(event);
+    GetPrimaryShelf()
+        ->GetShelfViewForTesting()
+        ->GetAppListButton()
+        ->OnGestureEvent(event);
   }
 
   void SendGestureEventToSecondaryDisplay(ui::GestureEvent* event) {
@@ -61,11 +69,11 @@ class AppListButtonTest : public AshTestBase {
         ->OnGestureEvent(event);
   }
 
-  const AppListButton* app_list_button() const { return app_list_button_; }
+  const AppListButton* app_list_button() const {
+    return GetPrimaryShelf()->GetShelfViewForTesting()->GetAppListButton();
+  }
 
  private:
-  AppListButton* app_list_button_ = nullptr;
-
   DISALLOW_COPY_AND_ASSIGN(AppListButtonTest);
 };
 
@@ -79,28 +87,62 @@ TEST_F(AppListButtonTest, SwipeUpToOpenFullscreenAppList) {
   // Swiping up less than the threshold should trigger a peeking app list.
   gfx::Point end = start;
   end.set_y(shelf->GetIdealBounds().bottom() -
-            ShelfLayoutManager::kAppListDragSnapToPeekingThreshold + 10);
+            app_list::AppListView::kDragSnapToPeekingThreshold + 10);
   GetEventGenerator()->GestureScrollSequence(
       start, end, base::TimeDelta::FromMilliseconds(100), 4 /* steps */);
   GetAppListTestHelper()->WaitUntilIdle();
   GetAppListTestHelper()->CheckVisibility(true);
-  GetAppListTestHelper()->CheckState(app_list::AppListViewState::PEEKING);
+  GetAppListTestHelper()->CheckState(ash::AppListViewState::kPeeking);
 
   // Closing the app list.
   GetAppListTestHelper()->DismissAndRunLoop();
   GetAppListTestHelper()->CheckVisibility(false);
-  GetAppListTestHelper()->CheckState(app_list::AppListViewState::CLOSED);
+  GetAppListTestHelper()->CheckState(ash::AppListViewState::kClosed);
 
   // Swiping above the threshold should trigger a fullscreen app list.
   end.set_y(shelf->GetIdealBounds().bottom() -
-            ShelfLayoutManager::kAppListDragSnapToPeekingThreshold - 10);
+            app_list::AppListView::kDragSnapToPeekingThreshold - 10);
   GetEventGenerator()->GestureScrollSequence(
       start, end, base::TimeDelta::FromMilliseconds(100), 4 /* steps */);
   base::RunLoop().RunUntilIdle();
   GetAppListTestHelper()->WaitUntilIdle();
   GetAppListTestHelper()->CheckVisibility(true);
-  GetAppListTestHelper()->CheckState(
-      app_list::AppListViewState::FULLSCREEN_ALL_APPS);
+  GetAppListTestHelper()->CheckState(ash::AppListViewState::kFullscreenAllApps);
+}
+
+TEST_F(AppListButtonTest, ClickToOpenAppList) {
+  Shelf* shelf = GetPrimaryShelf();
+  EXPECT_EQ(SHELF_ALIGNMENT_BOTTOM, shelf->alignment());
+
+  gfx::Point center = app_list_button()->GetCenterPoint();
+  views::View::ConvertPointToScreen(app_list_button(), &center);
+  GetEventGenerator()->MoveMouseTo(center);
+
+  // Click on the app list button should toggle the app list.
+  GetEventGenerator()->ClickLeftButton();
+  GetAppListTestHelper()->WaitUntilIdle();
+  GetAppListTestHelper()->CheckVisibility(true);
+  GetAppListTestHelper()->CheckState(ash::AppListViewState::kPeeking);
+  GetEventGenerator()->ClickLeftButton();
+  GetAppListTestHelper()->WaitUntilIdle();
+  GetAppListTestHelper()->CheckVisibility(false);
+  GetAppListTestHelper()->CheckState(ash::AppListViewState::kClosed);
+
+  // Shift-click should open the app list in fullscreen.
+  GetEventGenerator()->set_flags(ui::EF_SHIFT_DOWN);
+  GetEventGenerator()->ClickLeftButton();
+  GetEventGenerator()->set_flags(0);
+  GetAppListTestHelper()->WaitUntilIdle();
+  GetAppListTestHelper()->CheckVisibility(true);
+  GetAppListTestHelper()->CheckState(ash::AppListViewState::kFullscreenAllApps);
+
+  // Another shift-click should close the app list.
+  GetEventGenerator()->set_flags(ui::EF_SHIFT_DOWN);
+  GetEventGenerator()->ClickLeftButton();
+  GetEventGenerator()->set_flags(0);
+  GetAppListTestHelper()->WaitUntilIdle();
+  GetAppListTestHelper()->CheckVisibility(false);
+  GetAppListTestHelper()->CheckState(ash::AppListViewState::kClosed);
 }
 
 TEST_F(AppListButtonTest, ButtonPositionInTabletMode) {
@@ -117,7 +159,7 @@ TEST_F(AppListButtonTest, ButtonPositionInTabletMode) {
 
   Shell::Get()->tablet_mode_controller()->EnableTabletModeWindowManager(false);
   test_api.RunMessageLoopUntilAnimationsDone();
-  EXPECT_EQ(0, app_list_button()->bounds().x());
+  EXPECT_EQ(ShelfConstants::button_spacing(), app_list_button()->bounds().x());
 }
 
 class VoiceInteractionAppListButtonTest : public AppListButtonTest {
@@ -232,6 +274,47 @@ TEST_F(VoiceInteractionAppListButtonTest,
                                                ->ui_controller()
                                                ->model()
                                                ->visibility());
+}
+
+class KioskNextHomeButtonTest : public AppListButtonTest {
+ public:
+  KioskNextHomeButtonTest() {
+    scoped_feature_list_.InitAndEnableFeature(features::kKioskNextShell);
+  }
+
+  void SetUp() override {
+    set_start_session(false);
+    AppListButtonTest::SetUp();
+    client_ = BindMockKioskNextShellClient();
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+  std::unique_ptr<MockKioskNextShellClient> client_;
+
+  DISALLOW_COPY_AND_ASSIGN(KioskNextHomeButtonTest);
+};
+
+TEST_F(KioskNextHomeButtonTest, TapToGoHome) {
+  LogInKioskNextUser(GetSessionControllerClient());
+
+  ShelfViewTestAPI test_api(GetPrimaryShelf()->GetShelfViewForTesting());
+  test_api.RunMessageLoopUntilAnimationsDone();
+
+  // Enter Overview mode.
+  OverviewController* overview_controller = Shell::Get()->overview_controller();
+  ASSERT_TRUE(overview_controller->ToggleOverview());
+  ASSERT_TRUE(overview_controller->InOverviewSession());
+  test_api.RunMessageLoopUntilAnimationsDone();
+
+  // Tapping the home button should exit Overview mode.
+  gfx::Point center = app_list_button()->GetCenterPoint();
+  views::View::ConvertPointToScreen(app_list_button(), &center);
+  GetEventGenerator()->GestureTapDownAndUp(center);
+  test_api.RunMessageLoopUntilAnimationsDone();
+  EXPECT_FALSE(overview_controller->InOverviewSession());
+
+  // TODO(michaelpg): Create a Home Screen aura::Window* and verify its state.
 }
 
 }  // namespace ash

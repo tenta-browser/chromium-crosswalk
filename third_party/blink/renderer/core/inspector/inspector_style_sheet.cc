@@ -54,6 +54,7 @@
 #include "third_party/blink/renderer/core/inspector/inspector_resource_container.h"
 #include "third_party/blink/renderer/core/svg/svg_style_element.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/wtf/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 #include "third_party/blink/renderer/platform/wtf/text/text_position.h"
@@ -66,7 +67,7 @@ namespace {
 
 static const CSSParserContext* ParserContextForDocument(Document* document) {
   // Fallback to an insecure context parser if no document is present.
-  return document ? CSSParserContext::Create(*document)
+  return document ? MakeGarbageCollected<CSSParserContext>(*document)
                   : StrictCSSParserContext(SecureContextMode::kInsecureContext);
 }
 
@@ -344,8 +345,8 @@ void StyleSheetHandler::ObserveComment(unsigned start_offset,
 
 bool VerifyRuleText(Document* document, const String& rule_text) {
   DEFINE_STATIC_LOCAL(String, bogus_property_name, ("-webkit-boguz-propertee"));
-  StyleSheetContents* style_sheet =
-      StyleSheetContents::Create(ParserContextForDocument(document));
+  auto* style_sheet = MakeGarbageCollected<StyleSheetContents>(
+      ParserContextForDocument(document));
   CSSRuleSourceDataList* source_data =
       MakeGarbageCollected<CSSRuleSourceDataList>();
   String text = rule_text + " div { " + bogus_property_name + ": none; }";
@@ -382,8 +383,8 @@ bool VerifyStyleText(Document* document, const String& text) {
 }
 
 bool VerifyKeyframeKeyText(Document* document, const String& key_text) {
-  StyleSheetContents* style_sheet =
-      StyleSheetContents::Create(ParserContextForDocument(document));
+  auto* style_sheet = MakeGarbageCollected<StyleSheetContents>(
+      ParserContextForDocument(document));
   CSSRuleSourceDataList* source_data =
       MakeGarbageCollected<CSSRuleSourceDataList>();
   String text = "@keyframes boguzAnim { " + key_text +
@@ -413,8 +414,8 @@ bool VerifyKeyframeKeyText(Document* document, const String& key_text) {
 
 bool VerifySelectorText(Document* document, const String& selector_text) {
   DEFINE_STATIC_LOCAL(String, bogus_property_name, ("-webkit-boguz-propertee"));
-  StyleSheetContents* style_sheet =
-      StyleSheetContents::Create(ParserContextForDocument(document));
+  auto* style_sheet = MakeGarbageCollected<StyleSheetContents>(
+      ParserContextForDocument(document));
   CSSRuleSourceDataList* source_data =
       MakeGarbageCollected<CSSRuleSourceDataList>();
   String text = selector_text + " { " + bogus_property_name + ": none; }";
@@ -443,8 +444,8 @@ bool VerifySelectorText(Document* document, const String& selector_text) {
 
 bool VerifyMediaText(Document* document, const String& media_text) {
   DEFINE_STATIC_LOCAL(String, bogus_property_name, ("-webkit-boguz-propertee"));
-  StyleSheetContents* style_sheet =
-      StyleSheetContents::Create(ParserContextForDocument(document));
+  auto* style_sheet = MakeGarbageCollected<StyleSheetContents>(
+      ParserContextForDocument(document));
   CSSRuleSourceDataList* source_data =
       MakeGarbageCollected<CSSRuleSourceDataList>();
   String text = "@media " + media_text + " { div { " + bogus_property_name +
@@ -508,14 +509,14 @@ CSSRuleList* AsCSSRuleList(CSSRule* rule) {
   if (!rule)
     return nullptr;
 
-  if (rule->type() == CSSRule::kMediaRule)
-    return ToCSSMediaRule(rule)->cssRules();
+  if (auto* media_rule = DynamicTo<CSSMediaRule>(rule))
+    return media_rule->cssRules();
 
-  if (rule->type() == CSSRule::kSupportsRule)
-    return ToCSSSupportsRule(rule)->cssRules();
+  if (auto* supports_rule = DynamicTo<CSSSupportsRule>(rule))
+    return supports_rule->cssRules();
 
-  if (rule->type() == CSSRule::kKeyframesRule)
-    return ToCSSKeyframesRule(rule)->cssRules();
+  if (auto* keyframes_rule = DynamicTo<CSSKeyframesRule>(rule))
+    return keyframes_rule->cssRules();
 
   return nullptr;
 }
@@ -659,9 +660,9 @@ void Diff(const Vector<String>& list_a,
 }
 
 String CanonicalCSSText(CSSRule* rule) {
-  if (rule->type() != CSSRule::kStyleRule)
+  auto* style_rule = DynamicTo<CSSStyleRule>(rule);
+  if (!style_rule)
     return rule->cssText();
-  CSSStyleRule* style_rule = ToCSSStyleRule(rule);
 
   Vector<String> property_names;
   CSSStyleDeclaration* style = style_rule->style();
@@ -718,14 +719,6 @@ InspectorStyleSheetBase::BuildSourceRangeObject(const SourceRange& range) {
           .setEndColumn(end.column_.ZeroBasedInt())
           .build();
   return result;
-}
-
-InspectorStyle* InspectorStyle::Create(
-    CSSStyleDeclaration* style,
-    CSSRuleSourceData* source_data,
-    InspectorStyleSheetBase* parent_style_sheet) {
-  return MakeGarbageCollected<InspectorStyle>(style, source_data,
-                                              parent_style_sheet);
 }
 
 InspectorStyle::InspectorStyle(CSSStyleDeclaration* style,
@@ -801,7 +794,7 @@ void InspectorStyle::PopulateAllProperties(
       continue;
     bool important = !style_->getPropertyPriority(name).IsEmpty();
     if (important)
-      value.append(" !important");
+      value = value + " !important";
     result.push_back(CSSPropertySourceData(
         name, value, !style_->getPropertyPriority(name).IsEmpty(), false, true,
         SourceRange()));
@@ -1089,7 +1082,7 @@ CSSKeyframeRule* InspectorStyleSheet::SetKeyframeKey(
     return nullptr;
   }
 
-  CSSKeyframeRule* keyframe_rule = ToCSSKeyframeRule(rule);
+  CSSKeyframeRule* keyframe_rule = To<CSSKeyframeRule>(rule);
   keyframe_rule->setKeyText(text, exception_state);
 
   ReplaceText(source_data->rule_header_range, text, new_range, old_text);
@@ -1119,8 +1112,7 @@ CSSRule* InspectorStyleSheet::SetStyleText(const SourceRange& range,
 
   CSSRule* rule = RuleForSourceData(source_data);
   if (!rule || !rule->parentStyleSheet() ||
-      (rule->type() != CSSRule::kStyleRule &&
-       rule->type() != CSSRule::kKeyframeRule)) {
+      (!IsA<CSSStyleRule>(rule) && !IsA<CSSKeyframeRule>(rule))) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNotFoundError,
         "Source range didn't match existing style source range");
@@ -1128,10 +1120,10 @@ CSSRule* InspectorStyleSheet::SetStyleText(const SourceRange& range,
   }
 
   CSSStyleDeclaration* style = nullptr;
-  if (rule->type() == CSSRule::kStyleRule)
-    style = ToCSSStyleRule(rule)->style();
-  else if (rule->type() == CSSRule::kKeyframeRule)
-    style = ToCSSKeyframeRule(rule)->style();
+  if (auto* style_rule = DynamicTo<CSSStyleRule>(rule))
+    style = style_rule->style();
+  else
+    style = To<CSSKeyframeRule>(rule)->style();
   style->setCSSText(page_style_sheet_->OwnerDocument(), text, exception_state);
 
   ReplaceText(source_data->rule_body_range, text, new_range, old_text);
@@ -1280,7 +1272,7 @@ CSSStyleRule* InspectorStyleSheet::InsertCSSOMRuleBySourceRange(
     return nullptr;
   }
 
-  return InsertCSSOMRuleInMediaRule(ToCSSMediaRule(rule), insert_before_rule,
+  return InsertCSSOMRuleInMediaRule(To<CSSMediaRule>(rule), insert_before_rule,
                                     rule_text, exception_state);
 }
 
@@ -1363,7 +1355,7 @@ bool InspectorStyleSheet::DeleteRule(const SourceRange& range,
           "Cannot remove rule from non-media rule.");
       return false;
     }
-    CSSMediaRule* parent_media_rule = ToCSSMediaRule(parent_rule);
+    CSSMediaRule* parent_media_rule = To<CSSMediaRule>(parent_rule);
     wtf_size_t index = 0;
     while (index < parent_media_rule->length() &&
            parent_media_rule->Item(index) != rule)
@@ -1394,9 +1386,9 @@ InspectorStyleSheet::CollectClassNames() {
       protocol::Array<String>::create();
 
   for (wtf_size_t i = 0; i < parsed_flat_rules_.size(); ++i) {
-    if (parsed_flat_rules_.at(i)->type() == CSSRule::kStyleRule)
-      GetClassNamesFromRule(ToCSSStyleRule(parsed_flat_rules_.at(i)),
-                            unique_names);
+    if (auto* style_rule =
+            DynamicTo<CSSStyleRule>(parsed_flat_rules_.at(i).Get()))
+      GetClassNamesFromRule(style_rule, unique_names);
   }
   for (const String& class_name : unique_names)
     result->addItem(class_name);
@@ -1420,7 +1412,7 @@ void InspectorStyleSheet::InnerSetText(const String& text,
                                        bool mark_as_locally_modified) {
   CSSRuleSourceDataList* rule_tree =
       MakeGarbageCollected<CSSRuleSourceDataList>();
-  StyleSheetContents* style_sheet = StyleSheetContents::Create(
+  auto* style_sheet = MakeGarbageCollected<StyleSheetContents>(
       page_style_sheet_->Contents()->ParserContext());
   StyleSheetHandler handler(text, page_style_sheet_->OwnerDocument(),
                             rule_tree);
@@ -1428,12 +1420,13 @@ void InspectorStyleSheet::InnerSetText(const String& text,
       page_style_sheet_->Contents()->ParserContext(), style_sheet, text,
       handler);
   CSSStyleSheet* source_data_sheet = nullptr;
-  if (ToCSSImportRule(page_style_sheet_->ownerRule())) {
-    source_data_sheet = CSSStyleSheet::Create(
-        style_sheet, ToCSSImportRule(page_style_sheet_->ownerRule()));
-  } else {
+  if (auto* import_rule =
+          DynamicTo<CSSImportRule>(page_style_sheet_->ownerRule())) {
     source_data_sheet =
-        CSSStyleSheet::Create(style_sheet, *page_style_sheet_->ownerNode());
+        MakeGarbageCollected<CSSStyleSheet>(style_sheet, import_rule);
+  } else {
+    source_data_sheet = MakeGarbageCollected<CSSStyleSheet>(
+        style_sheet, *page_style_sheet_->ownerNode());
   }
 
   parsed_flat_rules_.clear();
@@ -1650,7 +1643,7 @@ InspectorStyleSheet::MediaQueryExpValueSourceRange(
 
 InspectorStyle* InspectorStyleSheet::GetInspectorStyle(
     CSSStyleDeclaration* style) {
-  return style ? InspectorStyle::Create(
+  return style ? MakeGarbageCollected<InspectorStyle>(
                      style, SourceDataForRule(style->parentRule()), this)
                : nullptr;
 }
@@ -1942,9 +1935,10 @@ bool InspectorStyleSheetForInlineStyle::GetText(String* result) {
 
 InspectorStyle* InspectorStyleSheetForInlineStyle::GetInspectorStyle(
     CSSStyleDeclaration* style) {
-  if (!inspector_style_)
-    inspector_style_ =
-        InspectorStyle::Create(element_->style(), RuleSourceData(), this);
+  if (!inspector_style_) {
+    inspector_style_ = MakeGarbageCollected<InspectorStyle>(
+        element_->style(), RuleSourceData(), this);
+  }
 
   return inspector_style_;
 }

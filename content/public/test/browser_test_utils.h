@@ -200,6 +200,10 @@ void SimulateMouseEvent(WebContents* web_contents,
 void SimulateRoutedMouseEvent(WebContents* web_contents,
                               blink::WebInputEvent::Type type,
                               const gfx::Point& point);
+void SimulateRoutedMouseEvent(WebContents* web_contents,
+                              blink::WebInputEvent::Type type,
+                              blink::WebMouseEvent::Button button,
+                              const gfx::Point& point);
 
 // Simulate a mouse wheel event.
 void SimulateMouseWheelEvent(WebContents* web_contents,
@@ -301,6 +305,10 @@ void ResendGestureScrollUpdateToEmbedder(WebContents* guest_web_contents,
 // When a guest view is pre-processing a mouse/touch event, send a synthetic
 // tap gesture to its RenderWidgetHostView.
 void MaybeSendSyntheticTapGesture(WebContents* guest_web_contents);
+
+// Spins a run loop until effects of previously forwarded input are fully
+// realized.
+void RunUntilInputProcessed(RenderWidgetHost* host);
 
 // Holds down modifier keys for the duration of its lifetime and releases them
 // upon destruction. This allows simulating multiple input events without
@@ -632,7 +640,7 @@ bool operator>(const T& a, const EvalJsResult& b) {
   return b.error.empty() && (JsLiteralHelper<T>::Convert(a) > b.value);
 }
 
-inline bool operator==(nullptr_t a, const EvalJsResult& b) {
+inline bool operator==(std::nullptr_t a, const EvalJsResult& b) {
   return b.error.empty() && (base::Value() == b.value);
 }
 
@@ -844,13 +852,14 @@ ui::AXNodeData GetFocusedAccessibilityNodeInfo(WebContents* web_contents);
 
 // This is intended to be a robust way to assert that the accessibility
 // tree eventually gets into the correct state, without worrying about
-// the exact ordering of events received while getting there.
-//
+// the exact ordering of events received while getting there. Blocks
+// until any change happens to the accessibility tree.
+void WaitForAccessibilityTreeToChange(WebContents* web_contents);
+
 // Searches the accessibility tree to see if any node's accessible name
-// is equal to the given name. If not, sets up a notification waiter
-// that listens for any accessibility event in any frame, and checks again
-// after each event. Keeps looping until the text is found (or the
-// test times out).
+// is equal to the given name. If not, repeatedly calls
+// WaitForAccessibilityTreeToChange, above, and then checks again.
+// Keeps looping until the text is found (or the test times out).
 void WaitForAccessibilityTreeToContainNodeWithName(WebContents* web_contents,
                                                    const std::string& name);
 
@@ -1367,6 +1376,10 @@ class TestNavigationManager : public WebContentsObserver {
   // Whether the navigation successfully committed.
   bool was_successful() const { return was_successful_; }
 
+  // Allows nestable tasks when running a message loop in the Wait* functions.
+  // This is useful for utilizing this class from within another message loop.
+  void AllowNestableTasks();
+
  protected:
   // Derived classes can override if they want to filter out navigations. This
   // is called from DidStartNavigation.
@@ -1408,6 +1421,7 @@ class TestNavigationManager : public WebContentsObserver {
   NavigationState desired_state_;
   bool was_successful_ = false;
   base::OnceClosure quit_closure_;
+  base::RunLoop::Type message_loop_type_ = base::RunLoop::Type::kDefault;
 
   base::WeakPtrFactory<TestNavigationManager> weak_factory_;
 
@@ -1440,13 +1454,16 @@ class ConsoleObserverDelegate : public WebContentsDelegate {
 
   // WebContentsDelegate method:
   bool DidAddMessageToConsole(WebContents* source,
-                              int32_t level,
+                              blink::mojom::ConsoleMessageLevel log_level,
                               const base::string16& message,
                               int32_t line_no,
                               const base::string16& source_id) override;
 
+  // Returns all the messages sent to the console.
+  std::vector<std::string> messages() { return messages_; }
+
   // Returns the most recent message sent to the console.
-  std::string message() { return message_; }
+  std::string message();
 
   // Waits for the next message captured by the filter to be sent to the
   // console.
@@ -1455,7 +1472,7 @@ class ConsoleObserverDelegate : public WebContentsDelegate {
  private:
   WebContents* web_contents_;
   std::string filter_;
-  std::string message_;
+  std::vector<std::string> messages_;
 
   base::RunLoop run_loop_;
 
@@ -1543,10 +1560,6 @@ class ContextMenuFilter : public content::BrowserMessageFilter {
 
 WebContents* GetEmbedderForGuest(content::WebContents* guest);
 
-// Returns true if the network service is enabled and it's running in the
-// browser process.
-bool IsNetworkServiceRunningInProcess();
-
 // Load the given |url| with |network_context| and return the |net::Error| code.
 int LoadBasicRequest(network::mojom::NetworkContext* network_context,
                      const GURL& url,
@@ -1573,6 +1586,7 @@ bool TestChildOrGuestAutoresize(bool is_guest,
 // BrowserPluginHostMsg_SynchronizeVisualProperties messages. This allows the
 // message to continue to the target child so that processing can be verified by
 // tests.
+// It also monitors for GesturePinchBegin/End events.
 class SynchronizeVisualPropertiesMessageFilter
     : public content::BrowserMessageFilter {
  public:
@@ -1590,6 +1604,11 @@ class SynchronizeVisualPropertiesMessageFilter
 
   // Waits for the next viz::LocalSurfaceId be received and returns it.
   viz::LocalSurfaceId WaitForSurfaceId();
+
+  bool pinch_gesture_active_set() { return pinch_gesture_active_set_; }
+  bool pinch_gesture_active_cleared() { return pinch_gesture_active_cleared_; }
+
+  void WaitForPinchGestureEnd();
 
  protected:
   ~SynchronizeVisualPropertiesMessageFilter() override;
@@ -1622,7 +1641,61 @@ class SynchronizeVisualPropertiesMessageFilter
   viz::LocalSurfaceId last_surface_id_;
   std::unique_ptr<base::RunLoop> surface_id_run_loop_;
 
+  bool pinch_gesture_active_set_;
+  bool pinch_gesture_active_cleared_;
+  bool last_pinch_gesture_active_;
+  std::unique_ptr<base::RunLoop> pinch_end_run_loop_;
+
   DISALLOW_COPY_AND_ASSIGN(SynchronizeVisualPropertiesMessageFilter);
+};
+
+// This class allows monitoring of mouse events received by a specific
+// RenderWidgetHost.
+class RenderWidgetHostMouseEventMonitor {
+ public:
+  explicit RenderWidgetHostMouseEventMonitor(RenderWidgetHost* host);
+  ~RenderWidgetHostMouseEventMonitor();
+  bool EventWasReceived() const { return event_received_; }
+  void ResetEventReceived() { event_received_ = false; }
+  const blink::WebMouseEvent& event() const { return event_; }
+
+ private:
+  bool MouseEventCallback(const blink::WebMouseEvent& event) {
+    event_received_ = true;
+    event_ = event;
+    return false;
+  }
+  RenderWidgetHost::MouseEventCallback mouse_callback_;
+  RenderWidgetHost* host_;
+  bool event_received_;
+  blink::WebMouseEvent event_;
+
+  DISALLOW_COPY_AND_ASSIGN(RenderWidgetHostMouseEventMonitor);
+};
+
+// Helper class to track and allow waiting for navigation start events.
+class DidStartNavigationObserver : public WebContentsObserver {
+ public:
+  explicit DidStartNavigationObserver(WebContents* web_contents);
+  ~DidStartNavigationObserver() override;
+
+  void Wait() { run_loop_.Run(); }
+  bool observed() { return observed_; }
+
+  // If the navigation was observed and is still not finished yet, this returns
+  // its handle, otherwise it returns nullptr.
+  NavigationHandle* navigation_handle() { return navigation_handle_; }
+
+  // WebContentsObserver override:
+  void DidStartNavigation(NavigationHandle* navigation_handle) override;
+  void DidFinishNavigation(NavigationHandle* navigation_handle) override;
+
+ private:
+  bool observed_ = false;
+  base::RunLoop run_loop_;
+  NavigationHandle* navigation_handle_ = nullptr;
+
+  DISALLOW_COPY_AND_ASSIGN(DidStartNavigationObserver);
 };
 
 }  // namespace content

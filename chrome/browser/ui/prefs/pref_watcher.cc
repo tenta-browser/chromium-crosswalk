@@ -6,13 +6,15 @@
 
 #include "base/bind.h"
 #include "build/build_config.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/incognito_helpers.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/renderer_preferences_util.h"
 #include "chrome/browser/ui/prefs/prefs_tab_helper.h"
 #include "chrome/common/pref_names.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
-#include "content/public/common/renderer_preferences.h"
+#include "components/language/core/browser/pref_names.h"
+#include "third_party/blink/public/mojom/renderer_preferences.mojom.h"
 
 namespace {
 
@@ -21,7 +23,6 @@ const char* const kWebPrefsToObserve[] = {
 #if BUILDFLAG(ENABLE_EXTENSIONS)
     prefs::kAnimationPolicy,
 #endif
-    prefs::kDataSaverEnabled,
     prefs::kDefaultCharset,
     prefs::kDisable3DAPIs,
     prefs::kEnableHyperlinkAuditing,
@@ -31,6 +32,7 @@ const char* const kWebPrefsToObserve[] = {
     prefs::kWebKitDomPasteEnabled,
 #if defined(OS_ANDROID)
     prefs::kWebKitFontScaleFactor,
+    prefs::kWebKitForceDarkModeEnabled,
     prefs::kWebKitForceEnableZoom,
     prefs::kWebKitPasswordEchoEnabled,
 #endif
@@ -52,23 +54,30 @@ const int kWebPrefsToObserveLength = base::size(kWebPrefsToObserve);
 // and they use session restore. So watch them once per profile.
 // http://crbug.com/452693
 PrefWatcher::PrefWatcher(Profile* profile) : profile_(profile) {
-  pref_change_registrar_.Init(profile_->GetPrefs());
+  profile_pref_change_registrar_.Init(profile_->GetPrefs());
 
   base::RepeatingClosure renderer_callback = base::BindRepeating(
       &PrefWatcher::UpdateRendererPreferences, base::Unretained(this));
-  pref_change_registrar_.Add(prefs::kAcceptLanguages, renderer_callback);
-  pref_change_registrar_.Add(prefs::kEnableDoNotTrack, renderer_callback);
-  pref_change_registrar_.Add(prefs::kEnableReferrers, renderer_callback);
-  pref_change_registrar_.Add(prefs::kEnableEncryptedMedia, renderer_callback);
-  pref_change_registrar_.Add(prefs::kWebRTCMultipleRoutesEnabled,
-                             renderer_callback);
-  pref_change_registrar_.Add(prefs::kWebRTCNonProxiedUdpEnabled,
-                             renderer_callback);
-  pref_change_registrar_.Add(prefs::kWebRTCIPHandlingPolicy, renderer_callback);
-  pref_change_registrar_.Add(prefs::kWebRTCUDPPortRange, renderer_callback);
+  profile_pref_change_registrar_.Add(language::prefs::kAcceptLanguages,
+                                     renderer_callback);
+  profile_pref_change_registrar_.Add(prefs::kEnableDoNotTrack,
+                                     renderer_callback);
+  profile_pref_change_registrar_.Add(prefs::kEnableReferrers,
+                                     renderer_callback);
+  profile_pref_change_registrar_.Add(prefs::kEnableEncryptedMedia,
+                                     renderer_callback);
+  profile_pref_change_registrar_.Add(prefs::kWebRTCMultipleRoutesEnabled,
+                                     renderer_callback);
+  profile_pref_change_registrar_.Add(prefs::kWebRTCNonProxiedUdpEnabled,
+                                     renderer_callback);
+  profile_pref_change_registrar_.Add(prefs::kWebRTCIPHandlingPolicy,
+                                     renderer_callback);
+  profile_pref_change_registrar_.Add(prefs::kWebRTCUDPPortRange,
+                                     renderer_callback);
 
 #if !defined(OS_MACOSX)
-  pref_change_registrar_.Add(prefs::kFullscreenAllowed, renderer_callback);
+  profile_pref_change_registrar_.Add(prefs::kFullscreenAllowed,
+                                     renderer_callback);
 #endif
 
   PrefChangeRegistrar::NamedChangeCallback webkit_callback =
@@ -76,7 +85,13 @@ PrefWatcher::PrefWatcher(Profile* profile) : profile_(profile) {
                           base::Unretained(this));
   for (int i = 0; i < kWebPrefsToObserveLength; ++i) {
     const char* pref_name = kWebPrefsToObserve[i];
-    pref_change_registrar_.Add(pref_name, webkit_callback);
+    profile_pref_change_registrar_.Add(pref_name, webkit_callback);
+  }
+  // LocalState can be NULL in tests.
+  if (g_browser_process->local_state()) {
+    local_state_pref_change_registrar_.Init(g_browser_process->local_state());
+    local_state_pref_change_registrar_.Add(prefs::kAllowCrossOriginAuthPrompt,
+                                           renderer_callback);
   }
 }
 
@@ -90,24 +105,25 @@ void PrefWatcher::UnregisterHelper(PrefsTabHelper* helper) {
   tab_helpers_.erase(helper);
 }
 
-void PrefWatcher::RegisterWatcherForWorkers(
-    content::mojom::RendererPreferenceWatcherPtr worker_watcher) {
-  worker_watchers_.AddPtr(std::move(worker_watcher));
+void PrefWatcher::RegisterRendererPreferenceWatcher(
+    blink::mojom::RendererPreferenceWatcherPtr watcher) {
+  renderer_preference_watchers_.AddPtr(std::move(watcher));
 }
 
 void PrefWatcher::Shutdown() {
-  pref_change_registrar_.RemoveAll();
+  profile_pref_change_registrar_.RemoveAll();
+  local_state_pref_change_registrar_.RemoveAll();
 }
 
 void PrefWatcher::UpdateRendererPreferences() {
   for (auto* helper : tab_helpers_)
     helper->UpdateRendererPreferences();
 
-  content::RendererPreferences prefs;
+  blink::mojom::RendererPreferences prefs;
   renderer_preferences_util::UpdateFromSystemSettings(&prefs, profile_);
-  worker_watchers_.ForAllPtrs(
-      [&prefs](content::mojom::RendererPreferenceWatcher* watcher) {
-        watcher->NotifyUpdate(prefs);
+  renderer_preference_watchers_.ForAllPtrs(
+      [&prefs](blink::mojom::RendererPreferenceWatcher* watcher) {
+        watcher->NotifyUpdate(prefs.Clone());
       });
 }
 

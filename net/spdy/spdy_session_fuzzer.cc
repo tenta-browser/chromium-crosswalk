@@ -12,7 +12,6 @@
 #include "net/cert/x509_certificate.h"
 #include "net/log/net_log_source.h"
 #include "net/log/test_net_log.h"
-#include "net/socket/client_socket_handle.h"
 #include "net/socket/fuzzed_socket_factory.h"
 #include "net/socket/socket_tag.h"
 #include "net/socket/socket_test_util.h"
@@ -65,7 +64,7 @@ class FuzzedSocketFactoryWithMockSSLData : public FuzzedSocketFactory {
   void AddSSLSocketDataProvider(SSLSocketDataProvider* socket);
 
   std::unique_ptr<SSLClientSocket> CreateSSLClientSocket(
-      std::unique_ptr<ClientSocketHandle> transport_socket,
+      std::unique_ptr<StreamSocket> nested_socket,
       const HostPortPair& host_and_port,
       const SSLConfig& ssl_config,
       const SSLClientSocketContext& context) override;
@@ -85,11 +84,11 @@ void FuzzedSocketFactoryWithMockSSLData::AddSSLSocketDataProvider(
 
 std::unique_ptr<SSLClientSocket>
 FuzzedSocketFactoryWithMockSSLData::CreateSSLClientSocket(
-    std::unique_ptr<ClientSocketHandle> transport_socket,
+    std::unique_ptr<StreamSocket> nested_socket,
     const HostPortPair& host_and_port,
     const SSLConfig& ssl_config,
     const SSLClientSocketContext& context) {
-  return std::make_unique<MockSSLClientSocket>(std::move(transport_socket),
+  return std::make_unique<MockSSLClientSocket>(std::move(nested_socket),
                                                host_and_port, ssl_config,
                                                mock_ssl_data_.GetNext());
 }
@@ -132,9 +131,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   net::TestCompletionCallback wait_for_start;
   int rv = stream_request.StartRequest(
       net::SPDY_REQUEST_RESPONSE_STREAM, spdy_session,
-      GURL("http://www.example.invalid/"), net::DEFAULT_PRIORITY,
-      net::SocketTag(), bound_test_net_log.bound(), wait_for_start.callback(),
-      TRAFFIC_ANNOTATION_FOR_TESTS);
+      GURL("http://www.example.invalid/"), false /* no early data */,
+      net::DEFAULT_PRIORITY, net::SocketTag(), bound_test_net_log.bound(),
+      wait_for_start.callback(), TRAFFIC_ANNOTATION_FOR_TESTS);
 
   if (rv == net::ERR_IO_PENDING) {
     rv = wait_for_start.WaitForResult();

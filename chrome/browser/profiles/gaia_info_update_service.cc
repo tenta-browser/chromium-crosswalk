@@ -132,9 +132,9 @@ void GAIAInfoUpdateService::OnProfileDownloadSuccess(
     profile_->GetPrefs()->SetString(prefs::kProfileGAIAInfoPictureURL,
                                     picture_url);
     gfx::Image gfx_image = gfx::Image::CreateFrom1xBitmap(bitmap);
-    entry->SetGAIAPicture(&gfx_image);
+    entry->SetGAIAPicture(gfx_image);
   } else if (picture_status == ProfileDownloader::PICTURE_DEFAULT) {
-    entry->SetGAIAPicture(nullptr);
+    entry->SetGAIAPicture(gfx::Image());
   }
 
   const base::string16 hosted_domain = downloader->GetProfileHostedDomain();
@@ -167,7 +167,7 @@ void GAIAInfoUpdateService::OnUsernameChanged(const std::string& username) {
     // Unset the old user's GAIA info.
     entry->SetGAIAName(base::string16());
     entry->SetGAIAGivenName(base::string16());
-    entry->SetGAIAPicture(nullptr);
+    entry->SetGAIAPicture(gfx::Image());
     // Unset the cached URL.
     profile_->GetPrefs()->ClearPref(prefs::kProfileGAIAInfoPictureURL);
   } else {
@@ -215,11 +215,11 @@ void GAIAInfoUpdateService::ScheduleNextUpdate() {
 }
 
 void GAIAInfoUpdateService::OnPrimaryAccountSet(
-    const AccountInfo& primary_account_info) {
+    const CoreAccountInfo& primary_account_info) {
   OnUsernameChanged(primary_account_info.gaia);
 }
 
 void GAIAInfoUpdateService::OnPrimaryAccountCleared(
-    const AccountInfo& previous_primary_account_info) {
+    const CoreAccountInfo& previous_primary_account_info) {
   OnUsernameChanged(std::string());
 }

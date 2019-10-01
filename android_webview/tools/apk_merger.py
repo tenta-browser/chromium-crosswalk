@@ -45,7 +45,7 @@ sys.path.append(BUILD_ANDROID_DIR)
 from pylib import constants  # pylint: disable=import-error,wrong-import-position
 
 DEFAULT_ZIPALIGN_PATH = os.path.join(
-    SRC_DIR, 'third_party', 'android_tools', 'sdk', 'build-tools',
+    SRC_DIR, 'third_party', 'android_sdk', 'public', 'build-tools',
     constants.ANDROID_SDK_BUILD_TOOLS_VERSION, 'zipalign')
 
 
@@ -201,17 +201,20 @@ def MergeApk(args, tmp_apk, tmp_dir_32, tmp_dir_64):
   assets_path = 'base/assets' if args.bundle else 'assets'
   exclude_files_64 = ['%s/snapshot_blob_32.bin' % assets_path,
                       GetTargetAbiPath(args.apk_32bit, args.shared_library)]
-  # TODO(benmason): Remove when libcrashpad_handler.so
-  # is no longer a separate lib.
   if 'libcrashpad_handler.so' in expected_files:
     exclude_files_64.append(
         GetTargetAbiPath(args.apk_32bit, 'libcrashpad_handler.so'))
+  if 'libcrashpad_handler_trampoline.so' in expected_files:
+    exclude_files_64.append(
+        GetTargetAbiPath(args.apk_32bit, 'libcrashpad_handler_trampoline.so'))
+  if args.has_unwind_cfi:
+    exclude_files_64.append('%s/unwind_cfi_32' % assets_path)
   UnpackApk(args.apk_64bit, tmp_dir_64, exclude_files_64)
   UnpackApk(args.apk_32bit, tmp_dir_32)
 
   ignores = ['META-INF', 'AndroidManifest.xml']
   if args.ignore_classes_dex:
-    ignores += ['classes.dex', 'classes2.dex']
+    ignores += ['classes.dex', 'classes2.dex', 'classes3.dex']
   if args.debug:
     # see http://crbug.com/648720
     ignores += ['webview_licenses.notice']

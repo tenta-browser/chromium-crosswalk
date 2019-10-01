@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
 #include <memory>
 #include <string>
 #include <utility>
@@ -42,6 +43,7 @@
 
 #if defined(OS_CHROMEOS)
 #include "chromeos/audio/cras_audio_handler.h"
+#include "chromeos/dbus/audio/cras_audio_client.h"
 #endif
 
 using ::testing::_;
@@ -62,10 +64,6 @@ constexpr const char* kRegularVideoDeviceId = "stub_device_0";
 constexpr const char* kDepthVideoDeviceId = "stub_device_1 (depth)";
 constexpr media::VideoCaptureApi kStubCaptureApi =
     media::VideoCaptureApi::LINUX_V4L2_SINGLE_PLANE;
-constexpr double kStubFocalLengthX = 135.0;
-constexpr double kStubFocalLengthY = 135.6;
-constexpr double kStubDepthNear = 0.0;
-constexpr double kStubDepthFar = 65.535;
 
 void AudioInputDevicesEnumerated(base::Closure quit_closure,
                                  media::AudioDeviceDescriptions* out,
@@ -172,7 +170,7 @@ class MockMediaStreamDispatcherHost
     // Notify that the event have occurred.
     base::Closure quit_closure = quit_closures_.front();
     quit_closures_.pop();
-    task_runner_->PostTask(FROM_HERE, base::ResetAndReturn(&quit_closure));
+    task_runner_->PostTask(FROM_HERE, std::move(quit_closure));
 
     label_ = label;
     audio_devices_ = audio_devices;
@@ -185,7 +183,7 @@ class MockMediaStreamDispatcherHost
     if (!quit_closures_.empty()) {
       base::Closure quit_closure = quit_closures_.front();
       quit_closures_.pop();
-      task_runner_->PostTask(FROM_HERE, base::ResetAndReturn(&quit_closure));
+      task_runner_->PostTask(FROM_HERE, std::move(quit_closure));
     }
 
     label_.clear();
@@ -206,7 +204,7 @@ class MockMediaStreamDispatcherHost
                       const blink::MediaStreamDevice& device) {
     base::Closure quit_closure = quit_closures_.front();
     quit_closures_.pop();
-    task_runner_->PostTask(FROM_HERE, base::ResetAndReturn(&quit_closure));
+    task_runner_->PostTask(FROM_HERE, std::move(quit_closure));
     if (success) {
       label_ = label;
       opened_device_ = device;
@@ -264,6 +262,7 @@ class MediaStreamDispatcherHostTest : public testing::Test {
         host_->CreateInterfacePtrAndBind());
 
 #if defined(OS_CHROMEOS)
+    chromeos::CrasAudioClient::InitializeFake();
     chromeos::CrasAudioHandler::InitializeForTesting();
 #endif
   }
@@ -272,6 +271,7 @@ class MediaStreamDispatcherHostTest : public testing::Test {
     audio_manager_->Shutdown();
 #if defined(OS_CHROMEOS)
     chromeos::CrasAudioHandler::Shutdown();
+    chromeos::CrasAudioClient::Shutdown();
 #endif
   }
 
@@ -287,19 +287,9 @@ class MediaStreamDispatcherHostTest : public testing::Test {
                 media::VideoCaptureDeviceInfo info;
                 info.descriptor.device_id = device_id;
                 info.descriptor.capture_api = kStubCaptureApi;
-                if (device_id == kDepthVideoDeviceId) {
-                  info.descriptor.camera_calibration.emplace();
-                  info.descriptor.camera_calibration->focal_length_x =
-                      kStubFocalLengthX;
-                  info.descriptor.camera_calibration->focal_length_y =
-                      kStubFocalLengthY;
-                  info.descriptor.camera_calibration->depth_near =
-                      kStubDepthNear;
-                  info.descriptor.camera_calibration->depth_far = kStubDepthFar;
-                }
                 result.push_back(info);
               }
-              base::ResetAndReturn(&result_callback).Run(result);
+              std::move(result_callback).Run(result);
             }));
 
     base::RunLoop run_loop;
@@ -326,7 +316,7 @@ class MediaStreamDispatcherHostTest : public testing::Test {
   std::unique_ptr<FakeMediaStreamUIProxy> CreateMockUI(bool expect_started) {
     std::unique_ptr<MockMediaStreamUIProxy> fake_ui =
         std::make_unique<MockMediaStreamUIProxy>();
-    testing::Mock::AllowLeak(fake_ui.get());
+
     if (expect_started)
       EXPECT_CALL(*fake_ui, MockOnStarted(_));
     return fake_ui;
@@ -507,15 +497,6 @@ TEST_F(MediaStreamDispatcherHostTest, GenerateStreamWithDepthVideo) {
   // one audio and one depth video stream.
   EXPECT_EQ(host_->audio_devices_.size(), 1u);
   EXPECT_EQ(host_->video_devices_.size(), 1u);
-  // host_->video_devices_[0] contains the information about generated video
-  // stream device (the depth device).
-  const base::Optional<blink::CameraCalibration> calibration =
-      host_->video_devices_[0].camera_calibration;
-  EXPECT_TRUE(calibration);
-  EXPECT_EQ(calibration->focal_length_x, kStubFocalLengthX);
-  EXPECT_EQ(calibration->focal_length_y, kStubFocalLengthY);
-  EXPECT_EQ(calibration->depth_near, kStubDepthNear);
-  EXPECT_EQ(calibration->depth_far, kStubDepthFar);
 }
 
 // This test generates two streams with video only using the same render frame
@@ -901,4 +882,4 @@ TEST_F(MediaStreamDispatcherHostTest, Salt) {
   EXPECT_EQ(group_id2, host_->opened_device_.group_id);
 }
 
-};  // namespace content
+}  // namespace content

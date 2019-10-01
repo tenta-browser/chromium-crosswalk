@@ -37,7 +37,7 @@
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
 #include <stdio.h>
 #endif
 
@@ -644,7 +644,7 @@ void LayoutCounter::LayoutObjectSubtreeAttached(LayoutObject* layout_object) {
     node = node->parentNode();
   else
     node = layout_object->GeneratingNode();
-  if (node && node->NeedsAttach())
+  if (node && node->NeedsReattachLayoutTree())
     return;  // No need to update if the parent is not attached yet
   for (LayoutObject* descendant = layout_object; descendant;
        descendant = descendant->NextInPreOrder(layout_object))
@@ -655,7 +655,7 @@ void LayoutCounter::LayoutObjectStyleChanged(LayoutObject& layout_object,
                                              const ComputedStyle* old_style,
                                              const ComputedStyle& new_style) {
   Node* node = layout_object.GeneratingNode();
-  if (!node || node->NeedsAttach())
+  if (!node || node->NeedsReattachLayoutTree())
     return;  // cannot have generated content or if it can have, it will be
              // handled during attaching
   const CounterDirectiveMap* old_counter_directives =
@@ -715,7 +715,7 @@ void LayoutCounter::LayoutObjectStyleChanged(LayoutObject& layout_object,
 
 }  // namespace blink
 
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
 
 void showCounterLayoutObjectTree(const blink::LayoutObject* layout_object,
                                  const char* counter_name) {
@@ -743,4 +743,4 @@ void showCounterLayoutObjectTree(const blink::LayoutObject* layout_object,
   fflush(stderr);
 }
 
-#endif  // NDEBUG
+#endif  // DCHECK_IS_ON()

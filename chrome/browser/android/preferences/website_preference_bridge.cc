@@ -269,6 +269,17 @@ ChooserContextBase* GetChooserContext(ContentSettingsType type) {
   }
 }
 
+std::string GetChooserObjectName(ContentSettingsType type,
+                                 base::Value& object) {
+  switch (type) {
+    case CONTENT_SETTINGS_TYPE_USB_CHOOSER_DATA:
+      return UsbChooserContext::GetObjectName(object);
+    default:
+      NOTREACHED();
+      return std::string();
+  }
+}
+
 bool OriginMatcher(const url::Origin& origin, const GURL& other) {
   return origin == url::Origin::Create(other);
 }
@@ -545,8 +556,9 @@ static void JNI_WebsitePreferenceBridge_GetChosenObjects(
     JNIEnv* env,
     jint content_settings_type,
     const JavaParamRef<jobject>& list) {
-  ChooserContextBase* context = GetChooserContext(
-      static_cast<ContentSettingsType>(content_settings_type));
+  ContentSettingsType type =
+      static_cast<ContentSettingsType>(content_settings_type);
+  ChooserContextBase* context = GetChooserContext(type);
   for (const auto& object : context->GetAllGrantedObjects()) {
     // Remove the trailing slash so that origins are matched correctly in
     // SingleWebsitePreferences.mergePermissionInfoForTopLevelOrigin.
@@ -563,7 +575,7 @@ static void JNI_WebsitePreferenceBridge_GetChosenObjects(
       jembedder = ConvertUTF8ToJavaString(env, embedder);
 
     ScopedJavaLocalRef<jstring> jname =
-        ConvertUTF8ToJavaString(env, context->GetObjectName(object->value));
+        ConvertUTF8ToJavaString(env, GetChooserObjectName(type, object->value));
 
     std::string serialized;
     bool written = base::JSONWriter::Write(object->value, &serialized);
@@ -571,9 +583,12 @@ static void JNI_WebsitePreferenceBridge_GetChosenObjects(
     ScopedJavaLocalRef<jstring> jserialized =
         ConvertUTF8ToJavaString(env, serialized);
 
+    jboolean jis_managed =
+        object->source == content_settings::SETTING_SOURCE_POLICY;
+
     Java_WebsitePreferenceBridge_insertChosenObjectInfoIntoList(
         env, list, content_settings_type, jorigin, jembedder, jname,
-        jserialized);
+        jserialized, jis_managed);
   }
 }
 
@@ -591,11 +606,12 @@ static void JNI_WebsitePreferenceBridge_RevokeObjectPermission(
       ConvertJavaStringToUTF8(env, jembedder.is_null() ? jorigin : jembedder));
   DCHECK(embedder.is_valid());
   std::unique_ptr<base::DictionaryValue> object = base::DictionaryValue::From(
-      base::JSONReader::Read(ConvertJavaStringToUTF8(env, jobject)));
+      base::JSONReader::ReadDeprecated(ConvertJavaStringToUTF8(env, jobject)));
   DCHECK(object);
   ChooserContextBase* context = GetChooserContext(
       static_cast<ContentSettingsType>(content_settings_type));
-  context->RevokeObjectPermission(origin, embedder, *object);
+  context->RevokeObjectPermission(url::Origin::Create(origin),
+                                  url::Origin::Create(embedder), *object);
 }
 
 namespace {
@@ -648,8 +664,7 @@ void OnLocalStorageModelInfoLoaded(
     Profile* profile,
     bool fetch_important,
     const ScopedJavaGlobalRef<jobject>& java_callback,
-    const std::list<BrowsingDataLocalStorageHelper::LocalStorageInfo>&
-        local_storage_info) {
+    const std::list<content::StorageUsageInfo>& local_storage_info) {
   JNIEnv* env = base::android::AttachCurrentThread();
   ScopedJavaLocalRef<jobject> map =
       Java_WebsitePreferenceBridge_createLocalStorageInfoMap(env);
@@ -660,21 +675,16 @@ void OnLocalStorageModelInfoLoaded(
         profile, kMaxImportantSites);
   }
 
-  for (const BrowsingDataLocalStorageHelper::LocalStorageInfo& info :
-       local_storage_info) {
-    ScopedJavaLocalRef<jstring> full_origin =
-        ConvertUTF8ToJavaString(env, info.origin_url.spec());
-    std::string origin_str = info.origin_url.GetOrigin().spec();
-
+  for (const content::StorageUsageInfo& info : local_storage_info) {
     bool important = false;
     if (fetch_important) {
       std::string registerable_domain;
-      if (info.origin_url.HostIsIPAddress()) {
-        registerable_domain = info.origin_url.host();
+      if (url::HostIsIPAddress(info.origin.host())) {
+        registerable_domain = info.origin.host();
       } else {
         registerable_domain =
             net::registry_controlled_domains::GetDomainAndRegistry(
-                info.origin_url,
+                info.origin.host(),
                 net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
       }
       auto important_domain_search =
@@ -687,14 +697,10 @@ void OnLocalStorageModelInfoLoaded(
         important = true;
       }
     }
-    // Remove the trailing slash so the origin is matched correctly in
-    // SingleWebsitePreferences.mergePermissionInfoForTopLevelOrigin.
-    DCHECK_EQ('/', origin_str.back());
-    origin_str.pop_back();
-    ScopedJavaLocalRef<jstring> origin =
-        ConvertUTF8ToJavaString(env, origin_str);
+    ScopedJavaLocalRef<jstring> java_origin =
+        ConvertUTF8ToJavaString(env, info.origin.Serialize());
     Java_WebsitePreferenceBridge_insertLocalStorageInfoIntoMap(
-        env, map, origin, full_origin, info.size, important);
+        env, map, java_origin, info.total_size_bytes, important);
   }
 
   base::android::RunObjectCallbackAndroid(java_callback, map);
@@ -741,10 +747,11 @@ static void JNI_WebsitePreferenceBridge_ClearLocalStorageData(
   Profile* profile = ProfileManager::GetActiveUserProfile();
   auto local_storage_helper =
       base::MakeRefCounted<BrowsingDataLocalStorageHelper>(profile);
-  GURL origin_url = GURL(ConvertJavaStringToUTF8(env, jorigin));
+  auto origin =
+      url::Origin::Create(GURL(ConvertJavaStringToUTF8(env, jorigin)));
   local_storage_helper->DeleteOrigin(
-      origin_url, base::BindOnce(&OnLocalStorageCleared,
-                                 ScopedJavaGlobalRef<jobject>(java_callback)));
+      origin, base::BindOnce(&OnLocalStorageCleared,
+                             ScopedJavaGlobalRef<jobject>(java_callback)));
 }
 
 static void JNI_WebsitePreferenceBridge_ClearStorageData(

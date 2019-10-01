@@ -21,7 +21,7 @@ android_library("glue") {
   srcjar_deps = [ ":glue_resource_rewriter" ]
 
   alternative_android_sdk_dep =
-      "//third_party/android_system_sdk:public_framework_system_java"
+      "//third_party/android_sdk:public_framework_system_java"
 
   java_files = [
     "java/src/com/android/webview/chromium/CallbackConverter.java",
@@ -53,7 +53,6 @@ android_library("glue") {
     "java/src/com/android/webview/chromium/WebResourceRequestAdapter.java",
     "java/src/com/android/webview/chromium/WebStorageAdapter.java",
     "java/src/com/android/webview/chromium/WebkitToSharedGlueConverter.java",
-    "java/src/com/android/webview/chromium/WebViewApplication.java",
     "java/src/com/android/webview/chromium/WebViewChromiumAwInit.java",
     "java/src/com/android/webview/chromium/WebViewChromium.java",
     "java/src/com/android/webview/chromium/WebViewChromiumFactoryProvider.java",

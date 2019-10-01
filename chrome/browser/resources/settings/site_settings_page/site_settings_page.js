@@ -52,22 +52,6 @@ Polymer({
     },
 
     /** @private */
-    enableClipboardContentSetting_: {
-      type: Boolean,
-      value: function() {
-        return loadTimeData.getBoolean('enableClipboardContentSetting');
-      }
-    },
-
-    /** @private */
-    enableSoundContentSetting_: {
-      type: Boolean,
-      value: function() {
-        return loadTimeData.getBoolean('enableSoundContentSetting');
-      }
-    },
-
-    /** @private */
     enableSensorsContentSetting_: {
       type: Boolean,
       readOnly: true,
@@ -77,10 +61,26 @@ Polymer({
     },
 
     /** @private */
+    enableExperimentalWebPlatformFeatures_: {
+      type: Boolean,
+      value: function() {
+        return loadTimeData.getBoolean('enableExperimentalWebPlatformFeatures');
+      },
+    },
+
+    /** @private */
     enablePaymentHandlerContentSetting_: {
       type: Boolean,
       value: function() {
         return loadTimeData.getBoolean('enablePaymentHandlerContentSetting');
+      }
+    },
+
+    /** @private */
+    enableBluetoothScanningContentSetting_: {
+      type: Boolean,
+      value: function() {
+        return loadTimeData.getBoolean('enableBluetoothScanningContentSetting');
       }
     },
 
@@ -132,6 +132,14 @@ Polymer({
 
     if (this.enablePaymentHandlerContentSetting_) {
       pairs.push([R.SITE_SETTINGS_PAYMENT_HANDLER, 'paymentHandler']);
+    }
+
+    if (this.enableExperimentalWebPlatformFeatures_) {
+      pairs.push([R.SITE_SETTINGS_SERIAL_PORTS, 'serial-ports']);
+    }
+
+    if (this.enableBluetoothScanningContentSetting_) {
+      pairs.push([R.SITE_SETTINGS_BLUETOOTH_SCANNING, 'bluetooth-scanning']);
     }
 
     pairs.forEach(([route, id]) => {

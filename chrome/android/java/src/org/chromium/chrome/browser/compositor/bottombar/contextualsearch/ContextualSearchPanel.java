@@ -13,9 +13,9 @@ import org.chromium.base.ActivityState;
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.compositor.LayerTitleCache;
 import org.chromium.chrome.browser.compositor.bottombar.OverlayPanel;
-import org.chromium.chrome.browser.compositor.bottombar.OverlayPanel.PanelProgressObserver;
 import org.chromium.chrome.browser.compositor.bottombar.OverlayPanelContent;
 import org.chromium.chrome.browser.compositor.bottombar.OverlayPanelManager;
 import org.chromium.chrome.browser.compositor.bottombar.OverlayPanelManager.PanelPriority;
@@ -23,9 +23,10 @@ import org.chromium.chrome.browser.compositor.bottombar.contextualsearch.Context
 import org.chromium.chrome.browser.compositor.layouts.LayoutUpdateHost;
 import org.chromium.chrome.browser.compositor.scene_layer.ContextualSearchSceneLayer;
 import org.chromium.chrome.browser.compositor.scene_layer.SceneOverlayLayer;
+import org.chromium.chrome.browser.contextualsearch.ContextualSearchFieldTrial;
 import org.chromium.chrome.browser.contextualsearch.ContextualSearchManagementDelegate;
+import org.chromium.chrome.browser.contextualsearch.ResolvedSearchTerm.CardTag;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.chrome.browser.util.MathUtils;
 import org.chromium.chrome.browser.widget.ScrimView;
 import org.chromium.chrome.browser.widget.ScrimView.ScrimParams;
@@ -36,11 +37,8 @@ import org.chromium.ui.resources.ResourceManager;
  * Controls the Contextual Search Panel.
  */
 public class ContextualSearchPanel extends OverlayPanel {
-    /** When using the Generic UX we never show the Arrow Icon */
-    private static final float ARROW_ICON_OPACITY_GENERIC_UX = 0.f;
-
-    /** When using the Generic UX we always show the Close Icon */
-    private static final float CLOSE_ICON_OPACITY_GENERIC_UX = 1.f;
+    /** The number of times to allow scrolling.  After this limit we'll close. */
+    private static final int SCROLL_COUNT_LIMIT = 3;
 
     /** Used for logging state changes. */
     private final ContextualSearchPanelMetrics mPanelMetrics;
@@ -64,13 +62,6 @@ public class ContextualSearchPanel extends OverlayPanel {
     private ContextualSearchSceneLayer mSceneLayer;
 
     /**
-     * Whether to use the Generic Sheet UX.
-     * This activates the closebox in the peeking Bar, and may someday do more,
-     * e.g. swipe-closed behavior.  See crbug.com/831783 for details.
-     */
-    private boolean mUseGenericSheetUx;
-
-    /**
      * A ScrimView for adjusting the Status Bar's brightness when a scrim is present (when the panel
      * is open).
      */
@@ -81,6 +72,9 @@ public class ContextualSearchPanel extends OverlayPanel {
      * brightness when a scrim is present (when the panel is open).
      */
     private ScrimParams mScrimParams;
+
+    /** Number of times the panel has been scrolled already. */
+    private int mScrollCount;
 
     // ============================================================================================
     // Constructor
@@ -101,16 +95,17 @@ public class ContextualSearchPanel extends OverlayPanel {
                 ApiCompatibilityUtils
                         .getDrawable(mContext.getResources(), R.drawable.modern_toolbar_shadow)
                         .getIntrinsicHeight();
-        mEndButtonWidthDp = mPxToDp
-                * mContext.getResources().getDimensionPixelSize(
-                          R.dimen.contextual_search_end_button_width);
+        // We may have 1 or 2 buttons depending on old/new layout.
+        int endButtonsWidthDimension =
+                ChromeFeatureList.isEnabled(ChromeFeatureList.OVERLAY_NEW_LAYOUT)
+                ? R.dimen.contextual_search_end_buttons_width
+                : R.dimen.contextual_search_end_button_width;
+        mEndButtonWidthDp =
+                mPxToDp * mContext.getResources().getDimensionPixelSize(endButtonsWidthDimension);
     }
 
     @Override
-    protected void initializeUiState() {
-        mUseGenericSheetUx = mActivity.supportsContextualSuggestionsBottomSheet()
-                && FeatureUtilities.areContextualSuggestionsEnabled(mActivity);
-    }
+    protected void initializeUiState() {}
 
     @Override
     public OverlayPanelContent createNewOverlayPanelContent() {
@@ -172,8 +167,9 @@ public class ContextualSearchPanel extends OverlayPanel {
     // ============================================================================================
 
     @Override
-    public void setPanelState(PanelState toState, @StateChangeReason int reason) {
-        PanelState fromState = getPanelState();
+    public void setPanelState(@PanelState int toState, @StateChangeReason int reason) {
+        @PanelState
+        int fromState = getPanelState();
 
         mPanelMetrics.onPanelStateChanged(
                 fromState, toState, reason, Profile.getLastUsedProfile().getOriginalProfile());
@@ -195,7 +191,7 @@ public class ContextualSearchPanel extends OverlayPanel {
     }
 
     @Override
-    protected boolean isSupportedState(PanelState state) {
+    protected boolean isSupportedState(@PanelState int state) {
         return canDisplayContentInPanel() || state != PanelState.MAXIMIZED;
     }
 
@@ -209,8 +205,9 @@ public class ContextualSearchPanel extends OverlayPanel {
     }
 
     @Override
-    protected PanelState getProjectedState(float velocity) {
-        PanelState projectedState = super.getProjectedState(velocity);
+    protected @PanelState int getProjectedState(float velocity) {
+        @PanelState
+        int projectedState = super.getProjectedState(velocity);
 
         // Prevent the fling gesture from moving the Panel from PEEKED to MAXIMIZED. This is to
         // make sure the Promo will be visible, considering that the EXPANDED state is the only
@@ -250,6 +247,7 @@ public class ContextualSearchPanel extends OverlayPanel {
         setProgressBarCompletion(0);
         setProgressBarVisible(false);
         getImageControl().hideCustomImage(false);
+        mScrollCount = 0;
 
         super.onClosed(reason);
 
@@ -277,9 +275,7 @@ public class ContextualSearchPanel extends OverlayPanel {
         getSearchBarControl().onSearchBarClick(x);
 
         if (isPeeking()) {
-            if (useGenericSheetUx() && isCoordinateInsideCloseButton(x)) {
-                closePanel(StateChangeReason.CLOSE_BUTTON, true);
-            } else if (getSearchBarControl().getQuickActionControl().hasQuickAction()
+            if (getSearchBarControl().getQuickActionControl().hasQuickAction()
                     && isCoordinateInsideActionTarget(x)) {
                 mPanelMetrics.setWasQuickActionClicked();
                 getSearchBarControl().getQuickActionControl().sendIntent(
@@ -291,7 +287,10 @@ public class ContextualSearchPanel extends OverlayPanel {
         } else if (isExpanded() || isMaximized()) {
             if (isCoordinateInsideCloseButton(x)) {
                 closePanel(StateChangeReason.CLOSE_BUTTON, true);
-            } else if (canPromoteToNewTab()) {
+            } else if (canPromoteToNewTab()
+                    && (!ChromeFeatureList.isEnabled(ChromeFeatureList.OVERLAY_NEW_LAYOUT)
+                            || ChromeFeatureList.isEnabled(ChromeFeatureList.OVERLAY_NEW_LAYOUT)
+                                    && isCoordinateInsideOpenTabButton(x))) {
                 mManagementDelegate.promoteToTab();
             }
         }
@@ -459,6 +458,28 @@ public class ContextualSearchPanel extends OverlayPanel {
     }
 
     /**
+     * Makes the panel not visible by either hiding it or closing it completely.
+     * Decides which method is most appropriate, and then makes it not visible based on that
+     * decision.
+     * @param reason The reason we want the panel to not be visible.
+     */
+    public void makePanelNotVisible(@StateChangeReason int reason) {
+        if (++mScrollCount >= SCROLL_COUNT_LIMIT) {
+            closePanel(StateChangeReason.BASE_PAGE_SCROLL, true);
+        } else if (isHideDuringScrollEnabled()) {
+            hidePanel(reason);
+        }
+    }
+
+    /** @return whether hiding during scrolling is enabled for the Longpress-Resolve feature. */
+    private boolean isHideDuringScrollEnabled() {
+        return ContextualSearchFieldTrial.LONGPRESS_RESOLVE_HIDE_ON_SCROLL.equals(
+                ChromeFeatureList.getFieldTrialParamByFeature(
+                        ChromeFeatureList.CONTEXTUAL_SEARCH_LONGPRESS_RESOLVE,
+                        ContextualSearchFieldTrial.LONGPRESS_RESOLVE_PARAM_NAME));
+    }
+
+    /**
      * Called after the panel has navigated to prefetched Search Results.
      * If the user has the panel open then they will see the prefetched result starting to load.
      * Currently this just logs the time between the start of the search until the results start to
@@ -524,7 +545,7 @@ public class ContextualSearchPanel extends OverlayPanel {
     }
 
     @Override
-    public PanelState getPanelState() {
+    public @PanelState int getPanelState() {
         // NOTE(pedrosimonetti): exposing superclass method to the interface.
         return super.getPanelState();
     }
@@ -588,10 +609,18 @@ public class ContextualSearchPanel extends OverlayPanel {
      * @param thumbnailUrl The URL of the thumbnail to display.
      * @param quickActionUri The URI for the intent associated with the quick action.
      * @param quickActionCategory The {@code QuickActionCategory} for the quick action.
+     * @param cardTagEnum The {@link CardTag} that the server returned if there was a card,
+     *        or {@code 0}.
      */
     public void onSearchTermResolved(String searchTerm, String thumbnailUrl, String quickActionUri,
-            int quickActionCategory) {
+            int quickActionCategory, @CardTag int cardTagEnum) {
         mPanelMetrics.onSearchTermResolved();
+        if (cardTagEnum == CardTag.CT_DEFINITION
+                || cardTagEnum == CardTag.CT_CONTEXTUAL_DEFINITION) {
+            getSearchBarControl().updateForDictionaryDefinition(searchTerm);
+            return;
+        }
+
         getSearchBarControl().setSearchTerm(searchTerm);
         getSearchBarControl().animateSearchTermResolution();
         if (mActivity == null || mActivity.getToolbarManager() == null) return;
@@ -721,33 +750,6 @@ public class ContextualSearchPanel extends OverlayPanel {
             }
             mScrimView.setViewAlpha(statusBarAlpha);
         }
-    }
-
-    @Override
-    public float getArrowIconOpacity() {
-        if (useGenericSheetUx()) {
-            return ARROW_ICON_OPACITY_GENERIC_UX;
-        } else {
-            return super.getArrowIconOpacity();
-        }
-    }
-
-    @Override
-    public float getCloseIconOpacity() {
-        if (useGenericSheetUx()) {
-            return CLOSE_ICON_OPACITY_GENERIC_UX;
-        } else {
-            return super.getCloseIconOpacity();
-        }
-    }
-
-    /**
-     * Whether the UX should match the generic sheet UX used by the generic assistive surface.
-     * TODO(crbug.com/831783) remove when the generic sheet UX is the default.
-     * @return Whether to apply the generic UX, rather than the legacy Contextual Search UX.
-     */
-    boolean useGenericSheetUx() {
-        return mUseGenericSheetUx;
     }
 
     // ============================================================================================
@@ -945,7 +947,7 @@ public class ContextualSearchPanel extends OverlayPanel {
     /**
      * @return Whether the panel content can be displayed in a new tab.
      */
-    boolean canPromoteToNewTab() {
+    public boolean canPromoteToNewTab() {
         return !mActivity.isCustomTab() && canDisplayContentInPanel();
     }
 

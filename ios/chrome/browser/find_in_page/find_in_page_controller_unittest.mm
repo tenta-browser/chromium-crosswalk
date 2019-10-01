@@ -36,13 +36,13 @@ class FindInPageControllerTest : public ChromeWebTest {
     find_in_page_controller_ =
         [[FindInPageController alloc] initWithWebState:web_state()];
     ukm::InitializeSourceUrlRecorderForWebState(web_state());
-  };
+  }
 
   void TearDown() override {
     [find_in_page_controller_ detachFromWebState];
     test_ukm_recorder_.Purge();
     ChromeWebTest::TearDown();
-  };
+  }
 
   FindInPageController* find_in_page_controller_ = nil;
   ukm::TestAutoSetUkmRecorder test_ukm_recorder_;
@@ -59,6 +59,7 @@ TEST_F(FindInPageControllerTest, VerifyUKMLoggedTrue) {
                              completion_handler_finished = true;
                            }];
   ASSERT_TRUE(WaitUntilConditionOrTimeout(kWaitForJSCompletionTimeout, ^{
+    base::RunLoop().RunUntilIdle();
     return completion_handler_finished;
   }));
   // Single true entry should be recorded for the interaction above.
@@ -81,6 +82,7 @@ TEST_F(FindInPageControllerTest, VerifyUKMLoggedFalse) {
                              completion_handler_finished = true;
                            }];
   ASSERT_TRUE(WaitUntilConditionOrTimeout(kWaitForJSCompletionTimeout, ^{
+    base::RunLoop().RunUntilIdle();
     return completion_handler_finished;
   }));
   // Single false entry should be recorded for the interaction above.

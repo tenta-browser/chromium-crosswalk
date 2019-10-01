@@ -107,6 +107,13 @@ interface HTMLVideoElement : HTMLMediaElement
     getter onleavepictureinpicture
     setter onleavepictureinpicture
 
+# Background Fetch API is not enabled in Android webview, crbug.com/766077
+interface BackgroundFetchManager
+interface BackgroundFetchRecord
+interface BackgroundFetchRegistration : EventTarget
+interface ServiceWorkerRegistration : EventTarget
+    getter backgroundFetch
+
 # support_webgl2_compute_context not supported on android, crbug.com/865569
 interface WebGL2ComputeRenderingContext
 

@@ -23,10 +23,12 @@
 #include "chrome/browser/safe_browsing/services_delegate.h"
 #include "components/safe_browsing/common/safe_browsing_prefs.h"
 #include "components/safe_browsing/db/util.h"
+#include "components/safe_browsing/safe_browsing_service_interface.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
+#include "services/network/public/mojom/network_context.mojom-forward.h"
 
 #if defined(FULL_SAFE_BROWSING)
 #include "chrome/browser/safe_browsing/incident_reporting/delayed_analysis_callback.h"
@@ -58,6 +60,10 @@ class TrackedPreferenceValidationDelegate;
 }
 }  // namespace prefs
 
+namespace extensions {
+class SafeBrowsingPrivateApiUnitTest;
+}  // namespace extensions
+
 namespace safe_browsing {
 class PingManager;
 class ClientSideDetectionService;
@@ -77,33 +83,18 @@ class TriggerManager;
 // the heavylifting of safebrowsing service. Both of these managers stay
 // alive until SafeBrowsingService is destroyed, however, they are disabled
 // permanently when Shutdown method is called.
-class SafeBrowsingService : public base::RefCountedThreadSafe<
-                                SafeBrowsingService,
-                                content::BrowserThread::DeleteOnUIThread>,
+class SafeBrowsingService : public SafeBrowsingServiceInterface,
                             public content::NotificationObserver {
  public:
-  // Makes the passed |factory| the factory used to instanciate
-  // a SafeBrowsingService. Useful for tests.
-  static void RegisterFactory(SafeBrowsingServiceFactory* factory) {
-    factory_ = factory;
-  }
-
   static base::FilePath GetCookieFilePathForTesting();
 
   static base::FilePath GetBaseFilename();
-
-  // Create an instance of the safe browsing service.
-  static SafeBrowsingService* CreateSafeBrowsingService();
 
   // Called on the UI thread to initialize the service.
   void Initialize();
 
   // Called on the main thread to let us know that the io_thread is going away.
   void ShutDown();
-
-  // Called on UI thread to decide if the download file's sha256 hash
-  // should be calculated for safebrowsing.
-  bool DownloadBinHashNeeded() const;
 
   // NOTE(vakh): This is not the most reliable way to find out if extended
   // reporting has been enabled. That's why it starts with estimated_. It
@@ -192,7 +183,7 @@ class SafeBrowsingService : public base::RefCountedThreadSafe<
   // Adds a listener for when SafeBrowsing preferences might have changed.
   // To get the current state, the callback should call enabled_by_prefs().
   // Should only be called on the UI thread.
-  std::unique_ptr<StateSubscription> RegisterStateCallback(
+  virtual std::unique_ptr<StateSubscription> RegisterStateCallback(
       const base::Callback<void(void)>& callback);
 
   // Sends serialized download report to backend.
@@ -222,6 +213,7 @@ class SafeBrowsingService : public base::RefCountedThreadSafe<
   friend class base::DeleteHelper<SafeBrowsingService>;
   friend class SafeBrowsingBlockingPageTestBase;
   friend class SafeBrowsingBlockingQuietPageTest;
+  friend class extensions::SafeBrowsingPrivateApiUnitTest;
   friend class SafeBrowsingServerTest;
   friend class SafeBrowsingUIManagerTest;
   friend class SafeBrowsingURLRequestContextGetter;
@@ -282,11 +274,6 @@ class SafeBrowsingService : public base::RefCountedThreadSafe<
   // Creates a configured NetworkContextParams when the network service is in
   // use.
   network::mojom::NetworkContextParamsPtr CreateNetworkContextParams();
-
-  // The factory used to instantiate a SafeBrowsingService object.
-  // Useful for tests, so they can provide their own implementation of
-  // SafeBrowsingService.
-  static SafeBrowsingServiceFactory* factory_;
 
   // The SafeBrowsingURLRequestContextGetter used to access
   // |url_request_context_|. Accessed on UI thread.
@@ -352,16 +339,7 @@ class SafeBrowsingService : public base::RefCountedThreadSafe<
   DISALLOW_COPY_AND_ASSIGN(SafeBrowsingService);
 };
 
-// Factory for creating SafeBrowsingService.  Useful for tests.
-class SafeBrowsingServiceFactory {
- public:
-  SafeBrowsingServiceFactory() {}
-  virtual ~SafeBrowsingServiceFactory() {}
-  virtual SafeBrowsingService* CreateSafeBrowsingService() = 0;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(SafeBrowsingServiceFactory);
-};
+SafeBrowsingServiceFactory* GetSafeBrowsingServiceFactory();
 
 }  // namespace safe_browsing
 

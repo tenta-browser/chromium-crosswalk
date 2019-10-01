@@ -4,6 +4,7 @@
 
 #include "chrome/browser/safe_browsing/advanced_protection_status_manager.h"
 
+#include "base/bind.h"
 #include "base/feature_list.h"
 #include "base/metrics/histogram_macros.h"
 #include "chrome/browser/profiles/profile.h"
@@ -11,6 +12,7 @@
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/common/safe_browsing_prefs.h"
+#include "components/safe_browsing/features.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "google_apis/gaia/gaia_constants.h"
@@ -55,11 +57,11 @@ void AdvancedProtectionStatusManager::Initialize() {
 
 void AdvancedProtectionStatusManager::MaybeRefreshOnStartUp() {
   // Retrieves advanced protection service status from primary account's info.
-  AccountInfo info = identity_manager_->GetPrimaryAccountInfo();
-  if (info.account_id.empty())
+  CoreAccountInfo core_info = identity_manager_->GetPrimaryAccountInfo();
+  if (core_info.account_id.empty())
     return;
 
-  is_under_advanced_protection_ = info.is_under_advanced_protection;
+  is_under_advanced_protection_ = core_info.is_under_advanced_protection;
 
   if (profile_->GetPrefs()->HasPrefPath(
           prefs::kAdvancedProtectionLastRefreshInUs)) {
@@ -96,7 +98,7 @@ bool AdvancedProtectionStatusManager::IsRefreshScheduled() {
   return timer_.IsRunning();
 }
 
-void AdvancedProtectionStatusManager::OnAccountUpdated(
+void AdvancedProtectionStatusManager::OnExtendedAccountInfoUpdated(
     const AccountInfo& info) {
   // Ignore update if |profile_| is in incognito mode, or the updated account
   // is not the primary account.
@@ -112,7 +114,7 @@ void AdvancedProtectionStatusManager::OnAccountUpdated(
   }
 }
 
-void AdvancedProtectionStatusManager::OnAccountRemovedWithInfo(
+void AdvancedProtectionStatusManager::OnExtendedAccountInfoRemoved(
     const AccountInfo& info) {
   if (profile_->IsOffTheRecord())
     return;
@@ -126,13 +128,15 @@ void AdvancedProtectionStatusManager::OnAccountRemovedWithInfo(
 }
 
 void AdvancedProtectionStatusManager::OnPrimaryAccountSet(
-    const AccountInfo& account_info) {
+    const CoreAccountInfo& account_info) {
+  // TODO(crbug.com/926204): remove IdentityManager ensures that primary account
+  // always has valid refresh token when it is set.
   if (account_info.is_under_advanced_protection)
     OnAdvancedProtectionEnabled();
 }
 
 void AdvancedProtectionStatusManager::OnPrimaryAccountCleared(
-    const AccountInfo& account_info) {
+    const CoreAccountInfo& account_info) {
   OnAdvancedProtectionDisabled();
 }
 
@@ -241,8 +245,30 @@ bool AdvancedProtectionStatusManager::IsUnderAdvancedProtection(
              ->is_under_advanced_protection();
 }
 
+// static
+bool AdvancedProtectionStatusManager::RequestsAdvancedProtectionVerdicts(
+    Profile* profile) {
+  Profile* original_profile =
+      profile->IsOffTheRecord() ? profile->GetOriginalProfile() : profile;
+
+  if (!original_profile)
+    return false;
+
+  bool is_under_advanced_protection =
+      AdvancedProtectionStatusManagerFactory::GetInstance()
+          ->GetForBrowserContext(
+              static_cast<content::BrowserContext*>(original_profile))
+          ->is_under_advanced_protection();
+
+  static bool force_enabled =
+      base::FeatureList::IsEnabled(kForceUseAPDownloadProtection);
+  static bool enabled = base::FeatureList::IsEnabled(kUseAPDownloadProtection);
+
+  return force_enabled || (is_under_advanced_protection && enabled);
+}
+
 bool AdvancedProtectionStatusManager::IsPrimaryAccount(
-    const AccountInfo& account_info) {
+    const CoreAccountInfo& account_info) {
   return !account_info.account_id.empty() &&
          account_info.account_id == GetPrimaryAccountId();
 }
@@ -286,7 +312,9 @@ AdvancedProtectionStatusManager::AdvancedProtectionStatusManager(
 }
 
 std::string AdvancedProtectionStatusManager::GetPrimaryAccountId() const {
-  return identity_manager_ ? identity_manager_->GetPrimaryAccountId()
+  // TODO(triploblastic@): Remove explicit conversion once
+  // AdvancedProtectionStatusManager has been fixed to use CoreAccountId.
+  return identity_manager_ ? identity_manager_->GetPrimaryAccountId().id
                            : std::string();
 }
 

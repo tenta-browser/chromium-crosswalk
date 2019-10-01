@@ -81,13 +81,15 @@ class EVENTS_OZONE_EVDEV_EXPORT EventFactoryEvdev : public DeviceEventObserver,
       const std::vector<TouchscreenDevice>& devices);
   void DispatchMouseDevicesUpdated(const std::vector<InputDevice>& devices);
   void DispatchTouchpadDevicesUpdated(const std::vector<InputDevice>& devices);
+  void DispatchUncategorizedDevicesUpdated(
+      const std::vector<InputDevice>& devices);
   void DispatchDeviceListsComplete();
   void DispatchStylusStateChanged(StylusState stylus_state);
 
   // Gamepad event and gamepad device event. These events are dispatched to
   // GamepadObserver through GamepadProviderOzone.
   void DispatchGamepadEvent(const GamepadEvent& event);
-  void DispatchGamepadDevicesUpdated(const std::vector<InputDevice>& devices);
+  void DispatchGamepadDevicesUpdated(const std::vector<GamepadDevice>& devices);
 
  protected:
   // DeviceEventObserver overrides:

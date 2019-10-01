@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/time/tick_clock.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -19,7 +20,8 @@ class DeadlineTaskRunnerTest : public testing::Test {
   DeadlineTaskRunnerTest()
       : task_environment_(
             base::test::ScopedTaskEnvironment::MainThreadType::MOCK_TIME,
-            base::test::ScopedTaskEnvironment::ExecutionMode::QUEUED) {
+            base::test::ScopedTaskEnvironment::ThreadPoolExecutionMode::
+                QUEUED) {
     // Null clock might trigger some assertions.
     task_environment_.FastForwardBy(base::TimeDelta::FromMilliseconds(5));
   }
@@ -51,7 +53,7 @@ TEST_F(DeadlineTaskRunnerTest, RunOnce) {
   task_environment_.FastForwardUntilNoTasksRemain();
 
   EXPECT_THAT(run_times_, testing::ElementsAre(start_time + delay));
-};
+}
 
 TEST_F(DeadlineTaskRunnerTest, RunTwice) {
   base::TimeDelta delay1 = base::TimeDelta::FromMilliseconds(10);
@@ -65,7 +67,7 @@ TEST_F(DeadlineTaskRunnerTest, RunTwice) {
   task_environment_.FastForwardUntilNoTasksRemain();
 
   EXPECT_THAT(run_times_, testing::ElementsAre(deadline1, deadline2));
-};
+}
 
 TEST_F(DeadlineTaskRunnerTest, EarlierDeadlinesTakePrecidence) {
   base::TimeTicks start_time = Now();
@@ -78,7 +80,7 @@ TEST_F(DeadlineTaskRunnerTest, EarlierDeadlinesTakePrecidence) {
   task_environment_.FastForwardUntilNoTasksRemain();
 
   EXPECT_THAT(run_times_, testing::ElementsAre(start_time + delay1));
-};
+}
 
 TEST_F(DeadlineTaskRunnerTest, LaterDeadlinesIgnored) {
   base::TimeTicks start_time = Now();
@@ -89,7 +91,7 @@ TEST_F(DeadlineTaskRunnerTest, LaterDeadlinesIgnored) {
   task_environment_.FastForwardUntilNoTasksRemain();
 
   EXPECT_THAT(run_times_, testing::ElementsAre(start_time + delay100));
-};
+}
 
 TEST_F(DeadlineTaskRunnerTest, DeleteDeadlineTaskRunnerAfterPosting) {
   deadline_task_runner_->SetDeadline(
@@ -100,7 +102,7 @@ TEST_F(DeadlineTaskRunnerTest, DeleteDeadlineTaskRunnerAfterPosting) {
   task_environment_.FastForwardUntilNoTasksRemain();
 
   EXPECT_TRUE(run_times_.empty());
-};
+}
 
 }  // namespace scheduler
 }  // namespace blink

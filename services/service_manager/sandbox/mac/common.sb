@@ -68,10 +68,13 @@
 ; https://crbug.com/850021
 (define (allow-cvms-blobs)
   (if (>= os-version 1014)
-    (allow file-read*
-      (extension "com.apple.cvms.kernel")
-      (subpath "/private/var/db/CVMS")
-    )))
+    (begin
+      (allow file-read* file-write-unlink
+        (prefix "/private/tmp/cvmsCodeSignObj"))
+      (allow file-read*
+        (extension "com.apple.cvms.kernel")
+        (prefix "/private/var/db/CVMS/cvmsCodeSignObj"))
+)))
 
 ; Allow logging for all processes.
 (allow file-write*
@@ -94,7 +97,7 @@
                               (param browser-pid))))
 
 (allow mach-lookup
-  (browser-service-name "FieldTrialMemoryServer")
+  (browser-service-name "MachPortRendezvousServer")
   (browser-service-name "rohitfork")
 )
 
@@ -106,6 +109,8 @@
 
 ; Allow reads of system libraries and frameworks.
 (allow file-read*
+  (subpath "/System/Library/CoreServices/CoreTypes.bundle")
+  (subpath "/System/Library/CoreServices/SystemVersion.bundle")
   (subpath "/System/Library/Frameworks")
   (subpath "/System/Library/Preferences/Logging")
   (subpath "/System/Library/PrivateFrameworks")
@@ -156,8 +161,10 @@
 
 ; Access to the home directory.
 (allow file-read-data
+  (path (string-append (user-homedir-path "/Library/Preferences/") (param bundle-id) ".plist"))
   (path (user-homedir-path "/Library/Preferences/.GlobalPreferences.plist"))
   (regex (user-homedir-path #"/Library/Preferences/ByHost/.GlobalPreferences.*"))
+  (path (user-homedir-path "/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist"))
 )
 
 ; Mach IPC needed by all Chromium Helper instances.
@@ -175,6 +182,7 @@
   (sysctl-name "hw.cachelinesize_compat")
   (sysctl-name "hw.cpufrequency_compat")
   (sysctl-name "hw.cputype")
+  (sysctl-name "hw.logicalcpu_max")
   (sysctl-name "hw.machine")
   (sysctl-name "hw.ncpu")
   (sysctl-name "hw.pagesize_compat")
@@ -185,9 +193,15 @@
   (sysctl-name "kern.maxfilesperproc")
   (sysctl-name "kern.osrelease")
   (sysctl-name "kern.ostype")
+  (sysctl-name "kern.osvariant_status")
   (sysctl-name "kern.osversion")
   (sysctl-name "kern.usrstack64")
   (sysctl-name "kern.version")
   (sysctl-name "sysctl.proc_cputype")
   (sysctl-name (string-append "kern.proc.pid." (param current-pid)))
+)
+
+(allow network-outbound
+  (literal "/private/var/run/asl_input")
+  (literal "/private/var/run/syslog")
 )

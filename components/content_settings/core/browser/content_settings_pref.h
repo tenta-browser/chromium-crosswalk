@@ -52,7 +52,7 @@ class ContentSettingsPref {
                          const ContentSettingsPattern& secondary_pattern,
                          const ResourceIdentifier& resource_identifier,
                          base::Time modified_time,
-                         base::Value* value);
+                         std::unique_ptr<base::Value>&& value);
 
   // Returns the |last_modified| date of a setting.
   base::Time GetWebsiteSettingLastModified(
@@ -68,6 +68,12 @@ class ContentSettingsPref {
 
   // Tries to lock |lock_|. If successful, returns true and releases the lock.
   bool TryLockForTesting() const;
+  void set_allow_resource_identifiers_for_testing() {
+    allow_resource_identifiers_ = true;
+  }
+  void reset_allow_resource_identifiers_for_testing() {
+    allow_resource_identifiers_ = false;
+  }
 
  private:
   // Reads all content settings exceptions from the preference and loads them
@@ -120,6 +126,10 @@ class ContentSettingsPref {
   mutable base::Lock lock_;
 
   base::ThreadChecker thread_checker_;
+
+  // Used for setting preferences with resource identifiers to simmulate legacy
+  // prefs that did have resource identifiers set.
+  bool allow_resource_identifiers_;
 
   DISALLOW_COPY_AND_ASSIGN(ContentSettingsPref);
 };

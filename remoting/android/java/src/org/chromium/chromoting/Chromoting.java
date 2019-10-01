@@ -40,6 +40,8 @@ import org.chromium.chromoting.help.HelpContext;
 import org.chromium.chromoting.help.HelpSingleton;
 import org.chromium.chromoting.jni.Client;
 import org.chromium.chromoting.jni.ConnectionListener;
+import org.chromium.chromoting.jni.DirectoryService;
+import org.chromium.chromoting.jni.DirectoryServiceRequestError;
 import org.chromium.chromoting.jni.JniOAuthTokenGetter;
 
 import java.util.ArrayList;
@@ -49,15 +51,19 @@ import java.util.Arrays;
  * The user interface for querying and displaying a user's host list from the directory server. It
  * also requests and renews authentication tokens using the system account manager.
  */
-public class Chromoting extends AppCompatActivity implements ConnectionListener,
-        AccountSwitcher.Callback, HostListManager.Callback, View.OnClickListener {
+public class Chromoting extends AppCompatActivity
+        implements ConnectionListener, AccountSwitcher.Callback, DirectoryService.HostListCallback,
+                   DirectoryService.DeleteCallback, View.OnClickListener {
     private static final String TAG = "Chromoting";
 
     /** Only accounts of this type will be selectable for authentication. */
     private static final String ACCOUNT_TYPE = "com.google";
 
     /** Scope to use when fetching the OAuth token. */
+    // To use these scopes in a debug build, your development account will need to be whitelisted.
     private static final String TOKEN_SCOPE = "oauth2:https://www.googleapis.com/auth/chromoting "
+            + "https://www.googleapis.com/auth/chromoting.directory "
+            + "https://www.googleapis.com/auth/tachyon "
             + "https://www.googleapis.com/auth/googletalk";
 
     /** Result code used for starting {@link DesktopActivity}. */
@@ -72,7 +78,7 @@ public class Chromoting extends AppCompatActivity implements ConnectionListener,
     private String mAccount;
 
     /** Helper for fetching the host list. */
-    private HostListManager mHostListManager;
+    private DirectoryService mDirectoryService;
 
     /** List of hosts. */
     private HostInfo[] mHosts = new HostInfo[0];
@@ -199,7 +205,7 @@ public class Chromoting extends AppCompatActivity implements ConnectionListener,
     }
 
     /** Closes any navigation drawer, then shows the Help screen. */
-    public void launchHelp(final HelpContext helpContext) {
+    public void launchHelp(final @HelpContext int helpContext) {
         closeDrawerThenRun(new Runnable() {
             @Override
             public void run() {
@@ -230,7 +236,7 @@ public class Chromoting extends AppCompatActivity implements ConnectionListener,
         Toolbar toolbar = (Toolbar) findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
 
-        mHostListManager = new HostListManager();
+        mDirectoryService = new DirectoryService();
 
         // Get ahold of our view widgets.
         mHostListView = (ListView) findViewById(R.id.hostList_chooser);
@@ -555,7 +561,7 @@ public class Chromoting extends AppCompatActivity implements ConnectionListener,
                 });
 
         final SessionConnector connector =
-                new SessionConnector(mClient, this, this, mHostListManager);
+                new SessionConnector(mClient, this, this, mDirectoryService);
         mAuthenticator = new SessionAuthenticator(this, mClient, host);
         mHostConnectingConsumer.consume(mAccount, new OAuthTokenFetcher.Callback() {
             @Override
@@ -565,13 +571,13 @@ public class Chromoting extends AppCompatActivity implements ConnectionListener,
             }
 
             @Override
-            public void onError(OAuthTokenFetcher.Error error) {
+            public void onError(@OAuthTokenFetcher.Error int error) {
                 showAuthErrorMessage(error);
             }
         });
     }
 
-    private void showAuthErrorMessage(OAuthTokenFetcher.Error error) {
+    private void showAuthErrorMessage(@OAuthTokenFetcher.Error int error) {
         String explanation = getString(error == OAuthTokenFetcher.Error.NETWORK
                 ? R.string.error_network_error : R.string.error_unexpected);
         Toast.makeText(Chromoting.this, explanation, Toast.LENGTH_LONG).show();
@@ -584,11 +590,11 @@ public class Chromoting extends AppCompatActivity implements ConnectionListener,
         mHostListRetrievingConsumer.consume(mAccount, new OAuthTokenFetcher.Callback() {
             @Override
             public void onTokenFetched(String token) {
-                mHostListManager.retrieveHostList(token, Chromoting.this);
+                mDirectoryService.retrieveHostList(Chromoting.this);
             }
 
             @Override
-            public void onError(OAuthTokenFetcher.Error error) {
+            public void onError(@OAuthTokenFetcher.Error int error) {
                 showAuthErrorMessage(error);
                 updateHostListView();
             }
@@ -601,11 +607,11 @@ public class Chromoting extends AppCompatActivity implements ConnectionListener,
         mHostDeletingConsumer.consume(mAccount, new OAuthTokenFetcher.Callback() {
             @Override
             public void onTokenFetched(String token) {
-                mHostListManager.deleteHost(token, hostId, Chromoting.this);
+                mDirectoryService.deleteHost(hostId, Chromoting.this);
             }
 
             @Override
-            public void onError(OAuthTokenFetcher.Error error) {
+            public void onError(@OAuthTokenFetcher.Error int error) {
                 showAuthErrorMessage(error);
                 updateHostListView();
             }
@@ -647,7 +653,7 @@ public class Chromoting extends AppCompatActivity implements ConnectionListener,
 
     @Override
     public void onHostListReceived(HostInfo[] hosts) {
-        // Store a copy of the array, so that it can't be mutated by the HostListManager. HostInfo
+        // Store a copy of the array, so that it can't be mutated by the DirectoryService. HostInfo
         // is an immutable type, so a shallow copy of the array is sufficient here.
         mHosts = Arrays.copyOf(hosts, hosts.length);
         updateHostListView();
@@ -655,29 +661,24 @@ public class Chromoting extends AppCompatActivity implements ConnectionListener,
     }
 
     @Override
-    public void onHostUpdated() {
-        // Not implemented Yet.
-    }
-
-    @Override
     public void onHostDeleted() {
         // Refresh the host list. there is no need to refetch the auth token again.
         // onHostListReceived is in charge to hide the progress indicator.
-        mHostListManager.retrieveHostList(mHostDeletingConsumer.getLatestToken(), this);
+        mDirectoryService.retrieveHostList(this);
     }
 
     @Override
-    public void onError(HostListManager.Error error) {
+    public void onError(@DirectoryServiceRequestError int error) {
         String explanation = null;
         switch (error) {
-            case AUTH_FAILED:
+            case DirectoryServiceRequestError.AUTH_FAILED:
                 break;
-            case NETWORK_ERROR:
+            case DirectoryServiceRequestError.NETWORK_ERROR:
                 explanation = getString(R.string.error_network_error);
                 break;
-            case UNEXPECTED_RESPONSE:
-            case SERVICE_UNAVAILABLE:
-            case UNKNOWN:
+            case DirectoryServiceRequestError.UNEXPECTED_RESPONSE:
+            case DirectoryServiceRequestError.SERVICE_UNAVAILABLE:
+            case DirectoryServiceRequestError.UNKNOWN:
                 explanation = getString(R.string.error_unexpected);
                 break;
             default:
@@ -713,29 +714,31 @@ public class Chromoting extends AppCompatActivity implements ConnectionListener,
     }
 
     @Override
-    public void onConnectionState(ConnectionListener.State state, ConnectionListener.Error error) {
+    public void onConnectionState(@State int state, @ConnectionListener.Error int error) {
         boolean dismissProgress = false;
         switch (state) {
-            case INITIALIZING:
-            case CONNECTING:
-            case AUTHENTICATED:
+            case State.INITIALIZING:
+            case State.CONNECTING:
+            case State.AUTHENTICATED:
                 // The connection is still being established.
                 break;
 
-            case CONNECTED:
+            case State.CONNECTED:
                 dismissProgress = true;
                 // Display the remote desktop.
                 startActivityForResult(new Intent(this, Desktop.class), DESKTOP_ACTIVITY);
                 break;
 
-            case FAILED:
+            case State.FAILED:
                 dismissProgress = true;
-                Toast.makeText(this, getString(error.message()), Toast.LENGTH_LONG).show();
+                Toast.makeText(this, getString(ConnectionListener.getErrorStringIdFromError(error)),
+                             Toast.LENGTH_LONG)
+                        .show();
                 // Close the Desktop view, if it is currently running.
                 finishActivity(DESKTOP_ACTIVITY);
                 break;
 
-            case CLOSED:
+            case State.CLOSED:
                 // No need to show toast in this case. Either the connection will have failed
                 // because of an error, which will trigger toast already. Or the disconnection will
                 // have been initiated by the user.

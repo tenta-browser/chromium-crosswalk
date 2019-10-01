@@ -19,6 +19,7 @@ import android.support.annotation.Nullable;
 import android.support.annotation.Px;
 import android.support.v4.graphics.ColorUtils;
 import android.support.v4.graphics.drawable.DrawableCompat;
+import android.support.v4.view.ViewCompat;
 import android.support.v7.content.res.AppCompatResources;
 import android.util.StateSet;
 import android.view.View;
@@ -29,7 +30,9 @@ import org.chromium.ui.R;
  * A helper class to create and maintain a background drawable with customized background color,
  * ripple color, and corner radius.
  */
-class RippleBackgroundHelper {
+// TODO(jdemeulenaere): Make this class package-private once it is not accessed by {@link
+// org.chromium.chrome.browser.autofill_assistant.carousel.ButtonView} anymore.
+public class RippleBackgroundHelper {
     private static final int[] STATE_SET_PRESSED = {android.R.attr.state_pressed};
     private static final int[] STATE_SET_SELECTED = {android.R.attr.state_selected};
     private static final int[] STATE_SET_SELECTED_PRESSED = {
@@ -66,14 +69,16 @@ class RippleBackgroundHelper {
      * @param borderColorResId The resource id of the border color.
      * @param borderSizeDimenId The resource id of the border size.
      */
-    RippleBackgroundHelper(View view, @ColorRes int backgroundColorResId,
+    // TODO(jdemeulenaere): Make this constructor package-private once it is not accessed by {@link
+    // org.chromium.chrome.browser.autofill_assistant.carousel.ButtonView} anymore.
+    public RippleBackgroundHelper(View view, @ColorRes int backgroundColorResId,
             @ColorRes int rippleColorResId, @Px int cornerRadius, @ColorRes int borderColorResId,
             @DimenRes int borderSizeDimenId) {
         mView = view;
 
-        int paddingLeft = mView.getPaddingLeft();
+        int paddingStart = ViewCompat.getPaddingStart(mView);
         int paddingTop = mView.getPaddingTop();
-        int paddingRight = mView.getPaddingRight();
+        int paddingEnd = ViewCompat.getPaddingEnd(mView);
         int paddingBottom = mView.getPaddingBottom();
         mView.setBackground(createBackgroundDrawable(
                 AppCompatResources.getColorStateList(view.getContext(), rippleColorResId),
@@ -85,7 +90,8 @@ class RippleBackgroundHelper {
         // On KitKat, setting the background on the view can cause padding reset. Save the padding
         // and re-apply after background is set.
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
-            mView.setPadding(paddingLeft, paddingTop, paddingRight, paddingBottom);
+            ViewCompat.setPaddingRelative(
+                    mView, paddingStart, paddingTop, paddingEnd, paddingBottom);
         }
     }
 
@@ -153,7 +159,9 @@ class RippleBackgroundHelper {
      * Called from the view when drawable state is changed to update the state of the background
      * color and the ripple color for pre-L versions.
      */
-    void onDrawableStateChanged() {
+    // TODO(jdemeulenaere): Make this method package-private once it is not accessed by {@link
+    // org.chromium.chrome.browser.autofill_assistant.carousel.ButtonView} anymore.
+    public void onDrawableStateChanged() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) return;
 
         int[] state = mView.getDrawableState();

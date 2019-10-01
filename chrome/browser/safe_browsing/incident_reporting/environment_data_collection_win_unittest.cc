@@ -20,7 +20,6 @@
 #include "chrome/browser/safe_browsing/download_protection/path_sanitizer.h"
 #include "chrome/browser/safe_browsing/incident_reporting/module_integrity_unittest_util_win.h"
 #include "chrome/browser/safe_browsing/incident_reporting/module_integrity_verifier_win.h"
-#include "chrome_elf/chrome_elf_constants.h"
 #include "components/safe_browsing/proto/csd.pb.h"
 #include "net/base/winsock_init.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -126,10 +125,8 @@ TEST(SafeBrowsingEnvironmentDataCollectionWinTest, RecordLspFeature) {
 TEST(SafeBrowsingEnvironmentDataCollectionWinTest, VerifyLoadedModules) {
   //  Load the test modules.
   std::vector<base::ScopedNativeLibrary> test_dlls(kTestDllNamesCount);
-  for (size_t i = 0; i < kTestDllNamesCount; ++i) {
-    test_dlls[i].Reset(
-        LoadNativeLibrary(base::FilePath(kTestDllNames[i]), NULL));
-  }
+  for (size_t i = 0; i < kTestDllNamesCount; ++i)
+    test_dlls[i] = base::ScopedNativeLibrary(base::FilePath(kTestDllNames[i]));
 
   // Edit the first byte of the function exported by the first module. Calling
   // GetModuleHandle so we do not increment the library ref count.

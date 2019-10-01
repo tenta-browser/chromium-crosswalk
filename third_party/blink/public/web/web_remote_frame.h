@@ -14,6 +14,7 @@
 #include "third_party/blink/public/platform/web_insecure_request_policy.h"
 #include "third_party/blink/public/platform/web_scroll_types.h"
 #include "third_party/blink/public/web/web_frame.h"
+#include "ui/events/types/scroll_types.h"
 #include "v8/include/v8.h"
 
 namespace cc {
@@ -52,20 +53,18 @@ class WebRemoteFrame : public WebFrame {
   // beginning.
   virtual WebLocalFrame* CreateLocalChild(WebTreeScopeType,
                                           const WebString& name,
-                                          WebSandboxFlags,
+                                          const FramePolicy&,
                                           WebLocalFrameClient*,
                                           blink::InterfaceRegistry*,
                                           mojo::ScopedMessagePipeHandle,
                                           WebFrame* previous_sibling,
-                                          const ParsedFeaturePolicy&,
                                           const WebFrameOwnerProperties&,
                                           FrameOwnerElementType,
                                           WebFrame* opener) = 0;
 
   virtual WebRemoteFrame* CreateRemoteChild(WebTreeScopeType,
                                             const WebString& name,
-                                            WebSandboxFlags,
-                                            const ParsedFeaturePolicy&,
+                                            const FramePolicy&,
                                             FrameOwnerElementType,
                                             WebRemoteFrameClient*,
                                             WebFrame* opener) = 0;
@@ -86,8 +85,13 @@ class WebRemoteFrame : public WebFrame {
   // Set frame |name| replicated from another process.
   virtual void SetReplicatedName(const WebString&) = 0;
 
-  virtual void SetReplicatedFeaturePolicyHeader(
-      const ParsedFeaturePolicy& parsed_header) = 0;
+  // Sets the FeaturePolicy header and the FeatureState (from opener) for the
+  // main frame. Once a non-empty |opener_feature_state| is set, it can no
+  // longer be modified (due to the fact that the original opener which passed
+  // down the FeatureState cannot be modified either).
+  virtual void SetReplicatedFeaturePolicyHeaderAndOpenerPolicies(
+      const ParsedFeaturePolicy& parsed_header,
+      const FeaturePolicy::FeatureState& opener_feature_state) = 0;
 
   // Adds |header| to the set of replicated CSP headers.
   virtual void AddReplicatedContentSecurityPolicyHeader(
@@ -109,6 +113,8 @@ class WebRemoteFrame : public WebFrame {
 
   virtual void DispatchLoadEventForFrameOwner() = 0;
 
+  virtual void SetNeedsOcclusionTracking(bool) = 0;
+
   virtual void DidStartLoading() = 0;
   virtual void DidStopLoading() = 0;
 
@@ -126,6 +132,11 @@ class WebRemoteFrame : public WebFrame {
   // "local" frame tree (ancestors-only vs all-nodes).
   virtual void UpdateUserActivationState(UserActivationUpdateType) = 0;
 
+  // Transfers user activation state from |source_frame| to this frame, which
+  // must be in the same frame tree as |source_frame|.
+  virtual void TransferUserActivationFrom(
+      blink::WebRemoteFrame* source_frame) = 0;
+
   virtual void SetHasReceivedUserGestureBeforeNavigation(bool value) = 0;
 
   // Scrolls the given rectangle into view. This kicks off the recursive scroll
@@ -138,8 +149,9 @@ class WebRemoteFrame : public WebFrame {
 
   // Continues to bubble logical scroll that reached the local root in the child
   // frame's process. Scroll bubbling continues from the frame owner element.
-  virtual void BubbleLogicalScroll(WebScrollDirection direction,
-                                   WebScrollGranularity granularity) = 0;
+  virtual void BubbleLogicalScroll(
+      WebScrollDirection direction,
+      ui::input_types::ScrollGranularity granularity) = 0;
 
   virtual void IntrinsicSizingInfoChanged(const WebIntrinsicSizingInfo&) = 0;
 

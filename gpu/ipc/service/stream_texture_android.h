@@ -46,6 +46,7 @@ class StreamTexture : public gpu::gles2::GLStreamTextureImage,
   // gl::GLImage implementation:
   gfx::Size GetSize() override;
   unsigned GetInternalFormat() override;
+  BindOrCopy ShouldBindOrCopy() override;
   bool BindTexImage(unsigned target) override;
   void ReleaseTexImage(unsigned target) override;
   bool CopyTexImage(unsigned target) override;
@@ -89,7 +90,7 @@ class StreamTexture : public gpu::gles2::GLStreamTextureImage,
   // IPC message handlers:
   void OnStartListening();
   void OnForwardForSurfaceRequest(const base::UnguessableToken& request_token);
-  void OnSetSize(const gfx::Size& size) { size_ = size; }
+  void OnSetSize(const gfx::Size& size);
 
   std::unique_ptr<SurfaceOwner> surface_owner_;
 

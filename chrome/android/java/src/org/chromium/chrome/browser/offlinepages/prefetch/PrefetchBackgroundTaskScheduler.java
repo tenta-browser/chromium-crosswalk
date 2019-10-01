@@ -5,6 +5,7 @@
 package org.chromium.chrome.browser.offlinepages.prefetch;
 
 import android.os.Bundle;
+import android.text.format.DateUtils;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.annotations.CalledByNative;
@@ -13,14 +14,13 @@ import org.chromium.components.background_task_scheduler.BackgroundTaskScheduler
 import org.chromium.components.background_task_scheduler.TaskIds;
 import org.chromium.components.background_task_scheduler.TaskInfo;
 
-import java.util.concurrent.TimeUnit;
-
 /**
  * Handles scheduling background task for offline pages prefetching.
  */
 @JNINamespace("offline_pages::prefetch")
 public class PrefetchBackgroundTaskScheduler {
     public static final long DEFAULT_START_DELAY_SECONDS = 15 * 60;
+    public static final long LIMITLESS_START_DELAY_SECONDS = 5;
 
     /**
      * Schedules the default 'NWake' task for the prefetching service. This task will normally be
@@ -28,8 +28,8 @@ public class PrefetchBackgroundTaskScheduler {
      * TODO(dewittj): Handle skipping work if the battery percentage is too low.
      */
     @CalledByNative
-    public static void scheduleTask(int additionalDelaySeconds) {
-        scheduleTaskInternal(additionalDelaySeconds, false);
+    public static void scheduleTask(int additionalDelaySeconds, String gcmToken) {
+        scheduleTaskInternal(additionalDelaySeconds, false, gcmToken);
     }
 
     /**
@@ -37,35 +37,43 @@ public class PrefetchBackgroundTaskScheduler {
      * delays and no network restrictions (device needs only to be online).
      */
     @CalledByNative
-    public static void scheduleTaskLimitless(int additionalDelaySeconds) {
-        scheduleTaskInternal(additionalDelaySeconds, true);
+    public static void scheduleTaskLimitless(int additionalDelaySeconds, String gcmToken) {
+        scheduleTaskInternal(additionalDelaySeconds, true, gcmToken);
+    }
+
+    static Bundle createGCMTokenBundle(String gcmToken) {
+        Bundle bundle = new Bundle(1);
+        bundle.putString(PrefetchBackgroundTask.GCM_TOKEN_BUNDLE_KEY, gcmToken);
+        return bundle;
     }
 
     private static void scheduleTaskInternal(
-            int additionalDelaySeconds, boolean limitlessPrefetching) {
+            int additionalDelaySeconds, boolean limitlessPrefetching, String gcmToken) {
         final long minimumTimeSeconds =
-                (limitlessPrefetching ? 0 : DEFAULT_START_DELAY_SECONDS) + additionalDelaySeconds;
+                (limitlessPrefetching ? LIMITLESS_START_DELAY_SECONDS : DEFAULT_START_DELAY_SECONDS)
+                + additionalDelaySeconds;
         TaskInfo.Builder taskInfoBuilder =
                 TaskInfo.createOneOffTask(TaskIds.OFFLINE_PAGES_PREFETCH_JOB_ID,
                                 PrefetchBackgroundTask.class,
                                 // Minimum time to wait
-                                TimeUnit.SECONDS.toMillis(minimumTimeSeconds),
+                                DateUtils.SECOND_IN_MILLIS * minimumTimeSeconds,
                                 // Maximum time to wait.  After this interval the event will fire
                                 // regardless of whether the conditions are right.
-                                TimeUnit.DAYS.toMillis(7))
-                        .setRequiredNetworkType(TaskInfo.NETWORK_TYPE_UNMETERED)
+                                DateUtils.DAY_IN_MILLIS * 7)
+                        .setRequiredNetworkType(TaskInfo.NetworkType.UNMETERED)
                         .setIsPersisted(true)
                         .setUpdateCurrent(true);
+
+        Bundle bundle = createGCMTokenBundle(gcmToken);
         /* Limitless prefetching eliminates the default wait time but still complies with backoff
          * delays determined by |additionalDelaySeconds|. There's also no restriction on the network
          * type.
          */
         if (limitlessPrefetching) {
-            taskInfoBuilder.setRequiredNetworkType(TaskInfo.NETWORK_TYPE_ANY);
-            Bundle bundle = new Bundle(1);
+            taskInfoBuilder.setRequiredNetworkType(TaskInfo.NetworkType.ANY);
             bundle.putBoolean(PrefetchBackgroundTask.LIMITLESS_BUNDLE_KEY, true);
-            taskInfoBuilder.setExtras(bundle);
         }
+        taskInfoBuilder.setExtras(bundle);
         BackgroundTaskSchedulerFactory.getScheduler().schedule(
                 ContextUtils.getApplicationContext(), taskInfoBuilder.build());
     }

@@ -4,6 +4,7 @@
 
 #include "content/browser/service_worker/service_worker_update_checker.h"
 
+#include "base/bind.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_storage.h"
 #include "content/browser/service_worker/service_worker_version.h"
@@ -15,12 +16,18 @@ ServiceWorkerUpdateChecker::ServiceWorkerUpdateChecker(
     const GURL& main_script_url,
     int64_t main_script_resource_id,
     scoped_refptr<ServiceWorkerVersion> version_to_update,
-    scoped_refptr<network::SharedURLLoaderFactory> loader_factory)
+    scoped_refptr<network::SharedURLLoaderFactory> loader_factory,
+    bool force_bypass_cache,
+    blink::mojom::ServiceWorkerUpdateViaCache update_via_cache,
+    base::TimeDelta time_since_last_check)
     : scripts_to_compare_(std::move(scripts_to_compare)),
       main_script_url_(main_script_url),
       main_script_resource_id_(main_script_resource_id),
       version_to_update_(std::move(version_to_update)),
       loader_factory_(std::move(loader_factory)),
+      force_bypass_cache_(force_bypass_cache),
+      update_via_cache_(update_via_cache),
+      time_since_last_check_(time_since_last_check),
       weak_factory_(this) {}
 
 ServiceWorkerUpdateChecker::~ServiceWorkerUpdateChecker() = default;
@@ -32,13 +39,16 @@ void ServiceWorkerUpdateChecker::Start(UpdateStatusCallback callback) {
 }
 
 void ServiceWorkerUpdateChecker::OnOneUpdateCheckFinished(
-    const GURL& script_url,
     int64_t old_resource_id,
+    const GURL& script_url,
     ServiceWorkerSingleScriptUpdateChecker::Result result,
     std::unique_ptr<ServiceWorkerSingleScriptUpdateChecker::PausedState>
         paused_state) {
   script_check_results_[script_url] =
       ComparedScriptInfo(old_resource_id, result, std::move(paused_state));
+  if (running_checker_->network_accessed())
+    network_accessed_ = true;
+
   running_checker_.reset();
 
   if (ServiceWorkerSingleScriptUpdateChecker::Result::kDifferent == result) {
@@ -95,10 +105,11 @@ void ServiceWorkerUpdateChecker::CheckOneScript(const GURL& url,
 
   auto writer = storage->CreateResponseWriter(storage->NewResourceId());
   running_checker_ = std::make_unique<ServiceWorkerSingleScriptUpdateChecker>(
-      url, resource_id, is_main_script, loader_factory_,
-      std::move(compare_reader), std::move(copy_reader), std::move(writer),
+      url, is_main_script, force_bypass_cache_, update_via_cache_,
+      time_since_last_check_, loader_factory_, std::move(compare_reader),
+      std::move(copy_reader), std::move(writer),
       base::BindOnce(&ServiceWorkerUpdateChecker::OnOneUpdateCheckFinished,
-                     weak_factory_.GetWeakPtr()));
+                     weak_factory_.GetWeakPtr(), resource_id));
 }
 
 ServiceWorkerUpdateChecker::ComparedScriptInfo::ComparedScriptInfo() = default;

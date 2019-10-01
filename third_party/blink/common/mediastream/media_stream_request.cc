@@ -12,7 +12,8 @@ namespace blink {
 bool IsAudioInputMediaType(MediaStreamType type) {
   return (type == MEDIA_DEVICE_AUDIO_CAPTURE ||
           type == MEDIA_GUM_TAB_AUDIO_CAPTURE ||
-          type == MEDIA_GUM_DESKTOP_AUDIO_CAPTURE);
+          type == MEDIA_GUM_DESKTOP_AUDIO_CAPTURE ||
+          type == MEDIA_DISPLAY_AUDIO_CAPTURE);
 }
 
 bool IsVideoInputMediaType(MediaStreamType type) {
@@ -103,7 +104,6 @@ MediaStreamDevice::MediaStreamDevice(const MediaStreamDevice& other) {
   name = other.name;
   input = other.input;
   session_id = other.session_id;
-  camera_calibration = other.camera_calibration;
   if (other.display_media_info.has_value())
     display_media_info = other.display_media_info->Clone();
 }
@@ -122,7 +122,6 @@ MediaStreamDevice& MediaStreamDevice::operator=(
   name = other.name;
   input = other.input;
   session_id = other.session_id;
-  camera_calibration = other.camera_calibration;
   if (other.display_media_info.has_value())
     display_media_info = other.display_media_info->Clone();
   return *this;

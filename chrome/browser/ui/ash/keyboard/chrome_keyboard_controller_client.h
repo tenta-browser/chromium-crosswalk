@@ -6,7 +6,10 @@
 #define CHROME_BROWSER_UI_ASH_KEYBOARD_CHROME_KEYBOARD_CONTROLLER_CLIENT_H_
 
 #include <memory>
+#include <set>
+#include <vector>
 
+#include "ash/public/interfaces/keyboard_config.mojom.h"
 #include "ash/public/interfaces/keyboard_controller.mojom.h"
 #include "base/callback_forward.h"
 #include "base/macros.h"
@@ -48,9 +51,9 @@ class ChromeKeyboardControllerClient
 
     // Forwards the 'OnKeyboardOccludedBoundsChanged' mojo observer method.
     // This is used to update the insets of browser and app windows when the
-    // keyboard is shown. |bounds| is in the frame of reference of the
-    // keyboard window.
-    virtual void OnKeyboardOccludedBoundsChanged(const gfx::Rect& bounds) {}
+    // keyboard is shown.
+    virtual void OnKeyboardOccludedBoundsChanged(
+        const gfx::Rect& screen_bounds) {}
 
     // Notifies observers when the keyboard content (i.e. the extension) has
     // loaded. Note: if the content is already loaded when the observer is
@@ -102,7 +105,7 @@ class ChromeKeyboardControllerClient
   // Returns whether |flag| has been set.
   bool IsEnableFlagSet(const keyboard::mojom::KeyboardEnableFlag& flag);
 
-  // Calls forwarded to ash.mojom.KeyboardController..
+  // Calls forwarded to ash.mojom.KeyboardController.
   void ReloadKeyboardIfNeeded();
   void RebuildKeyboardIfEnabled();
   void ShowKeyboard();
@@ -157,8 +160,7 @@ class ChromeKeyboardControllerClient
   void OnLoadKeyboardContentsRequested() override;
   void OnKeyboardUIDestroyed() override;
 
-  void OnKeyboardContentsLoaded(const base::UnguessableToken& token,
-                                const gfx::Size& size);
+  void OnKeyboardContentsLoaded(const gfx::Size& size);
 
   // session_manager::SessionManagerObserver:
   void OnSessionStateChanged() override;

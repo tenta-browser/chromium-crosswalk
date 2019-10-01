@@ -8,6 +8,7 @@
 
 #include "base/stl_util.h"
 #include "components/offline_pages/core/client_namespace_constants.h"
+#include "components/offline_pages/core/offline_page_feature.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using LifetimeType = offline_pages::LifetimePolicy::LifetimeType;
@@ -64,12 +65,6 @@ void ClientPolicyControllerTest::ExpectRemovedOnCacheReset(
 
 void ClientPolicyControllerTest::ExpectDownloadSupport(std::string name_space,
                                                        bool expectation) {
-  EXPECT_EQ(expectation,
-            base::ContainsValue(
-                controller()->GetNamespacesSupportedByDownload(), name_space))
-      << "Namespace " << name_space
-      << " had incorrect download support when getting namespaces supported by"
-         " download.";
   EXPECT_EQ(expectation, controller()->IsSupportedByDownload(name_space))
       << "Namespace " << name_space
       << " had incorrect download support when directly checking if supported"
@@ -94,13 +89,6 @@ void ClientPolicyControllerTest::ExpectUserRequestedDownloadSupport(
 
 void ClientPolicyControllerTest::ExpectRecentTab(std::string name_space,
                                                  bool expectation) {
-  EXPECT_EQ(
-      expectation,
-      base::ContainsValue(
-          controller()->GetNamespacesShownAsRecentlyVisitedSite(), name_space))
-      << "Namespace " << name_space
-      << " had incorrect recent tab support when getting namespaces shown as a"
-         " recently visited site.";
   EXPECT_EQ(expectation, controller()->IsShownAsRecentlyVisitedSite(name_space))
       << "Namespace " << name_space
       << " had incorrect recent tab support when directly checking if shown as"
@@ -110,13 +98,6 @@ void ClientPolicyControllerTest::ExpectRecentTab(std::string name_space,
 void ClientPolicyControllerTest::ExpectRestrictedToTabFromClientId(
     std::string name_space,
     bool expectation) {
-  EXPECT_EQ(
-      expectation,
-      base::ContainsValue(
-          controller()->GetNamespacesRestrictedToTabFromClientId(), name_space))
-      << "Namespace " << name_space
-      << " had incorrect restriction when getting namespaces restricted to"
-         " the tab from the client id field";
   EXPECT_EQ(expectation,
             controller()->IsRestrictedToTabFromClientId(name_space))
       << "Namespace " << name_space
@@ -127,13 +108,6 @@ void ClientPolicyControllerTest::ExpectRestrictedToTabFromClientId(
 void ClientPolicyControllerTest::ExpectDisabledWhenPrefetchDisabled(
     std::string name_space,
     bool expectation) {
-  EXPECT_EQ(expectation,
-            base::ContainsValue(
-                controller()->GetNamespacesDisabledWhenPrefetchDisabled(),
-                name_space))
-      << "Namespace " << name_space
-      << " had incorrect prefetch pref support when getting namespaces"
-         " disabled when prefetch settings are disabled.";
   EXPECT_EQ(expectation,
             controller()->IsDisabledWhenPrefetchDisabled(name_space))
       << "Namespace " << name_space
@@ -240,7 +214,7 @@ TEST_F(ClientPolicyControllerTest, CheckSuggestedArticlesDefined) {
   EXPECT_TRUE(isTemporary(policy));
   EXPECT_TRUE(controller()->IsRemovedOnCacheReset(kSuggestedArticlesNamespace));
   ExpectRemovedOnCacheReset(kSuggestedArticlesNamespace, true);
-  ExpectDownloadSupport(kSuggestedArticlesNamespace, false);
+  ExpectDownloadSupport(kSuggestedArticlesNamespace, IsOfflinePagesEnabled());
   ExpectUserRequestedDownloadSupport(kSuggestedArticlesNamespace, false);
   ExpectRecentTab(kSuggestedArticlesNamespace, false);
   ExpectRestrictedToTabFromClientId(kSuggestedArticlesNamespace, false);

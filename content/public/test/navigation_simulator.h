@@ -17,8 +17,9 @@
 class GURL;
 
 namespace net {
-class HostPortPair;
+class IPEndPoint;
 class HttpResponseHeaders;
+class SSLInfo;
 }  // namespace net
 
 namespace content {
@@ -127,10 +128,10 @@ class NavigationSimulator {
       const GURL& original_url,
       RenderFrameHost* render_frame_host);
 
-  // Creates a NavigationSimulator for an already-started browser initiated
-  // navigation via LoadURL / Reload / GoToOffset. Can be used to drive the
-  // navigation to completion.
-  static std::unique_ptr<NavigationSimulator> CreateFromPendingBrowserInitiated(
+  // Creates a NavigationSimulator for an already-started navigation via
+  // LoadURL / Reload / GoToOffset / history.GoBack() scripts, etc. Can be used
+  // to drive the navigation to completion.
+  static std::unique_ptr<NavigationSimulator> CreateFromPending(
       WebContents* contents);
 
   virtual ~NavigationSimulator() {}
@@ -202,6 +203,8 @@ class NavigationSimulator {
       scoped_refptr<net::HttpResponseHeaders> response_headers) = 0;
 
   // Simulates the navigation failing with the error code |error_code|.
+  // IMPORTANT NOTE: This is simulating a network connection error and implies
+  // we do not get a response. Error codes like 204 are not properly managed.
   virtual void Fail(int error_code) = 0;
 
   // Simulates the commit of an error page following a navigation failure.
@@ -242,6 +245,9 @@ class NavigationSimulator {
   // Sets whether this navigation originated as the result of a form submission.
   virtual void SetIsFormSubmission(bool is_form_submission) = 0;
 
+  // Sets whether this navigation originated as the result of a link click.
+  virtual void SetWasInitiatedByLinkClick(bool was_initiated_by_link_click) = 0;
+
   // The following parameters can change during redirects. They should be
   // specified before calling |Start| if they need to apply to the navigation to
   // the original url. Otherwise, they should be specified before calling
@@ -250,7 +256,10 @@ class NavigationSimulator {
 
   // The following parameters can change at any point until the page fails or
   // commits. They should be specified before calling |Fail| or |Commit|.
-  virtual void SetSocketAddress(const net::HostPortPair& socket_address) = 0;
+  virtual void SetSocketAddress(const net::IPEndPoint& remote_endpoint) = 0;
+
+  // Pretend the navigation response is served from cache.
+  virtual void SetWasFetchedViaCache(bool was_fetched_via_cache) = 0;
 
   // Pretend the navigation is against an inner response of a signed exchange.
   virtual void SetIsSignedExchangeInnerResponse(
@@ -278,6 +287,10 @@ class NavigationSimulator {
   // If the test sets this to false, it should follow up any calls that result
   // in throttles deferring the navigation with a call to Wait().
   virtual void SetAutoAdvance(bool auto_advance) = 0;
+
+  // Sets the SSLInfo to be set on the response. This should be called before
+  // Commit().
+  virtual void SetSSLInfo(const net::SSLInfo& ssl_info) = 0;
 
   // --------------------------------------------------------------------------
 

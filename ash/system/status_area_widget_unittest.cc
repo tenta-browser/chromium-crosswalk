@@ -5,9 +5,13 @@
 #include "ash/system/status_area_widget.h"
 
 #include "ash/focus_cycler.h"
+#include "ash/keyboard/ui/keyboard_controller.h"
+#include "ash/keyboard/ui/keyboard_util.h"
+#include "ash/keyboard/ui/test/keyboard_test_util.h"
 #include "ash/public/cpp/ash_switches.h"
+#include "ash/public/cpp/keyboard/keyboard_switches.h"
 #include "ash/public/cpp/system_tray_focus_observer.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/session/test_session_controller_client.h"
 #include "ash/shell.h"
 #include "ash/system/ime_menu/ime_menu_tray.h"
@@ -19,16 +23,13 @@
 #include "ash/system/unified/unified_system_tray.h"
 #include "ash/system/virtual_keyboard/virtual_keyboard_tray.h"
 #include "ash/test/ash_test_base.h"
+#include "base/bind_helpers.h"
 #include "base/command_line.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
+#include "chromeos/dbus/shill/shill_clients.h"
 #include "chromeos/network/network_handler.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/session_manager/session_manager_types.h"
 #include "ui/events/test/event_generator.h"
-#include "ui/keyboard/keyboard_controller.h"
-#include "ui/keyboard/keyboard_util.h"
-#include "ui/keyboard/public/keyboard_switches.h"
-#include "ui/keyboard/test/keyboard_test_util.h"
 
 using session_manager::SessionState;
 
@@ -58,11 +59,11 @@ TEST_F(StatusAreaWidgetTest, Basics) {
   EXPECT_TRUE(status->palette_tray());
 
   // Default trays are visible.
-  EXPECT_FALSE(status->overview_button_tray()->visible());
-  EXPECT_TRUE(status->unified_system_tray()->visible());
-  EXPECT_FALSE(status->logout_button_tray_for_testing()->visible());
-  EXPECT_FALSE(status->ime_menu_tray()->visible());
-  EXPECT_FALSE(status->virtual_keyboard_tray_for_testing()->visible());
+  EXPECT_FALSE(status->overview_button_tray()->GetVisible());
+  EXPECT_TRUE(status->unified_system_tray()->GetVisible());
+  EXPECT_FALSE(status->logout_button_tray_for_testing()->GetVisible());
+  EXPECT_FALSE(status->ime_menu_tray()->GetVisible());
+  EXPECT_FALSE(status->virtual_keyboard_tray_for_testing()->GetVisible());
 }
 
 class SystemTrayFocusTestObserver : public SystemTrayFocusObserver {
@@ -125,9 +126,10 @@ class StatusAreaWidgetFocusTest : public AshTestBase {
 
 // Tests that tab traversal through status area widget in non-active session
 // could properly send FocusOut event.
-TEST_F(StatusAreaWidgetFocusTest, FocusOutObserverUnified) {
+// TODO(crbug.com/934939): Failing on trybot.
+TEST_F(StatusAreaWidgetFocusTest, DISABLED_FocusOutObserverUnified) {
   // Set session state to LOCKED.
-  SessionController* session = Shell::Get()->session_controller();
+  SessionControllerImpl* session = Shell::Get()->session_controller();
   ASSERT_TRUE(session->IsActiveUserSessionStarted());
   TestSessionControllerClient* client = GetSessionControllerClient();
   client->SetSessionState(SessionState::LOCKED);
@@ -142,39 +144,42 @@ TEST_F(StatusAreaWidgetFocusTest, FocusOutObserverUnified) {
   ASSERT_TRUE(status->virtual_keyboard_tray_for_testing());
 
   // Default trays are visible.
-  ASSERT_FALSE(status->overview_button_tray()->visible());
-  ASSERT_TRUE(status->unified_system_tray()->visible());
-  ASSERT_FALSE(status->logout_button_tray_for_testing()->visible());
-  ASSERT_FALSE(status->ime_menu_tray()->visible());
-  ASSERT_FALSE(status->virtual_keyboard_tray_for_testing()->visible());
+  ASSERT_FALSE(status->overview_button_tray()->GetVisible());
+  ASSERT_TRUE(status->unified_system_tray()->GetVisible());
+  ASSERT_FALSE(status->logout_button_tray_for_testing()->GetVisible());
+  ASSERT_FALSE(status->ime_menu_tray()->GetVisible());
+  ASSERT_FALSE(status->virtual_keyboard_tray_for_testing()->GetVisible());
 
   // In Unified, we don't have notification tray, so ImeMenuTray is used for
   // tab testing.
   status->ime_menu_tray()->OnIMEMenuActivationChanged(true);
-  ASSERT_TRUE(status->ime_menu_tray()->visible());
+  ASSERT_TRUE(status->ime_menu_tray()->GetVisible());
 
-  // Set focus to status area widget, which will be be system tray.
+  // Set focus to status area widget. The first focused view will be the IME
+  // tray.
   ASSERT_TRUE(Shell::Get()->focus_cycler()->FocusWidget(status));
   views::FocusManager* focus_manager = status->GetFocusManager();
-  EXPECT_EQ(status->unified_system_tray(), focus_manager->GetFocusedView());
-
-  // A tab key event will move focus to notification tray.
-  GenerateTabEvent(false);
   EXPECT_EQ(status->ime_menu_tray(), focus_manager->GetFocusedView());
+
+  // A tab key event will move focus to the system tray.
+  GenerateTabEvent(false);
+  EXPECT_EQ(status->unified_system_tray(), focus_manager->GetFocusedView());
   EXPECT_EQ(0, test_observer_->focus_out_count());
   EXPECT_EQ(0, test_observer_->reverse_focus_out_count());
 
   // Another tab key event will send FocusOut event, since we are not handling
-  // this event, focus will still be moved to system tray.
+  // this event, focus will remain within the status widhet and will be
+  // moved to the IME tray.
   GenerateTabEvent(false);
-  EXPECT_EQ(status->unified_system_tray(), focus_manager->GetFocusedView());
+  EXPECT_EQ(status->ime_menu_tray(), focus_manager->GetFocusedView());
   EXPECT_EQ(1, test_observer_->focus_out_count());
   EXPECT_EQ(0, test_observer_->reverse_focus_out_count());
 
   // A reverse tab key event will send reverse FocusOut event, since we are not
-  // handling this event, focus will still be moved to notification tray.
+  // handling this event, focus will remain within the status widget and will
+  // be moved to the system tray.
   GenerateTabEvent(true);
-  EXPECT_EQ(status->ime_menu_tray(), focus_manager->GetFocusedView());
+  EXPECT_EQ(status->unified_system_tray(), focus_manager->GetFocusedView());
   EXPECT_EQ(1, test_observer_->focus_out_count());
   EXPECT_EQ(1, test_observer_->reverse_focus_out_count());
 }
@@ -212,7 +217,7 @@ class UnifiedStatusAreaWidgetTest : public AshTestBase {
 
   // AshTestBase:
   void SetUp() override {
-    chromeos::DBusThreadManager::Initialize();
+    chromeos::shill_clients::InitializeFakes();
     // Initializing NetworkHandler before ash is more like production.
     chromeos::NetworkHandler::Initialize();
     AshTestBase::SetUp();
@@ -227,7 +232,7 @@ class UnifiedStatusAreaWidgetTest : public AshTestBase {
     chromeos::NetworkHandler::Get()->ShutdownPrefServices();
     AshTestBase::TearDown();
     chromeos::NetworkHandler::Shutdown();
-    chromeos::DBusThreadManager::Shutdown();
+    chromeos::shill_clients::Shutdown();
   }
 
  private:
@@ -249,10 +254,7 @@ class StatusAreaWidgetVirtualKeyboardTest : public AshTestBase {
         keyboard::switches::kEnableVirtualKeyboard);
     AshTestBase::SetUp();
     ASSERT_TRUE(keyboard::IsKeyboardEnabled());
-
-    keyboard_controller()->LoadKeyboardWindowInBackground();
-    // Wait for the keyboard window to load.
-    base::RunLoop().RunUntilIdle();
+    keyboard::test::WaitUntilLoaded();
 
     // These tests only apply to the floating virtual keyboard, as it is the
     // only case where both the virtual keyboard and the shelf are visible.

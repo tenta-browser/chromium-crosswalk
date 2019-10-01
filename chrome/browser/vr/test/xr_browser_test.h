@@ -5,17 +5,21 @@
 #ifndef CHROME_BROWSER_VR_TEST_XR_BROWSER_TEST_H_
 #define CHROME_BROWSER_VR_TEST_XR_BROWSER_TEST_H_
 
+#include <unordered_set>
+
 #include "base/callback.h"
 #include "base/environment.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/time/time.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/vr/test/conditional_skipping.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
+#include "device/vr/test/test_hook.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "url/gurl.h"
 
@@ -48,16 +52,32 @@ class XrBrowserTestBase : public InProcessBrowserTest {
   static constexpr char kVrLogPathVal[] = "./";
   static constexpr char kTestFileDir[] =
       "chrome/test/data/xr/e2e_test_files/html/";
+  static constexpr char kSwitchIgnoreRuntimeRequirements[] =
+      "ignore-runtime-requirements";
+  static const std::vector<std::string> kRequiredTestSwitches;
+  static const std::vector<std::pair<std::string, std::string>>
+      kRequiredTestSwitchesWithValues;
   enum class TestStatus {
     STATUS_RUNNING = 0,
     STATUS_PASSED = 1,
     STATUS_FAILED = 2
   };
 
+  enum class RuntimeType {
+    RUNTIME_NONE = 0,
+    RUNTIME_OPENVR = 1,
+    RUNTIME_WMR = 2
+  };
+
   XrBrowserTestBase();
   ~XrBrowserTestBase() override;
 
   void SetUp() override;
+  void TearDown() override;
+
+  virtual RuntimeType GetRuntimeType() const;
+  device::XrAxisType GetPrimaryAxisType() const;
+  device::XrAxisType GetSecondaryAxisType() const;
 
   // Returns a GURL to the XR test HTML file of the given name, e.g.
   // GetHtmlTestFile("foo") returns a GURL for the foo.html file in the XR
@@ -72,16 +92,16 @@ class XrBrowserTestBase : public InProcessBrowserTest {
   // HTML files, initializing and starting the server if necessary.
   net::EmbeddedTestServer* GetEmbeddedServer();
 
-  // Convenience function for accessing the WebContents belonging to the first
+  // Convenience function for accessing the WebContents belonging to the current
   // tab open in the browser.
-  content::WebContents* GetFirstTabWebContents();
+  content::WebContents* GetCurrentWebContents();
 
   // Loads the given GURL and blocks until the JavaScript on the page has
   // signalled that pre-test initialization is complete.
   void LoadUrlAndAwaitInitialization(const GURL& url);
 
   // Convenience function for ensuring the given JavaScript runs successfully
-  // without having to always surround in EXPECT_TRUE.
+  // without having to always surround in ASSERT_TRUE.
   void RunJavaScriptOrFail(const std::string& js_expression,
                            content::WebContents* web_contents);
 
@@ -147,52 +167,65 @@ class XrBrowserTestBase : public InProcessBrowserTest {
   Browser* browser() { return InProcessBrowserTest::browser(); }
 
   // Convenience function for running RunJavaScriptOrFail with the return value
-  // of GetFirstTabWebContents.
+  // of GetCurrentWebContents.
   void RunJavaScriptOrFail(const std::string& js_expression);
 
   // Convenience function for running RunJavaScriptAndExtractBoolOrFail with the
-  // return value of GetFirstTabWebContents.
+  // return value of GetCurrentWebContents.
   bool RunJavaScriptAndExtractBoolOrFail(const std::string& js_expression);
 
   // Convenience function for running RunJavaScriptAndExtractStringOrFail with
-  // the return value of GetFirstTabWebContents.
+  // the return value of GetCurrentWebContents.
   std::string RunJavaScriptAndExtractStringOrFail(
       const std::string& js_expression);
 
   // Convenience function for running PollJavaScriptBoolean with the return
-  // value of GetFirstTabWebContents.
+  // value of GetCurrentWebContents.
   bool PollJavaScriptBoolean(const std::string& bool_expression,
                              const base::TimeDelta& timeout);
 
   // Convenience function for running PollJavaScriptBooleanOrFail with the
-  // return value of GetFirstTabWebContents.
+  // return value of GetCurrentWebContents.
   void PollJavaScriptBooleanOrFail(const std::string& bool_expression,
                                    const base::TimeDelta& timeout);
 
   // Convenience function for running WaitOnJavaScriptStep with the return value
-  // of GetFirstTabWebContents.
+  // of GetCurrentWebContents.
   void WaitOnJavaScriptStep();
 
   // Convenience function for running ExecuteStepAndWait with the return value
-  // of GetFirstTabWebContents.
+  // of GetCurrentWebContents.
   void ExecuteStepAndWait(const std::string& step_function);
 
   // Convenience function for running EndTest with the return value of
-  // GetFirstTabWebContents.
+  // GetCurrentWebContents.
   void EndTest();
 
   // Convenience function for running AssertNoJavaScriptErrors with the return
-  // value of GetFirstTabWebContents.
+  // value of GetCurrentWebContents.
   void AssertNoJavaScriptErrors();
+
+  // Returns the set of runtime requirements to ignore, i.e. if a requirement
+  // is in the vector, tests should not be skipped even if they don't meet the
+  // requirement.
+  std::unordered_set<std::string> GetIgnoredRuntimeRequirements() {
+    return ignored_requirements_;
+  }
 
  protected:
   std::unique_ptr<base::Environment> env_;
   std::vector<base::Feature> enable_features_;
+  std::vector<base::Feature> disable_features_;
   std::vector<std::string> append_switches_;
+  std::vector<XrTestRequirement> runtime_requirements_;
+  std::unordered_set<std::string> ignored_requirements_;
 
  private:
+  void LogJavaScriptFailure();
   std::unique_ptr<net::EmbeddedTestServer> server_;
   base::test::ScopedFeatureList scoped_feature_list_;
+  bool test_skipped_at_startup_ = false;
+  bool javascript_failed_ = false;
   DISALLOW_COPY_AND_ASSIGN(XrBrowserTestBase);
 };
 

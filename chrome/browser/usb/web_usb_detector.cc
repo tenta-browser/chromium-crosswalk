@@ -7,6 +7,7 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/feature_list.h"
 #include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
@@ -28,8 +29,8 @@
 #include "content/public/common/origin_util.h"
 #include "content/public/common/service_manager_connection.h"
 #include "device/base/features.h"
-#include "device/usb/public/mojom/device.mojom.h"
 #include "services/device/public/mojom/constants.mojom.h"
+#include "services/device/public/mojom/usb_device.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/page_transition_types.h"
@@ -144,7 +145,7 @@ class WebUsbNotificationDelegate : public TabStripModelObserver,
     if (tab_to_activate) {
       TabStripModel* tab_strip_model = browser->tab_strip_model();
       tab_strip_model->ActivateTabAt(
-          tab_strip_model->GetIndexOfWebContents(tab_to_activate), false);
+          tab_strip_model->GetIndexOfWebContents(tab_to_activate));
       browser->window()->Activate();
       return;
     }

@@ -102,13 +102,16 @@ void SyncConfirmationHandler::HandleUndo(const base::ListValue* args) {
 
 void SyncConfirmationHandler::HandleAccountImageRequest(
     const base::ListValue* args) {
-  AccountInfo account_info = identity_manager_->GetPrimaryAccountInfo();
+  base::Optional<AccountInfo> primary_account_info =
+      identity_manager_->FindExtendedAccountInfoForAccount(
+          identity_manager_->GetPrimaryAccountInfo());
 
   // Fire the "account-image-changed" listener from |SetUserImageURL()|.
   // Note: If the account info is not available yet in the
   // IdentityManager, i.e. account_info is empty, the listener will be
   // fired again through |OnAccountUpdated()|.
-  SetUserImageURL(account_info.picture_url);
+  if (primary_account_info)
+    SetUserImageURL(primary_account_info->picture_url);
 }
 
 void SyncConfirmationHandler::RecordConsent(const base::ListValue* args) {
@@ -174,16 +177,18 @@ void SyncConfirmationHandler::SetUserImageURL(const std::string& picture_url) {
     picture_url_to_load = profiles::GetPlaceholderAvatarIconUrl();
   }
   base::Value picture_url_value(picture_url_to_load);
-  web_ui()->CallJavascriptFunctionUnsafe("sync.confirmation.setUserImageURL",
-                                         picture_url_value);
 
+  AllowJavascript();
   if (unified_consent::IsUnifiedConsentFeatureEnabled()) {
-    AllowJavascript();
     FireWebUIListener("account-image-changed", picture_url_value);
+  } else {
+    CallJavascriptFunction("sync.confirmation.setUserImageURL",
+                           picture_url_value);
   }
 }
 
-void SyncConfirmationHandler::OnAccountUpdated(const AccountInfo& info) {
+void SyncConfirmationHandler::OnExtendedAccountInfoUpdated(
+    const AccountInfo& info) {
   if (!info.IsValid())
     return;
 
@@ -220,18 +225,20 @@ void SyncConfirmationHandler::HandleInitializedWithSize(
   if (!browser_)
     return;
 
-  if (!identity_manager_->HasPrimaryAccount()) {
+  base::Optional<AccountInfo> primary_account_info =
+      identity_manager_->FindExtendedAccountInfoForAccount(
+          identity_manager_->GetPrimaryAccountInfo());
+  if (!primary_account_info) {
     // No account is signed in, so there is nothing to be displayed in the sync
     // confirmation dialog.
     return;
   }
-  AccountInfo account_info = identity_manager_->GetPrimaryAccountInfo();
 
-  if (!account_info.IsValid()) {
+  if (!primary_account_info->IsValid()) {
     SetUserImageURL(kNoPictureURLFound);
     identity_manager_->AddObserver(this);
   } else {
-    SetUserImageURL(account_info.picture_url);
+    SetUserImageURL(primary_account_info->picture_url);
   }
 
   signin::SetInitializedModalHeight(browser_, web_ui(), args);

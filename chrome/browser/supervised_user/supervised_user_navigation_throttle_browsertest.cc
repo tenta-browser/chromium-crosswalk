@@ -58,7 +58,8 @@ class SupervisedUserNavigationThrottleTest
   void BlockHost(const std::string& host) {
     Profile* profile = browser()->profile();
     SupervisedUserSettingsService* settings_service =
-        SupervisedUserSettingsServiceFactory::GetForProfile(profile);
+        SupervisedUserSettingsServiceFactory::GetForKey(
+            profile->GetProfileKey());
     auto dict = std::make_unique<base::DictionaryValue>();
     dict->SetKey(host, base::Value(false));
     settings_service->SetLocalSetting(
@@ -120,9 +121,9 @@ void SupervisedUserNavigationThrottleTest::SetUpCommandLine(
 #endif
 }
 
-INSTANTIATE_TEST_CASE_P(,
-                        SupervisedUserNavigationThrottleTest,
-                        ::testing::Values(false, true));
+INSTANTIATE_TEST_SUITE_P(,
+                         SupervisedUserNavigationThrottleTest,
+                         ::testing::Values(false, true));
 
 // Tests that navigating to a blocked page simply fails if there is no
 // SupervisedUserNavigationObserver.
@@ -130,7 +131,7 @@ IN_PROC_BROWSER_TEST_P(SupervisedUserNavigationThrottleTest,
                        NoNavigationObserverBlock) {
   Profile* profile = browser()->profile();
   SupervisedUserSettingsService* supervised_user_settings_service =
-      SupervisedUserSettingsServiceFactory::GetForProfile(profile);
+      SupervisedUserSettingsServiceFactory::GetForKey(profile->GetProfileKey());
   supervised_user_settings_service->SetLocalSetting(
       supervised_users::kContentPackDefaultFilteringBehavior,
       std::unique_ptr<base::Value>(
@@ -198,9 +199,9 @@ class SupervisedUserNavigationThrottleNotSupervisedTest
   void SetUpCommandLine(base::CommandLine* command_line) override {}
 };
 
-INSTANTIATE_TEST_CASE_P(,
-                        SupervisedUserNavigationThrottleNotSupervisedTest,
-                        ::testing::Values(false, true));
+INSTANTIATE_TEST_SUITE_P(,
+                         SupervisedUserNavigationThrottleNotSupervisedTest,
+                         ::testing::Values(false, true));
 
 IN_PROC_BROWSER_TEST_P(SupervisedUserNavigationThrottleNotSupervisedTest,
                        DontBlock) {

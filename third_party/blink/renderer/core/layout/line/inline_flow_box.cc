@@ -181,7 +181,7 @@ void InlineFlowBox::AddToLine(InlineBox* child) {
         if (!child_flow_box->DescendantsHaveSameLineHeightAndBaseline() ||
             !HasIdenticalLineHeightProperties(parent_style, child_style,
                                               root) ||
-            child_style.HasBorder() || child_style.HasPadding() ||
+            child_style.HasBorder() || child_style.MayHavePadding() ||
             child_style.HasTextCombine()) {
           should_clear_descendants_have_same_line_height_and_baseline = true;
         }
@@ -1145,12 +1145,27 @@ inline void InlineFlowBox::AddReplacedChildLayoutOverflow(
 void InlineFlowBox::AddReplacedChildrenVisualOverflow(LayoutUnit line_top,
                                                       LayoutUnit line_bottom) {
   LayoutRect logical_visual_overflow =
-      VisualOverflowRect(line_top, line_bottom);
+      LogicalVisualOverflowRect(line_top, line_bottom);
   bool visual_overflow_may_have_changed = false;
   for (InlineBox* curr = FirstChild(); curr; curr = curr->NextOnLine()) {
     const LineLayoutItem& item = curr->GetLineLayoutItem();
-    if (item.IsOutOfFlowPositioned() || item.IsText() || item.IsLayoutInline())
+    if (item.IsOutOfFlowPositioned() || item.IsText())
       continue;
+
+    if (item.IsLayoutInline()) {
+      InlineFlowBox* flow = ToInlineFlowBox(curr);
+      flow->AddReplacedChildrenVisualOverflow(line_top, line_bottom);
+      // Propagate visual overflow only if it may be present.
+      if (!KnownToHaveNoOverflow()) {
+        if (!flow->BoxModelObject().HasSelfPaintingLayer()) {
+          logical_visual_overflow.Unite(
+              flow->LogicalVisualOverflowRect(line_top, line_bottom));
+          visual_overflow_may_have_changed = true;
+        }
+      }
+
+      continue;
+    }
 
     LineLayoutBox box = LineLayoutBox(curr->GetLineLayoutItem());
 
@@ -1685,7 +1700,7 @@ const char* InlineFlowBox::BoxName() const {
   return "InlineFlowBox";
 }
 
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
 
 void InlineFlowBox::DumpLineTreeAndMark(StringBuilder& string_builder,
                                         const InlineBox* marked_box1,

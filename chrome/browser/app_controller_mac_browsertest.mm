@@ -10,6 +10,7 @@
 #import <objc/runtime.h>
 #include <stddef.h>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/mac/foundation_util.h"
@@ -701,7 +702,8 @@ IN_PROC_BROWSER_TEST_F(AppControllerMainMenuBrowserTest,
   base::ScopedAllowBlockingForTesting allow_blocking;
   base::FilePath path2 = profile_manager->GenerateNextProfileDirectoryPath();
   Profile* profile2 =
-      Profile::CreateProfile(path2, NULL, Profile::CREATE_MODE_SYNCHRONOUS);
+      Profile::CreateProfile(path2, NULL, Profile::CREATE_MODE_SYNCHRONOUS)
+          .release();
   profile_manager->RegisterTestingProfile(profile2, false, true);
   bookmarks::test::WaitForBookmarkModelToLoad(
       BookmarkModelFactory::GetForBrowserContext(profile2));
@@ -831,7 +833,8 @@ IN_PROC_BROWSER_TEST_F(AppControllerHandoffBrowserTest, TestHandoffURLs) {
   EXPECT_EQ(g_handoff_url, test_url2);
 
   // Test that switching tabs updates the handoff URL.
-  browser()->tab_strip_model()->ActivateTabAt(0, true);
+  browser()->tab_strip_model()->ActivateTabAt(
+      0, {TabStripModel::GestureType::kOther});
   EXPECT_EQ(g_handoff_url, test_url1);
 
   // Test that closing the current tab updates the handoff URL.

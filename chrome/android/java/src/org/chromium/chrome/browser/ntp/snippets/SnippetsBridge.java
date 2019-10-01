@@ -84,14 +84,6 @@ public class SnippetsBridge implements SuggestionsSource {
         return nativeAreRemoteSuggestionsEnabled(mNativeSnippetsBridge);
     }
 
-    public static void setContentSuggestionsNotificationsEnabled(boolean enabled) {
-        nativeSetContentSuggestionsNotificationsEnabled(enabled);
-    }
-
-    public static boolean areContentSuggestionsNotificationsEnabled() {
-        return nativeAreContentSuggestionsNotificationsEnabled();
-    }
-
     @Override
     public void fetchRemoteSuggestions() {
         assert mNativeSnippetsBridge != 0;
@@ -207,18 +199,6 @@ public class SnippetsBridge implements SuggestionsSource {
     }
 
     @CalledByNative
-    private static void setAssetDownloadDataForSuggestion(
-            SnippetArticle suggestion, String downloadGuid, String filePath, String mimeType) {
-        suggestion.setAssetDownloadData(downloadGuid, filePath, mimeType);
-    }
-
-    @CalledByNative
-    private static void setOfflinePageDownloadDataForSuggestion(
-            SnippetArticle suggestion, long offlinePageId) {
-        suggestion.setOfflinePageDownloadData(offlinePageId);
-    }
-
-    @CalledByNative
     private static SuggestionsCategoryInfo createSuggestionsCategoryInfo(int category, String title,
             @ContentSuggestionsCardLayout int cardLayout,
             @ContentSuggestionsAdditionalAction int additionalAction, boolean showIfEmpty,
@@ -262,8 +242,6 @@ public class SnippetsBridge implements SuggestionsSource {
     private static native void nativeRemoteSuggestionsSchedulerOnPersistentSchedulerWakeUp();
     private static native void nativeRemoteSuggestionsSchedulerOnBrowserUpgraded();
     private native boolean nativeAreRemoteSuggestionsEnabled(long nativeNTPSnippetsBridge);
-    private static native void nativeSetContentSuggestionsNotificationsEnabled(boolean enabled);
-    private static native boolean nativeAreContentSuggestionsNotificationsEnabled();
     private native int[] nativeGetCategories(long nativeNTPSnippetsBridge);
     private native int nativeGetCategoryStatus(long nativeNTPSnippetsBridge, int category);
     private native SuggestionsCategoryInfo nativeGetCategoryInfo(

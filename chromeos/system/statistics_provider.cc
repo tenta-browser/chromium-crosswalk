@@ -32,10 +32,10 @@
 #include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
 #include "base/values.h"
-#include "chromeos/app_mode/kiosk_oem_manifest_parser.h"
 #include "chromeos/constants/chromeos_constants.h"
 #include "chromeos/constants/chromeos_paths.h"
 #include "chromeos/constants/chromeos_switches.h"
+#include "chromeos/system/kiosk_oem_manifest_parser.h"
 #include "chromeos/system/name_value_pairs_parser.h"
 
 namespace chromeos {
@@ -187,6 +187,8 @@ const char kCustomizationIdKey[] = "customization_id";
 const char kDevSwitchBootKey[] = "devsw_boot";
 const char kDevSwitchBootValueDev[] = "1";
 const char kDevSwitchBootValueVerified[] = "0";
+const char kDockMacAddressKey[] = "dock_mac";
+const char kEthernetMacAddressKey[] = "ethernet_mac0";
 const char kFirmwareWriteProtectBootKey[] = "wpsw_boot";
 const char kFirmwareWriteProtectBootValueOn[] = "1";
 const char kFirmwareWriteProtectBootValueOff[] = "0";
@@ -198,6 +200,7 @@ const char kHardwareClassKey[] = "hardware_class";
 const char kIsVmKey[] = "is_vm";
 const char kIsVmValueFalse[] = "0";
 const char kIsVmValueTrue[] = "1";
+const char kManufactureDateKey[] = "mfg_date";
 const char kOffersCouponCodeKey[] = "ubind_attribute";
 const char kOffersGroupCodeKey[] = "gbind_attribute";
 const char kRlzBrandCodeKey[] = "rlz_brand_code";
@@ -543,7 +546,7 @@ void StatisticsProviderImpl::LoadMachineStatistics(bool load_oem_manifest) {
     // testing).
     std::string stub_contents =
         "\"serial_number\"=\"stub_" +
-        base::Int64ToString(base::Time::Now().ToJavaTime()) + "\"\n";
+        base::NumberToString(base::Time::Now().ToJavaTime()) + "\"\n";
     int bytes_written = base::WriteFile(
         machine_info_path, stub_contents.c_str(), stub_contents.size());
     if (bytes_written < static_cast<int>(stub_contents.size())) {

@@ -15,6 +15,7 @@
 #include "base/strings/string16.h"
 #include "chrome/browser/custom_handlers/protocol_handler_registry.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/send_tab_to_self/send_tab_to_self_sub_menu_model.h"
 #include "components/renderer_context_menu/context_menu_content_type.h"
 #include "components/renderer_context_menu/render_view_context_menu_base.h"
 #include "components/renderer_context_menu/render_view_context_menu_observer.h"
@@ -68,9 +69,11 @@ class RenderViewContextMenu : public RenderViewContextMenuBase {
   static void AddSpellCheckServiceItem(ui::SimpleMenuModel* menu,
                                        bool is_checked);
 
-  // Adds the accessibility labels service item to the context menu.
-  static void AddAccessibilityLabelsServiceItem(ui::SimpleMenuModel* menu,
-                                                bool is_checked);
+  // Range of command IDs to use for the items in the send tab to self submenu.
+  static const int kMinSendTabToSelfSubMenuCommandId =
+      send_tab_to_self::SendTabToSelfSubMenuModel::kMinCommandId;
+  static const int kMaxSendTabToSelfSubMenuCommandId =
+      send_tab_to_self::SendTabToSelfSubMenuModel::kMaxCommandId;
 
   // RenderViewContextMenuBase:
   bool IsCommandIdChecked(int command_id) const override;
@@ -172,7 +175,9 @@ class RenderViewContextMenu : public RenderViewContextMenuBase {
   void AppendEditableItems();
   void AppendLanguageSettings();
   void AppendSpellingSuggestionItems();
-  void AppendAccessibilityLabelsItems();
+  // Returns true if the items were appended. This might not happen in all
+  // cases, e.g. these are only appended if a screen reader is enabled.
+  bool AppendAccessibilityLabelsItems();
   void AppendSearchProvider();
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   void AppendAllExtensionItems();
@@ -211,7 +216,7 @@ class RenderViewContextMenu : public RenderViewContextMenuBase {
   void ExecCopyLinkText();
   void ExecCopyImageAt();
   void ExecSearchWebForImage();
-  void ExecLoadOriginalImage();
+  void ExecLoadImage();
   void ExecPlayPause();
   void ExecMute();
   void ExecLoop();
@@ -247,12 +252,13 @@ class RenderViewContextMenu : public RenderViewContextMenuBase {
   ProtocolHandlerRegistry* protocol_handler_registry_;
 
   // An observer that handles spelling suggestions, "Add to dictionary", and
-  // "Ask Google for suggestions" items.
+  // "Use enhanced spell check" items.
   std::unique_ptr<SpellingMenuObserver> spelling_suggestions_menu_observer_;
 
   // An observer that handles accessibility labels items.
   std::unique_ptr<AccessibilityLabelsMenuObserver>
       accessibility_labels_menu_observer_;
+  ui::SimpleMenuModel accessibility_labels_submenu_model_;
 
 #if !defined(OS_MACOSX)
   // An observer that handles the submenu for showing spelling options. This
@@ -278,6 +284,10 @@ class RenderViewContextMenu : public RenderViewContextMenuBase {
   // embeds the MimeHandlerViewGuest. Otherwise this will be the same as
   // |source_web_contents_|.
   content::WebContents* const embedder_web_contents_;
+
+  // Send tab to self submenu.
+  std::unique_ptr<send_tab_to_self::SendTabToSelfSubMenuModel>
+      send_tab_to_self_sub_menu_model_;
 
   DISALLOW_COPY_AND_ASSIGN(RenderViewContextMenu);
 };

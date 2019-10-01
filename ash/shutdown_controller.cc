@@ -6,15 +6,14 @@
 
 #include <utility>
 
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "ash/shutdown_reason.h"
 #include "ash/wm/lock_state_controller.h"
 #include "base/metrics/user_metrics.h"
 #include "base/strings/stringprintf.h"
 #include "base/system/sys_info.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/power_manager_client.h"
+#include "chromeos/dbus/power/power_manager_client.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
 namespace ash {
@@ -42,14 +41,13 @@ void ShutdownController::ShutDownOrReboot(ShutdownReason reason) {
     base::RecordAction(base::UserMetricsAction("Accel_ShutDown_PowerButton"));
 
   // On real Chrome OS hardware the power manager handles shutdown.
-  using chromeos::DBusThreadManager;
   std::string description = base::StringPrintf("UI request from ash: %s",
                                                ShutdownReasonToString(reason));
   if (reboot_on_shutdown_) {
-    DBusThreadManager::Get()->GetPowerManagerClient()->RequestRestart(
+    chromeos::PowerManagerClient::Get()->RequestRestart(
         power_manager::REQUEST_RESTART_FOR_USER, description);
   } else {
-    DBusThreadManager::Get()->GetPowerManagerClient()->RequestShutdown(
+    chromeos::PowerManagerClient::Get()->RequestShutdown(
         power_manager::REQUEST_SHUTDOWN_FOR_USER, description);
   }
 }

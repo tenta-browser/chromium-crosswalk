@@ -7,6 +7,7 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "components/cast_channel/cast_channel_enum.h"
 #include "components/cast_channel/cast_socket.h"
 #include "components/cast_channel/logger.h"
@@ -92,8 +93,8 @@ void KeepAliveDelegate::SendKeepAliveMessage(const CastMessage& message,
   DVLOG(2) << "Sending " << ToString(message_type);
 
   socket_->transport()->SendMessage(
-      message, base::Bind(&KeepAliveDelegate::SendKeepAliveMessageComplete,
-                          weak_factory_.GetWeakPtr(), message_type));
+      message, base::BindOnce(&KeepAliveDelegate::SendKeepAliveMessageComplete,
+                              weak_factory_.GetWeakPtr(), message_type));
 }
 
 void KeepAliveDelegate::SendKeepAliveMessageComplete(

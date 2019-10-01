@@ -96,11 +96,15 @@ suite('cr-radio-group', () => {
     // Check for decrement.
     checkPressed(['Home', 'PageUp', 'ArrowUp', 'ArrowLeft'], 2, 1);
     // No change when reached first selected.
-    checkPressed(['Home', 'PageUp', 'ArrowUp', 'ArrowLeft'], 1, 1);
+    checkPressed(['Home'], 1, 1);
+    // Wraps when decrementing when first selected.
+    checkPressed(['PageUp', 'ArrowUp', 'ArrowLeft'], 1, 3);
     // Check for increment.
     checkPressed(['End', 'ArrowRight', 'PageDown', 'ArrowDown'], 2, 3);
     // No change when reached last selected.
-    checkPressed(['End', 'ArrowRight', 'PageDown', 'ArrowDown'], 3, 3);
+    checkPressed(['End'], 3, 3);
+    // Wraps when incrementing when last selected.
+    checkPressed(['ArrowRight', 'PageDown', 'ArrowDown'], 3, 1);
   });
 
   test('mouse event', () => {
@@ -134,6 +138,31 @@ suite('cr-radio-group', () => {
     noneSelectedOneFocusable(1);
     firstRadio.disabled = true;
     noneSelectedOneFocusable(2);
+  });
+
+  test('when group is disabled, button aria-disabled is updated', () => {
+    assertEquals('false', radioGroup.getAttribute('aria-disabled'));
+    assertFalse(radioGroup.disabled);
+    checkLength(3, '[aria-disabled="false"]');
+    radioGroup.disabled = true;
+    assertEquals('true', radioGroup.getAttribute('aria-disabled'));
+    checkLength(3, '[aria-disabled="true"]');
+    radioGroup.disabled = false;
+    assertEquals('false', radioGroup.getAttribute('aria-disabled'));
+    checkLength(3, '[aria-disabled="false"]');
+
+    // Check that if a button already disabled, it will remain disabled after
+    // group is re-enabled.
+    const firstRadio = radioGroup.querySelector('[name="1"]');
+    firstRadio.disabled = true;
+    checkLength(2, '[aria-disabled="false"]');
+    checkLength(1, '[aria-disabled="true"][disabled][name="1"]');
+    radioGroup.disabled = true;
+    checkLength(3, '[aria-disabled="true"]');
+    checkLength(1, '[aria-disabled="true"][disabled][name="1"]');
+    radioGroup.disabled = false;
+    checkLength(2, '[aria-disabled="false"]');
+    checkLength(1, '[aria-disabled="true"][disabled][name="1"]');
   });
 
   test('radios name change updates selection and tabindex', () => {

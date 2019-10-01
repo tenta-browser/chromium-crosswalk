@@ -34,11 +34,9 @@
 #include "chrome/browser/io_thread.h"
 #include "chrome/browser/net/chrome_network_delegate.h"
 #include "chrome/browser/net/chrome_url_request_context_getter.h"
-#include "chrome/browser/net/failing_url_request_interceptor.h"
 #include "chrome/browser/net/profile_network_context_service.h"
 #include "chrome/browser/net/profile_network_context_service_factory.h"
 #include "chrome/browser/policy/cloud/policy_header_service_factory.h"
-#include "chrome/browser/policy/policy_helpers.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/signin/account_consistency_mode_manager.h"
@@ -49,7 +47,6 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "components/about_handler/about_protocol_handler.h"
-#include "components/certificate_transparency/tree_state_tracker.h"
 #include "components/content_settings/core/browser/content_settings_provider.h"
 #include "components/content_settings/core/browser/cookie_settings.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
@@ -82,6 +79,7 @@
 #include "net/cert/ct_policy_enforcer.h"
 #include "net/cert/multi_log_ct_verifier.h"
 #include "net/cert/multi_threaded_cert_verifier.h"
+#include "net/cert_net/cert_net_fetcher_impl.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_store.h"
 #include "net/http/http_network_session.h"
@@ -90,7 +88,6 @@
 #include "net/http/transport_security_persister.h"
 #include "net/net_buildflags.h"
 #include "net/nqe/network_quality_estimator.h"
-#include "net/ssl/channel_id_service.h"
 #include "net/ssl/client_cert_store.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/data_protocol_handler.h"
@@ -136,7 +133,7 @@
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/net/nss_context.h"
 #include "chromeos/constants/chromeos_switches.h"
-#include "chromeos/dbus/cryptohome_client.h"
+#include "chromeos/dbus/cryptohome/cryptohome_client.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/settings/cros_settings_names.h"
 #include "chromeos/tpm/tpm_token_info_getter.h"
@@ -161,9 +158,9 @@
 #include "net/ssl/client_cert_store_mac.h"
 #endif  // defined(OS_MACOSX)
 
-#if (defined(OS_LINUX) && !defined(OS_CHROMEOS)) || defined(OS_MACOSX)
-#include "chrome/browser/net/trial_comparison_cert_verifier.h"
+#if BUILDFLAG(TRIAL_COMPARISON_CERT_VERIFIER_SUPPORTED)
 #include "net/cert/cert_verify_proc_builtin.h"
+#include "services/network/trial_comparison_cert_verifier_mojo.h"
 #endif
 
 using content::BrowserContext;
@@ -246,9 +243,10 @@ void DidGetTPMInfoForUserOnUIThread(
   if (token_info.has_value() && token_info->slot != -1) {
     DVLOG(1) << "Got TPM slot for " << username_hash << ": "
              << token_info->slot;
-    base::PostTaskWithTraits(FROM_HERE, {BrowserThread::IO},
-                             base::Bind(&crypto::InitializeTPMForChromeOSUser,
-                                        username_hash, token_info->slot));
+    base::PostTaskWithTraits(
+        FROM_HERE, {BrowserThread::IO},
+        base::BindOnce(&crypto::InitializeTPMForChromeOSUser, username_hash,
+                       token_info->slot));
   } else {
     NOTREACHED() << "TPMTokenInfoGetter reported invalid token.";
   }
@@ -261,7 +259,7 @@ void GetTPMInfoForUserOnUIThread(const AccountId& account_id,
            << " " << account_id.Serialize() << " " << username_hash;
   std::unique_ptr<chromeos::TPMTokenInfoGetter> scoped_token_info_getter =
       chromeos::TPMTokenInfoGetter::CreateForUserToken(
-          account_id, chromeos::DBusThreadManager::Get()->GetCryptohomeClient(),
+          account_id, chromeos::CryptohomeClient::Get(),
           base::ThreadTaskRunnerHandle::Get());
   chromeos::TPMTokenInfoGetter* token_info_getter =
       scoped_token_info_getter.get();
@@ -281,7 +279,7 @@ void StartTPMSlotInitializationOnIOThread(const AccountId& account_id,
 
   base::PostTaskWithTraits(
       FROM_HERE, {BrowserThread::UI},
-      base::Bind(&GetTPMInfoForUserOnUIThread, account_id, username_hash));
+      base::BindOnce(&GetTPMInfoForUserOnUIThread, account_id, username_hash));
 }
 
 void StartNSSInitOnIOThread(const AccountId& account_id,
@@ -403,8 +401,8 @@ void ProfileIOData::InitializeOnUIThread(Profile* profile) {
       DCHECK(!params->username_hash.empty());
       base::PostTaskWithTraits(
           FROM_HERE, {BrowserThread::IO},
-          base::Bind(&StartNSSInitOnIOThread, user->GetAccountId(),
-                     user->username_hash(), profile->GetPath()));
+          base::BindOnce(&StartNSSInitOnIOThread, user->GetAccountId(),
+                         user->username_hash(), profile->GetPath()));
 
       // Use the device-wide system key slot only if the user is affiliated on
       // the device.
@@ -436,6 +434,10 @@ void ProfileIOData::InitializeOnUIThread(Profile* profile) {
   allowed_domains_for_apps_.Init(prefs::kAllowedDomainsForApps, pref_service);
   allowed_domains_for_apps_.MoveToThread(
       base::CreateSingleThreadTaskRunnerWithTraits({BrowserThread::IO}));
+  signed_exchange_enabled_.Init(prefs::kSignedHTTPExchangeEnabled,
+                                pref_service);
+  signed_exchange_enabled_.MoveToThread(
+      base::CreateSingleThreadTaskRunnerWithTraits({BrowserThread::IO}));
 
   scoped_refptr<base::SingleThreadTaskRunner> io_task_runner =
       base::CreateSingleThreadTaskRunnerWithTraits({BrowserThread::IO});
@@ -451,8 +453,6 @@ void ProfileIOData::InitializeOnUIThread(Profile* profile) {
     sync_first_setup_complete_.Init(syncer::prefs::kSyncFirstSetupComplete,
                                     pref_service);
     sync_first_setup_complete_.MoveToThread(io_task_runner);
-    sync_has_auth_error_.Init(syncer::prefs::kSyncHasAuthError, pref_service);
-    sync_has_auth_error_.MoveToThread(io_task_runner);
   }
 
 #if !defined(OS_CHROMEOS)
@@ -521,12 +521,6 @@ void ProfileIOData::AppRequestContext::SetCookieStore(
   set_cookie_store(cookie_store_.get());
 }
 
-void ProfileIOData::AppRequestContext::SetChannelIDService(
-    std::unique_ptr<net::ChannelIDService> channel_id_service) {
-  channel_id_service_ = std::move(channel_id_service);
-  set_channel_id_service(channel_id_service_.get());
-}
-
 void ProfileIOData::AppRequestContext::SetHttpNetworkSession(
     std::unique_ptr<net::HttpNetworkSession> http_network_session) {
   http_network_session_ = std::move(http_network_session);
@@ -568,6 +562,9 @@ ProfileIOData::ProfileIOData(Profile::ProfileType profile_type)
 ProfileIOData::~ProfileIOData() {
   if (BrowserThread::IsThreadInitialized(BrowserThread::IO))
     DCHECK_CURRENTLY_ON(BrowserThread::IO);
+
+  if (cert_net_fetcher_)
+    cert_net_fetcher_->Shutdown();
 
   // Pull the contents of the request context maps onto the stack for sanity
   // checking of values in a minidump. http://crbug.com/260425
@@ -819,10 +816,6 @@ bool ProfileIOData::IsSyncEnabled() const {
          !sync_suppress_start_.GetValue();
 }
 
-bool ProfileIOData::SyncHasAuthError() const {
-  return sync_has_auth_error_.GetValue();
-}
-
 #if !defined(OS_CHROMEOS)
 std::string ProfileIOData::GetSigninScopedDeviceId() const {
   return signin_scoped_device_id_.GetValue();
@@ -965,6 +958,10 @@ void ProfileIOData::Init(
       builder->SetCertVerifier(
           std::make_unique<WrappedCertVerifierForProfileIODataTesting>());
     } else {
+#if defined(OS_ANDROID) || defined(OS_FUCHSIA) || \
+    BUILDFLAG(TRIAL_COMPARISON_CERT_VERIFIER_SUPPORTED)
+      cert_net_fetcher_ = base::MakeRefCounted<net::CertNetFetcherImpl>();
+#endif
       std::unique_ptr<net::CertVerifier> cert_verifier;
 #if defined(OS_CHROMEOS)
       crypto::ScopedPK11Slot public_slot =
@@ -982,16 +979,24 @@ void ProfileIOData::Init(
             std::make_unique<net::MultiThreadedCertVerifier>(
                 verify_proc.get()));
       }
-#elif defined(OS_LINUX) || defined(OS_MACOSX)
-      cert_verifier = std::make_unique<net::CachingCertVerifier>(
-          std::make_unique<TrialComparisonCertVerifier>(
-              profile_params_->profile, net::CertVerifyProc::CreateDefault(),
-              net::CreateCertVerifyProcBuiltin()));
-#else
-      cert_verifier = std::make_unique<net::CachingCertVerifier>(
-          std::make_unique<net::MultiThreadedCertVerifier>(
-              net::CertVerifyProc::CreateDefault()));
+#elif BUILDFLAG(TRIAL_COMPARISON_CERT_VERIFIER_SUPPORTED)
+      auto& trial_params = profile_params_->main_network_context_params
+                               ->trial_comparison_cert_verifier_params;
+      if (trial_params) {
+        cert_verifier = std::make_unique<net::CachingCertVerifier>(
+            std::make_unique<network::TrialComparisonCertVerifierMojo>(
+                trial_params->initial_allowed,
+                std::move(trial_params->config_client_request),
+                std::move(trial_params->report_client),
+                net::CertVerifyProc::CreateDefault(cert_net_fetcher_),
+                net::CreateCertVerifyProcBuiltin(cert_net_fetcher_)));
+      }
 #endif
+      if (!cert_verifier) {
+        cert_verifier = std::make_unique<net::CachingCertVerifier>(
+            std::make_unique<net::MultiThreadedCertVerifier>(
+                net::CertVerifyProc::CreateDefault(cert_net_fetcher_)));
+      }
       const base::CommandLine& command_line =
           *base::CommandLine::ForCurrentProcess();
       cert_verifier = network::IgnoreErrorsCertVerifier::MaybeWrapCertVerifier(
@@ -1021,6 +1026,9 @@ void ProfileIOData::Init(
             std::move(profile_params_->main_network_context_request),
             std::move(profile_params_->main_network_context_params),
             std::move(builder), &main_request_context_);
+
+    if (cert_net_fetcher_)
+      cert_net_fetcher_->SetURLRequestContext(main_request_context_);
   }
 
   OnMainRequestContextCreated(profile_params_.get());
@@ -1139,6 +1147,10 @@ void ProfileIOData::SetUpJobFactoryDefaultsForBuilder(
       url::kAboutScheme,
       std::make_unique<about_handler::AboutProtocolHandler>());
 
+  // File support is needed for PAC scripts that use file URLs.
+  // TODO(crbug.com/839566): remove file support for all cases.
+  builder->set_file_enabled(true);
+
   builder->SetInterceptors(std::move(request_interceptors));
 
   if (protocol_handler_interceptor) {
@@ -1154,7 +1166,6 @@ void ProfileIOData::ShutdownOnUIThread(
   google_services_user_account_id_.Destroy();
   sync_suppress_start_.Destroy();
   sync_first_setup_complete_.Destroy();
-  sync_has_auth_error_.Destroy();
 #if !defined(OS_CHROMEOS)
   signin_scoped_device_id_.Destroy();
 #endif
@@ -1165,6 +1176,7 @@ void ProfileIOData::ShutdownOnUIThread(
   safe_browsing_whitelist_domains_.Destroy();
   network_prediction_options_.Destroy();
   incognito_availibility_pref_.Destroy();
+  signed_exchange_enabled_.Destroy();
 #if BUILDFLAG(ENABLE_PLUGINS)
   always_open_pdf_externally_.Destroy();
 #endif

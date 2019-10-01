@@ -34,6 +34,7 @@ import org.chromium.chrome.R;
 import org.chromium.chrome.browser.consent_auditor.ConsentAuditorFeature;
 import org.chromium.chrome.browser.externalauth.UserRecoverableErrorHandler;
 import org.chromium.chrome.browser.preferences.PrefServiceBridge;
+import org.chromium.chrome.browser.sync.SyncUserDataWiper;
 import org.chromium.components.signin.AccountIdProvider;
 import org.chromium.components.signin.AccountManagerDelegateException;
 import org.chromium.components.signin.AccountManagerFacade;
@@ -50,7 +51,6 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 
 /**
  * This fragment implements sign-in screen with account picker and descriptions of signin-related
@@ -321,14 +321,13 @@ public abstract class SigninFragmentBase
     }
 
     private void updateSigninDetailsDescription(boolean addSettingsLink) {
-        final @StringRes int description = mChildAccountStatus == ChildAccountStatus.REGULAR_CHILD
-                ? R.string.signin_details_description_child_account
-                : R.string.signin_details_description;
-        final @Nullable Object settingsLinkSpan =
-                addSettingsLink ? new NoUnderlineClickableSpan(this::onSettingsLinkClicked) : null;
+        final @Nullable Object settingsLinkSpan = addSettingsLink
+                ? new NoUnderlineClickableSpan(getResources(), this::onSettingsLinkClicked)
+                : null;
         final SpanApplier.SpanInfo spanInfo =
                 new SpanApplier.SpanInfo(SETTINGS_LINK_OPEN, SETTINGS_LINK_CLOSE, settingsLinkSpan);
-        mConsentTextTracker.setText(mView.getDetailsDescriptionView(), description,
+        mConsentTextTracker.setText(mView.getDetailsDescriptionView(),
+                R.string.signin_details_description,
                 input -> SpanApplier.applySpans(input.toString(), spanInfo));
     }
 
@@ -342,16 +341,6 @@ public abstract class SigninFragmentBase
                 ? R.string.signin_sync_description_child_account
                 : R.string.signin_sync_description;
         mConsentTextTracker.setText(mView.getSyncDescriptionView(), syncDescription);
-
-        mConsentTextTracker.setText(
-                mView.getTapToSearchTitleView(), R.string.signin_tap_to_search_title);
-        mConsentTextTracker.setText(
-                mView.getTapToSearchDescriptionView(), R.string.signin_tap_to_search_description);
-
-        mConsentTextTracker.setText(
-                mView.getSafeBrowsingTitleView(), R.string.signin_safe_browsing_title);
-        mConsentTextTracker.setText(
-                mView.getSafeBrowsingDescriptionView(), R.string.signin_safe_browsing_description);
 
         mConsentTextTracker.setText(mView.getRefuseButton(), getNegativeButtonTextId());
         mConsentTextTracker.setText(mView.getMoreButton(), R.string.more);
@@ -448,9 +437,6 @@ public abstract class SigninFragmentBase
                         if (mDestroyed) return;
                         runStateMachineAndSignin(settingsClicked);
                     }
-
-                    @Override
-                    public void onSystemAccountsChanged() {}
                 };
         accountTrackerService.addSystemAccountsSeededListener(listener);
     }
@@ -467,7 +453,7 @@ public abstract class SigninFragmentBase
 
                         // Don't start sign-in if this fragment has been destroyed.
                         if (mDestroyed) return;
-                        SigninManager.wipeSyncUserDataIfRequired(wipeData).then((Void v) -> {
+                        SyncUserDataWiper.wipeSyncUserDataIfRequired(wipeData).then((Void v) -> {
                             onSigninAccepted(mSelectedAccountName, mIsDefaultAccountSelected,
                                     settingsClicked, () -> mIsSigninInProgress = false);
                         });
@@ -483,7 +469,7 @@ public abstract class SigninFragmentBase
 
     private static void recordAccountTrackerServiceSeedingTime(long seedingStartTime) {
         RecordHistogram.recordTimesHistogram("Signin.AndroidAccountSigninViewSeedingTime",
-                SystemClock.elapsedRealtime() - seedingStartTime, TimeUnit.MILLISECONDS);
+                SystemClock.elapsedRealtime() - seedingStartTime);
     }
 
     /**
@@ -713,7 +699,6 @@ public abstract class SigninFragmentBase
         mGmsIsUpdatingDialog.dismiss();
         mGmsIsUpdatingDialog = null;
         RecordHistogram.recordTimesHistogram("Signin.AndroidGmsUpdatingDialogShownTime",
-                SystemClock.elapsedRealtime() - mGmsIsUpdatingDialogShowTime,
-                TimeUnit.MILLISECONDS);
+                SystemClock.elapsedRealtime() - mGmsIsUpdatingDialogShowTime);
     }
 }

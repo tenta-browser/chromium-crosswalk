@@ -50,13 +50,10 @@ struct XRRuntimeSessionOptions {
   int32 render_process_id;
   int32 render_frame_id;
 
-  // A flag to indicate if there has been a user activation when the request
-  // session is made.
-  bool has_user_activation;
-
-  // This flag ensures that render path's that are only supported in WebXR are
-  // not used for WebVR 1.1.
-  bool use_legacy_webvr_render_path;
+  // This flag ensures that render paths that are only supported in WebXR are
+  // not used for WebVR 1.1. It is also used for metrics to distinguish between
+  // WebVR and WebXR APIs.
+  bool is_legacy_webvr;
 };
 
 // An XRRuntime may live in the browser process or a utility process.  The
@@ -168,6 +165,15 @@ interface ImmersiveOverlay {
 
   // Allows the browser to hide WebXR content or overlays temporarily.
   SetOverlayAndWebXRVisibility(bool overlay_visible, bool webxr_visible);
+
+  // The browser may request to be notified the browser that the current page
+  // has submitted a frame.  This call returns when the current page submits a
+  // frame.
+  // If the current page's WebXR session is not visible because the browser has
+  // made its own UI visible, the page may receive one frame's worth of pose
+  // data to unblock rendering.  This allows frame-timeout UI to show while
+  // still allowing a timed-out page to recover and start submitting frames.
+  RequestNotificationOnWebXrSubmitted() => ();
 };
 
 // XRCompositorHost lives in the XRRuntime process, and allows the browser to

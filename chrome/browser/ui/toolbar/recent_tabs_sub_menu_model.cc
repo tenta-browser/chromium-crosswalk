@@ -17,16 +17,18 @@
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
+#include "chrome/browser/favicon/favicon_utils.h"
+#include "chrome/browser/favicon/large_icon_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search/search.h"
 #include "chrome/browser/sessions/session_restore.h"
 #include "chrome/browser/sessions/tab_restore_service_factory.h"
+#include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/browser/sync/session_sync_service_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_live_tab_context.h"
-#include "chrome/browser/ui/in_product_help/reopen_tab_in_product_help.h"
-#include "chrome/browser/ui/in_product_help/reopen_tab_in_product_help_factory.h"
+#include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/toolbar/app_menu_model.h"
 #include "chrome/grit/generated_resources.h"
@@ -35,6 +37,7 @@
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/sessions/core/tab_restore_service.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/sync/driver/sync_service_utils.h"
 #include "components/sync_sessions/open_tabs_ui_delegate.h"
 #include "components/sync_sessions/session_sync_service.h"
 #include "components/sync_sessions/synced_session.h"
@@ -43,6 +46,7 @@
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/paint_vector_icon.h"
+#include "ui/native_theme/native_theme.h"
 #include "ui/resources/grit/ui_resources.h"
 
 namespace {
@@ -123,7 +127,36 @@ int CommandIdToWindowVectorIndex(int command_id) {
 }
 
 gfx::Image CreateFavicon(const gfx::VectorIcon& icon) {
-  return gfx::Image(gfx::CreateVectorIcon(icon, 16, gfx::kChromeIconGrey));
+  ui::NativeTheme* native_theme = ui::NativeTheme::GetInstanceForNativeUi();
+  return gfx::Image(
+      gfx::CreateVectorIcon(icon, 16,
+                            native_theme->GetSystemColor(
+                                ui::NativeTheme::kColorId_DefaultIconColor)));
+}
+
+scoped_refptr<base::RefCountedMemory> RecentTabsGetSyncedFaviconForPageURL(
+    sync_sessions::SessionSyncService* session_sync_service,
+    const GURL& page_url) {
+  DCHECK(session_sync_service);
+  sync_sessions::OpenTabsUIDelegate* open_tabs =
+      session_sync_service->GetOpenTabsUIDelegate();
+  return open_tabs ? open_tabs->GetSyncedFaviconForPageURL(page_url.spec())
+                   : nullptr;
+}
+
+// Check if user settings allow querying a Google server using history
+// information.
+bool CanSendHistoryDataToServer(bool is_local_tab, Browser* browser) {
+  // If |is_local_tab|, the local lookup done inside |favicon_request_handler_|
+  // will usually succeed. However, it will fail if the website has no favicon,
+  // and we shouldn't share the url with the favicon server in such case, for
+  // privacy. So we don't allow server queries for any local tabs.
+  return !is_local_tab &&
+         syncer::GetUploadToGoogleState(
+             ProfileSyncServiceFactory::GetInstance()->GetForProfile(
+                 browser->profile()),
+             syncer::ModelType::HISTORY_DELETE_DIRECTIVES) ==
+             syncer::UploadState::ACTIVE;
 }
 
 }  // namespace
@@ -168,10 +201,7 @@ RecentTabsSubMenuModel::RecentTabsSubMenuModel(
       browser_(browser),
       session_sync_service_(
           SessionSyncServiceFactory::GetInstance()->GetForProfile(
-              browser->profile())),
-      default_favicon_(
-          ui::ResourceBundle::GetSharedInstance().GetNativeImageNamed(
-              IDR_DEFAULT_FAVICON)) {
+              browser->profile())) {
   // Invoke asynchronous call to load tabs from local last session, which does
   // nothing if the tabs have already been loaded or they shouldn't be loaded.
   // TabRestoreServiceChanged() will be called after the tabs are loaded.
@@ -312,11 +342,7 @@ void RecentTabsSubMenuModel::ExecuteCommand(int command_id, int event_flags) {
     }
   }
 
-#if BUILDFLAG(ENABLE_DESKTOP_IN_PRODUCT_HELP)
-  auto* reopen_tab_iph =
-      ReopenTabInProductHelpFactory::GetForProfile(browser_->profile());
-  reopen_tab_iph->TabReopened();
-#endif
+  browser_->window()->OnTabRestored(command_id);
 
   UMA_HISTOGRAM_MEDIUM_TIMES("WrenchMenu.TimeToAction.OpenRecentTab",
                              menu_opened_timer_.Elapsed());
@@ -394,7 +420,7 @@ void RecentTabsSubMenuModel::BuildLocalEntries() {
   sessions::TabRestoreService* service =
       TabRestoreServiceFactory::GetForProfile(browser_->profile());
 
-  if (!service || service->entries().size() == 0) {
+  if (!service || service->entries().empty()) {
     // This is to show a disabled restore tab entry with the accelerator to
     // teach users about this command.
     InsertItemWithStringIdAt(++last_local_model_index_,
@@ -564,40 +590,25 @@ void RecentTabsSubMenuModel::AddDeviceFavicon(
 }
 
 void RecentTabsSubMenuModel::AddTabFavicon(int command_id, const GURL& url) {
-  bool is_local_tab = command_id < kFirstOtherDevicesTabCommandId;
   int index_in_menu = GetIndexOfCommandId(command_id);
 
-  if (!is_local_tab) {
-    // If tab has synced favicon, use it.
-    // Note that currently, other devices' tabs only have favicons if
-    // --sync-tab-favicons switch is on; according to zea@, this flag is now
-    // automatically enabled for iOS and android, and they're looking into
-    // enabling it for other platforms.
-    sync_sessions::OpenTabsUIDelegate* open_tabs = GetOpenTabsUIDelegate();
-    scoped_refptr<base::RefCountedMemory> favicon_png;
-    if (open_tabs &&
-        open_tabs->GetSyncedFaviconForPageURL(url.spec(), &favicon_png)) {
-      gfx::Image image = gfx::Image::CreateFrom1xPNGBytes(favicon_png);
-      SetIcon(index_in_menu, image);
-      return;
-    }
-  }
-
-  // Otherwise, start to fetch the favicon from local history asynchronously.
   // Set default icon first.
-  SetIcon(index_in_menu, default_favicon_);
-  // Start request to fetch actual icon if possible.
-  favicon::FaviconService* favicon_service =
-      FaviconServiceFactory::GetForProfile(browser_->profile(),
-                                           ServiceAccessType::EXPLICIT_ACCESS);
-  if (!favicon_service)
-    return;
+  SetIcon(index_in_menu, favicon::GetDefaultFavicon());
 
-  favicon_service->GetFaviconImageForPageURL(
+  sync_sessions::OpenTabsUIDelegate* open_tabs = GetOpenTabsUIDelegate();
+  bool is_local_tab = command_id < kFirstOtherDevicesTabCommandId;
+  favicon_request_handler_.GetFaviconImageForPageURL(
       url,
-      base::Bind(&RecentTabsSubMenuModel::OnFaviconDataAvailable,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 command_id),
+      base::BindOnce(&RecentTabsSubMenuModel::OnFaviconDataAvailable,
+                     base::Unretained(this), command_id),
+      favicon::FaviconRequestOrigin::RECENTLY_CLOSED_TABS,
+      FaviconServiceFactory::GetForProfile(browser_->profile(),
+                                           ServiceAccessType::EXPLICIT_ACCESS),
+      LargeIconServiceFactory::GetForBrowserContext(browser_->profile()),
+      open_tabs ? open_tabs->GetIconUrlForPageUrl(url) : GURL(),
+      base::BindOnce(&RecentTabsGetSyncedFaviconForPageURL,
+                     base::Unretained(session_sync_service_)),
+      CanSendHistoryDataToServer(is_local_tab, browser_),
       is_local_tab ? &local_tab_cancelable_task_tracker_
                    : &other_devices_tab_cancelable_task_tracker_);
 }
@@ -605,14 +616,17 @@ void RecentTabsSubMenuModel::AddTabFavicon(int command_id, const GURL& url) {
 void RecentTabsSubMenuModel::OnFaviconDataAvailable(
     int command_id,
     const favicon_base::FaviconImageResult& image_result) {
-  if (image_result.image.IsEmpty())
+  if (image_result.image.IsEmpty()) {
+    // Default icon has already been set.
     return;
+  }
   int index_in_menu = GetIndexOfCommandId(command_id);
   DCHECK_GT(index_in_menu, -1);
   SetIcon(index_in_menu, image_result.image);
-  ui::MenuModelDelegate* menu_model_delegate = GetMenuModelDelegate();
-  if (menu_model_delegate)
-    menu_model_delegate->OnIconChanged(index_in_menu);
+  ui::MenuModelDelegate* delegate = menu_model_delegate();
+  if (delegate)
+    delegate->OnIconChanged(index_in_menu);
+  return;
 }
 
 int RecentTabsSubMenuModel::CommandIdToTabVectorIndex(
@@ -656,9 +670,8 @@ void RecentTabsSubMenuModel::ClearTabsFromOtherDevices() {
 
 sync_sessions::OpenTabsUIDelegate*
 RecentTabsSubMenuModel::GetOpenTabsUIDelegate() {
-  // Only return the delegate if it exists and it is done syncing sessions.
-  return session_sync_service_ ? session_sync_service_->GetOpenTabsUIDelegate()
-                               : nullptr;
+  DCHECK(session_sync_service_);
+  return session_sync_service_->GetOpenTabsUIDelegate();
 }
 
 void RecentTabsSubMenuModel::TabRestoreServiceChanged(
@@ -667,9 +680,9 @@ void RecentTabsSubMenuModel::TabRestoreServiceChanged(
 
   BuildLocalEntries();
 
-  ui::MenuModelDelegate* menu_model_delegate = GetMenuModelDelegate();
-  if (menu_model_delegate)
-    menu_model_delegate->OnMenuStructureChanged();
+  ui::MenuModelDelegate* delegate = menu_model_delegate();
+  if (delegate)
+    delegate->OnMenuStructureChanged();
 }
 
 void RecentTabsSubMenuModel::TabRestoreServiceDestroyed(
@@ -682,7 +695,7 @@ void RecentTabsSubMenuModel::OnForeignSessionUpdated() {
 
   BuildTabsFromOtherDevices();
 
-  ui::MenuModelDelegate* menu_model_delegate = GetMenuModelDelegate();
-  if (menu_model_delegate)
-    menu_model_delegate->OnMenuStructureChanged();
+  ui::MenuModelDelegate* delegate = menu_model_delegate();
+  if (delegate)
+    delegate->OnMenuStructureChanged();
 }

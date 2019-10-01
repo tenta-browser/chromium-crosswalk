@@ -7,6 +7,10 @@
 
 namespace media {
 
+namespace {
+constexpr size_t kVP8NumFramesActive = 4;
+}
+
 VP8Decoder::VP8Accelerator::VP8Accelerator() {}
 
 VP8Decoder::VP8Accelerator::~VP8Accelerator() {}
@@ -164,10 +168,19 @@ gfx::Size VP8Decoder::GetPicSize() const {
   return pic_size_;
 }
 
+gfx::Rect VP8Decoder::GetVisibleRect() const {
+  return gfx::Rect(pic_size_);
+}
+
 size_t VP8Decoder::GetRequiredNumOfPictures() const {
   const size_t kVP8NumFramesActive = 4;
   const size_t kPicsInPipeline = limits::kMaxVideoFrames + 2;
   return kVP8NumFramesActive + kPicsInPipeline;
+}
+
+size_t VP8Decoder::GetNumReferenceFrames() const {
+  // Maximum number of reference frames.
+  return kVP8NumFramesActive;
 }
 
 }  // namespace media

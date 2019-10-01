@@ -49,6 +49,11 @@ void ErrorRetryStateMachine::SetDisplayingWebError() {
   state_ = ErrorRetryState::kDisplayingWebErrorForFailedNavigation;
 }
 
+void ErrorRetryStateMachine::SetRetryPlaceholderNavigation() {
+  DCHECK(state_ == web::ErrorRetryState::kNoNavigationError);
+  state_ = ErrorRetryState::kRetryPlaceholderNavigation;
+}
+
 ErrorRetryCommand ErrorRetryStateMachine::DidFailProvisionalNavigation(
     const GURL& web_view_url,
     const GURL& error_url) {
@@ -74,9 +79,20 @@ ErrorRetryCommand ErrorRetryStateMachine::DidFailProvisionalNavigation(
     case ErrorRetryState::kDisplayingNativeErrorForFailedNavigation:
     // Retry of a previous failure still fails.
     case ErrorRetryState::kDisplayingWebErrorForFailedNavigation:
-      return BackForwardOrReloadFailed(web_view_url, error_url);
+      if (web::GetWebClient()->IsSlimNavigationManagerEnabled()) {
+        // In this case, a back/forward item already exists. Rewriting the
+        // WebView's URL to the placeholder URL before loading the error page
+        // ensures that WebKit doesn't associate the (empty) contents of an
+        // immediately-preceding kRewriteToWebViewURL step with the actual URL
+        // in its page cache. See http://crbug.com/950489.
+        state_ = ErrorRetryState::kLoadingPlaceholder;
+        return ErrorRetryCommand::kRewriteToPlaceholderURL;
+      } else {
+        return BackForwardOrReloadFailed(web_view_url, error_url);
+      }
 
     case ErrorRetryState::kLoadingPlaceholder:
+    case ErrorRetryState::kRetryPlaceholderNavigation:
     case ErrorRetryState::kReadyToDisplayErrorForFailedNavigation:
     case ErrorRetryState::kNavigatingToFailedNavigationItem:
       NOTREACHED() << "Unexpected error retry state: "
@@ -103,6 +119,7 @@ ErrorRetryCommand ErrorRetryStateMachine::DidFailNavigation(
       return BackForwardOrReloadFailed(web_view_url, error_url);
 
     case ErrorRetryState::kLoadingPlaceholder:
+    case ErrorRetryState::kRetryPlaceholderNavigation:
     case ErrorRetryState::kReadyToDisplayErrorForFailedNavigation:
     case ErrorRetryState::kNavigatingToFailedNavigationItem:
       NOTREACHED() << "Unexpected error retry state: "
@@ -121,6 +138,20 @@ ErrorRetryCommand ErrorRetryStateMachine::DidFinishNavigation(
       state_ = ErrorRetryState::kReadyToDisplayErrorForFailedNavigation;
       return ErrorRetryCommand::kLoadErrorView;
 
+    case ErrorRetryState::kRetryPlaceholderNavigation:
+      if (wk_navigation_util::IsPlaceholderUrl(web_view_url)) {
+        // (11) Explicitly keep the state the same so after rewriting to the non
+        // placeholder url the else block will trigger.
+        DCHECK_EQ(web_view_url,
+                  wk_navigation_util::CreatePlaceholderUrlForUrl(url_));
+        state_ = ErrorRetryState::kRetryPlaceholderNavigation;
+        return ErrorRetryCommand::kRewriteToWebViewURL;
+      } else {
+        // The url was written by kRewriteToWebViewURL in the if block, so on
+        // this navigation load an error view.
+        state_ = ErrorRetryState::kReadyToDisplayErrorForFailedNavigation;
+        return ErrorRetryCommand::kLoadErrorView;
+      }
     case ErrorRetryState::kNewRequest:
       if (wk_navigation_util::IsRestoreSessionUrl(web_view_url)) {
         // (8) Initial load of restore_session.html. Don't change state or
@@ -144,7 +175,7 @@ ErrorRetryCommand ErrorRetryStateMachine::DidFinishNavigation(
         // (4) Back/forward to or reload of placeholder URL. Rewrite WebView URL
         // to prepare for retry.
         state_ = ErrorRetryState::kNavigatingToFailedNavigationItem;
-        return ErrorRetryCommand::kRewriteWebViewURL;
+        return ErrorRetryCommand::kRewriteToWebViewURL;
       }
 
       if (wk_navigation_util::IsRestoreSessionUrl(web_view_url)) {

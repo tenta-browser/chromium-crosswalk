@@ -15,7 +15,6 @@
 #include "third_party/blink/public/common/service_worker/service_worker_status_code.h"
 
 namespace content {
-
 namespace background_fetch {
 
 // The database schema is content/browser/background_fetch/storage/README.md.
@@ -65,7 +64,7 @@ DatabaseStatus ToDatabaseStatus(blink::ServiceWorkerStatusCode status);
 // Converts the |metadata_proto| to a BackgroundFetchRegistration object.
 bool ToBackgroundFetchRegistration(
     const proto::BackgroundFetchMetadata& metadata_proto,
-    blink::mojom::BackgroundFetchRegistration* registration);
+    blink::mojom::BackgroundFetchRegistrationData* registration_data);
 
 bool MojoFailureReasonFromRegistrationProto(
     proto::BackgroundFetchRegistration_BackgroundFetchFailureReason
@@ -78,12 +77,11 @@ bool MojoFailureReasonFromRegistrationProto(
 // `RemoveUniqueParamFromCacheURL` when querying from the cache.
 CONTENT_EXPORT GURL MakeCacheUrlUnique(const GURL& url,
                                        const std::string& unique_id,
-                                       int request_index);
+                                       size_t request_index);
 CONTENT_EXPORT GURL RemoveUniqueParamFromCacheURL(const GURL& url,
                                                   const std::string& unique_id);
 
 }  // namespace background_fetch
-
 }  // namespace content
 
 #endif  // CONTENT_BROWSER_BACKGROUND_FETCH_STORAGE_DATABASE_HELPERS_H_

@@ -12,7 +12,6 @@
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "components/variations/client_filterable_state.h"
-#include "components/variations/proto/study.pb.h"
 
 namespace variations {
 namespace {
@@ -107,10 +106,6 @@ bool CheckStudyLocale(const Study::Filter& filter, const std::string& locale) {
 }
 
 bool CheckStudyPlatform(const Study::Filter& filter, Study::Platform platform) {
-  // An empty platform list matches all platforms.
-  if (filter.platform_size() == 0)
-    return true;
-
   for (int i = 0; i < filter.platform_size(); ++i) {
     if (filter.platform(i) == platform)
       return true;
@@ -155,6 +150,25 @@ bool CheckStudyVersion(const Study::Filter& filter,
   if (filter.has_max_version()) {
     if (version.CompareToWildcardString(filter.max_version()) > 0)
       return false;
+  }
+
+  return true;
+}
+
+bool CheckStudyOSVersion(const Study::Filter& filter,
+                         const base::Version& version) {
+  if (filter.has_min_os_version()) {
+    if (!version.IsValid() ||
+        version.CompareToWildcardString(filter.min_os_version()) < 0) {
+      return false;
+    }
+  }
+
+  if (filter.has_max_os_version()) {
+    if (!version.IsValid() ||
+        version.CompareToWildcardString(filter.max_os_version()) > 0) {
+      return false;
+    }
   }
 
   return true;
@@ -260,19 +274,17 @@ bool ShouldAddStudy(const Study& study,
       return false;
     }
 
+    if (!CheckStudyOSVersion(study.filter(), client_state.os_version)) {
+      DVLOG(1) << "Filtered out study " << study.name()
+               << " due to os_version.";
+      return false;
+    }
+
     const std::string& country = GetClientCountryForStudy(study, client_state);
     if (!CheckStudyCountry(study.filter(), country)) {
       DVLOG(1) << "Filtered out study " << study.name() << " due to country.";
       return false;
     }
-  }
-
-  // TODO(paulmiller): Remove this once https://crbug.com/866722 is resolved.
-  if (study.consistency() == Study_Consistency_PERMANENT &&
-      !client_state.supports_permanent_consistency) {
-    DVLOG(1) << "Filtered out study " << study.name()
-             << " due to supports_permanent_consistency.";
-    return false;
   }
 
   DVLOG(1) << "Kept study " << study.name() << ".";

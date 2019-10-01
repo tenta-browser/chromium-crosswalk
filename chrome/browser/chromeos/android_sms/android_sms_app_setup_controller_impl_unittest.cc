@@ -19,6 +19,7 @@
 #include "base/run_loop.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
+#include "chrome/browser/web_applications/components/install_options.h"
 #include "chrome/browser/web_applications/components/test_pending_app_manager.h"
 #include "chrome/browser/web_applications/components/web_app_constants.h"
 #include "chrome/test/base/testing_profile.h"
@@ -27,6 +28,7 @@
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/extension_paths.h"
+#include "services/network/test/test_cookie_manager.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace chromeos {
@@ -39,17 +41,16 @@ const char kTestUrl1[] = "https://test-url-1.com/";
 const char kTestInstallUrl1[] = "https://test-url-1.com/install";
 const char kTestUrl2[] = "https://test-url-2.com/";
 
-web_app::PendingAppManager::AppInfo GetAppInfoForUrl(const GURL& url) {
-  web_app::PendingAppManager::AppInfo info(url,
-                                           web_app::LaunchContainer::kWindow,
-                                           web_app::InstallSource::kInternal);
-  info.override_previous_user_uninstall = true;
-  info.bypass_service_worker_check = true;
-  info.require_manifest = true;
-  return info;
+web_app::InstallOptions GetInstallOptionsForUrl(const GURL& url) {
+  web_app::InstallOptions options(url, web_app::LaunchContainer::kWindow,
+                                  web_app::InstallSource::kInternal);
+  options.override_previous_user_uninstall = true;
+  options.bypass_service_worker_check = true;
+  options.require_manifest = true;
+  return options;
 }
 
-class FakeCookieManager : public network::mojom::CookieManager {
+class FakeCookieManager : public network::TestCookieManager {
  public:
   FakeCookieManager() = default;
   ~FakeCookieManager() override {
@@ -60,8 +61,9 @@ class FakeCookieManager : public network::mojom::CookieManager {
   void InvokePendingSetCanonicalCookieCallback(
       const std::string& expected_cookie_name,
       const std::string& expected_cookie_value,
-      bool expected_secure_source,
+      const std::string& expected_source_scheme,
       bool expected_modify_http_only,
+      net::CookieOptions::SameSiteCookieContext expect_same_site_context,
       bool success) {
     ASSERT_FALSE(set_canonical_cookie_calls_.empty());
     auto params = std::move(set_canonical_cookie_calls_.front());
@@ -69,10 +71,19 @@ class FakeCookieManager : public network::mojom::CookieManager {
 
     EXPECT_EQ(expected_cookie_name, std::get<0>(params).Name());
     EXPECT_EQ(expected_cookie_value, std::get<0>(params).Value());
-    EXPECT_EQ(expected_secure_source, std::get<1>(params));
-    EXPECT_EQ(expected_modify_http_only, std::get<2>(params));
+    EXPECT_EQ(expected_source_scheme, std::get<1>(params));
+    EXPECT_EQ(expected_modify_http_only,
+              !std::get<2>(params).exclude_httponly());
+    EXPECT_EQ(expect_same_site_context,
+              std::get<2>(params).same_site_cookie_context());
+    net::CanonicalCookie::CookieInclusionStatus status =
+        net::CanonicalCookie::CookieInclusionStatus::INCLUDE;
 
-    std::move(std::get<3>(params)).Run(success);
+    if (!success)
+      status =
+          net::CanonicalCookie::CookieInclusionStatus::EXCLUDE_UNKNOWN_ERROR;
+
+    std::move(std::get<3>(params)).Run(status);
   }
 
   void InvokePendingDeleteCookiesCallback(
@@ -91,11 +102,11 @@ class FakeCookieManager : public network::mojom::CookieManager {
 
   // network::mojom::CookieManager
   void SetCanonicalCookie(const net::CanonicalCookie& cookie,
-                          bool secure_source,
-                          bool modify_http_only,
+                          const std::string& source_scheme,
+                          const net::CookieOptions& options,
                           SetCanonicalCookieCallback callback) override {
-    set_canonical_cookie_calls_.emplace_back(
-        cookie, secure_source, modify_http_only, std::move(callback));
+    set_canonical_cookie_calls_.emplace_back(cookie, source_scheme, options,
+                                             std::move(callback));
   }
 
   void DeleteCookies(network::mojom::CookieDeletionFilterPtr filter,
@@ -103,29 +114,11 @@ class FakeCookieManager : public network::mojom::CookieManager {
     delete_cookies_calls_.emplace_back(std::move(filter), std::move(callback));
   }
 
-  void GetAllCookies(GetAllCookiesCallback callback) override {}
-  void GetCookieList(const GURL& url,
-                     const net::CookieOptions& cookie_options,
-                     GetCookieListCallback callback) override {}
-  void DeleteCanonicalCookie(const net::CanonicalCookie& cookie,
-                             DeleteCanonicalCookieCallback callback) override {}
-  void AddCookieChangeListener(
-      const GURL& url,
-      const std::string& name,
-      network::mojom::CookieChangeListenerPtr listener) override {}
-  void AddGlobalChangeListener(
-      network::mojom::CookieChangeListenerPtr notification_pointer) override {}
-  void CloneInterface(
-      network::mojom::CookieManagerRequest new_interface) override {}
-  void FlushCookieStore(FlushCookieStoreCallback callback) override {}
-  void SetContentSettings(
-      const std::vector<::ContentSettingPatternSource>& settings) override {}
-  void SetForceKeepSessionState() override {}
-  void BlockThirdPartyCookies(bool block) override {}
-
  private:
-  std::vector<
-      std::tuple<net::CanonicalCookie, bool, bool, SetCanonicalCookieCallback>>
+  std::vector<std::tuple<net::CanonicalCookie,
+                         std::string,
+                         net::CookieOptions,
+                         SetCanonicalCookieCallback>>
       set_canonical_cookie_calls_;
   std::vector<
       std::pair<network::mojom::CookieDeletionFilterPtr, DeleteCookiesCallback>>
@@ -142,13 +135,7 @@ class AndroidSmsAppSetupControllerImplTest : public testing::Test {
         : fake_cookie_manager_(fake_cookie_manager) {}
     ~TestPwaDelegate() override = default;
 
-    void SetHasPwa(const GURL& url, bool has_pwa) {
-      // If no PWA should exist, erase any existing entry and return.
-      if (!has_pwa) {
-        url_to_pwa_map_.erase(url);
-        return;
-      }
-
+    void SetHasPwa(const GURL& url) {
       // If a PWA already exists for this URL, there is nothing to do.
       if (base::ContainsKey(url_to_pwa_map_, url))
         return;
@@ -175,6 +162,19 @@ class AndroidSmsAppSetupControllerImplTest : public testing::Test {
       return fake_cookie_manager_;
     }
 
+    bool RemovePwa(const extensions::ExtensionId& extension_id,
+                   base::string16* error,
+                   Profile* profile) override {
+      for (const auto& url_pwa_pair : url_to_pwa_map_) {
+        if (url_pwa_pair.second->id() == extension_id) {
+          url_to_pwa_map_.erase(url_pwa_pair.first);
+          return true;
+        }
+      }
+
+      return false;
+    }
+
    private:
     FakeCookieManager* fake_cookie_manager_;
     base::flat_map<GURL, scoped_refptr<const extensions::Extension>>
@@ -182,7 +182,9 @@ class AndroidSmsAppSetupControllerImplTest : public testing::Test {
   };
 
   AndroidSmsAppSetupControllerImplTest()
-      : host_content_settings_map_(
+      : thread_bundle_(
+            content::TestBrowserThreadBundle::MainThreadType::UI_MOCK_TIME),
+        host_content_settings_map_(
             HostContentSettingsMapFactory::GetForProfile(&profile_)) {}
 
   ~AndroidSmsAppSetupControllerImplTest() override = default;
@@ -208,6 +210,72 @@ class AndroidSmsAppSetupControllerImplTest : public testing::Test {
         ->SetPwaDelegateForTesting(std::move(base_delegate));
   }
 
+  void CallSetUpAppWithRetries(const GURL& app_url,
+                               const GURL& install_url,
+                               size_t num_failure_tries,
+                               bool expected_setup_result) {
+    const auto& install_requests =
+        test_pending_app_manager_->install_requests();
+    size_t num_install_requests_before_call = install_requests.size();
+
+    base::RunLoop run_loop;
+    base::HistogramTester histogram_tester;
+
+    test_pending_app_manager_->SetInstallResultCode(
+        web_app::InstallResultCode::kFailedUnknownReason);
+
+    setup_controller_->SetUpApp(
+        app_url, install_url,
+        base::BindOnce(&AndroidSmsAppSetupControllerImplTest::OnSetUpAppResult,
+                       base::Unretained(this), run_loop.QuitClosure()));
+
+    fake_cookie_manager_->InvokePendingSetCanonicalCookieCallback(
+        "default_to_persist" /* expected_cookie_name */,
+        "true" /* expected_cookie_value */,
+        "https" /* expected_source_scheme */,
+        false /* expected_modify_http_only */,
+        net::CookieOptions::SameSiteCookieContext::SAME_SITE_STRICT,
+        true /* success */);
+
+    fake_cookie_manager_->InvokePendingDeleteCookiesCallback(
+        app_url, "cros_migrated_to" /* expected_cookie_name */,
+        true /* success */);
+
+    base::RunLoop().RunUntilIdle();
+
+    // Fast forward through remaining attempts.
+    for (size_t retry_count = 0; retry_count < num_failure_tries - 1;
+         retry_count++) {
+      EXPECT_NE(ContentSetting::CONTENT_SETTING_ALLOW,
+                GetNotificationSetting(app_url));
+      EXPECT_EQ(num_install_requests_before_call + retry_count + 1u,
+                install_requests.size());
+      EXPECT_EQ(GetInstallOptionsForUrl(install_url), install_requests.back());
+
+      thread_bundle_.FastForwardBy(
+          AndroidSmsAppSetupControllerImpl::kInstallRetryDelay *
+          (1 << retry_count));
+    }
+
+    // Send success code for last attempt.
+    test_pending_app_manager_->SetInstallResultCode(
+        web_app::InstallResultCode::kSuccess);
+    thread_bundle_.FastForwardBy(
+        AndroidSmsAppSetupControllerImpl::kInstallRetryDelay *
+        (1 << (num_failure_tries - 1)));
+
+    if (last_set_up_app_result_ && *last_set_up_app_result_) {
+      histogram_tester.ExpectBucketCount(
+          "AndroidSms.NumAttemptsForSuccessfulInstallation",
+          num_failure_tries + 1, 1);
+    }
+    histogram_tester.ExpectBucketCount(
+        "AndroidSms.EffectivePWAInstallationSuccess", expected_setup_result, 1);
+
+    EXPECT_EQ(last_set_up_app_result_, expected_setup_result);
+    last_set_up_app_result_.reset();
+  }
+
   void CallSetUpApp(const GURL& app_url,
                     const GURL& install_url,
                     size_t num_expected_app_installs) {
@@ -225,8 +293,16 @@ class AndroidSmsAppSetupControllerImplTest : public testing::Test {
 
     fake_cookie_manager_->InvokePendingSetCanonicalCookieCallback(
         "default_to_persist" /* expected_cookie_name */,
-        "true" /* expected_cookie_value */, true /* expected_secure_source */,
-        false /* expected_modify_http_only */, true /* success */);
+        "true" /* expected_cookie_value */,
+        "https" /* expected_source_scheme */,
+        false /* expected_modify_http_only */,
+        net::CookieOptions::SameSiteCookieContext::SAME_SITE_STRICT,
+        true /* success */);
+
+    fake_cookie_manager_->InvokePendingDeleteCookiesCallback(
+        app_url, "cros_migrated_to" /* expected_cookie_name */,
+        true /* success */);
+    base::RunLoop().RunUntilIdle();
 
     fake_cookie_manager_->InvokePendingDeleteCookiesCallback(
         app_url, "cros_migrated_to" /* expected_cookie_name */,
@@ -236,7 +312,7 @@ class AndroidSmsAppSetupControllerImplTest : public testing::Test {
     // install it.
     if (!test_pwa_delegate_->GetPwaForUrl(install_url, &profile_)) {
       EXPECT_EQ(num_install_requests_before_call + 1u, install_requests.size());
-      EXPECT_EQ(GetAppInfoForUrl(install_url), install_requests.back());
+      EXPECT_EQ(GetInstallOptionsForUrl(install_url), install_requests.back());
 
       EXPECT_EQ(ContentSetting::CONTENT_SETTING_ALLOW,
                 GetNotificationSetting(app_url));
@@ -246,6 +322,8 @@ class AndroidSmsAppSetupControllerImplTest : public testing::Test {
       histogram_tester.ExpectBucketCount("AndroidSms.PWAInstallationResult",
                                          web_app::InstallResultCode::kSuccess,
                                          num_expected_app_installs);
+      histogram_tester.ExpectBucketCount(
+          "AndroidSms.EffectivePWAInstallationSuccess", true, 1);
     }
 
     run_loop.Run();
@@ -275,34 +353,34 @@ class AndroidSmsAppSetupControllerImplTest : public testing::Test {
                      const GURL& install_url,
                      const GURL& migrated_to_app_url,
                      size_t num_expected_app_uninstalls) {
-    const auto& uninstall_requests =
-        test_pending_app_manager_->uninstall_requests();
-    size_t num_uninstall_requests_before_call = uninstall_requests.size();
-
     base::RunLoop run_loop;
     base::HistogramTester histogram_tester;
 
+    bool was_installed =
+        test_pwa_delegate_->GetPwaForUrl(install_url, &profile_) != nullptr;
     setup_controller_->RemoveApp(
         app_url, install_url, migrated_to_app_url,
         base::BindOnce(&AndroidSmsAppSetupControllerImplTest::OnRemoveAppResult,
                        base::Unretained(this), run_loop.QuitClosure()));
+    base::RunLoop().RunUntilIdle();
 
     // If the PWA was already installed at the URL, RemoveApp() should uninstall
     // the it.
-    if (test_pwa_delegate_->GetPwaForUrl(install_url, &profile_)) {
-      EXPECT_EQ(num_uninstall_requests_before_call + 1u,
-                uninstall_requests.size());
-      EXPECT_EQ(install_url, uninstall_requests.back());
+    if (was_installed) {
+      EXPECT_FALSE(test_pwa_delegate()->GetPwaForUrl(install_url, &profile_));
 
       fake_cookie_manager_->InvokePendingSetCanonicalCookieCallback(
           "cros_migrated_to" /* expected_cookie_name */,
           migrated_to_app_url.GetContent() /* expected_cookie_value */,
-          true /* expected_secure_source */,
-          false /* expected_modify_http_only */, true /* success */);
+          "https" /* expected_source_scheme */,
+          false /* expected_modify_http_only */,
+          net::CookieOptions::SameSiteCookieContext::SAME_SITE_STRICT,
+          true /* success */);
 
       fake_cookie_manager_->InvokePendingDeleteCookiesCallback(
           app_url, "default_to_persist" /* expected_cookie_name */,
           true /* success */);
+      base::RunLoop().RunUntilIdle();
     }
 
     if (num_expected_app_uninstalls) {
@@ -370,14 +448,14 @@ TEST_F(AndroidSmsAppSetupControllerImplTest, SetUpApp_NoPreviousApp) {
 
 TEST_F(AndroidSmsAppSetupControllerImplTest, SetUpApp_AppAlreadyInstalled) {
   // Start with a PWA already installed at the URL.
-  test_pwa_delegate()->SetHasPwa(GURL(kTestInstallUrl1), true);
+  test_pwa_delegate()->SetHasPwa(GURL(kTestInstallUrl1));
   CallSetUpApp(GURL(kTestUrl1), GURL(kTestInstallUrl1),
                0u /* num_expected_app_installs */);
 }
 
 TEST_F(AndroidSmsAppSetupControllerImplTest, SetUpApp_OtherPwaInstalled) {
   // Start with a PWA already installed at a different URL.
-  test_pwa_delegate()->SetHasPwa(GURL(kTestUrl2), true);
+  test_pwa_delegate()->SetHasPwa(GURL(kTestUrl2));
   CallSetUpApp(GURL(kTestUrl1), GURL(kTestInstallUrl1),
                1u /* num_expected_app_installs */);
 }
@@ -388,24 +466,42 @@ TEST_F(AndroidSmsAppSetupControllerImplTest, SetUpAppThenDeleteCookie) {
   CallDeleteRememberDeviceByDefaultCookie(GURL(kTestUrl1));
 }
 
+TEST_F(AndroidSmsAppSetupControllerImplTest, SetUpApp_Retry) {
+  // Setup should fail when all attempts fail.
+  CallSetUpAppWithRetries(
+      GURL(kTestUrl1), GURL(kTestInstallUrl1),
+      AndroidSmsAppSetupControllerImpl::kMaxInstallRetryCount +
+          1 /* num_failure_tries*/,
+      false /* expected_setup_result */);
+
+  // Setup should succeed when the last attempt succeeds.
+  CallSetUpAppWithRetries(GURL(kTestUrl1), GURL(kTestInstallUrl1),
+                          AndroidSmsAppSetupControllerImpl::
+                              kMaxInstallRetryCount /* num_failure_tries*/,
+                          true /* expected_setup_result */);
+
+  // Setup should succeed when only fewer than max attempts fail.
+  CallSetUpAppWithRetries(GURL(kTestUrl1), GURL(kTestInstallUrl1),
+                          1 /* num_failure_tries*/,
+                          true /* expected_setup_result */);
+}
+
 TEST_F(AndroidSmsAppSetupControllerImplTest, SetUpAppThenRemove) {
   // Install and remove.
   CallSetUpApp(GURL(kTestUrl1), GURL(kTestInstallUrl1),
                1u /* num_expected_app_installs */);
-  test_pwa_delegate()->SetHasPwa(GURL(kTestInstallUrl1), true);
+  test_pwa_delegate()->SetHasPwa(GURL(kTestInstallUrl1));
   CallRemoveApp(GURL(kTestUrl1), GURL(kTestInstallUrl1),
                 GURL(kTestUrl2) /* migrated_to_app_url */,
                 1u /* num_expected_app_uninstalls */);
-  test_pwa_delegate()->SetHasPwa(GURL(kTestInstallUrl1), false);
 
   // Repeat once more.
   CallSetUpApp(GURL(kTestUrl1), GURL(kTestInstallUrl1),
                1u /* num_expected_app_installs */);
-  test_pwa_delegate()->SetHasPwa(GURL(kTestInstallUrl1), true);
+  test_pwa_delegate()->SetHasPwa(GURL(kTestInstallUrl1));
   CallRemoveApp(GURL(kTestUrl1), GURL(kTestInstallUrl1),
                 GURL(kTestUrl2) /* migrated_to_app_url */,
                 1u /* num_expected_app_uninstalls */);
-  test_pwa_delegate()->SetHasPwa(GURL(kTestInstallUrl1), false);
 }
 
 TEST_F(AndroidSmsAppSetupControllerImplTest, RemoveApp_NoInstalledApp) {

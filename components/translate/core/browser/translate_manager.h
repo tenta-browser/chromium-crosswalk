@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "base/callback.h"
 #include "base/callback_list.h"
 #include "base/feature_list.h"
 #include "base/gtest_prod_util.h"
@@ -33,12 +34,14 @@ class TranslateClient;
 class TranslateDriver;
 class TranslatePrefs;
 class TranslateRanker;
+struct TranslateTriggerDecision;
 
 namespace testing {
 class TranslateManagerTest;
 }  // namespace testing
 
 struct TranslateErrorDetails;
+struct TranslateInitDetails;
 
 // The TranslateManager class is responsible for showing an info-bar when a page
 // in a language different than the user language is loaded.  It triggers the
@@ -115,8 +118,9 @@ class TranslateManager {
   void InitiateTranslation(const std::string& page_lang);
 
   // Initiate a manually triggered translation process for the current page.
-  // Collect source and target languages, and show translation UI.
-  void InitiateManualTranslation();
+  // Collect source and target languages, and show translation UI. If
+  // |auto_translate| is true the page gets translated to the target language.
+  void InitiateManualTranslation(bool auto_translate = false);
 
   // Returns true iff the current page could be manually translated.
   bool CanManuallyTranslate();
@@ -135,14 +139,24 @@ class TranslateManager {
   void ReportLanguageDetectionError();
 
   // Callback types for translate errors.
-  typedef base::Callback<void(const TranslateErrorDetails&)>
+  typedef base::RepeatingCallback<void(const TranslateErrorDetails&)>
       TranslateErrorCallback;
   typedef base::CallbackList<void(const TranslateErrorDetails&)>
       TranslateErrorCallbackList;
 
+  // Callback types for translate initialization.
+  typedef base::RepeatingCallback<void(const TranslateInitDetails&)>
+      TranslateInitCallback;
+  typedef base::CallbackList<void(const TranslateInitDetails&)>
+      TranslateInitCallbackList;
+
   // Registers a callback for translate errors.
   static std::unique_ptr<TranslateErrorCallbackList::Subscription>
   RegisterTranslateErrorCallback(const TranslateErrorCallback& callback);
+
+  // Registers a callback for translate initialization.
+  static std::unique_ptr<TranslateInitCallbackList::Subscription>
+  RegisterTranslateInitCallback(const TranslateInitCallback& callback);
 
   // Gets the LanguageState associated with the TranslateManager
   LanguageState& GetLanguageState();
@@ -171,10 +185,11 @@ class TranslateManager {
   bool ShouldSuppressBubbleUI(bool triggered_from_menu,
                               const std::string& source_language);
 
+  // Sets target language.
+  void SetPredefinedTargetLanguage(const std::string& language_code);
+
  private:
   friend class translate::testing::TranslateManagerTest;
-
-  struct TranslateTriggerDecision;
 
   // Sends a translation request to the TranslateDriver.
   void DoTranslatePage(const std::string& translate_script,
@@ -183,6 +198,12 @@ class TranslateManager {
 
   // Notifies all registered callbacks of translate errors.
   void NotifyTranslateError(TranslateErrors::Type error_type);
+
+  // Notifies all registered callbacks of translate initialization.
+  void NotifyTranslateInit(std::string page_language_code,
+                           std::string target_lang,
+                           TranslateTriggerDecision decision,
+                           bool ui_shown);
 
   // Called when the Translate script has been fetched.
   // Initiates the translation.
@@ -227,6 +248,25 @@ class TranslateManager {
   void FilterForUserPrefs(TranslateTriggerDecision* decision,
                           TranslatePrefs* translate_prefs,
                           const std::string& page_language_code);
+
+  // Determines if either auto-translation or showing the UI is supported for
+  // the current navigation's hrefTranslate attribute. Writes the results to
+  // |decision|.
+  void FilterForHrefTranslate(TranslateTriggerDecision* decision,
+                              TranslatePrefs* translate_prefs,
+                              const std::string& page_language_code);
+
+  // Determines if showing the UI is supported for the predefined target
+  // language which was set via SetPredefinedTargetLanguage call.
+  // Writes the results to |decision|.
+  void FilterForPredefinedTarget(TranslateTriggerDecision* decision,
+                                 TranslatePrefs* translate_prefs,
+                                 const std::string& page_language_code);
+
+  // Check whether there is specified target, the source and
+  // the target are both supported, and the source and target don't match.
+  bool IsTranslatableLanguagePair(const std::string& page_language_code,
+                                  const std::string& target_language_code);
 
   // Enables or disables the translate omnibox icon depending on |decision|. The
   // icon is always shown if translate UI is shown, auto-translation happens, or

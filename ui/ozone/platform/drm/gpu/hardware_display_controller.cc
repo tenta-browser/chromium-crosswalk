@@ -7,8 +7,10 @@
 #include <drm.h>
 #include <string.h>
 #include <xf86drm.h>
+#include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/stl_util.h"
 #include "base/trace_event/trace_event.h"
@@ -177,7 +179,7 @@ bool HardwareDisplayController::ScheduleOrTestPageFlip(
 }
 
 std::vector<uint64_t> HardwareDisplayController::GetFormatModifiers(
-    uint32_t format) {
+    uint32_t format) const {
   std::vector<uint64_t> modifiers;
 
   if (crtc_controllers_.empty())
@@ -200,7 +202,7 @@ std::vector<uint64_t> HardwareDisplayController::GetFormatModifiers(
 
 std::vector<uint64_t>
 HardwareDisplayController::GetFormatModifiersForModesetting(
-    uint32_t fourcc_format) {
+    uint32_t fourcc_format) const {
   const auto& modifiers = GetFormatModifiers(fourcc_format);
   std::vector<uint64_t> filtered_modifiers;
   for (auto modifier : modifiers) {

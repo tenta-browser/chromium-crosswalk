@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/stl_util.h"
 #include "base/synchronization/cancellation_flag.h"
 #include "base/task/post_task.h"
@@ -21,7 +22,9 @@
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profile_resetter/brandcoded_default_settings.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/search/instant_service_factory.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
+#include "chrome/browser/translate/chrome_translate_client.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -31,6 +34,7 @@
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/browser/website_settings_info.h"
 #include "components/content_settings/core/browser/website_settings_registry.h"
+#include "components/language/core/browser/language_prefs.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/search_engines/search_engines_pref_names.h"
@@ -58,7 +62,8 @@ void ResetShortcutsOnBlockingThread() {
   if (!base::PathService::Get(base::FILE_EXE, &chrome_exe))
     return;
 
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   for (int location = ShellUtil::SHORTCUT_LOCATION_FIRST;
        location < ShellUtil::NUM_SHORTCUT_LOCATIONS; ++location) {
     ShellUtil::ShortcutListMaybeRemoveUnknownArgs(
@@ -79,6 +84,7 @@ ProfileResetter::ProfileResetter(Profile* profile)
       template_url_service_(TemplateURLServiceFactory::GetForProfile(profile_)),
       pending_reset_flags_(0),
       cookies_remover_(nullptr),
+      ntp_service_(InstantServiceFactory::GetForProfile(profile)),
       weak_ptr_factory_(this) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(profile_);
@@ -118,14 +124,16 @@ void ProfileResetter::Reset(
     Resettable flag;
     void (ProfileResetter::*method)();
   } flagToMethod[] = {
-    {DEFAULT_SEARCH_ENGINE, &ProfileResetter::ResetDefaultSearchEngine},
-    {HOMEPAGE, &ProfileResetter::ResetHomepage},
-    {CONTENT_SETTINGS, &ProfileResetter::ResetContentSettings},
-    {COOKIES_AND_SITE_DATA, &ProfileResetter::ResetCookiesAndSiteData},
-    {EXTENSIONS, &ProfileResetter::ResetExtensions},
-    {STARTUP_PAGES, &ProfileResetter::ResetStartupPages},
-    {PINNED_TABS, &ProfileResetter::ResetPinnedTabs},
-    {SHORTCUTS, &ProfileResetter::ResetShortcuts},
+      {DEFAULT_SEARCH_ENGINE, &ProfileResetter::ResetDefaultSearchEngine},
+      {HOMEPAGE, &ProfileResetter::ResetHomepage},
+      {CONTENT_SETTINGS, &ProfileResetter::ResetContentSettings},
+      {COOKIES_AND_SITE_DATA, &ProfileResetter::ResetCookiesAndSiteData},
+      {EXTENSIONS, &ProfileResetter::ResetExtensions},
+      {STARTUP_PAGES, &ProfileResetter::ResetStartupPages},
+      {PINNED_TABS, &ProfileResetter::ResetPinnedTabs},
+      {SHORTCUTS, &ProfileResetter::ResetShortcuts},
+      {NTP_CUSTOMIZATIONS, &ProfileResetter::ResetNtpCustomizations},
+      {LANGUAGES, &ProfileResetter::ResetLanguages},
   };
 
   ResettableFlags reset_triggered_for_flags = 0;
@@ -332,6 +340,24 @@ void ProfileResetter::ResetShortcuts() {
 #endif
 }
 
+void ProfileResetter::ResetNtpCustomizations() {
+  ntp_service_->ResetToDefault();
+  MarkAsDone(NTP_CUSTOMIZATIONS);
+}
+
+void ProfileResetter::ResetLanguages() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  PrefService* prefs = profile_->GetPrefs();
+  DCHECK(prefs);
+
+  auto translate_prefs = ChromeTranslateClient::CreateTranslatePrefs(prefs);
+  translate_prefs->ResetToDefaults();
+
+  language::ResetLanguagePrefs(prefs);
+
+  MarkAsDone(LANGUAGES);
+}
+
 void ProfileResetter::OnTemplateURLServiceLoaded() {
   // TemplateURLService has loaded. If we need to clean search engines, it's
   // time to go on.
@@ -350,7 +376,8 @@ void ProfileResetter::OnBrowsingDataRemoverDone() {
 #if defined(OS_WIN)
 std::vector<ShortcutCommand> GetChromeLaunchShortcuts(
     const scoped_refptr<SharedCancellationFlag>& cancel) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   // Get full path of chrome.
   base::FilePath chrome_exe;
   if (!base::PathService::Get(base::FILE_EXE, &chrome_exe))

@@ -20,16 +20,16 @@ static const size_t kMaxCacheSize = 15;
 // Returns the content type of |request|.
 ResourceTypeProvider::ContentType GetContentTypeInternal(
     const net::URLRequest& request) {
-  const content::ResourceRequestInfo* request_info =
+  content::ResourceRequestInfo* request_info =
       content::ResourceRequestInfo::ForRequest(&request);
 
   if (!request_info)
     return ContentResourceTypeProvider::CONTENT_TYPE_UNKNOWN;
 
   content::ResourceType resource_type = request_info->GetResourceType();
-  if (resource_type == content::RESOURCE_TYPE_MEDIA)
+  if (resource_type == content::ResourceType::kMedia)
     return ContentResourceTypeProvider::CONTENT_TYPE_MEDIA;
-  if (resource_type == content::RESOURCE_TYPE_MAIN_FRAME)
+  if (resource_type == content::ResourceType::kMainFrame)
     return ContentResourceTypeProvider::CONTENT_TYPE_MAIN_FRAME;
   return ContentResourceTypeProvider::CONTENT_TYPE_UNKNOWN;
 }
@@ -70,7 +70,7 @@ void ContentResourceTypeProvider::SetContentType(
 
 bool ContentResourceTypeProvider::IsNonContentInitiatedRequest(
     const net::URLRequest& request) const {
-  const auto* resource_request_info =
+  auto* resource_request_info =
       content::ResourceRequestInfo::ForRequest(&request);
   return !resource_request_info ||
          (resource_request_info->GetGlobalRequestID() ==

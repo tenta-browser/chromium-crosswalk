@@ -14,7 +14,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/process/kill.h"
 #include "base/time/time.h"
-#include "chromeos/dbus/power_manager_client.h"
+#include "chromeos/dbus/power/power_manager_client.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/render_process_host_observer.h"
@@ -24,8 +24,6 @@ class RenderProcessHost;
 }
 
 namespace chromeos {
-
-class ScreenLocker;
 
 // Freezes the chrome renderers when the system is about to suspend and thaws
 // them after the system fully resumes.  This class registers itself as a
@@ -85,9 +83,6 @@ class RendererFreezer : public PowerManagerClient::RenderProcessManagerDelegate,
 
   // Called after thawing the renderers has completed.
   void OnThawRenderersComplete(bool success);
-
-  // Called whenever the screen locker is shown or hidden.
-  void OnScreenLockStateChanged(chromeos::ScreenLocker* locker, bool is_locked);
 
   // Called whenever a new renderer process is created.
   void OnRenderProcessCreated(content::RenderProcessHost* rph);

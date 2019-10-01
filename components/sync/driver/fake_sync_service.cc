@@ -35,8 +35,8 @@ syncer::SyncService::TransportState FakeSyncService::GetTransportState() const {
   return TransportState::DISABLED;
 }
 
-AccountInfo FakeSyncService::GetAuthenticatedAccountInfo() const {
-  return AccountInfo();
+CoreAccountInfo FakeSyncService::GetAuthenticatedAccountInfo() const {
+  return CoreAccountInfo();
 }
 
 bool FakeSyncService::IsAuthenticatedAccountPrimary() const {
@@ -69,10 +69,6 @@ ModelTypeSet FakeSyncService::GetRegisteredDataTypes() const {
   return ModelTypeSet();
 }
 
-ModelTypeSet FakeSyncService::GetForcedDataTypes() const {
-  return ModelTypeSet();
-}
-
 ModelTypeSet FakeSyncService::GetPreferredDataTypes() const {
   return ModelTypeSet();
 }
@@ -86,15 +82,15 @@ bool FakeSyncService::IsSetupInProgress() const {
   return false;
 }
 
-const GoogleServiceAuthError& FakeSyncService::GetAuthError() const {
-  return error_;
+GoogleServiceAuthError FakeSyncService::GetAuthError() const {
+  return GoogleServiceAuthError();
 }
 
-bool FakeSyncService::IsPassphraseRequiredForDecryption() const {
-  return false;
+base::Time FakeSyncService::GetAuthErrorTime() const {
+  return base::Time();
 }
 
-bool FakeSyncService::IsUsingSecondaryPassphrase() const {
+bool FakeSyncService::RequiresClientUpgrade() const {
   return false;
 }
 
@@ -102,39 +98,40 @@ UserShare* FakeSyncService::GetUserShare() const {
   return user_share_.get();
 }
 
-void FakeSyncService::ReenableDatatype(ModelType type) {}
-
 void FakeSyncService::ReadyForStartChanged(ModelType type) {}
 
-syncer::SyncTokenStatus FakeSyncService::GetSyncTokenStatus() const {
+syncer::SyncTokenStatus FakeSyncService::GetSyncTokenStatusForDebugging()
+    const {
   return syncer::SyncTokenStatus();
 }
 
-bool FakeSyncService::QueryDetailedSyncStatus(SyncStatus* result) const {
+bool FakeSyncService::QueryDetailedSyncStatusForDebugging(
+    SyncStatus* result) const {
   return false;
 }
 
-base::Time FakeSyncService::GetLastSyncedTime() const {
+base::Time FakeSyncService::GetLastSyncedTimeForDebugging() const {
   return base::Time();
 }
 
-SyncCycleSnapshot FakeSyncService::GetLastCycleSnapshot() const {
+SyncCycleSnapshot FakeSyncService::GetLastCycleSnapshotForDebugging() const {
   return SyncCycleSnapshot();
 }
 
-std::unique_ptr<base::Value> FakeSyncService::GetTypeStatusMap() {
+std::unique_ptr<base::Value> FakeSyncService::GetTypeStatusMapForDebugging() {
   return nullptr;
 }
 
-const GURL& FakeSyncService::sync_service_url() const {
+const GURL& FakeSyncService::GetSyncServiceUrlForDebugging() const {
   return sync_service_url_;
 }
 
-std::string FakeSyncService::unrecoverable_error_message() const {
+std::string FakeSyncService::GetUnrecoverableErrorMessageForDebugging() const {
   return std::string();
 }
 
-base::Location FakeSyncService::unrecoverable_error_location() const {
+base::Location FakeSyncService::GetUnrecoverableErrorLocationForDebugging()
+    const {
   return base::Location();
 }
 
@@ -154,18 +151,10 @@ base::WeakPtr<JsController> FakeSyncService::GetJsController() {
   return base::WeakPtr<JsController>();
 }
 
-void FakeSyncService::GetAllNodes(
+void FakeSyncService::GetAllNodesForDebugging(
     const base::Callback<void(std::unique_ptr<base::ListValue>)>& callback) {}
 
 void FakeSyncService::SetInvalidationsForSessionsEnabled(bool enabled) {}
-
-bool FakeSyncService::IsPassphraseRequired() const {
-  return false;
-}
-
-ModelTypeSet FakeSyncService::GetEncryptedDataTypes() const {
-  return ModelTypeSet();
-}
 
 void FakeSyncService::Shutdown() {}
 

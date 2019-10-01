@@ -16,6 +16,8 @@
 #include "base/bind_helpers.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/memory/read_only_shared_memory_region.h"
+#include "base/one_shot_event.h"
 #include "base/strings/string_util.h"
 #include "base/task/post_task.h"
 #include "base/version.h"
@@ -33,7 +35,6 @@
 #include "extensions/common/file_util.h"
 #include "extensions/common/manifest_handlers/default_locale_handler.h"
 #include "extensions/common/message_bundle.h"
-#include "extensions/common/one_shot_event.h"
 #include "ui/base/resource/resource_bundle.h"
 
 using content::BrowserContext;
@@ -72,7 +73,8 @@ void VerifyContent(const VerifyContentInfo& info) {
       info.extension_id, info.extension_root, info.relative_path));
   if (job.get()) {
     job->Start(verifier);
-    job->BytesRead(info.content.size(), info.content.data());
+    job->BytesRead(info.content.data(), info.content.size(),
+                   base::File::FILE_OK);
     job->DoneReading();
   }
 }
@@ -101,6 +103,7 @@ bool LoadScriptContent(const HostID& host_id,
                                            script_file->relative_path(),
                                            &resource_id)) {
       const ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
+      DCHECK(!rb.IsGzipped(resource_id));
       content = rb.GetRawDataResource(resource_id).as_string();
     } else {
       LOG(WARNING) << "Failed to get file path to "
@@ -192,7 +195,7 @@ void LoadScriptsOnFileTaskRunner(
   DCHECK(GetExtensionFileTaskRunner()->RunsTasksInCurrentSequence());
   DCHECK(user_scripts.get());
   LoadUserScripts(user_scripts.get(), hosts_info, added_script_ids, verifier);
-  std::unique_ptr<base::SharedMemory> memory =
+  base::ReadOnlySharedMemoryRegion memory =
       UserScriptLoader::Serialize(*user_scripts);
   base::PostTaskWithTraits(
       FROM_HERE, {content::BrowserThread::UI},
@@ -216,8 +219,8 @@ ExtensionUserScriptLoader::ExtensionUserScriptLoader(
     ExtensionSystem::Get(browser_context)
         ->ready()
         .Post(FROM_HERE,
-              base::Bind(&ExtensionUserScriptLoader::OnExtensionSystemReady,
-                         weak_factory_.GetWeakPtr()));
+              base::BindOnce(&ExtensionUserScriptLoader::OnExtensionSystemReady,
+                             weak_factory_.GetWeakPtr()));
   } else {
     SetReady(true);
   }

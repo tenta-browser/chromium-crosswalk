@@ -4,13 +4,13 @@
 'use strict';
 
 /** @type {!MockVolumeManager} */
-var volumeManager;
+let volumeManager;
 
 /** @type {!DeviceHandler} */
-var deviceHandler;
+let deviceHandler;
 
 /** Mock chrome APIs. */
-var mockChrome;
+let mockChrome;
 
 // Set up the test components.
 function setUp() {
@@ -22,6 +22,12 @@ function setUp() {
   };
   window.loadTimeData.getString = id => {
     return window.loadTimeData.data_[id] || id;
+  };
+  window.loadTimeData.getBoolean = id => {
+    return id === 'ARC_USB_STORAGE_UI_ENABLED' ? true : false;
+  };
+  window.loadTimeData.valueExists = id => {
+    return id === 'ARC_USB_STORAGE_UI_ENABLED';
   };
 
   setupChromeApis();
@@ -36,6 +42,40 @@ function setUpInIncognitoContext() {
 }
 
 function testGoodDevice(callback) {
+  // Turn off ARC so that the notification won't show the "OPEN SETTINGS"
+  // button.
+  mockChrome.fileManagerPrivate.arcEnabledPref = false;
+
+  mockChrome.fileManagerPrivate.onMountCompleted.dispatch({
+    eventType: 'mount',
+    status: 'success',
+    volumeMetadata: {
+      isParentDevice: true,
+      deviceType: 'usb',
+      devicePath: '/device/path',
+      deviceLabel: 'label'
+    },
+    shouldNotify: true
+  });
+
+  // Since arcEnabled is false here, the notification doesn't mention ARC.
+  reportPromise(
+      mockChrome.notifications.resolver.promise.then(notifications => {
+        assertEquals(1, Object.keys(notifications).length);
+        const options = notifications['deviceNavigation:/device/path'];
+        assertEquals('REMOVABLE_DEVICE_NAVIGATION_MESSAGE', options.message);
+        assertTrue(options.isClickable);
+      }),
+      callback);
+}
+
+function testGoodDeviceWithAllowPlayStoreMessage(callback) {
+  // Turn on ARC so that the notification shows the "OPEN SETTINGS" button.
+  mockChrome.fileManagerPrivate.arcEnabledPref = true;
+  // Turn off the ARC pref so that the notification shows the "Allow Play Store
+  // applications ..." label.
+  mockChrome.fileManagerPrivate.arcRemovableMediaAccessEnabledPref = false;
+
   mockChrome.fileManagerPrivate.onMountCompleted.dispatch({
     eventType: 'mount',
     status: 'success',
@@ -49,31 +89,66 @@ function testGoodDevice(callback) {
   });
 
   reportPromise(
-      mockChrome.notifications.resolver.promise.then(function(notifications) {
+      mockChrome.notifications.resolver.promise.then(notifications => {
         assertEquals(1, Object.keys(notifications).length);
-        var options = notifications['deviceNavigation:/device/path'];
-        assertEquals('REMOVABLE_DEVICE_NAVIGATION_MESSAGE', options.message);
+        const options = notifications['deviceNavigationAppAccess:/device/path'];
+        assertEquals(
+            'REMOVABLE_DEVICE_NAVIGATION_MESSAGE ' +
+                'REMOVABLE_DEVICE_ALLOW_PLAY_STORE_ACCESS_MESSAGE',
+            options.message);
+        assertTrue(options.isClickable);
+      }),
+      callback);
+}
+
+function testGoodDeviceWithPlayStoreAppsHaveAccessMessage(callback) {
+  // Turn on ARC so that the notification shows the "OPEN SETTINGS" button.
+  mockChrome.fileManagerPrivate.arcEnabledPref = true;
+  // Turn on the ARC pref so that the notification shows the "Play Store apps
+  // have ..." label.
+  mockChrome.fileManagerPrivate.arcRemovableMediaAccessEnabledPref = true;
+
+  mockChrome.fileManagerPrivate.onMountCompleted.dispatch({
+    eventType: 'mount',
+    status: 'success',
+    volumeMetadata: {
+      isParentDevice: true,
+      deviceType: 'usb',
+      devicePath: '/device/path',
+      deviceLabel: 'label'
+    },
+    shouldNotify: true
+  });
+
+  // Since arcRemovableMediaAccessEnabled is true here, "Play Store apps have
+  // access to ..." message is shown.
+  reportPromise(
+      mockChrome.notifications.resolver.promise.then(notifications => {
+        assertEquals(1, Object.keys(notifications).length);
+        const options = notifications['deviceNavigationAppAccess:/device/path'];
+        assertEquals(
+            'REMOVABLE_DEVICE_NAVIGATION_MESSAGE ' +
+                'REMOVABLE_DEVICE_PLAY_STORE_APPS_HAVE_ACCESS_MESSAGE',
+            options.message);
+        console.log(options.message);
         assertTrue(options.isClickable);
       }),
       callback);
 }
 
 function testRemovableMediaDeviceWithImportEnabled(callback) {
-  var storage = new MockChromeStorageAPI();
+  const storage = new MockChromeStorageAPI();
 
-  setupFileSystem(
-      VolumeManagerCommon.VolumeType.REMOVABLE,
-      'blabbity',
-      [
-        '/DCIM/',
-        '/DCIM/grandma.jpg'
-      ]);
+  setupFileSystem(VolumeManagerCommon.VolumeType.REMOVABLE, 'blabbity', [
+    '/DCIM/',
+    '/DCIM/grandma.jpg',
+  ]);
 
-  var resolver = new importer.Resolver();
+  const resolver = new importer.Resolver();
 
   // Handle media device navigation requests.
   deviceHandler.addEventListener(
-      DeviceHandler.VOLUME_NAVIGATION_REQUESTED, function(event) {
+      DeviceHandler.VOLUME_NAVIGATION_REQUESTED, event => {
         resolver.resolve(event);
       });
 
@@ -85,29 +160,25 @@ function testRemovableMediaDeviceWithImportEnabled(callback) {
   });
 
   reportPromise(
-      resolver.promise.then(
-          function(event) {
-            assertEquals('blabbity', event.volumeId);
-          }),
+      resolver.promise.then(event => {
+        assertEquals('blabbity', event.volumeId);
+      }),
       callback);
 }
 
 function testMtpMediaDeviceWithImportEnabled(callback) {
-  var storage = new MockChromeStorageAPI();
+  const storage = new MockChromeStorageAPI();
 
-  setupFileSystem(
-      VolumeManagerCommon.VolumeType.MTP,
-      'blabbity',
-      [
-        '/dcim/',
-        '/dcim/grandpa.jpg'
-      ]);
+  setupFileSystem(VolumeManagerCommon.VolumeType.MTP, 'blabbity', [
+    '/dcim/',
+    '/dcim/grandpa.jpg',
+  ]);
 
-  var resolver = new importer.Resolver();
+  const resolver = new importer.Resolver();
 
   // Handle media device navigation requests.
   deviceHandler.addEventListener(
-      DeviceHandler.VOLUME_NAVIGATION_REQUESTED, function(event) {
+      DeviceHandler.VOLUME_NAVIGATION_REQUESTED, event => {
         resolver.resolve(event);
       });
 
@@ -119,36 +190,8 @@ function testMtpMediaDeviceWithImportEnabled(callback) {
   });
 
   reportPromise(
-      resolver.promise.then(
-          function(event) {
-            assertEquals('blabbity', event.volumeId);
-          }),
-      callback);
-}
-
-function testMediaDeviceWithImportDisabled(callback) {
-  mockChrome.commandLinePrivate.cloudImportDisabled = true;
-
-  mockChrome.fileManagerPrivate.onMountCompleted.dispatch({
-    eventType: 'mount',
-    status: 'success',
-    volumeMetadata: {
-      isParentDevice: true,
-      deviceType: 'usb',
-      devicePath: '/device/path',
-      deviceLabel: 'label',
-      hasMedia: true
-    },
-    shouldNotify: true
-  });
-
-  reportPromise(
-      mockChrome.notifications.resolver.promise.then(function(notifications) {
-        assertEquals(1, Object.keys(notifications).length);
-        assertEquals(
-            'REMOVABLE_DEVICE_NAVIGATION_MESSAGE',
-            notifications['deviceNavigation:/device/path'].message,
-            'Device notification did not have the right message.');
+      resolver.promise.then(event => {
+        assertEquals('blabbity', event.volumeId);
       }),
       callback);
 }
@@ -184,7 +227,7 @@ function testGoodDeviceWithBadParent(callback) {
   });
 
   reportPromise(
-      mockChrome.notifications.resolver.promise.then(function(notifications) {
+      mockChrome.notifications.resolver.promise.then(notifications => {
         assertFalse(!!notifications['device:/device/path']);
         assertEquals(
             'DEVICE_UNKNOWN: label',
@@ -221,7 +264,7 @@ function testGoodDeviceWithBadParent_DuplicateMount(callback) {
   });
 
   reportPromise(
-      mockChrome.notifications.resolver.promise.then(function(notifications) {
+      mockChrome.notifications.resolver.promise.then(notifications => {
         assertEquals(1, Object.keys(notifications).length);
         assertEquals(
             'REMOVABLE_DEVICE_NAVIGATION_MESSAGE',
@@ -244,7 +287,7 @@ function testUnsupportedDevice(callback) {
   });
 
   reportPromise(
-      mockChrome.notifications.resolver.promise.then(function(notifications) {
+      mockChrome.notifications.resolver.promise.then(notifications => {
         assertFalse(!!mockChrome.notifications.items['device:/device/path']);
         assertEquals(
             'DEVICE_UNSUPPORTED: label',
@@ -268,9 +311,9 @@ function testUnknownDevice(callback) {
   });
 
   reportPromise(
-      mockChrome.notifications.resolver.promise.then(function(notifications) {
+      mockChrome.notifications.resolver.promise.then(notifications => {
         assertFalse(!!mockChrome.notifications.items['device:/device/path']);
-        var item = mockChrome.notifications.items['deviceFail:/device/path'];
+        const item = mockChrome.notifications.items['deviceFail:/device/path'];
         assertEquals('DEVICE_UNKNOWN_DEFAULT_MESSAGE', item.message);
         // "Format device" button should appear.
         assertEquals('DEVICE_UNKNOWN_BUTTON_LABEL', item.buttons[0].title);
@@ -293,9 +336,9 @@ function testUnknownReadonlyDevice(callback) {
   });
 
   reportPromise(
-      mockChrome.notifications.resolver.promise.then(function(notifications) {
+      mockChrome.notifications.resolver.promise.then(notifications => {
         assertFalse(!!mockChrome.notifications.items['device:/device/path']);
-        var item = mockChrome.notifications.items['deviceFail:/device/path'];
+        const item = mockChrome.notifications.items['deviceFail:/device/path'];
         assertEquals('DEVICE_UNKNOWN_DEFAULT_MESSAGE', item.message);
         // "Format device" button should not appear.
         assertFalse(!!item.buttons);
@@ -353,13 +396,13 @@ function testMountPartialSuccess(callback) {
 
   reportPromise(
       mockChrome.notifications.resolver.promise
-          .then(function(notifications) {
+          .then(notifications => {
             assertEquals(1, Object.keys(notifications).length);
             assertEquals(
                 'REMOVABLE_DEVICE_NAVIGATION_MESSAGE',
                 notifications['deviceNavigation:/device/path'].message);
           })
-          .then(function() {
+          .then(() => {
             mockChrome.fileManagerPrivate.onMountCompleted.dispatch({
               eventType: 'mount',
               status: 'error_unsupported_filesystem',
@@ -372,10 +415,9 @@ function testMountPartialSuccess(callback) {
               shouldNotify: true
             });
           })
-          .then(function() {
-            var notifications = mockChrome.notifications.items;
-            assertEquals(
-                2, Object.keys(notifications).length);
+          .then(() => {
+            const notifications = mockChrome.notifications.items;
+            assertEquals(2, Object.keys(notifications).length);
             assertEquals(
                 'MULTIPART_DEVICE_UNSUPPORTED: label',
                 notifications['deviceFail:/device/path'].message);
@@ -397,7 +439,7 @@ function testUnknown(callback) {
   });
 
   reportPromise(
-      mockChrome.notifications.resolver.promise.then(function(notifications) {
+      mockChrome.notifications.resolver.promise.then(notifications => {
         assertEquals(1, Object.keys(notifications).length);
         assertEquals(
             'DEVICE_UNKNOWN: label',
@@ -421,7 +463,7 @@ function testNonASCIILabel(callback) {
   });
 
   reportPromise(
-      mockChrome.notifications.resolver.promise.then(function(notifications) {
+      mockChrome.notifications.resolver.promise.then(notifications => {
         assertEquals(1, Object.keys(notifications).length);
         assertEquals(
             'DEVICE_UNKNOWN: \u30E9\u30D9\u30EB',
@@ -579,13 +621,13 @@ function testDeviceHardUnplugged() {
 }
 
 function testNotificationClicked(callback) {
-  var devicePath = '/device/path';
-  var notificationId = 'deviceNavigation:' + devicePath;
+  const devicePath = '/device/path';
+  const notificationId = 'deviceNavigation:' + devicePath;
 
   // Add a listener for navigation-requested events.
-  var resolver = new importer.Resolver();
+  const resolver = new importer.Resolver();
   deviceHandler.addEventListener(
-      DeviceHandler.VOLUME_NAVIGATION_REQUESTED, function(event) {
+      DeviceHandler.VOLUME_NAVIGATION_REQUESTED, event => {
         resolver.resolve(event);
       });
 
@@ -593,12 +635,11 @@ function testNotificationClicked(callback) {
   // navigation-requested event is dispatched.
   mockChrome.notifications.onClicked.dispatch(notificationId);
   reportPromise(
-      resolver.promise.then(
-          function(event) {
-            assertEquals(null, event.volumeId);
-            assertEquals(devicePath, event.devicePath);
-            assertEquals(null, event.filePath);
-          }),
+      resolver.promise.then(event => {
+        assertEquals(null, event.volumeId);
+        assertEquals(devicePath, event.devicePath);
+        assertEquals(null, event.filePath);
+      }),
       callback);
 }
 
@@ -640,11 +681,11 @@ function testMountCompleteInIncognito() {
  */
 function setupFileSystem(volumeType, volumeId, fileNames) {
   /** @type {!MockVolumeManager}*/
-  var mockVolumeManager = volumeManager;
-  var volumeInfo = mockVolumeManager.createVolumeInfo(
+  const mockVolumeManager = volumeManager;
+  const volumeInfo = mockVolumeManager.createVolumeInfo(
       volumeType, volumeId, 'A volume known as ' + volumeId);
   assertTrue(!!volumeInfo);
-  var mockFileSystem = /** @type {!MockFileSystem} */
+  const mockFileSystem = /** @type {!MockFileSystem} */
       (volumeInfo.fileSystem);
   mockFileSystem.populate(fileNames);
   return volumeInfo;
@@ -653,14 +694,6 @@ function setupFileSystem(volumeType, volumeId, fileNames) {
 function setupChromeApis() {
   // Mock chrome APIs.
   mockChrome = {
-    commandLinePrivate: {
-      hasSwitch: function(switchName, callback) {
-        if (switchName === 'disable-cloud-import') {
-          callback(mockChrome.commandLinePrivate.cloudImportDisabled);
-        }
-      },
-      cloudImportDisabled: false,
-    },
     extension: {
       inIncognitoContext: false,
     },
@@ -679,7 +712,16 @@ function setupChromeApis() {
       },
       getProfiles: function(callback) {
         callback([{profileId: 'userid@xyz.domain.org'}]);
-      }
+      },
+      getPreferences: function(callback) {
+        callback({
+          arcEnabled: mockChrome.fileManagerPrivate.arcEnabledPref,
+          arcRemovableMediaAccessEnabled:
+              mockChrome.fileManagerPrivate.arcRemovableMediaAccessEnabledPref
+        });
+      },
+      arcEnabledPref: false,
+      arcRemovableMediaAccessEnabledPref: true,
     },
     i18n: {
       getUILanguage: function() {

@@ -248,11 +248,13 @@ TEST(CrossOriginReadBlockingTest, GetCanonicalMimeType) {
       // Case-insensitive comparison:
       {"APPLICATION/JSON", MimeType::kJson},
       {"APPLICATION/ACTIVITY+JSON", MimeType::kJson},
+      {"appLICAtion/zIP", MimeType::kNeverSniffed},
 
       // Images are allowed cross-site, and SVG is an image, so we should
       // classify SVG as "other" instead of "xml" (even though it technically is
-      // an xml document).
+      // an xml document).  Same argument for DASH video format.
       {"image/svg+xml", MimeType::kOthers},
+      {"application/dash+xml", MimeType::kOthers},
 
       // Javascript should not be blocked.
       {"application/javascript", MimeType::kOthers},
@@ -271,6 +273,17 @@ TEST(CrossOriginReadBlockingTest, GetCanonicalMimeType) {
       {"application/json+blah", MimeType::kOthers},
       {"text/xml+blah", MimeType::kOthers},
       {"application/xml+blah", MimeType::kOthers},
+
+      // Types protected without sniffing.
+      {"application/gzip", MimeType::kNeverSniffed},
+      {"application/x-protobuf", MimeType::kNeverSniffed},
+      {"application/x-gzip", MimeType::kNeverSniffed},
+      {"application/x-www-form-urlencoded", MimeType::kNeverSniffed},
+      {"application/zip", MimeType::kNeverSniffed},
+      {"text/event-stream", MimeType::kNeverSniffed},
+      // TODO(lukasza): https://crbug.com/944162: Add application/pdf and
+      // text/csv to the list of content types tested here (after
+      // kMimeHandlerViewInCrossProcessFrame gets enabled by default).
   };
 
   for (const auto& test : tests) {

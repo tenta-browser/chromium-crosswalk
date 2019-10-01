@@ -4,8 +4,12 @@
 
 #include "ash/shelf/shelf_widget.h"
 
+#include "ash/keyboard/ui/keyboard_controller.h"
+#include "ash/keyboard/ui/keyboard_util.h"
+#include "ash/keyboard/ui/test/keyboard_test_util.h"
 #include "ash/public/cpp/ash_features.h"
 #include "ash/public/cpp/ash_switches.h"
+#include "ash/public/cpp/keyboard/keyboard_switches.h"
 #include "ash/root_window_controller.h"
 #include "ash/shelf/login_shelf_view.h"
 #include "ash/shelf/shelf.h"
@@ -19,16 +23,13 @@
 #include "ash/test/ash_test_helper.h"
 #include "ash/test_shell_delegate.h"
 #include "ash/wm/window_util.h"
+#include "base/bind_helpers.h"
 #include "base/test/scoped_feature_list.h"
 #include "components/session_manager/session_manager_types.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/display/display.h"
 #include "ui/events/event_utils.h"
 #include "ui/events/test/event_generator.h"
-#include "ui/keyboard/keyboard_controller.h"
-#include "ui/keyboard/keyboard_util.h"
-#include "ui/keyboard/public/keyboard_switches.h"
-#include "ui/keyboard/test/keyboard_test_util.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
 
@@ -439,7 +440,7 @@ class ShelfWidgetViewsVisibilityTest : public AshTestBase {
     ASSERT_NE(nullptr, primary_shelf_widget_);
     secondary_shelf_widget_ = Shelf::ForWindow(root_windows[1])->shelf_widget();
     ASSERT_NE(nullptr, secondary_shelf_widget_);
-  };
+  }
 
   void ExpectVisible(session_manager::SessionState state,
                      ShelfVisibility primary_shelf_visibility,
@@ -449,17 +450,18 @@ class ShelfWidgetViewsVisibilityTest : public AshTestBase {
               !primary_shelf_widget_->IsVisible());
     if (primary_shelf_visibility != kNone) {
       EXPECT_EQ(primary_shelf_visibility == kLoginShelf,
-                primary_shelf_widget_->login_shelf_view()->visible());
+                primary_shelf_widget_->login_shelf_view()->GetVisible());
       EXPECT_EQ(primary_shelf_visibility == kShelf,
-                primary_shelf_widget_->shelf_view_for_testing()->visible());
+                primary_shelf_widget_->shelf_view_for_testing()->GetVisible());
     }
     EXPECT_EQ(secondary_shelf_visibility == kNone,
               !secondary_shelf_widget_->IsVisible());
     if (secondary_shelf_visibility != kNone) {
       EXPECT_EQ(secondary_shelf_visibility == kLoginShelf,
-                secondary_shelf_widget_->login_shelf_view()->visible());
-      EXPECT_EQ(secondary_shelf_visibility == kShelf,
-                secondary_shelf_widget_->shelf_view_for_testing()->visible());
+                secondary_shelf_widget_->login_shelf_view()->GetVisible());
+      EXPECT_EQ(
+          secondary_shelf_visibility == kShelf,
+          secondary_shelf_widget_->shelf_view_for_testing()->GetVisible());
     }
   }
 
@@ -520,10 +522,7 @@ class ShelfWidgetVirtualKeyboardTest : public AshTestBase {
         keyboard::switches::kEnableVirtualKeyboard);
     AshTestBase::SetUp();
     ASSERT_TRUE(keyboard::IsKeyboardEnabled());
-
-    keyboard_controller()->LoadKeyboardWindowInBackground();
-    // Wait for the keyboard window to load.
-    base::RunLoop().RunUntilIdle();
+    keyboard::test::WaitUntilLoaded();
 
     // These tests only apply to the floating virtual keyboard, as it is the
     // only case where both the virtual keyboard and the shelf are visible.

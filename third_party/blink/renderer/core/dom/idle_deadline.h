@@ -10,17 +10,23 @@
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/time.h"
 
+namespace base {
+class TickClock;
+}
+
 namespace blink {
 
 class CORE_EXPORT IdleDeadline : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  enum class CallbackType { kCalledWhenIdle, kCalledByTimeout };
-
-  static IdleDeadline* Create(TimeTicks deadline, CallbackType callback_type) {
-    return MakeGarbageCollected<IdleDeadline>(deadline, callback_type);
-  }
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
+  enum class CallbackType {
+    kCalledWhenIdle = 0,
+    kCalledByTimeout = 1,
+    kMaxValue = kCalledByTimeout
+  };
 
   IdleDeadline(TimeTicks deadline, CallbackType);
 
@@ -30,9 +36,14 @@ class CORE_EXPORT IdleDeadline : public ScriptWrappable {
     return callback_type_ == CallbackType::kCalledByTimeout;
   }
 
+  // The caller is the owner of the |clock|. The |clock| must outlive the
+  // IdleDeadline.
+  void SetTickClockForTesting(const base::TickClock* clock) { clock_ = clock; }
+
  private:
   TimeTicks deadline_;
   CallbackType callback_type_;
+  const base::TickClock* clock_;
 };
 
 }  // namespace blink

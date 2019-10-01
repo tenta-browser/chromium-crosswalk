@@ -83,9 +83,9 @@
                     android:layout_width="@dimen/snippets_offline_icon_size"
                     android:layout_height="@dimen/snippets_offline_icon_size"
                     android:layout_marginStart="6dp"
-                    android:src="@drawable/offline_pin_round"
                     android:contentDescription="@string/accessibility_ntp_offline_badge"
                     android:visibility="gone"
+                    app:srcCompat="@drawable/ic_offline_pin_24dp"
                     tools:tint="@color/default_icon_color" />
 
                 <ImageView
@@ -95,8 +95,8 @@
                     android:layout_marginStart="6dp"
                     android:contentDescription="@string/accessibility_suggestion_with_video_badge"
                     android:visibility="gone"
-                    app:srcCompat="@drawable/ic_play_circle_filled_grey"
-                    tools:src="@drawable/ic_play_circle_filled_grey" />
+                    app:srcCompat="@drawable/ic_play_circle_filled_24dp"
+                    tools:src="@drawable/ic_play_circle_filled_24dp" />
             </LinearLayout>
         </LinearLayout>
 
@@ -116,8 +116,8 @@
          cannot select which corners must be rounded, they are all rounded. -->
     <ImageView
         android:id="@+id/corner_top"
-        android:layout_width="@dimen/content_suggestions_card_modern_corner_radius"
-        android:layout_height="@dimen/content_suggestions_card_modern_corner_radius"
+        android:layout_width="@dimen/default_rounded_corner_radius"
+        android:layout_height="@dimen/default_rounded_corner_radius"
         android:layout_alignTop="@id/card_contents"
         android:layout_alignParentEnd="true"
         tools:ignore="ContentDescription"
@@ -126,8 +126,8 @@
 
     <ImageView
         android:id="@+id/corner_bottom"
-        android:layout_width="@dimen/content_suggestions_card_modern_corner_radius"
-        android:layout_height="@dimen/content_suggestions_card_modern_corner_radius"
+        android:layout_width="@dimen/default_rounded_corner_radius"
+        android:layout_height="@dimen/default_rounded_corner_radius"
         android:layout_alignBottom="@id/card_contents"
         android:layout_alignParentEnd="true"
         tools:ignore="ContentDescription"

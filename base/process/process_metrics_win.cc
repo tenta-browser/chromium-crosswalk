@@ -143,9 +143,9 @@ TimeDelta ProcessMetrics::GetCumulativeCPUUsage() {
 
   if (!GetProcessTimes(process_.Get(), &creation_time, &exit_time, &kernel_time,
                        &user_time)) {
-    // We don't assert here because in some cases (such as in the Task Manager)
-    // we may call this function on a process that has just exited but we have
-    // not yet received the notification.
+    // This should never fail because we duplicate the handle to guarantee it
+    // will remain valid.
+    DCHECK(false);
     return TimeDelta();
   }
 
@@ -265,7 +265,8 @@ BASE_EXPORT bool GetSystemPerformanceInfo(SystemPerformanceInfo* info) {
   SYSTEM_PERFORMANCE_INFORMATION counters = {};
   {
     // The call to NtQuerySystemInformation might block on a lock.
-    base::ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+    base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                  BlockingType::MAY_BLOCK);
     if (query_system_information_ptr(::SystemPerformanceInformation, &counters,
                                      sizeof(SYSTEM_PERFORMANCE_INFORMATION),
                                      nullptr) != STATUS_SUCCESS) {

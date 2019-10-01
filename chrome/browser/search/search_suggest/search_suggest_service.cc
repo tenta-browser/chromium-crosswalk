@@ -8,6 +8,7 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search/search.h"
@@ -19,18 +20,13 @@
 
 namespace {
 
-constexpr char kSuggestionHashRegex[] = "[a-z0-9]{1,4}";
+constexpr char kSuggestionHashRegex[] = "[a-z0-9]{4}";
 
-std::string* ValidateHash(const uint8_t hash[4]) {
-  const std::string hash_string = reinterpret_cast<const char*>(hash);
+bool ValidateHash(const uint8_t hash[4], std::string& result) {
+  const std::string hash_string(reinterpret_cast<const char*>(hash), 4);
+  result = hash_string;
 
-  std::string* trimmed_string = new std::string("");
-  // The uint8_t array received via IPC ends in an EOT byte (\4), remove it.
-  base::TrimString(hash_string, "\4", trimmed_string);
-
-  if (!re2::RE2::FullMatch(*trimmed_string, kSuggestionHashRegex))
-    return nullptr;
-  return trimmed_string;
+  return re2::RE2::FullMatch(hash_string, kSuggestionHashRegex);
 }
 
 const char kFirstShownTimeMs[] = "first_shown_time_ms";
@@ -44,16 +40,15 @@ const char kRequestFrozenTimeMs[] = "request_frozen_time_ms";
 // Default value for max_impressions specified by the VASCO team.
 const int kDefaultMaxImpressions = 4;
 
-std::unique_ptr<base::DictionaryValue> ImpressionDictDefaults() {
-  std::unique_ptr<base::DictionaryValue> defaults =
-      std::make_unique<base::DictionaryValue>();
-  defaults->SetInteger(kFirstShownTimeMs, 0);
-  defaults->SetInteger(kImpressionCapExpireTimeMs, 0);
-  defaults->SetInteger(kImpressionsCount, 0);
-  defaults->SetBoolean(kIsRequestFrozen, false);
-  defaults->SetInteger(kMaxImpressions, kDefaultMaxImpressions);
-  defaults->SetInteger(kRequestFreezeTimeMs, 0);
-  defaults->SetInteger(kRequestFrozenTimeMs, 0);
+base::Value ImpressionDictDefaults() {
+  base::Value defaults(base::Value::Type::DICTIONARY);
+  defaults.SetKey(kFirstShownTimeMs, base::Value(0));
+  defaults.SetKey(kImpressionCapExpireTimeMs, base::Value(0));
+  defaults.SetKey(kImpressionsCount, base::Value(0));
+  defaults.SetKey(kIsRequestFrozen, base::Value(false));
+  defaults.SetKey(kMaxImpressions, base::Value(kDefaultMaxImpressions));
+  defaults.SetKey(kRequestFreezeTimeMs, base::Value(0));
+  defaults.SetKey(kRequestFrozenTimeMs, base::Value(0));
   return defaults;
 }
 
@@ -103,7 +98,9 @@ SearchSuggestService::SearchSuggestService(
           identity_manager,
           base::BindRepeating(&SearchSuggestService::SigninStatusChanged,
                               base::Unretained(this)))),
-      profile_(profile) {}
+      profile_(profile),
+      search_suggest_data_(base::nullopt),
+      search_suggest_status_(SearchSuggestLoader::Status::FATAL_ERROR) {}
 
 SearchSuggestService::~SearchSuggestService() = default;
 
@@ -119,6 +116,11 @@ void SearchSuggestService::Shutdown() {
 const base::Optional<SearchSuggestData>&
 SearchSuggestService::search_suggest_data() const {
   return search_suggest_data_;
+}
+
+const SearchSuggestLoader::Status& SearchSuggestService::search_suggest_status()
+    const {
+  return search_suggest_status_;
 }
 
 void SearchSuggestService::Refresh() {
@@ -176,13 +178,16 @@ void SearchSuggestService::SearchSuggestDataLoaded(
     DictionaryPrefUpdate update(profile_->GetPrefs(),
                                 prefs::kNtpSearchSuggestionsImpressions);
 
-    if (data.has_value()) {
+    if (status == SearchSuggestLoader::Status::OK_WITH_SUGGESTIONS ||
+        status == SearchSuggestLoader::Status::OK_WITHOUT_SUGGESTIONS) {
       base::DictionaryValue* dict = update.Get();
       dict->SetInteger(kMaxImpressions, data->max_impressions);
       dict->SetInteger(kImpressionCapExpireTimeMs,
                        data->impression_cap_expire_time_ms);
       dict->SetInteger(kRequestFreezeTimeMs, data->request_freeze_time_ms);
-    } else if (status == SearchSuggestLoader::Status::FATAL_ERROR) {
+    }
+
+    if (status == SearchSuggestLoader::Status::OK_WITHOUT_SUGGESTIONS) {
       base::DictionaryValue* dict = update.Get();
       dict->SetBoolean(kIsRequestFrozen, true);
       dict->SetInteger(kRequestFrozenTimeMs, base::Time::Now().ToTimeT());
@@ -258,7 +263,7 @@ void SearchSuggestService::BlocklistSearchSuggestion(int task_version,
     return;
 
   std::string task_version_id =
-      std::to_string(task_version) + "_" + std::to_string(task_id);
+      base::NumberToString(task_version) + "_" + base::NumberToString(task_id);
   DictionaryPrefUpdate update(profile_->GetPrefs(),
                               prefs::kNtpSearchSuggestionsBlocklist);
   base::DictionaryValue* blocklist = update.Get();
@@ -275,13 +280,12 @@ void SearchSuggestService::BlocklistSearchSuggestionWithHash(
   if (!search::DefaultSearchProviderIsGoogle(profile_))
     return;
 
-  std::string* hash_string = ValidateHash(hash);
-
-  if (!hash_string)
+  std::string hash_string;
+  if (!ValidateHash(hash, hash_string))
     return;
 
   std::string task_version_id =
-      std::to_string(task_version) + "_" + std::to_string(task_id);
+      base::NumberToString(task_version) + "_" + base::NumberToString(task_id);
 
   DictionaryPrefUpdate update(profile_->GetPrefs(),
                               prefs::kNtpSearchSuggestionsBlocklist);
@@ -289,7 +293,7 @@ void SearchSuggestService::BlocklistSearchSuggestionWithHash(
   base::Value* value = blocklist->FindKey(task_version_id);
   if (!value)
     value = blocklist->SetKey(task_version_id, base::ListValue());
-  value->GetList().emplace_back(base::Value(*hash_string));
+  value->GetList().emplace_back(base::Value(hash_string));
 
   search_suggest_data_ = base::nullopt;
   Refresh();
@@ -301,13 +305,13 @@ void SearchSuggestService::SearchSuggestionSelected(int task_version,
   if (!search::DefaultSearchProviderIsGoogle(profile_))
     return;
 
-  std::string* hash_string = ValidateHash(hash);
-
-  if (!hash_string)
+  std::string hash_string;
+  if (!ValidateHash(hash, hash_string))
     return;
 
-  std::string blocklist_item = std::to_string(task_version) + "_" +
-                               std::to_string(task_id) + ":" + *hash_string;
+  std::string blocklist_item = base::NumberToString(task_version) + "_" +
+                               base::NumberToString(task_id) + ":" +
+                               hash_string;
 
   std::string blocklist = GetBlocklistAsString();
   if (!blocklist.empty())

@@ -8,9 +8,11 @@
 #include <string>
 #include <vector>
 
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/devtools/devtools_toggle_action.h"
 #include "chrome/browser/ui/chrome_pages.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_delegate.h"
 #include "content/public/common/page_zoom.h"
 #include "printing/buildflags/buildflags.h"
@@ -31,7 +33,9 @@ namespace chrome {
 
 bool IsCommandEnabled(Browser* browser, int command);
 bool SupportsCommand(Browser* browser, int command);
-bool ExecuteCommand(Browser* browser, int command);
+bool ExecuteCommand(Browser* browser,
+                    int command,
+                    base::TimeTicks time_stamp = base::TimeTicks::Now());
 bool ExecuteCommandWithDisposition(Browser* browser,
                                    int command,
                                    WindowOpenDisposition disposition);
@@ -78,14 +82,26 @@ bool CanZoomIn(content::WebContents* contents);
 bool CanZoomOut(content::WebContents* contents);
 bool CanResetZoom(content::WebContents* contents);
 void RestoreTab(Browser* browser);
-TabStripModelDelegate::RestoreTabType GetRestoreTabType(
-    const Browser* browser);
-void SelectNextTab(Browser* browser);
-void SelectPreviousTab(Browser* browser);
+TabStripModelDelegate::RestoreTabType GetRestoreTabType(const Browser* browser);
+void SelectNextTab(
+    Browser* browser,
+    TabStripModel::UserGestureDetails gesture_detail =
+        TabStripModel::UserGestureDetails(TabStripModel::GestureType::kOther));
+void SelectPreviousTab(
+    Browser* browser,
+    TabStripModel::UserGestureDetails gesture_detail =
+        TabStripModel::UserGestureDetails(TabStripModel::GestureType::kOther));
 void MoveTabNext(Browser* browser);
 void MoveTabPrevious(Browser* browser);
-void SelectNumberedTab(Browser* browser, int index);
-void SelectLastTab(Browser* browser);
+void SelectNumberedTab(
+    Browser* browser,
+    int index,
+    TabStripModel::UserGestureDetails gesture_detail =
+        TabStripModel::UserGestureDetails(TabStripModel::GestureType::kOther));
+void SelectLastTab(
+    Browser* browser,
+    TabStripModel::UserGestureDetails gesture_detail =
+        TabStripModel::UserGestureDetails(TabStripModel::GestureType::kOther));
 void DuplicateTab(Browser* browser);
 bool CanDuplicateTab(const Browser* browser);
 content::WebContents* DuplicateTabAt(Browser* browser, int index);
@@ -103,9 +119,9 @@ void SaveCreditCard(Browser* browser);
 void MigrateLocalCards(Browser* browser);
 void Translate(Browser* browser);
 void ManagePasswordsForPage(Browser* browser);
+void SendTabToSelfFromPageAction(Browser* browser);
 void SavePage(Browser* browser);
 bool CanSavePage(const Browser* browser);
-void SendToMyDevices(Browser* browser);
 void ShowFindBar(Browser* browser);
 void Print(Browser* browser);
 bool CanPrint(Browser* browser);
@@ -143,6 +159,10 @@ void DistillCurrentPage(Browser* browser);
 bool CanRequestTabletSite(content::WebContents* current_tab);
 bool IsRequestingTabletSite(Browser* browser);
 void ToggleRequestTabletSite(Browser* browser);
+// Overwrite the user agent's OS with Android OS so that the web content is
+// using its mobile version layout. Note it won't take effect until the web
+// contents is reloaded.
+void SetAndroidOsForTabletSite(content::WebContents* current_tab);
 void ToggleFullscreenMode(Browser* browser);
 void ClearCache(Browser* browser);
 bool IsDebuggerAttachedToCurrentTab(Browser* browser);

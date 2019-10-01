@@ -21,6 +21,7 @@
 #include "media/mojo/clients/mojo_decryptor.h"
 #include "media/mojo/clients/mojo_demuxer_stream_impl.h"
 #include "media/mojo/common/media_type_converters.h"
+#include "media/mojo/interfaces/cdm_proxy.mojom.h"
 #include "media/mojo/interfaces/constants.mojom.h"
 #include "media/mojo/interfaces/content_decryption_module.mojom.h"
 #include "media/mojo/interfaces/decryptor.mojom.h"
@@ -28,9 +29,10 @@
 #include "media/mojo/interfaces/media_service.mojom.h"
 #include "media/mojo/interfaces/renderer.mojom.h"
 #include "media/mojo/services/media_interface_provider.h"
-#include "media/mojo/services/service_tests_catalog_source.h"
+#include "media/mojo/services/media_manifest.h"
 #include "mojo/public/cpp/bindings/associated_binding.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
+#include "services/service_manager/public/cpp/manifest_builder.h"
 #include "services/service_manager/public/cpp/test/test_service.h"
 #include "services/service_manager/public/cpp/test/test_service_manager.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -118,6 +120,16 @@ ACTION_P(QuitLoop, run_loop) {
   base::PostTask(FROM_HERE, run_loop->QuitClosure());
 }
 
+service_manager::Manifest MakeMediaManifestForExecutable() {
+  service_manager::Manifest manifest = GetMediaManifest();
+  manifest.options.sandbox_type = "none";
+  manifest.options.execution_mode =
+      service_manager::Manifest::ExecutionMode::kStandaloneExecutable;
+  return manifest;
+}
+
+const char kTestServiceName[] = "media_service_unittests";
+
 // Tests MediaService built into a standalone mojo service binary (see
 // ServiceMain() in main.cc) where MediaService uses TestMojoMediaClient.
 // TestMojoMediaClient supports CDM creation using DefaultCdmFactory (only
@@ -126,9 +138,14 @@ ACTION_P(QuitLoop, run_loop) {
 class MediaServiceTest : public testing::Test {
  public:
   MediaServiceTest()
-      : test_service_manager_(test::CreateServiceTestCatalog()),
-        test_service_(test_service_manager_.RegisterTestInstance(
-            "media_service_unittests")),
+      : test_service_manager_(
+            {MakeMediaManifestForExecutable(),
+             service_manager::ManifestBuilder()
+                 .WithServiceName(kTestServiceName)
+                 .RequireCapability(mojom::kMediaServiceName, "media:media")
+                 .Build()}),
+        test_service_(
+            test_service_manager_.RegisterTestInstance(kTestServiceName)),
         cdm_proxy_client_binding_(&cdm_proxy_client_),
         renderer_client_binding_(&renderer_client_),
         video_stream_(DemuxerStream::VIDEO) {}
@@ -231,9 +248,8 @@ class MediaServiceTest : public testing::Test {
   void InitializeRenderer(const VideoDecoderConfig& video_config,
                           bool expected_result) {
     base::RunLoop run_loop;
-    interface_factory_->CreateRenderer(
-        media::mojom::HostedRendererType::kDefault, std::string(),
-        mojo::MakeRequest(&renderer_));
+    interface_factory_->CreateDefaultRenderer(std::string(),
+                                              mojo::MakeRequest(&renderer_));
 
     video_stream_.set_video_decoder_config(video_config);
 
@@ -251,7 +267,7 @@ class MediaServiceTest : public testing::Test {
         .WillOnce(QuitLoop(&run_loop));
     renderer_->Initialize(
         std::move(client_ptr_info), std::move(streams), base::nullopt,
-        base::nullopt,
+        base::nullopt, /* allow_credentials */ false,
         base::BindOnce(&MediaServiceTest::OnRendererInitialized,
                        base::Unretained(this)));
     run_loop.Run();

@@ -13,6 +13,7 @@ Run audits: enabled visible
 =============== Audits run ===============
 bootup-time
 critical-request-chains
+diagnostics
 dom-size
 efficient-animated-content
 estimated-input-latency
@@ -22,12 +23,18 @@ first-cpu-idle
 first-meaningful-paint
 font-display
 interactive
+main-thread-tasks
 mainthread-work-breakdown
+max-potential-fid
 metrics
 network-requests
+network-rtt
+network-server-latency
 offscreen-images
+performance-budget
 redirects
 render-blocking-resources
+resource-summary
 screenshot-thumbnails
 speed-index
 time-to-first-byte

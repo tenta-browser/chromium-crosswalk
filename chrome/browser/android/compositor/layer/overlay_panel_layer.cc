@@ -16,19 +16,14 @@
 #include "ui/base/l10n/l10n_util_android.h"
 #include "ui/gfx/color_utils.h"
 
-namespace {
-
-const SkColor kBarBackgroundColor = SkColorSetRGB(0xff, 0xff, 0xff);
-const SkColor kBarBorderColor = SkColorSetRGB(0xf1, 0xf1, 0xf1);
-
-// This is the default width for any icon displayed on an OverlayPanel.
-const float kDefaultIconWidthDp = 36.0f;
-
-}  // namespace
-
 namespace android {
 
+const float OverlayPanelLayer::kDefaultIconWidthDp = 36.0f;
+const int OverlayPanelLayer::kInvalidResourceID = -1;
+
 scoped_refptr<cc::Layer> OverlayPanelLayer::GetIconLayer() {
+  if (panel_icon_resource_id_ == -1)
+    return nullptr;
   ui::Resource* panel_icon_resource = resource_manager_->GetResource(
       ui::ANDROID_RESOURCE_TYPE_STATIC, panel_icon_resource_id_);
   DCHECK(panel_icon_resource);
@@ -51,11 +46,15 @@ void OverlayPanelLayer::SetResourceIds(int bar_text_resource_id,
                                        int panel_shadow_resource_id,
                                        int bar_shadow_resource_id,
                                        int panel_icon_resource_id,
+                                       int drag_handlebar_resource_id,
+                                       int open_tab_icon_resource_id,
                                        int close_icon_resource_id) {
   bar_text_resource_id_ = bar_text_resource_id;
   panel_shadow_resource_id_ = panel_shadow_resource_id;
   bar_shadow_resource_id_ = bar_shadow_resource_id;
   panel_icon_resource_id_ = panel_icon_resource_id;
+  drag_handlebar_resource_id_ = drag_handlebar_resource_id;
+  open_tab_icon_resource_id_ = open_tab_icon_resource_id;
   close_icon_resource_id_ = close_icon_resource_id;
 }
 
@@ -67,7 +66,9 @@ void OverlayPanelLayer::SetProperties(
     float panel_y,
     float panel_width,
     float panel_height,
+    int bar_background_color,
     float bar_margin_side,
+    float bar_margin_top,
     float bar_height,
     float bar_offset_y,
     float bar_text_opacity,
@@ -75,7 +76,9 @@ void OverlayPanelLayer::SetProperties(
     float bar_border_height,
     bool bar_shadow_visible,
     float bar_shadow_opacity,
-    float close_icon_opacity) {
+    int icon_tint,
+    int drag_handlebar_tint,
+    float icon_opacity) {
   // Grabs required static resources.
   ui::NinePatchResource* panel_shadow_resource =
       ui::NinePatchResource::From(resource_manager_->GetResource(
@@ -115,6 +118,7 @@ void OverlayPanelLayer::SetProperties(
   gfx::Size background_size(panel_width, bar_height);
   bar_background_->SetBounds(background_size);
   bar_background_->SetPosition(gfx::PointF(0.f, bar_top));
+  bar_background_->SetBackgroundColor(bar_background_color);
 
   // ---------------------------------------------------------------------------
   // Bar Text
@@ -158,11 +162,30 @@ void OverlayPanelLayer::SetProperties(
   }
 
   // ---------------------------------------------------------------------------
+  // Drag Handlebar
+  // ---------------------------------------------------------------------------
+  if (drag_handlebar_resource_id_ != 0 && drag_handlebar_resource_id_ != -1) {
+    ui::Resource* drag_handlebar_resource =
+        resource_manager_->GetStaticResourceWithTint(
+            drag_handlebar_resource_id_, drag_handlebar_tint);
+    drag_handlebar_->SetUIResourceId(
+        drag_handlebar_resource->ui_resource()->id());
+    drag_handlebar_->SetBounds(drag_handlebar_resource->size());
+    float drag_handlebar_left =
+        panel_width / 2 - drag_handlebar_resource->size().width() / 2;
+    float drag_handlebar_top =
+        bar_top + bar_margin_top - drag_handlebar_resource->size().height() / 2;
+    drag_handlebar_->SetPosition(
+        gfx::PointF(drag_handlebar_left, drag_handlebar_top));
+  }
+
+  // ---------------------------------------------------------------------------
   // Close Icon
   // ---------------------------------------------------------------------------
   // Grab the Close Icon resource.
-  ui::Resource* close_icon_resource = resource_manager_->GetResource(
-      ui::ANDROID_RESOURCE_TYPE_STATIC, close_icon_resource_id_);
+  ui::Resource* close_icon_resource =
+      resource_manager_->GetStaticResourceWithTint(close_icon_resource_id_,
+                                                   icon_tint);
 
   // Positions the icon at the end of the bar.
   float close_icon_left;
@@ -181,7 +204,33 @@ void OverlayPanelLayer::SetProperties(
   close_icon_->SetBounds(close_icon_resource->size());
   close_icon_->SetPosition(
       gfx::PointF(close_icon_left, close_icon_top));
-  close_icon_->SetOpacity(close_icon_opacity);
+  close_icon_->SetOpacity(icon_opacity);
+
+  // ---------------------------------------------------------------------------
+  // Open Tab icon
+  // ---------------------------------------------------------------------------
+  if (open_tab_icon_resource_id_ != kInvalidResourceID) {
+    ui::Resource* open_tab_icon_resource =
+        resource_manager_->GetStaticResourceWithTint(open_tab_icon_resource_id_,
+                                                     icon_tint);
+
+    // Positions the icon at the end of the bar.
+    float open_tab_top = close_icon_top;
+    float open_tab_left;
+    float margin_from_close_icon =
+        close_icon_resource->size().width() + bar_margin_side;
+    if (is_rtl) {
+      open_tab_left = close_icon_left + margin_from_close_icon;
+    } else {
+      open_tab_left = close_icon_left - margin_from_close_icon;
+    }
+
+    open_tab_icon_->SetUIResourceId(
+        open_tab_icon_resource->ui_resource()->id());
+    open_tab_icon_->SetBounds(open_tab_icon_resource->size());
+    open_tab_icon_->SetPosition(gfx::PointF(open_tab_left, open_tab_top));
+    open_tab_icon_->SetOpacity(icon_opacity);
+  }
 
   // ---------------------------------------------------------------------------
   // Content
@@ -189,6 +238,7 @@ void OverlayPanelLayer::SetProperties(
   content_container_->SetPosition(
       gfx::PointF(0.f, content_offset_y));
   content_container_->SetBounds(gfx::Size(panel_width, panel_height));
+  content_container_->SetBackgroundColor(bar_background_color);
   if (content_layer) {
     if (content_layer->parent() != content_container_)
       content_container_->AddChild(content_layer);
@@ -235,9 +285,73 @@ void OverlayPanelLayer::SetProperties(
     bar_border_->SetBounds(bar_border_size);
     bar_border_->SetPosition(
         gfx::PointF(0.f, border_y));
+    bar_border_->SetBackgroundColor(bar_background_color);
     layer_->AddChild(bar_border_);
   } else if (bar_border_.get() && bar_border_->parent()) {
     bar_border_->RemoveFromParent();
+  }
+}
+
+void OverlayPanelLayer::SetProgressBar(int progress_bar_background_resource_id,
+                                       int progress_bar_resource_id,
+                                       bool progress_bar_visible,
+                                       float progress_bar_position_y,
+                                       float progress_bar_height,
+                                       float progress_bar_opacity,
+                                       int progress_bar_completion,
+                                       float panel_width) {
+  bool should_render_progress_bar =
+      progress_bar_visible && progress_bar_opacity > 0.f;
+
+  if (should_render_progress_bar) {
+    ui::NinePatchResource* progress_bar_background_resource =
+        ui::NinePatchResource::From(resource_manager_->GetResource(
+            ui::ANDROID_RESOURCE_TYPE_STATIC,
+            progress_bar_background_resource_id));
+    ui::NinePatchResource* progress_bar_resource =
+        ui::NinePatchResource::From(resource_manager_->GetResource(
+            ui::ANDROID_RESOURCE_TYPE_STATIC, progress_bar_resource_id));
+
+    DCHECK(progress_bar_background_resource);
+    DCHECK(progress_bar_resource);
+
+    // Progress Bar Background
+    if (progress_bar_background_->parent() != layer_)
+      layer_->AddChild(progress_bar_background_);
+
+    float progress_bar_y = progress_bar_position_y - progress_bar_height;
+    gfx::Size progress_bar_background_size(panel_width, progress_bar_height);
+
+    progress_bar_background_->SetUIResourceId(
+        progress_bar_background_resource->ui_resource()->id());
+    progress_bar_background_->SetBorder(
+        progress_bar_background_resource->Border(progress_bar_background_size));
+    progress_bar_background_->SetAperture(
+        progress_bar_background_resource->aperture());
+    progress_bar_background_->SetBounds(progress_bar_background_size);
+    progress_bar_background_->SetPosition(gfx::PointF(0.f, progress_bar_y));
+    progress_bar_background_->SetOpacity(progress_bar_opacity);
+
+    // Progress Bar
+    if (progress_bar_->parent() != layer_)
+      layer_->AddChild(progress_bar_);
+
+    float progress_bar_width =
+        floor(panel_width * progress_bar_completion / 100.f);
+    gfx::Size progress_bar_size(progress_bar_width, progress_bar_height);
+    progress_bar_->SetUIResourceId(progress_bar_resource->ui_resource()->id());
+    progress_bar_->SetBorder(progress_bar_resource->Border(progress_bar_size));
+    progress_bar_->SetAperture(progress_bar_resource->aperture());
+    progress_bar_->SetBounds(progress_bar_size);
+    progress_bar_->SetPosition(gfx::PointF(0.f, progress_bar_y));
+    progress_bar_->SetOpacity(progress_bar_opacity);
+  } else {
+    // Removes Progress Bar and its Background from the Layer Tree.
+    if (progress_bar_background_.get() && progress_bar_background_->parent())
+      progress_bar_background_->RemoveFromParent();
+
+    if (progress_bar_.get() && progress_bar_->parent())
+      progress_bar_->RemoveFromParent();
   }
 }
 
@@ -249,10 +363,16 @@ OverlayPanelLayer::OverlayPanelLayer(ui::ResourceManager* resource_manager)
       bar_text_(cc::UIResourceLayer::Create()),
       bar_shadow_(cc::UIResourceLayer::Create()),
       panel_icon_(cc::UIResourceLayer::Create()),
+      drag_handlebar_(cc::UIResourceLayer::Create()),
+      open_tab_icon_(cc::UIResourceLayer::Create()),
       close_icon_(cc::UIResourceLayer::Create()),
       content_container_(cc::SolidColorLayer::Create()),
       text_container_(cc::Layer::Create()),
-      bar_border_(cc::SolidColorLayer::Create()) {
+      bar_border_(cc::SolidColorLayer::Create()),
+      progress_bar_(cc::NinePatchLayer::Create()),
+      progress_bar_background_(cc::NinePatchLayer::Create()) {
+  // Background colors for each widget are set in SetProperties, where variable
+  // colors are available.
   layer_->SetMasksToBounds(false);
   layer_->SetIsDrawable(true);
 
@@ -263,7 +383,6 @@ OverlayPanelLayer::OverlayPanelLayer(ui::ResourceManager* resource_manager)
 
   // Bar Background
   bar_background_->SetIsDrawable(true);
-  bar_background_->SetBackgroundColor(kBarBackgroundColor);
   layer_->AddChild(bar_background_);
 
   // Bar Text
@@ -277,21 +396,35 @@ OverlayPanelLayer::OverlayPanelLayer(ui::ResourceManager* resource_manager)
   // The container that any text in the bar will be added to.
   text_container_->SetIsDrawable(true);
 
+  // Drag Handlebar
+  drag_handlebar_->SetIsDrawable(true);
+  layer_->AddChild(drag_handlebar_);
+
+  // Open Tab Icon
+  open_tab_icon_->SetIsDrawable(true);
+  layer_->AddChild(open_tab_icon_);
+
   // Close Icon
   close_icon_->SetIsDrawable(true);
   layer_->AddChild(close_icon_);
 
   // Content Container
   content_container_->SetIsDrawable(true);
-  content_container_->SetBackgroundColor(kBarBackgroundColor);
   layer_->AddChild(content_container_);
 
   // Bar Border
   bar_border_->SetIsDrawable(true);
-  bar_border_->SetBackgroundColor(kBarBorderColor);
 
   // Bar Shadow
   bar_shadow_->SetIsDrawable(true);
+
+  // Progress Bar Background
+  progress_bar_background_->SetIsDrawable(true);
+  progress_bar_background_->SetFillCenter(true);
+
+  // Progress Bar
+  progress_bar_->SetIsDrawable(true);
+  progress_bar_->SetFillCenter(true);
 }
 
 OverlayPanelLayer::~OverlayPanelLayer() {

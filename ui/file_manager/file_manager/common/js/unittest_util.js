@@ -10,7 +10,7 @@
  * @param {!Array<!FileEntry>} actual
  */
 function assertFileEntryListEquals(expected, actual) {
-  var entryToPath = function(entry) {
+  const entryToPath = entry => {
     assertTrue(entry.isFile);
     return entry.fullPath;
   };
@@ -27,12 +27,12 @@ function assertFileEntryListEquals(expected, actual) {
 function assertFileEntryPathsEqual(expectedPaths, fileEntries) {
   assertEquals(expectedPaths.length, fileEntries.length);
 
-  var entryToPath = function(entry) {
+  const entryToPath = entry => {
     assertTrue(entry.isFile);
     return entry.fullPath;
   };
 
-  var actualPaths = fileEntries.map(entryToPath);
+  const actualPaths = fileEntries.map(entryToPath);
   actualPaths.sort();
   expectedPaths = expectedPaths.slice();
   expectedPaths.sort();
@@ -52,107 +52,56 @@ function assertFileEntryPathsEqual(expectedPaths, fileEntries) {
  *   recorder.assertCallCount(1);
  *   assertEquals(recorder.getListCall()[0], 'hammy');
  * </pre>
- * @constructor
  */
-function TestCallRecorder() {
-  /** @private {!Array<!Arguments>} */
-  this.calls_ = [];
+class TestCallRecorder {
+  constructor() {
+    /** @private {!Array<!Arguments>} */
+    this.calls_ = [];
+
+    /**
+     * The recording function. Bound in our constructor to ensure we always
+     * return the same object. This is necessary as some clients may make use
+     * of object equality.
+     *
+     * @type {function(*)}
+     */
+    this.callback = this.recordArguments_.bind(this);
+  }
 
   /**
-   * The recording function. Bound in our constructor to ensure we always
-   * return the same object. This is necessary as some clients may make use
-   * of object equality.
-   *
-   * @type {function(*)}
+   * Records the magic {@code arguments} value for later inspection.
+   * @private
    */
-  this.callback = this.recordArguments_.bind(this);
-}
-
-/**
- * Records the magic {@code arguments} value for later inspection.
- * @private
- */
-TestCallRecorder.prototype.recordArguments_ = function() {
-  this.calls_.push(arguments);
-};
-
-/**
- * Asserts that the recorder was called {@code expected} times.
- * @param {number} expected The expected number of calls.
- */
-TestCallRecorder.prototype.assertCallCount = function(expected) {
-  var actual = this.calls_.length;
-  assertEquals(
-      expected, actual,
-      'Expected ' + expected + ' call(s), but was ' + actual + '.');
-};
-
-/**
- * @return {?Arguments} Returns the {@code Arguments} for the last call,
- *    or null if the recorder hasn't been called.
- */
-TestCallRecorder.prototype.getLastArguments = function() {
-  return (this.calls_.length === 0) ? null :
-                                      this.calls_[this.calls_.length - 1];
-};
-
-/**
- * @param {number} index Index of which args to return.
- * @return {?Arguments} Returns the {@code Arguments} for the call specified
- *    by indexd.
- */
-TestCallRecorder.prototype.getArguments = function(index) {
-  return (index < this.calls_.length) ? this.calls_[index] : null;
-};
-
-/**
- * Stubs the chrome.storage API.
- * @constructor
- * @struct
- */
-function MockChromeStorageAPI() {
-  /** @type {Object<?>} */
-  this.state = {};
-
-  /** @suppress {const} */
-  window.chrome = window.chrome || {};
-  /** @suppress {const} */
-  window.chrome.runtime = window.chrome.runtime || {};  // For lastError.
-  /** @suppress {checkTypes} */
-  window.chrome.storage = {
-    local: {
-      get: this.get_.bind(this),
-      set: this.set_.bind(this),
-    }
-  };
-}
-
-/**
- * @param {Array<string>|string} keys
- * @param {function(Object<?>)} callback
- * @private
- */
-MockChromeStorageAPI.prototype.get_ = function(keys, callback) {
-  var keys = keys instanceof Array ? keys : [keys];
-  var result = {};
-  keys.forEach((key) => {
-    if (key in this.state) {
-      result[key] = this.state[key];
-    }
-  });
-  callback(result);
-};
-
-/**
- * @param {Object<?>} values
- * @param {function()=} opt_callback
- * @private
- */
-MockChromeStorageAPI.prototype.set_ = function(values, opt_callback) {
-  for (var key in values) {
-    this.state[key] = values[key];
+  recordArguments_() {
+    this.calls_.push(arguments);
   }
-  if (opt_callback) {
-    opt_callback();
+
+  /**
+   * Asserts that the recorder was called {@code expected} times.
+   * @param {number} expected The expected number of calls.
+   */
+  assertCallCount(expected) {
+    const actual = this.calls_.length;
+    assertEquals(
+        expected, actual,
+        'Expected ' + expected + ' call(s), but was ' + actual + '.');
   }
-};
+
+  /**
+   * @return {?Arguments} Returns the {@code Arguments} for the last call,
+   *    or null if the recorder hasn't been called.
+   */
+  getLastArguments() {
+    return (this.calls_.length === 0) ? null :
+                                        this.calls_[this.calls_.length - 1];
+  }
+
+  /**
+   * @param {number} index Index of which args to return.
+   * @return {?Arguments} Returns the {@code Arguments} for the call specified
+   *    by indexd.
+   */
+  getArguments(index) {
+    return (index < this.calls_.length) ? this.calls_[index] : null;
+  }
+}

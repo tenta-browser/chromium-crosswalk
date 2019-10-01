@@ -7,6 +7,7 @@
 #include <string>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
@@ -58,14 +59,14 @@ class TestDurablePermissionContext : public DurableStoragePermissionContext {
   void NotifyPermissionSet(const PermissionRequestID& id,
                            const GURL& requesting_origin,
                            const GURL& embedder_origin,
-                           const BrowserPermissionCallback& callback,
+                           BrowserPermissionCallback callback,
                            bool persist,
                            ContentSetting content_setting) override {
     permission_set_count_++;
     last_permission_set_persisted_ = persist;
     last_permission_set_setting_ = content_setting;
     DurableStoragePermissionContext::NotifyPermissionSet(
-        id, requesting_origin, embedder_origin, callback, persist,
+        id, requesting_origin, embedder_origin, std::move(callback), persist,
         content_setting);
   }
 

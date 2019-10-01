@@ -12,6 +12,8 @@
 #include "ash/assistant/ui/assistant_ui_constants.h"
 #include "ash/assistant/ui/assistant_view_delegate.h"
 #include "ash/assistant/util/assistant_util.h"
+#include "ash/public/cpp/app_list/app_list_features.h"
+#include "base/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/views/layout/box_layout.h"
 
@@ -71,11 +73,13 @@ void SuggestionContainerView::InitLayout() {
           gfx::Insets(0, kPaddingDip), kSpacingDip));
 
   layout_manager_->set_cross_axis_alignment(
-      views::BoxLayout::CrossAxisAlignment::CROSS_AXIS_ALIGNMENT_END);
+      app_list_features::IsEmbeddedAssistantUIEnabled()
+          ? views::BoxLayout::CrossAxisAlignment::kCenter
+          : views::BoxLayout::CrossAxisAlignment::kEnd);
 
   // We center align when showing conversation starters.
   layout_manager_->set_main_axis_alignment(
-      views::BoxLayout::MainAxisAlignment::MAIN_AXIS_ALIGNMENT_CENTER);
+      views::BoxLayout::MainAxisAlignment::kCenter);
 }
 
 void SuggestionContainerView::OnConversationStartersChanged(
@@ -93,7 +97,7 @@ void SuggestionContainerView::OnResponseChanged(
 
   // When no longer showing conversation starters, we start align our content.
   layout_manager_->set_main_axis_alignment(
-      views::BoxLayout::MainAxisAlignment::MAIN_AXIS_ALIGNMENT_START);
+      views::BoxLayout::MainAxisAlignment::kStart);
 
   OnSuggestionsChanged(response->GetSuggestions());
 }
@@ -115,8 +119,7 @@ void SuggestionContainerView::OnSuggestionsChanged(
     // suggestion chip view.
     const int id = suggestion.first;
 
-    app_list::SuggestionChipView::Params params;
-    params.assistant_style = true;
+    SuggestionChipView::Params params;
     params.text = base::UTF8ToUTF16(suggestion.second->text);
 
     if (!suggestion.second->icon_url.is_empty()) {
@@ -133,13 +136,13 @@ void SuggestionContainerView::OnSuggestionsChanged(
       params.icon = gfx::ImageSkia();
     }
 
-    app_list::SuggestionChipView* suggestion_chip_view =
-        new app_list::SuggestionChipView(params, /*listener=*/this);
+    SuggestionChipView* suggestion_chip_view =
+        new SuggestionChipView(params, /*listener=*/this);
     suggestion_chip_view->SetAccessibleName(params.text);
 
     // Given a suggestion chip view, we need to be able to look up the id of
     // the underlying suggestion. This is used for handling press events.
-    suggestion_chip_view->set_id(id);
+    suggestion_chip_view->SetID(id);
 
     // Given an id, we also want to be able to look up the corresponding
     // suggestion chip view. This is used for handling icon download events.
@@ -173,15 +176,14 @@ void SuggestionContainerView::ButtonPressed(views::Button* sender,
   // pressed was a conversation starter.
   if (!has_received_response_) {
     suggestion =
-        delegate_->GetCacheModel()->GetConversationStarterById(sender->id());
+        delegate_->GetCacheModel()->GetConversationStarterById(sender->GetID());
   } else {
     // Otherwise, the suggestion chip belonged to the interaction response.
     suggestion =
         delegate_->GetInteractionModel()->response()->GetSuggestionById(
-            sender->id());
+            sender->GetID());
   }
 
-  // TODO(dmblack): Use a delegate pattern here similar to CaptionBar.
   delegate_->OnSuggestionChipPressed(suggestion);
 }
 
@@ -190,8 +192,10 @@ void SuggestionContainerView::OnUiVisibilityChanged(
     AssistantVisibility old_visibility,
     base::Optional<AssistantEntryPoint> entry_point,
     base::Optional<AssistantExitPoint> exit_point) {
-  if (assistant::util::IsStartingSession(new_visibility, old_visibility)) {
-    // Show conversation starters at the start of a new Assistant session.
+  if (assistant::util::IsStartingSession(new_visibility, old_visibility) &&
+      entry_point.value() != AssistantEntryPoint::kLauncherSearchResult) {
+    // Show conversation starters at the start of a new Assistant session except
+    // when the user already started a query in Launcher quick search box (QSB).
     OnConversationStartersChanged(
         delegate_->GetCacheModel()->GetConversationStarters());
     return;
@@ -206,7 +210,7 @@ void SuggestionContainerView::OnUiVisibilityChanged(
   // When we start a new session we will be showing conversation starters so
   // we need to center align our content.
   layout_manager_->set_main_axis_alignment(
-      views::BoxLayout::MainAxisAlignment::MAIN_AXIS_ALIGNMENT_CENTER);
+      views::BoxLayout::MainAxisAlignment::kCenter);
 }
 
 }  // namespace ash

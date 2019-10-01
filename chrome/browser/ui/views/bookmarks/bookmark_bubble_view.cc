@@ -8,7 +8,6 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
-#include "build/buildflag.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/profiles/profile.h"
@@ -17,14 +16,12 @@
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/sync/sync_promo_ui.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
-#include "chrome/browser/ui/views/sync/bubble_sync_promo_view.h"
 #include "chrome/browser/ui/views/textfield_layout.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_utils.h"
-#include "components/signin/core/browser/account_consistency_method.h"
-#include "components/signin/core/browser/signin_buildflags.h"
+#include "components/signin/core/browser/signin_metrics.h"
 #include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/events/keycodes/keyboard_codes.h"
@@ -35,9 +32,8 @@
 #include "ui/views/layout/grid_layout.h"
 #include "ui/views/widget/widget.h"
 
-#if BUILDFLAG(ENABLE_DICE_SUPPORT)
-#include "chrome/browser/signin/account_consistency_mode_manager.h"
-#include "chrome/browser/ui/views/sync/dice_bubble_sync_promo_view.h"
+#if !defined(OS_CHROMEOS)
+#include "chrome/browser/ui/views/sync/bubble_sync_promo_view_util.h"
 #endif
 
 using base::UserMetricsAction;
@@ -148,9 +144,10 @@ base::string16 BookmarkBubbleView::GetDialogButtonLabel(
 }
 
 views::View* BookmarkBubbleView::CreateExtraView() {
-  edit_button_ = views::MdTextButton::CreateSecondaryUiButton(
+  auto edit_button = views::MdTextButton::CreateSecondaryUiButton(
       this, l10n_util::GetStringUTF16(IDS_BOOKMARK_BUBBLE_OPTIONS));
-  edit_button_->AddAccelerator(ui::Accelerator(ui::VKEY_E, ui::EF_ALT_DOWN));
+  edit_button->AddAccelerator(ui::Accelerator(ui::VKEY_E, ui::EF_ALT_DOWN));
+  edit_button_ = edit_button.release();
   return edit_button_;
 }
 
@@ -161,30 +158,29 @@ bool BookmarkBubbleView::GetExtraViewPadding(int* padding) {
 }
 
 views::View* BookmarkBubbleView::CreateFootnoteView() {
+#if defined(OS_CHROMEOS)
+  // ChromeOS does not show the signin promo.
+  return nullptr;
+#else
   if (!SyncPromoUI::ShouldShowSyncPromo(profile_))
     return nullptr;
 
-#if BUILDFLAG(ENABLE_DICE_SUPPORT)
-  if (AccountConsistencyModeManager::IsDiceEnabledForProfile(profile_)) {
-    footnote_view_ = new DiceBubbleSyncPromoView(
-        profile_, delegate_.get(),
-        signin_metrics::AccessPoint::ACCESS_POINT_BOOKMARK_BUBBLE,
-        IDS_BOOKMARK_DICE_PROMO_SIGNIN_MESSAGE,
-        IDS_BOOKMARK_DICE_PROMO_SYNC_MESSAGE,
-        false /* signin_button_prominent */);
-  } else {
-    footnote_view_ = new BubbleSyncPromoView(
-        delegate_.get(),
-        signin_metrics::AccessPoint::ACCESS_POINT_BOOKMARK_BUBBLE,
-        IDS_BOOKMARK_SYNC_PROMO_LINK, IDS_BOOKMARK_SYNC_PROMO_MESSAGE);
-  }
-#else
-  footnote_view_ = new BubbleSyncPromoView(
-      delegate_.get(),
-      signin_metrics::AccessPoint::ACCESS_POINT_BOOKMARK_BUBBLE,
-      IDS_BOOKMARK_SYNC_PROMO_LINK, IDS_BOOKMARK_SYNC_PROMO_MESSAGE);
-#endif
+  BubbleSyncPromoViewParams params;
+  params.link_text_resource_id = IDS_BOOKMARK_SYNC_PROMO_LINK;
+  params.message_text_resource_id = IDS_BOOKMARK_SYNC_PROMO_MESSAGE;
+  params.dice_no_accounts_promo_message_resource_id =
+      IDS_BOOKMARK_DICE_PROMO_SIGNIN_MESSAGE;
+  params.dice_accounts_promo_message_resource_id =
+      IDS_BOOKMARK_DICE_PROMO_SYNC_MESSAGE;
+  params.dice_signin_button_prominent = false;
+
+  footnote_view_ =
+      CreateBubbleSyncPromoView(
+          profile_, delegate_.get(),
+          signin_metrics::AccessPoint::ACCESS_POINT_BOOKMARK_BUBBLE, params)
+          .release();
   return footnote_view_;
+#endif
 }
 
 bool BookmarkBubbleView::Cancel() {
@@ -228,7 +224,7 @@ void BookmarkBubbleView::ButtonPressed(views::Button* sender,
 // views::ComboboxListener -----------------------------------------------------
 
 void BookmarkBubbleView::OnPerformAction(views::Combobox* combobox) {
-  if (combobox->selected_index() + 1 == folder_model()->GetItemCount()) {
+  if (combobox->GetSelectedIndex() + 1 == folder_model()->GetItemCount()) {
     base::RecordAction(UserMetricsAction("BookmarkBubble_EditFromCombobox"));
     ShowEditor();
   }
@@ -329,6 +325,7 @@ void BookmarkBubbleView::ApplyEdits() {
       base::RecordAction(
           UserMetricsAction("BookmarkBubble_ChangeTitleInBubble"));
     }
-    folder_model()->MaybeChangeParent(node, parent_combobox_->selected_index());
+    folder_model()->MaybeChangeParent(node,
+                                      parent_combobox_->GetSelectedIndex());
   }
 }

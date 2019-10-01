@@ -20,48 +20,130 @@ import sys
 import tempfile
 import time
 
+TOP_SRC_DIR = os.path.join(os.path.dirname(__file__), '..', '..', '..')
+
+try:
+  sys.path.append(os.path.join(TOP_SRC_DIR, 'build', 'android'))
+  import devil_chromium
+  devil_chromium.Initialize()
+
+  from pylib.constants import host_paths
+  if host_paths.DEVIL_PATH not in sys.path:
+    sys.path.append(host_paths.DEVIL_PATH)
+
+  from devil.android import apk_helper
+  from devil.android import device_utils
+  from devil.android import flag_changer
+  from devil.android.sdk import intent
+except:
+  pass
+
 
 CONCURRENT_TASKS=4
 BREAKPAD_TOOLS_DIR = os.path.join(
-  os.path.dirname(__file__), '..', '..', '..',
-  'components', 'crash', 'content', 'tools')
+  TOP_SRC_DIR, 'components', 'crash', 'content', 'tools')
+ANDROID_CRASH_DIR = '/data/data/org.chromium.content_shell_apk/cache'
 
-def run_test(options, crash_dir, symbols_dir, additional_arguments = []):
+
+def GetDevice():
+  if hasattr(GetDevice, 'device'):
+    return GetDevice.device
+
+  devices = device_utils.DeviceUtils.HealthyDevices()
+  assert len(devices) == 1
+  GetDevice.device = devices[0]
+  return GetDevice.device
+
+
+def get_android_dump(crash_dir):
   global failure
 
-  print "# Run content_shell and make it crash."
-  cmd = [options.binary,
-         '--run-web-tests',
-         'chrome://crash',
-         '--enable-crash-reporter',
-         '--crash-dumps-dir=%s' % crash_dir]
-  cmd += additional_arguments
-  if options.verbose:
-    print ' '.join(cmd)
-  failure = 'Failed to run content_shell.'
-  if options.verbose:
-    subprocess.check_call(cmd)
-  else:
-    # On Windows, using os.devnull can cause check_call to never return,
-    # so use a temporary file for the output.
-    with tempfile.TemporaryFile() as tmpfile:
-      subprocess.check_call(cmd, stdout=tmpfile, stderr=tmpfile)
+  pending = ANDROID_CRASH_DIR + '/pending/'
+  device = GetDevice()
 
-  print "# Retrieve crash dump."
-  dmp_dir = crash_dir
-  # TODO(crbug.com/782923): This test should not reach directly into the
-  # Crashpad database, but instead should use crashpad_database_util.
-  if sys.platform == 'darwin':
-    dmp_dir = os.path.join(dmp_dir, 'pending')
-  elif sys.platform == 'win32':
-    dmp_dir = os.path.join(dmp_dir, 'reports')
-  dmp_files = glob.glob(os.path.join(dmp_dir, '*.dmp'))
-  failure = 'Expected 1 crash dump, found %d.' % len(dmp_files)
-  if len(dmp_files) != 1:
+  for attempts in range(5):
+    files = device.RunShellCommand(['ls', pending], as_root=True)
+
+    dumps = [f for f in files if f.endswith('.dmp')]
+    if len(dumps) > 0:
+      break
+    # Crashpad may still be writing the dump. Sleep and try again.
+    time.sleep(5)
+
+  if len(dumps) != 1:
+    failure = 'Expected 1 crash dump, found %d.' % len(dumps)
+    print dumps
     raise Exception(failure)
-  dmp_file = dmp_files[0]
 
-  if sys.platform not in ('darwin', 'win32'):
+  device.PullFile(pending + dumps[0], crash_dir, as_root=True)
+  device.RunShellCommand(['rm', pending + dumps[0]], check_return=True,
+                          as_root=True)
+
+  return os.path.join(crash_dir, os.path.basename(dumps[0]))
+
+def run_test(options, crash_dir, symbols_dir, platform,
+             additional_arguments = []):
+  global failure
+
+  print '# Run content_shell and make it crash.'
+  if platform == 'android':
+    device = GetDevice()
+
+    failure = None
+    apk_path = os.path.join(options.build_dir, 'apks', 'ContentShell.apk')
+    apk = apk_helper.ApkHelper(apk_path)
+    view_activity = apk.GetViewActivityName()
+    package_name = apk.GetPackageName()
+
+    device.RunShellCommand(['am', 'set-debug-app', '--persistent',
+                            package_name])
+
+    changer = flag_changer.FlagChanger(device, 'content-shell-command-line')
+    changer.ReplaceFlags(['--enable-crash-reporter',
+                          '--crash-dumps-dir=%s' % ANDROID_CRASH_DIR])
+
+    launch_intent = intent.Intent(action='android.intent.action.VIEW',
+                                  activity=view_activity, data='chrome://crash',
+                                  package=package_name)
+    device.StartActivity(launch_intent)
+  else:
+    cmd = [options.binary,
+           '--run-web-tests',
+           'chrome://crash',
+           '--enable-crash-reporter',
+           '--crash-dumps-dir=%s' % crash_dir]
+    cmd += additional_arguments
+
+    if options.verbose:
+      print ' '.join(cmd)
+    failure = 'Failed to run content_shell.'
+    if options.verbose:
+      subprocess.check_call(cmd)
+    else:
+      # On Windows, using os.devnull can cause check_call to never return,
+      # so use a temporary file for the output.
+      with tempfile.TemporaryFile() as tmpfile:
+        subprocess.check_call(cmd, stdout=tmpfile, stderr=tmpfile)
+
+  print '# Retrieve crash dump.'
+  if platform == 'android':
+    dmp_file = get_android_dump(crash_dir)
+  else:
+    dmp_dir = crash_dir
+    # TODO(crbug.com/782923): This test should not reach directly into the
+    # Crashpad database, but instead should use crashpad_database_util.
+    if platform == 'darwin':
+      dmp_dir = os.path.join(dmp_dir, 'pending')
+    elif platform == 'win32':
+      dmp_dir = os.path.join(dmp_dir, 'reports')
+
+    dmp_files = glob.glob(os.path.join(dmp_dir, '*.dmp'))
+    failure = 'Expected 1 crash dump, found %d.' % len(dmp_files)
+    if len(dmp_files) != 1:
+      raise Exception(failure)
+    dmp_file = dmp_files[0]
+
+  if platform not in ('darwin', 'win32', 'android'):
     minidump = os.path.join(crash_dir, 'minidump')
     dmp_to_minidump = os.path.join(BREAKPAD_TOOLS_DIR, 'dmp2minidump.py')
     cmd = [dmp_to_minidump, dmp_file, minidump]
@@ -72,8 +154,8 @@ def run_test(options, crash_dir, symbols_dir, additional_arguments = []):
   else:
     minidump = dmp_file
 
-  print "# Symbolize crash dump."
-  if sys.platform == 'win32':
+  print '# Symbolize crash dump.'
+  if platform == 'win32':
     cdb_exe = os.path.join(options.build_dir, 'cdb', 'cdb.exe')
     cmd = [cdb_exe, '-y', options.build_dir, '-c', '.lines;.excr;k30;q',
            '-z', dmp_file]
@@ -133,19 +215,21 @@ def main():
                     help='Print verbose status output.')
   parser.add_option('', '--json', default='',
                     help='Path to JSON output.')
+  parser.add_option('', '--platform', default=sys.platform,
+                    help='Platform to run the test on.')
 
   (options, _) = parser.parse_args()
 
   if not options.build_dir:
-    print "Required option --build-dir missing."
+    print 'Required option --build-dir missing.'
     return 1
 
   if not options.binary:
-    print "Required option --binary missing."
+    print 'Required option --binary missing.'
     return 1
 
   if not os.access(options.binary, os.X_OK):
-    print "Cannot find %s." % options.binary
+    print 'Cannot find %s.' % options.binary
     return 1
 
   failure = ''
@@ -157,8 +241,16 @@ def main():
   crash_service = None
 
   try:
-    if sys.platform != 'win32':
-      print "# Generate symbols."
+    if options.platform == 'android':
+      device = GetDevice()
+
+      print '# Install ContentShell.apk'
+      apk_path = os.path.join(options.build_dir, 'apks', 'ContentShell.apk')
+      device.Install(apk_path, reinstall=False, allow_downgrade=True)
+      #device.RunShellCommand(['mkdir', ANDROID_CRASH_DIR], check_return=True)
+
+    if options.platform != 'win32':
+      print '# Generate symbols.'
       bins = [options.binary]
       if options.additional_binary:
         bins.append(options.additional_binary)
@@ -169,22 +261,20 @@ def main():
                '--build-dir=%s' % options.build_dir,
                '--binary=%s' % binary,
                '--symbols-dir=%s' % symbols_dir,
-               '--jobs=%d' % options.jobs]
+               '--jobs=%d' % options.jobs,
+               '--platform=%s' % options.platform]
         if options.verbose:
           cmd.append('--verbose')
           print ' '.join(cmd)
         failure = 'Failed to run generate_breakpad_symbols.py.'
         subprocess.check_call(cmd)
 
-    print "# Running test without trap handler."
-    run_test(options, crash_dir, symbols_dir)
-    print "# Running test with trap handler."
-    run_test(options, crash_dir, symbols_dir,
-             additional_arguments =
-               ['--enable-features=WebAssemblyTrapHandler'])
+    run_test(options, crash_dir, symbols_dir, options.platform)
 
   except:
-    print "FAIL: %s" % failure
+    if failure == '':
+        failure = '%s: %s' % sys.exc_info()[:2]
+    print 'FAIL: %s' % failure
     if options.json:
       with open(options.json, 'w') as json_file:
         json.dump([failure], json_file)
@@ -192,7 +282,7 @@ def main():
     return 1
 
   else:
-    print "PASS: Breakpad integration test ran successfully."
+    print 'PASS: Breakpad integration test ran successfully.'
     if options.json:
       with open(options.json, 'w') as json_file:
         json.dump([], json_file)
@@ -206,6 +296,15 @@ def main():
       shutil.rmtree(crash_dir)
     except:
       print 'Failed to delete temp directory "%s".' % crash_dir
+    if options.platform == 'android':
+      try:
+        pending = ANDROID_CRASH_DIR + '/pending/'
+        files = device.RunShellCommand(['ls', pending], as_root=True)
+        for f in files:
+          GetDevice().RunShellCommand(['rm', pending + f], check_return=True,
+                                      as_root=True)
+      except:
+        print 'Failed to delete android crash dir %s' % ANDROID_CRASH_DIR
 
 
 if '__main__' == __name__:

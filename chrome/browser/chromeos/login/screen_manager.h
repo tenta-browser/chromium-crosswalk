@@ -11,9 +11,11 @@
 
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "chrome/browser/chromeos/login/screens/base_screen.h"
+#include "chrome/browser/chromeos/login/oobe_screen.h"
 
 namespace chromeos {
+
+class BaseScreen;
 
 // Class that manages creation and ownership of screens.
 class ScreenManager {
@@ -21,22 +23,20 @@ class ScreenManager {
   ScreenManager();
   ~ScreenManager();
 
-  // Getter for screen with lazy initialization.
-  BaseScreen* GetScreen(OobeScreen screen);
+  // Initialize all screen instances.
+  void Init(std::vector<std::unique_ptr<BaseScreen>> screens);
 
-  bool HasScreen(OobeScreen screen);
+  // Getter for screen. Does not create the screen.
+  BaseScreen* GetScreen(OobeScreenId screen);
+
+  bool HasScreen(OobeScreenId screen);
+
+  void SetScreenForTesting(std::unique_ptr<BaseScreen> value);
+  void DeleteScreenForTesting(OobeScreenId screen);
 
  private:
-  FRIEND_TEST_ALL_PREFIXES(EnrollmentScreenTest, TestCancel);
-  FRIEND_TEST_ALL_PREFIXES(WizardControllerFlowTest, Accelerators);
-  friend class WizardControllerFlowTest;
-  friend class WizardControllerOobeResumeTest;
-  friend class WizardControllerBrokenLocalStateTest;
-  friend class WizardControllerOobeConfigurationTest;
-  friend class WizardControllerSupervisionTransitionOobeTest;
-
   // Created screens.
-  std::map<OobeScreen, std::unique_ptr<BaseScreen>> screens_;
+  std::map<OobeScreenId, std::unique_ptr<BaseScreen>> screens_;
 
   DISALLOW_COPY_AND_ASSIGN(ScreenManager);
 };

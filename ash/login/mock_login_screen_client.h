@@ -5,31 +5,30 @@
 #ifndef ASH_LOGIN_MOCK_LOGIN_SCREEN_CLIENT_H_
 #define ASH_LOGIN_MOCK_LOGIN_SCREEN_CLIENT_H_
 
-#include "ash/public/interfaces/kiosk_app_info.mojom.h"
-#include "ash/public/interfaces/login_screen.mojom.h"
+#include "ash/public/cpp/login_screen_client.h"
 #include "components/password_manager/core/browser/hash_password_manager.h"
-#include "mojo/public/cpp/bindings/binding_set.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
 namespace ash {
 
-class MockLoginScreenClient : public mojom::LoginScreenClient {
+class MockLoginScreenClient : public LoginScreenClient {
  public:
   MockLoginScreenClient();
   ~MockLoginScreenClient() override;
-
-  mojom::LoginScreenClientPtr CreateInterfacePtrAndBind();
 
   MOCK_METHOD4(AuthenticateUserWithPasswordOrPin_,
                void(const AccountId& account_id,
                     const std::string& password,
                     bool authenticated_by_pin,
-                    AuthenticateUserWithPasswordOrPinCallback& callback));
+                    base::OnceCallback<void(bool)>& callback));
   MOCK_METHOD2(AuthenticateUserWithExternalBinary_,
                void(const AccountId& account_id,
-                    AuthenticateUserWithExternalBinaryCallback& callback));
+                    base::OnceCallback<void(bool)>& callback));
   MOCK_METHOD1(EnrollUserWithExternalBinary_,
-               void(EnrollUserWithExternalBinaryCallback& callback));
+               void(base::OnceCallback<void(bool)>& callback));
+  MOCK_METHOD2(ValidateParentAccessCode_,
+               bool(const AccountId& account_id,
+                    const std::string& access_code));
 
   // Set the result that should be passed to |callback| in
   // |AuthenticateUserWithPasswordOrPin| or
@@ -38,32 +37,40 @@ class MockLoginScreenClient : public mojom::LoginScreenClient {
     authenticate_user_callback_result_ = value;
   }
 
+  // Sets the result that should be passed to |callback| in
+  // |ValidateParentAccessCode|.
+  void set_validate_parent_access_code_result(bool value) {
+    validate_parent_access_code_result_ = value;
+  }
+
   // If set to non-null, when |AuthenticateUser| is called the callback will be
   // stored in |storage| instead of being executed.
   void set_authenticate_user_with_password_or_pin_callback_storage(
-      AuthenticateUserWithPasswordOrPinCallback* storage) {
+      base::OnceCallback<void(bool)>* storage) {
     authenticate_user_with_password_or_pin_callback_storage_ = storage;
   }
   void set_authenticate_user_with_external_binary_storage(
-      AuthenticateUserWithPasswordOrPinCallback* storage) {
+      base::OnceCallback<void(bool)>* storage) {
     authenticate_user_with_external_binary_callback_storage_ = storage;
   }
   void set_enroll_user_with_external_binary_storage(
-      EnrollUserWithExternalBinaryCallback* storage) {
+      base::OnceCallback<void(bool)>* storage) {
     enroll_user_with_external_binary_callback_storage_ = storage;
   }
 
-  // mojom::LoginScreenClient:
+  // LoginScreenClient:
   void AuthenticateUserWithPasswordOrPin(
       const AccountId& account_id,
       const std::string& password,
       bool authenticated_by_pin,
-      AuthenticateUserWithPasswordOrPinCallback callback) override;
+      base::OnceCallback<void(bool)> callback) override;
   void AuthenticateUserWithExternalBinary(
       const AccountId& account_id,
-      AuthenticateUserWithExternalBinaryCallback callback) override;
+      base::OnceCallback<void(bool)> callback) override;
   void EnrollUserWithExternalBinary(
-      EnrollUserWithExternalBinaryCallback callback) override;
+      base::OnceCallback<void(bool)> callback) override;
+  bool ValidateParentAccessCode(const AccountId& account_id,
+                                const std::string& code) override;
   MOCK_METHOD1(AuthenticateUserWithEasyUnlock,
                void(const AccountId& account_id));
   MOCK_METHOD1(HardlockPod, void(const AccountId& account_id));
@@ -77,8 +84,7 @@ class MockLoginScreenClient : public mojom::LoginScreenClient {
                void(const AccountId& account_id));
   MOCK_METHOD1(FocusLockScreenApps, void(bool reverse));
   MOCK_METHOD2(ShowGaiaSignin,
-               void(bool can_close,
-                    const base::Optional<AccountId>& prefilled_account));
+               void(bool can_close, const AccountId& prefilled_account));
   MOCK_METHOD0(OnRemoveUserWarningShown, void());
   MOCK_METHOD1(RemoveUser, void(const AccountId& account_id));
   MOCK_METHOD3(LaunchPublicSession,
@@ -88,29 +94,24 @@ class MockLoginScreenClient : public mojom::LoginScreenClient {
   MOCK_METHOD2(RequestPublicSessionKeyboardLayouts,
                void(const AccountId& account_id, const std::string& locale));
   MOCK_METHOD0(ShowFeedback, void());
-  MOCK_METHOD1(LaunchKioskApp, void(const std::string& app_id));
-  MOCK_METHOD1(LaunchArcKioskApp, void(const AccountId& account_id));
   MOCK_METHOD0(ShowResetScreen, void());
   MOCK_METHOD0(ShowAccountAccessHelpApp, void());
   MOCK_METHOD0(FocusOobeDialog, void());
   MOCK_METHOD1(OnFocusLeavingSystemTray, void(bool reverse));
+  MOCK_METHOD0(OnUserActivity, void());
 
  private:
   bool authenticate_user_callback_result_ = true;
-  AuthenticateUserWithPasswordOrPinCallback*
+  bool validate_parent_access_code_result_ = true;
+  base::OnceCallback<void(bool)>*
       authenticate_user_with_password_or_pin_callback_storage_ = nullptr;
-  AuthenticateUserWithExternalBinaryCallback*
+  base::OnceCallback<void(bool)>*
       authenticate_user_with_external_binary_callback_storage_ = nullptr;
-  EnrollUserWithExternalBinaryCallback*
+  base::OnceCallback<void(bool)>*
       enroll_user_with_external_binary_callback_storage_ = nullptr;
-
-  mojo::Binding<mojom::LoginScreenClient> binding_;
 
   DISALLOW_COPY_AND_ASSIGN(MockLoginScreenClient);
 };
-
-// Helper method to bind a login screen client so it receives all mojo calls.
-std::unique_ptr<MockLoginScreenClient> BindMockLoginScreenClient();
 
 }  // namespace ash
 

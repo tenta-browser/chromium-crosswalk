@@ -12,15 +12,10 @@ namespace aura {
 class Window;
 }
 
-class PrefService;
-
 namespace ash {
-
-class OverviewSession;
 
 class ASH_EXPORT ShellObserver {
  public:
-
   // Called when a casting session is started or stopped.
   virtual void OnCastingSessionStartedOrStopped(bool started) {}
 
@@ -30,36 +25,21 @@ class ASH_EXPORT ShellObserver {
   // Invoked when the shelf alignment in |root_window| is changed.
   virtual void OnShelfAlignmentChanged(aura::Window* root_window) {}
 
+  // Invoked when user work area insets (accessibility panel, docked magnifier,
+  // keyboard) in |root_window| changed.
+  // This notification is not fired when shelf bounds changed.
+  virtual void OnUserWorkAreaInsetsChanged(aura::Window* root_window) {}
+
   // Invoked when the shelf auto-hide behavior in |root_window| is changed.
   virtual void OnShelfAutoHideBehaviorChanged(aura::Window* root_window) {}
 
-  // Invoked when entering or exiting fullscreen mode in |root_window|.
+  // Invoked when entering or exiting fullscreen mode in |container|.
+  // |container| is always the active desk container.
   virtual void OnFullscreenStateChanged(bool is_fullscreen,
-                                        aura::Window* root_window) {}
+                                        aura::Window* container) {}
 
   // Invoked when |pinned_window| enter or exit pinned mode.
   virtual void OnPinnedStateChanged(aura::Window* pinned_window) {}
-
-  // Called when the overview mode is about to be started (before the windows
-  // get re-arranged).
-  virtual void OnOverviewModeStarting() {}
-
-  // Called after the animations that happen when overview mode is started are
-  // complete. If |canceled| it means overview was quit before the start
-  // animations were finished.
-  virtual void OnOverviewModeStartingAnimationComplete(bool canceled) {}
-
-  // Called when the overview mode is about to end (bofore the windows restore
-  // themselves). |overview_session| will not be null.
-  virtual void OnOverviewModeEnding(OverviewSession* overview_session) {}
-
-  // Called after overview mode has ended.
-  virtual void OnOverviewModeEnded() {}
-
-  // Called after the animations that happen when overview mode is ended are
-  // complete. If |canceled| it means overview was reentered before the exit
-  // animations were finished.
-  virtual void OnOverviewModeEndingAnimationComplete(bool canceled) {}
 
   // Called when the split view mode is about to be started before the window
   // gets snapped and activated).
@@ -80,13 +60,12 @@ class ASH_EXPORT ShellObserver {
   // Called at the end of Shell::Init.
   virtual void OnShellInitialized() {}
 
+  // Called at the beginning of ~Shell.
+  virtual void OnShellDestroying() {}
+
   // Called near the end of ~Shell. Shell::Get() still returns the Shell, but
   // most of Shell's state has been deleted.
   virtual void OnShellDestroyed() {}
-
-  // Called when local state prefs are available. This occurs an arbitrary
-  // amount of time after Shell initialization. Only called once.
-  virtual void OnLocalStatePrefServiceInitialized(PrefService* pref_service) {}
 
  protected:
   virtual ~ShellObserver() {}

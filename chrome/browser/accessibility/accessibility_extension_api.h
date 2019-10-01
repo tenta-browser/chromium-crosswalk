@@ -27,11 +27,11 @@ class AccessibilityPrivateSetNativeAccessibilityEnabledFunction
 };
 
 // API function that sets the location of the accessibility focus ring.
-class AccessibilityPrivateSetFocusRingFunction
+class AccessibilityPrivateSetFocusRingsFunction
     : public UIThreadExtensionFunction {
-  ~AccessibilityPrivateSetFocusRingFunction() override {}
+  ~AccessibilityPrivateSetFocusRingsFunction() override {}
   ResponseAction Run() override;
-  DECLARE_EXTENSION_FUNCTION("accessibilityPrivate.setFocusRing",
+  DECLARE_EXTENSION_FUNCTION("accessibilityPrivate.setFocusRings",
                              ACCESSIBILITY_PRIVATE_SETFOCUSRING)
 };
 
@@ -164,6 +164,14 @@ class AccessibilityPrivateGetBatteryDescriptionFunction
   ash::mojom::AccessibilityControllerPtr controller_ = nullptr;
 };
 
+// API function that opens or closes the virtual keyboard.
+class AccessibilityPrivateSetVirtualKeyboardVisibleFunction
+    : public UIThreadExtensionFunction {
+  ~AccessibilityPrivateSetVirtualKeyboardVisibleFunction() override {}
+  ResponseAction Run() override;
+  DECLARE_EXTENSION_FUNCTION("accessibilityPrivate.setVirtualKeyboardVisible",
+                             ACCESSIBILITY_PRIVATE_SETVIRTUALKEYBOARDVISIBLE)
+};
 #endif  // defined (OS_CHROMEOS)
 
 #endif  // CHROME_BROWSER_ACCESSIBILITY_ACCESSIBILITY_EXTENSION_API_H_

@@ -6,12 +6,15 @@
 #define COMPONENTS_SYNC_TEST_FAKE_SYNC_ENCRYPTION_HANDLER_H_
 
 #include <string>
+#include <vector>
 
 #include "base/compiler_specific.h"
 #include "base/observer_list.h"
-#include "components/sync/base/cryptographer.h"
+#include "base/time/time.h"
 #include "components/sync/base/fake_encryptor.h"
 #include "components/sync/engine/sync_encryption_handler.h"
+#include "components/sync/nigori/cryptographer.h"
+#include "components/sync/nigori/keystore_keys_handler.h"
 #include "components/sync/syncable/nigori_handler.h"
 
 namespace syncer {
@@ -22,7 +25,8 @@ namespace syncer {
 // (setting pending keys, installing keys).
 // Note: NOT thread safe. If threads attempt to check encryption state
 // while another thread is modifying it, races can occur.
-class FakeSyncEncryptionHandler : public SyncEncryptionHandler,
+class FakeSyncEncryptionHandler : public KeystoreKeysHandler,
+                                  public SyncEncryptionHandler,
                                   public syncable::NigoriHandler {
  public:
   FakeSyncEncryptionHandler();
@@ -38,6 +42,7 @@ class FakeSyncEncryptionHandler : public SyncEncryptionHandler,
   bool IsEncryptEverythingEnabled() const override;
   PassphraseType GetPassphraseType(
       syncable::BaseTransaction* const trans) const override;
+  base::Time GetKeystoreMigrationTime() const override;
 
   // NigoriHandler implemenation.
   void ApplyNigoriUpdate(const sync_pb::NigoriSpecifics& nigori,
@@ -45,12 +50,12 @@ class FakeSyncEncryptionHandler : public SyncEncryptionHandler,
   void UpdateNigoriFromEncryptedTypes(
       sync_pb::NigoriSpecifics* nigori,
       syncable::BaseTransaction* const trans) const override;
-  bool NeedKeystoreKey(syncable::BaseTransaction* const trans) const override;
-  bool SetKeystoreKeys(
-      const google::protobuf::RepeatedPtrField<google::protobuf::string>& keys,
-      syncable::BaseTransaction* const trans) override;
   ModelTypeSet GetEncryptedTypes(
       syncable::BaseTransaction* const trans) const override;
+
+  // KeystoreKeysHandler implementation.
+  bool NeedKeystoreKey() const override;
+  bool SetKeystoreKeys(const std::vector<std::string>& keys) override;
 
   Cryptographer* cryptographer() { return &cryptographer_; }
 

@@ -113,8 +113,26 @@ bool AskIfSharedCorsOriginAccessListNotAllowOnIO(
     const GURL url) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   DCHECK(!base::FeatureList::IsEnabled(network::features::kNetworkService));
-  return !shared_cors_origin_access_list->GetOriginAccessList().IsAllowed(
-      origin, url);
+  return shared_cors_origin_access_list->GetOriginAccessList().CheckAccessState(
+             origin, url) !=
+         network::cors::OriginAccessList::AccessState::kAllowed;
+}
+
+base::File::Error ToFileError(int net_error) {
+  // Note: For now, only return specific errors that our obervers care about.
+  switch (net_error) {
+    case net::OK:
+      return base::File::FILE_OK;
+    case net::ERR_FILE_NOT_FOUND:
+      return base::File::FILE_ERROR_NOT_FOUND;
+    case net::ERR_ACCESS_DENIED:
+      return base::File::FILE_ERROR_ACCESS_DENIED;
+    case net::ERR_ABORTED:
+    case net::ERR_CONNECTION_ABORTED:
+      return base::File::FILE_ERROR_ABORT;
+    default:
+      return base::File::FILE_ERROR_FAILED;
+  }
 }
 
 class FileURLDirectoryLoader
@@ -618,12 +636,14 @@ class FileURLLoader : public network::mojom::URLLoader {
     }
 
     if (!net::GetMimeTypeFromFile(path, &head.mime_type)) {
+      std::string new_type;
       net::SniffMimeType(
           initial_read_buffer, initial_read_result, request.url, head.mime_type,
           GetContentClient()->browser()->ForceSniffingFileUrlsForHtml()
               ? net::ForceSniffFileUrlsForHtml::kEnabled
               : net::ForceSniffFileUrlsForHtml::kDisabled,
-          &head.mime_type);
+          &new_type);
+      head.mime_type.assign(new_type);
       head.did_mime_sniff = true;
     }
     if (head.headers) {
@@ -643,8 +663,8 @@ class FileURLLoader : public network::mojom::URLLoader {
     // In case of a range request, seek to the appropriate position before
     // sending the remaining bytes asynchronously. Under normal conditions
     // (i.e., no range request) this Seek is effectively a no-op.
-    int new_position = file.Seek(base::File::FROM_BEGIN,
-                                 static_cast<int64_t>(first_byte_to_send));
+    int64_t new_position = file.Seek(base::File::FROM_BEGIN,
+                                     static_cast<int64_t>(first_byte_to_send));
     if (observer)
       observer->OnSeekComplete(new_position);
 
@@ -665,8 +685,11 @@ class FileURLLoader : public network::mojom::URLLoader {
                         std::unique_ptr<FileURLLoaderObserver> observer) {
     client_->OnComplete(network::URLLoaderCompletionStatus(net_error));
     client_.reset();
-    if (observer)
+    if (observer) {
+      if (net_error != net::OK)
+        observer->OnBytesRead(nullptr, 0u, ToFileError(net_error));
       observer->OnDoneReading();
+    }
     MaybeDeleteSelf();
   }
 
@@ -772,8 +795,9 @@ void FileURLLoaderFactory::CreateLoaderAndStart(
       // Only internal call sites, such as ExtensionDownloader, is permitted.
       DCHECK(shared_cors_origin_access_list_);
       cors_flag =
-          !shared_cors_origin_access_list_->GetOriginAccessList().IsAllowed(
-              *request.request_initiator, request.url);
+          shared_cors_origin_access_list_->GetOriginAccessList()
+              .CheckAccessState(*request.request_initiator, request.url) !=
+          network::cors::OriginAccessList::AccessState::kAllowed;
     } else {
       // TODO(toyoshim): Remove this thread-hop code once the NetworkService is
       // fully enabled, and if other IO thread users do not need cors enabled

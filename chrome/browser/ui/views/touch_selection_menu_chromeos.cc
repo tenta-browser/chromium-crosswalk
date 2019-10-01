@@ -6,10 +6,14 @@
 
 #include <utility>
 
+#include "ash/public/cpp/shell_window_ids.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/browser/ui/ash/ash_util.h"
 #include "chrome/browser/ui/views/touch_selection_menu_runner_chromeos.h"
-#include "components/arc/arc_bridge_service.h"
 #include "components/arc/arc_service_manager.h"
+#include "components/arc/session/arc_bridge_service.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_skia_operations.h"
 #include "ui/views/controls/button/button.h"
@@ -27,7 +31,10 @@ TouchSelectionMenuChromeOS::TouchSelectionMenuChromeOS(
     aura::Window* context,
     arc::mojom::TextSelectionActionPtr action)
     : views::TouchSelectionMenuViews(owner, client, context),
-      action_(std::move(action)) {}
+      action_(std::move(action)),
+      display_id_(
+          display::Screen::GetScreen()->GetDisplayNearestWindow(context).id()) {
+}
 
 void TouchSelectionMenuChromeOS::SetActionsForTesting(
     std::vector<arc::mojom::TextSelectionActionPtr> actions) {
@@ -37,8 +44,7 @@ void TouchSelectionMenuChromeOS::SetActionsForTesting(
   // default action buttons are already added, we should remove the existent
   // buttons if any, and then call CreateButtons, this will call the parent
   // method too.
-  if (has_children())
-    RemoveAllChildViews(/*delete_children=*/true);
+  RemoveAllChildViews(/*delete_children=*/true);
 
   CreateButtons();
 }
@@ -80,6 +86,13 @@ void TouchSelectionMenuChromeOS::ButtonPressed(views::Button* sender,
 
   instance->HandleIntent(std::move(action_->action_intent),
                          std::move(action_->activity));
+}
+
+void TouchSelectionMenuChromeOS::OnBeforeBubbleWidgetInit(
+    views::Widget::InitParams* params,
+    views::Widget* widget) const {
+  ash_util::SetupWidgetInitParamsForContainer(
+      params, ash::kShellWindowId_SettingBubbleContainer);
 }
 
 TouchSelectionMenuChromeOS::~TouchSelectionMenuChromeOS() = default;

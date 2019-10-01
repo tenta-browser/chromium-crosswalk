@@ -7,7 +7,7 @@
 #include <memory>
 #include <utility>
 
-#include "ash/accelerators/accelerator_controller.h"
+#include "ash/accelerators/accelerator_controller_impl.h"
 #include "ash/accessibility/accessibility_highlight_controller.h"
 #include "ash/accessibility/accessibility_observer.h"
 #include "ash/accessibility/accessibility_panel_layout_manager.h"
@@ -15,12 +15,14 @@
 #include "ash/events/select_to_speak_event_handler.h"
 #include "ash/events/switch_access_event_handler.h"
 #include "ash/high_contrast/high_contrast_controller.h"
+#include "ash/keyboard/ash_keyboard_controller.h"
+#include "ash/keyboard/ui/keyboard_util.h"
 #include "ash/policy/policy_recommendation_restorer.h"
 #include "ash/public/cpp/ash_pref_names.h"
 #include "ash/public/cpp/notification_utils.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/resources/vector_icons/vector_icons.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/session/session_observer.h"
 #include "ash/shell.h"
 #include "ash/sticky_keys/sticky_keys_controller.h"
@@ -29,6 +31,7 @@
 #include "ash/system/power/power_status.h"
 #include "ash/system/power/scoped_backlights_forced_off.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/metrics/user_metrics.h"
 #include "base/strings/string16.h"
@@ -40,8 +43,6 @@
 #include "ui/aura/window.h"
 #include "ui/base/cursor/cursor_type.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/base/ui_base_features.h"
-#include "ui/keyboard/keyboard_util.h"
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/public/cpp/notifier_id.h"
 #include "ui/wm/core/cursor_manager.h"
@@ -265,9 +266,14 @@ void AccessibilityController::RegisterProfilePrefs(PrefRegistrySimple* registry,
                                   static_cast<int>(kDefaultAutoclickEventType));
     registry->RegisterBooleanPref(
         prefs::kAccessibilityAutoclickRevertToLeftClick, true);
+    registry->RegisterBooleanPref(
+        prefs::kAccessibilityAutoclickStabilizePosition, false);
     registry->RegisterIntegerPref(
         prefs::kAccessibilityAutoclickMovementThreshold,
         kDefaultAutoclickMovementThreshold);
+    registry->RegisterIntegerPref(
+        prefs::kAccessibilityAutoclickMenuPosition,
+        static_cast<int>(kDefaultAutoclickMenuPosition));
     registry->RegisterBooleanPref(prefs::kAccessibilityCaretHighlightEnabled,
                                   false);
     registry->RegisterBooleanPref(prefs::kAccessibilityCursorHighlightEnabled,
@@ -311,38 +317,6 @@ void AccessibilityController::RegisterProfilePrefs(PrefRegistrySimple* registry,
 
   // In production the prefs are owned by chrome.
   // TODO(jamescook): Move ownership to ash.
-  registry->RegisterForeignPref(prefs::kAccessibilityAutoclickEnabled);
-  registry->RegisterForeignPref(prefs::kAccessibilityAutoclickDelayMs);
-  registry->RegisterForeignPref(prefs::kAccessibilityAutoclickEventType);
-  registry->RegisterForeignPref(
-      prefs::kAccessibilityAutoclickRevertToLeftClick);
-  registry->RegisterForeignPref(
-      prefs::kAccessibilityAutoclickMovementThreshold);
-  registry->RegisterForeignPref(prefs::kAccessibilityCaretHighlightEnabled);
-  registry->RegisterForeignPref(prefs::kAccessibilityCursorHighlightEnabled);
-  registry->RegisterForeignPref(prefs::kAccessibilityDictationEnabled);
-  registry->RegisterForeignPref(prefs::kAccessibilityFocusHighlightEnabled);
-  registry->RegisterForeignPref(prefs::kAccessibilityHighContrastEnabled);
-  registry->RegisterForeignPref(prefs::kAccessibilityLargeCursorEnabled);
-  registry->RegisterForeignPref(prefs::kAccessibilityLargeCursorDipSize);
-  registry->RegisterForeignPref(prefs::kAccessibilityMonoAudioEnabled);
-  registry->RegisterForeignPref(prefs::kAccessibilityScreenMagnifierEnabled);
-  registry->RegisterForeignPref(prefs::kAccessibilityScreenMagnifierScale);
-  registry->RegisterForeignPref(prefs::kAccessibilitySpokenFeedbackEnabled);
-  registry->RegisterForeignPref(prefs::kAccessibilitySelectToSpeakEnabled);
-  registry->RegisterForeignPref(prefs::kAccessibilityStickyKeysEnabled);
-  registry->RegisterForeignPref(prefs::kAccessibilitySwitchAccessEnabled);
-  registry->RegisterForeignPref(prefs::kAccessibilityVirtualKeyboardEnabled);
-  registry->RegisterForeignPref(
-      prefs::kHighContrastAcceleratorDialogHasBeenAccepted);
-  registry->RegisterForeignPref(
-      prefs::kScreenMagnifierAcceleratorDialogHasBeenAccepted);
-  registry->RegisterForeignPref(
-      prefs::kDockedMagnifierAcceleratorDialogHasBeenAccepted);
-  registry->RegisterForeignPref(
-      prefs::kDictationAcceleratorDialogHasBeenAccepted);
-  registry->RegisterForeignPref(
-      prefs::kDisplayRotationAcceleratorDialogHasBeenAccepted);
 }
 
 void AccessibilityController::SetHighContrastAcceleratorDialogAccepted() {
@@ -830,9 +804,19 @@ void AccessibilityController::ObservePrefs(PrefService* prefs) {
           &AccessibilityController::UpdateAutoclickRevertToLeftClickFromPref,
           base::Unretained(this)));
   pref_change_registrar_->Add(
+      prefs::kAccessibilityAutoclickStabilizePosition,
+      base::BindRepeating(
+          &AccessibilityController::UpdateAutoclickStabilizePositionFromPref,
+          base::Unretained(this)));
+  pref_change_registrar_->Add(
       prefs::kAccessibilityAutoclickMovementThreshold,
       base::BindRepeating(
           &AccessibilityController::UpdateAutoclickMovementThresholdFromPref,
+          base::Unretained(this)));
+  pref_change_registrar_->Add(
+      prefs::kAccessibilityAutoclickMenuPosition,
+      base::BindRepeating(
+          &AccessibilityController::UpdateAutoclickMenuPositionFromPref,
           base::Unretained(this)));
   pref_change_registrar_->Add(
       prefs::kAccessibilityCaretHighlightEnabled,
@@ -897,7 +881,9 @@ void AccessibilityController::ObservePrefs(PrefService* prefs) {
   UpdateAutoclickDelayFromPref();
   UpdateAutoclickEventTypeFromPref();
   UpdateAutoclickRevertToLeftClickFromPref();
+  UpdateAutoclickStabilizePositionFromPref();
   UpdateAutoclickMovementThresholdFromPref();
+  UpdateAutoclickMenuPositionFromPref();
   UpdateCaretHighlightFromPref();
   UpdateCursorHighlightFromPref();
   UpdateDictationFromPref();
@@ -924,7 +910,8 @@ void AccessibilityController::UpdateAutoclickFromPref() {
 
   NotifyAccessibilityStatusChanged();
 
-  Shell::Get()->autoclick_controller()->SetEnabled(enabled);
+  Shell::Get()->autoclick_controller()->SetEnabled(
+      enabled, true /* show confirmation dialog */);
 }
 
 void AccessibilityController::UpdateAutoclickDelayFromPref() {
@@ -969,13 +956,49 @@ void AccessibilityController::UpdateAutoclickRevertToLeftClickFromPref() {
       revert_to_left_click);
 }
 
+void AccessibilityController::UpdateAutoclickStabilizePositionFromPref() {
+  DCHECK(active_user_prefs_);
+  bool stabilize_position = active_user_prefs_->GetBoolean(
+      prefs::kAccessibilityAutoclickStabilizePosition);
+
+  Shell::Get()->autoclick_controller()->set_stabilize_click_position(
+      stabilize_position);
+}
+
 void AccessibilityController::UpdateAutoclickMovementThresholdFromPref() {
   DCHECK(active_user_prefs_);
   int movement_threshold = active_user_prefs_->GetInteger(
       prefs::kAccessibilityAutoclickMovementThreshold);
 
-  Shell::Get()->autoclick_controller()->set_movement_threshold(
+  Shell::Get()->autoclick_controller()->SetMovementThreshold(
       movement_threshold);
+}
+
+void AccessibilityController::UpdateAutoclickMenuPositionFromPref() {
+  Shell::Get()->autoclick_controller()->SetMenuPosition(
+      GetAutoclickMenuPosition());
+}
+
+void AccessibilityController::SetAutoclickMenuPosition(
+    mojom::AutoclickMenuPosition position) {
+  if (!active_user_prefs_)
+    return;
+  active_user_prefs_->SetInteger(prefs::kAccessibilityAutoclickMenuPosition,
+                                 static_cast<int>(position));
+  active_user_prefs_->CommitPendingWrite();
+  Shell::Get()->autoclick_controller()->SetMenuPosition(position);
+}
+
+mojom::AutoclickMenuPosition
+AccessibilityController::GetAutoclickMenuPosition() {
+  DCHECK(active_user_prefs_);
+  return static_cast<mojom::AutoclickMenuPosition>(
+      active_user_prefs_->GetInteger(
+          prefs::kAccessibilityAutoclickMenuPosition));
+}
+
+void AccessibilityController::UpdateAutoclickMenuBoundsIfNeeded() {
+  Shell::Get()->autoclick_controller()->UpdateAutoclickMenuBoundsIfNeeded();
 }
 
 void AccessibilityController::UpdateCaretHighlightFromPref() {
@@ -1223,23 +1246,6 @@ void AccessibilityController::UpdateVirtualKeyboardFromPref() {
   NotifyAccessibilityStatusChanged();
 
   keyboard::SetAccessibilityKeyboardEnabled(enabled);
-
-  if (::features::IsMultiProcessMash()) {
-    // TODO(mash): Support on-screen keyboard. See https://crbug.com/646565.
-    NOTIMPLEMENTED();
-    return;
-  }
-
-  // Note that there are two versions of the on-screen keyboard. A full layout
-  // is provided for accessibility, which includes sticky modifier keys to
-  // enable typing of hotkeys. A compact version is used in tablet mode to
-  // provide a layout with larger keys to facilitate touch typing. In the event
-  // that the a11y keyboard is being disabled, an on-screen keyboard might still
-  // be enabled and a forced reset is required to pick up the layout change.
-  if (keyboard::IsKeyboardEnabled())
-    Shell::Get()->EnableKeyboard();
-  else
-    Shell::Get()->DisableKeyboard();
 }
 
 void AccessibilityController::GetBatteryDescription(
@@ -1247,6 +1253,15 @@ void AccessibilityController::GetBatteryDescription(
   // Pass battery status as string to callback function.
   std::move(callback).Run(PowerStatus::Get()->GetAccessibleNameString(
       true /* Enables full description*/));
+}
+
+void AccessibilityController::SetVirtualKeyboardVisible(bool is_visible) {
+  if (is_visible) {
+    Shell::Get()->ash_keyboard_controller()->ShowKeyboard();
+  } else {
+    Shell::Get()->ash_keyboard_controller()->HideKeyboard(
+        mojom::HideReason::kUser);
+  }
 }
 
 }  // namespace ash

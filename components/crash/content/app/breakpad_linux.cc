@@ -1540,7 +1540,7 @@ void HandleCrashDump(const BreakpadInfo& info) {
   google_breakpad::PageAllocator allocator;
   const char* exe_buf = nullptr;
 
-  if (GetCrashReporterClient()->HandleCrashDump(info.filename)) {
+  if (GetCrashReporterClient()->HandleCrashDump(info.filename, info.pid)) {
     return;
   }
 
@@ -2122,7 +2122,7 @@ bool IsCrashReporterEnabled() {
   return g_is_crash_reporter_enabled;
 }
 
-void SetFirstChanceExceptionHandler(bool (*handler)(int, void*, void*)) {
+void SetFirstChanceExceptionHandler(bool (*handler)(int, siginfo_t*, void*)) {
   google_breakpad::SetFirstChanceExceptionHandler(handler);
 }
 

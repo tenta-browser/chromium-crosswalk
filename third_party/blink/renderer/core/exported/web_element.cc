@@ -81,7 +81,7 @@ bool WebElement::HasHTMLTagName(const WebString& tag_name) const {
   // createElementNS(xhtmlNS, 'INPUT') HTMLUnknownElement INPUT    INPUT
   const Element* element = ConstUnwrap<Element>();
   return html_names::xhtmlNamespaceURI == element->namespaceURI() &&
-         element->localName() == String(tag_name).DeprecatedLower();
+         element->localName() == String(tag_name).LowerASCII();
 }
 
 bool WebElement::HasAttribute(const WebString& attr_name) const {
@@ -144,10 +144,6 @@ WebNode WebElement::ShadowRoot() const {
   return WebNode(root);
 }
 
-bool WebElement::HasNonEmptyLayoutSize() const {
-  return ConstUnwrap<Element>()->HasNonEmptyLayoutSize();
-}
-
 WebRect WebElement::BoundsInViewport() const {
   return ConstUnwrap<Element>()->BoundsInViewport();
 }
@@ -168,7 +164,7 @@ void WebElement::RequestFullscreen() {
 
 WebElement::WebElement(Element* elem) : WebNode(elem) {}
 
-DEFINE_WEB_NODE_TYPE_CASTS(WebElement, IsElementNode());
+DEFINE_WEB_NODE_TYPE_CASTS(WebElement, IsElementNode())
 
 WebElement& WebElement::operator=(Element* elem) {
   private_ = elem;

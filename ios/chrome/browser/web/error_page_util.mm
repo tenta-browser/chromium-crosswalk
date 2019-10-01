@@ -17,6 +17,7 @@
 #include "ios/chrome/browser/application_context.h"
 #import "ios/net/protocol_handler_util.h"
 #include "net/base/net_errors.h"
+#include "third_party/zlib/google/compression_utils.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/resource/scale_factor.h"
 #include "ui/base/webui/jstemplate_builder.h"
@@ -26,8 +27,12 @@
 #error "This file requires ARC support."
 #endif
 
-NSString* GetErrorPage(NSError* error, bool is_post, bool is_off_the_record) {
-  NSString* url_spec = error.userInfo[NSURLErrorFailingURLStringErrorKey];
+NSString* GetErrorPage(const GURL& url,
+                       NSError* error,
+                       bool is_post,
+                       bool is_off_the_record) {
+  DCHECK_EQ(url, GURL(base::SysNSStringToUTF8(
+                     error.userInfo[NSURLErrorFailingURLStringErrorKey])));
   NSError* final_error = base::ios::GetFinalUnderlyingErrorFromError(error);
   if (!final_error)
     final_error = error;
@@ -41,26 +46,32 @@ NSString* GetErrorPage(NSError* error, bool is_post, bool is_off_the_record) {
     NOTREACHED();
   }
 
-  base::DictionaryValue error_strings;
-  error_page::LocalizedError::GetStrings(
-      net_error, error_page::Error::kNetErrorDomain,
-      GURL(base::SysNSStringToUTF16(url_spec)), is_post,
-      /*stale_copy_in_cache=*/false,
-      /*can_show_network_diagnostics_dialog=*/false, is_off_the_record,
-      error_page::LocalizedError::OfflineContentOnNetErrorFeatureState::
-          kDisabled,
-      /*auto_fetch_feature_enabled=*/false,
-      GetApplicationContext()->GetApplicationLocale(),
-      /*params=*/nullptr, &error_strings);
+  error_page::LocalizedError::PageState page_state =
+      error_page::LocalizedError::GetPageState(
+          net_error, error_page::Error::kNetErrorDomain, url, is_post,
+          /*stale_copy_in_cache=*/false,
+          /*can_show_network_diagnostics_dialog=*/false, is_off_the_record,
+          /*offline_content_feature_enabled=*/false,
+          /*auto_fetch_feature_enabled=*/false,
+          GetApplicationContext()->GetApplicationLocale(),
+          /*params=*/nullptr);
 
   ui::ScaleFactor scale_factor =
       ui::ResourceBundle::GetSharedInstance().GetMaxScaleFactor();
 
-  const base::StringPiece template_html(
+  std::string extracted_string;
+  base::StringPiece template_html(
       ui::ResourceBundle::GetSharedInstance().GetRawDataResourceForScale(
           IDR_NET_ERROR_HTML, scale_factor));
+  if (ui::ResourceBundle::GetSharedInstance().IsGzipped(IDR_NET_ERROR_HTML)) {
+    base::StringPiece compressed_html = template_html;
+    extracted_string.resize(compression::GetUncompressedSize(compressed_html));
+    template_html.set(extracted_string.data(), extracted_string.size());
+    bool success = compression::GzipUncompress(compressed_html, template_html);
+    DCHECK(success);
+  }
   if (template_html.empty())
     NOTREACHED() << "unable to load template. ID: " << IDR_NET_ERROR_HTML;
   return base::SysUTF8ToNSString(webui::GetTemplatesHtml(
-      template_html, &error_strings, /*template_id=*/"t"));
+      template_html, &page_state.strings, /*template_id=*/"t"));
 }

@@ -9,18 +9,19 @@
 #include "base/android/jni_string.h"
 #include "base/android/library_loader/library_loader_hooks.h"
 #include "base/android/scoped_java_ref.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
 #include "base/stl_util.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/task/task_scheduler/task_scheduler.h"
+#include "base/task/thread_pool/thread_pool.h"
 #include "jni/JniInterface_jni.h"
 #include "remoting/base/chromium_url_request.h"
+#include "remoting/base/oauth_token_getter_proxy.h"
 #include "remoting/base/url_request_context_getter.h"
 #include "remoting/client/jni/jni_oauth_token_getter.h"
 #include "remoting/client/jni/jni_touch_event_data.h"
-#include "remoting/client/oauth_token_getter_proxy.h"
 
 using base::android::ConvertJavaStringToUTF8;
 using base::android::ConvertUTF8ToJavaString;
@@ -65,12 +66,12 @@ void JniRuntimeDelegate::RuntimeWillShutdown() {
       base::WaitableEvent::ResetPolicy::AUTOMATIC,
       base::WaitableEvent::InitialState::NOT_SIGNALED);
   runtime_->network_task_runner()->PostTask(
-      FROM_HERE, base::Bind(&JniRuntimeDelegate::DetachFromVmAndSignal,
-                            base::Unretained(this), &done_event));
+      FROM_HERE, base::BindOnce(&JniRuntimeDelegate::DetachFromVmAndSignal,
+                                base::Unretained(this), &done_event));
   done_event.Wait();
   runtime_->display_task_runner()->PostTask(
-      FROM_HERE, base::Bind(&JniRuntimeDelegate::DetachFromVmAndSignal,
-                            base::Unretained(this), &done_event));
+      FROM_HERE, base::BindOnce(&JniRuntimeDelegate::DetachFromVmAndSignal,
+                                base::Unretained(this), &done_event));
   done_event.Wait();
 }
 

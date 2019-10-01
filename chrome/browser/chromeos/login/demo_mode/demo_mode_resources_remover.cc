@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
@@ -256,7 +257,7 @@ DemoModeResourcesRemover::DemoModeResourcesRemover(PrefService* local_state)
   CHECK(!g_instance);
   g_instance = this;
 
-  cryptohome_observer_.Add(DBusThreadManager::Get()->GetCryptohomeClient());
+  cryptohome_observer_.Add(CryptohomeClient::Get());
   ChromeUserManager::Get()->AddSessionStateObserver(this);
 }
 

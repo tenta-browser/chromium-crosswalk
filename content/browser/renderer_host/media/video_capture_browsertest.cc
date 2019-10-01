@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/run_loop.h"
 #include "base/task/post_task.h"
@@ -164,7 +165,7 @@ class VideoCaptureBrowserTest : public ContentBrowserTest,
     command_line->AppendSwitch(switches::kUseFakeUIForMediaStream);
     if (params_.exercise_accelerated_jpeg_decoding) {
       base::CommandLine::ForCurrentProcess()->AppendSwitch(
-          switches::kUseFakeJpegDecodeAccelerator);
+          switches::kUseFakeMjpegDecodeAccelerator);
     } else {
       base::CommandLine::ForCurrentProcess()->AppendSwitch(
           switches::kDisableAcceleratedMjpegDecode);
@@ -244,7 +245,8 @@ IN_PROC_BROWSER_TEST_P(VideoCaptureBrowserTest, StartAndImmediatelyStop) {
 }
 
 // Flaky on MSAN. https://crbug.com/840294
-#if defined(MEMORY_SANITIZER)
+// Flaky on MacOS 10.12. https://crbug.com/938074
+#if defined(MEMORY_SANITIZER) || defined(MAC_OS_X_VERSION_10_12)
 #define MAYBE_ReceiveFramesFromFakeCaptureDevice \
   DISABLED_ReceiveFramesFromFakeCaptureDevice
 #else
@@ -274,6 +276,7 @@ IN_PROC_BROWSER_TEST_P(VideoCaptureBrowserTest,
                  std::move(quit_run_loop_on_current_thread_cb), true);
 
   bool must_wait_for_gpu_decode_to_start = false;
+#if defined(OS_CHROMEOS)
   if (params_.exercise_accelerated_jpeg_decoding) {
     // Since the GPU jpeg decoder is created asynchronously while decoding
     // in software is ongoing, we have to keep pushing frames until a message
@@ -286,6 +289,7 @@ IN_PROC_BROWSER_TEST_P(VideoCaptureBrowserTest,
           must_wait_for_gpu_decode_to_start = false;
         }));
   }
+#endif  // defined(OS_CHROMEOS)
   EXPECT_CALL(mock_controller_event_handler_, DoOnNewBuffer(_, _, _))
       .Times(AtLeast(1));
   EXPECT_CALL(mock_controller_event_handler_, OnBufferReady(_, _, _))
@@ -334,12 +338,12 @@ IN_PROC_BROWSER_TEST_P(VideoCaptureBrowserTest,
   }
 }
 
-INSTANTIATE_TEST_CASE_P(,
-                        VideoCaptureBrowserTest,
-                        Combine(Values(0, 1, 2),             // DeviceIndex
-                                Values(gfx::Size(640, 480),  // Resolution
-                                       gfx::Size(1280, 720)),
-                                Bool(),    // ExerciseAcceleratedJpegDecoding
-                                Bool()));  // UseMojoService
+INSTANTIATE_TEST_SUITE_P(,
+                         VideoCaptureBrowserTest,
+                         Combine(Values(0, 1, 2),             // DeviceIndex
+                                 Values(gfx::Size(640, 480),  // Resolution
+                                        gfx::Size(1280, 720)),
+                                 Bool(),    // ExerciseAcceleratedJpegDecoding
+                                 Bool()));  // UseMojoService
 
 }  // namespace content

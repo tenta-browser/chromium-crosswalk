@@ -6,7 +6,6 @@
 
 #include "base/android/build_info.h"
 #include "base/bind.h"
-#include "base/debug/stack_trace.h"
 #include "base/logging.h"
 #include "cc/layers/solid_color_layer.h"
 #include "cc/layers/surface_layer.h"
@@ -59,8 +58,7 @@ DelegatedFrameHostAndroid::DelegatedFrameHostAndroid(
       client_(client),
       begin_frame_source_(this),
       enable_surface_synchronization_(enable_surface_synchronization),
-      enable_viz_(
-          base::FeatureList::IsEnabled(features::kVizDisplayCompositor)),
+      enable_viz_(features::IsVizDisplayCompositorEnabled()),
       frame_evictor_(std::make_unique<viz::FrameEvictor>(this)) {
   DCHECK(view_);
   DCHECK(client_);
@@ -190,13 +188,13 @@ bool DelegatedFrameHostAndroid::CanCopyFromCompositingSurface() const {
 }
 
 void DelegatedFrameHostAndroid::EvictDelegatedFrame() {
-  if (!content_layer_)
-    return;
-  content_layer_->SetSurfaceId(viz::SurfaceId(),
-                               cc::DeadlinePolicy::UseDefaultDeadline());
-  if (!enable_surface_synchronization_) {
-    content_layer_->RemoveFromParent();
-    content_layer_ = nullptr;
+  if (content_layer_) {
+    content_layer_->SetSurfaceId(viz::SurfaceId(),
+                                 cc::DeadlinePolicy::UseDefaultDeadline());
+    if (!enable_surface_synchronization_) {
+      content_layer_->RemoveFromParent();
+      content_layer_ = nullptr;
+    }
   }
   if (!HasSavedFrame() || frame_evictor_->visible())
     return;
@@ -309,6 +307,11 @@ void DelegatedFrameHostAndroid::EmbedSurface(
   if (!enable_surface_synchronization_)
     return;
 
+  // We should never attempt to embed an invalid surface. Catch this here to
+  // track down the root cause. Otherwise we will have vague crashes later on
+  // at serialization time.
+  CHECK(new_local_surface_id.is_valid());
+
   local_surface_id_ = new_local_surface_id;
   surface_size_in_pixels_ = new_size_in_pixels;
 
@@ -384,7 +387,7 @@ void DelegatedFrameHostAndroid::DidReceiveCompositorFrameAck(
 
 void DelegatedFrameHostAndroid::OnBeginFrame(
     const viz::BeginFrameArgs& args,
-    const base::flat_map<uint32_t, gfx::PresentationFeedback>& feedbacks) {
+    const viz::PresentationFeedbackMap& feedbacks) {
   client_->DidPresentCompositorFrames(feedbacks);
   if (enable_viz_) {
     NOTREACHED();

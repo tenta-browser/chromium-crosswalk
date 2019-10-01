@@ -17,6 +17,7 @@
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part.h"
+#include "chrome/browser/chromeos/login/test/local_policy_test_server_mixin.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/chromeos/policy/device_cloud_policy_manager_chromeos.h"
 #include "chrome/browser/chromeos/policy/device_policy_builder.h"
@@ -25,7 +26,6 @@
 #include "chrome/browser/chromeos/settings/device_settings_service.h"
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/policy/test/local_policy_test_server.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/chrome_constants.h"
@@ -33,7 +33,7 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chromeos/constants/chromeos_switches.h"
-#include "chromeos/dbus/fake_session_manager_client.h"
+#include "chromeos/dbus/session_manager/fake_session_manager_client.h"
 #include "components/ownership/owner_key_util.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/policy/core/common/cloud/cloud_policy_client.h"
@@ -109,20 +109,13 @@ class KeyRotationDeviceCloudPolicyTest : public DevicePolicyCrosBrowserTest {
 
   void SetUp() override {
     UpdateBuiltTestPolicyValue(kTestPolicyValue);
-    StartPolicyTestServer();
     DevicePolicyCrosBrowserTest::SetUp();
-  }
-
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    DevicePolicyCrosBrowserTest::SetUpCommandLine(command_line);
-    command_line->AppendSwitchASCII(policy::switches::kDeviceManagementUrl,
-                                    policy_test_server_.GetServiceURL().spec());
+    local_policy_mixin_.server()->EnableAutomaticRotationOfSigningKeys();
+    UpdateServedTestPolicy();
   }
 
   void SetUpInProcessBrowserTestFixture() override {
     DevicePolicyCrosBrowserTest::SetUpInProcessBrowserTestFixture();
-    InstallOwnerKey();
-    MarkAsEnterpriseOwned();
     SetFakeDevicePolicy();
   }
 
@@ -149,9 +142,8 @@ class KeyRotationDeviceCloudPolicyTest : public DevicePolicyCrosBrowserTest {
   }
 
   void UpdateServedTestPolicy() {
-    EXPECT_TRUE(policy_test_server_.UpdatePolicy(
-        dm_protocol::kChromeDevicePolicyType, std::string() /* entity_id */,
-        device_policy()->payload().SerializeAsString()));
+    EXPECT_TRUE(
+        local_policy_mixin_.UpdateDevicePolicy(device_policy()->payload()));
   }
 
   int GetTestPolicyValue() {
@@ -182,14 +174,6 @@ class KeyRotationDeviceCloudPolicyTest : public DevicePolicyCrosBrowserTest {
   }
 
  private:
-  void StartPolicyTestServer() {
-    policy_test_server_.RegisterClient(PolicyBuilder::kFakeToken,
-                                       PolicyBuilder::kFakeDeviceId);
-    UpdateServedTestPolicy();
-    policy_test_server_.EnableAutomaticRotationOfSigningKeys();
-    EXPECT_TRUE(policy_test_server_.Start());
-  }
-
   void SetFakeDevicePolicy() {
     device_policy()
         ->payload()
@@ -221,7 +205,7 @@ class KeyRotationDeviceCloudPolicyTest : public DevicePolicyCrosBrowserTest {
     }
   }
 
-  LocalPolicyTestServer policy_test_server_;
+  chromeos::LocalPolicyTestServerMixin local_policy_mixin_{&mixin_host_};
   std::unique_ptr<PolicyChangeRegistrar> policy_change_registrar_;
   int awaited_policy_value_ = -1;
   std::unique_ptr<base::RunLoop> policy_change_waiting_run_loop_;
@@ -285,7 +269,6 @@ class SigninExtensionsDeviceCloudPolicyBrowserTest
   ~SigninExtensionsDeviceCloudPolicyBrowserTest() override = default;
 
   void SetUp() override {
-    StartPolicyTestServer();
     ASSERT_TRUE(embedded_test_server()->InitializeAndListen());
     DevicePolicyCrosBrowserTest::SetUp();
   }
@@ -294,8 +277,6 @@ class SigninExtensionsDeviceCloudPolicyBrowserTest
     DevicePolicyCrosBrowserTest::SetUpCommandLine(command_line);
     command_line->AppendSwitch(chromeos::switches::kLoginManager);
     command_line->AppendSwitch(chromeos::switches::kForceLoginManagerInTests);
-    command_line->AppendSwitchASCII(policy::switches::kDeviceManagementUrl,
-                                    policy_test_server_.GetServiceURL().spec());
     // The test app has to be whitelisted for sign-in screen.
     command_line->AppendSwitchASCII(
         extensions::switches::kWhitelistedExtensionID, kTestExtensionId);
@@ -303,14 +284,11 @@ class SigninExtensionsDeviceCloudPolicyBrowserTest
 
   void SetUpInProcessBrowserTestFixture() override {
     DevicePolicyCrosBrowserTest::SetUpInProcessBrowserTestFixture();
-    InstallOwnerKey();
-    MarkAsEnterpriseOwned();
     SetFakeDevicePolicy();
 
-    EXPECT_TRUE(policy_test_server_.UpdatePolicy(
-        dm_protocol::kChromeDevicePolicyType, std::string() /* entity_id */,
-        device_policy()->payload().SerializeAsString()));
-    EXPECT_TRUE(policy_test_server_.UpdatePolicy(
+    EXPECT_TRUE(
+        local_policy_mixin_.UpdateDevicePolicy(device_policy()->payload()));
+    EXPECT_TRUE(local_policy_mixin_.server()->UpdatePolicy(
         dm_protocol::kChromeSigninExtensionPolicyType, kTestExtensionId,
         BuildTestComponentPolicyPayload().SerializeAsString()));
   }
@@ -374,16 +352,6 @@ class SigninExtensionsDeviceCloudPolicyBrowserTest
     return response;
   }
 
-  void StartPolicyTestServer() {
-    std::unique_ptr<crypto::RSAPrivateKey> signing_key(
-        PolicyBuilder::CreateTestSigningKey());
-    EXPECT_TRUE(policy_test_server_.SetSigningKeyAndSignature(
-        signing_key.get(), PolicyBuilder::GetTestSigningKeySignature()));
-    policy_test_server_.RegisterClient(PolicyBuilder::kFakeToken,
-                                       PolicyBuilder::kFakeDeviceId);
-    EXPECT_TRUE(policy_test_server_.Start());
-  }
-
   void SetFakeDevicePolicy() {
     device_policy()->policy_data().set_public_key_version(
         kFakePolicyPublicKeyVersion);
@@ -395,8 +363,8 @@ class SigninExtensionsDeviceCloudPolicyBrowserTest
 
     device_policy()
         ->payload()
-        .mutable_device_login_screen_app_install_list()
-        ->add_device_login_screen_app_install_list(policy_item_value);
+        .mutable_device_login_screen_extensions()
+        ->add_device_login_screen_extensions(policy_item_value);
 
     device_policy()->Build();
     session_manager_client()->set_device_policy(device_policy()->GetBlob());
@@ -419,7 +387,7 @@ class SigninExtensionsDeviceCloudPolicyBrowserTest
     builder->Build();
   }
 
-  LocalPolicyTestServer policy_test_server_;
+  chromeos::LocalPolicyTestServerMixin local_policy_mixin_{&mixin_host_};
 
   DISALLOW_COPY_AND_ASSIGN(SigninExtensionsDeviceCloudPolicyBrowserTest);
 };

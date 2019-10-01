@@ -48,14 +48,14 @@ function writeDirectory_(bytes, tag) {
   assertTrue(tag.componentCount > 4);
 
   let byteWriter = new ByteWriter(bytes.buffer, 0);
-  byteWriter.writeScalar(1, 2); // Number of fields.
+  byteWriter.writeScalar(1, 2);  // Number of fields.
 
   byteWriter.writeScalar(tag.id, 2);
   byteWriter.writeScalar(tag.format, 2);
   byteWriter.writeScalar(tag.componentCount, 4);
   byteWriter.forward(tag.id, 4);
 
-  byteWriter.writeScalar(0, 4); // Offset to next IFD.
+  byteWriter.writeScalar(0, 4);  // Offset to next IFD.
 
   byteWriter.resolveOffset(tag.id);
   const string = /** @type {string} */ (tag.value);
@@ -71,10 +71,10 @@ function writeDirectory_(bytes, tag) {
  */
 function parseExifData_(bytes) {
   let exifParser = new ExifParser(this);
-  exifParser.log = function(arg) {
+  exifParser.log = arg => {
     console.log(arg);
   };
-  exifParser.vlog = function(arg) {
+  exifParser.vlog = arg => {
     console.log(arg);
   };
 

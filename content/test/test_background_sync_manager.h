@@ -12,18 +12,18 @@
 
 #include "base/callback_forward.h"
 #include "base/memory/ref_counted.h"
+#include "base/time/time.h"
 #include "content/browser/background_sync/background_sync_manager.h"
 #include "content/browser/service_worker/service_worker_storage.h"
 
-class GURL;
-
-namespace base {
-class TimeDelta;
-}
+namespace url {
+class Origin;
+}  // namespace url
 
 namespace content {
 
 struct BackgroundSyncParameters;
+class DevToolsBackgroundServicesContextImpl;
 class ServiceWorkerContextWrapper;
 class ServiceWorkerVersion;
 
@@ -39,8 +39,9 @@ class TestBackgroundSyncManager : public BackgroundSyncManager {
       base::RepeatingCallback<void(scoped_refptr<ServiceWorkerVersion>,
                                    ServiceWorkerVersion::StatusCallback)>;
 
-  explicit TestBackgroundSyncManager(
-      scoped_refptr<ServiceWorkerContextWrapper> service_worker_context);
+  TestBackgroundSyncManager(
+      scoped_refptr<ServiceWorkerContextWrapper> service_worker_context,
+      scoped_refptr<DevToolsBackgroundServicesContextImpl> devtools_context);
   ~TestBackgroundSyncManager() override;
 
   // Force a call to the internal Init() method.
@@ -70,6 +71,13 @@ class TestBackgroundSyncManager : public BackgroundSyncManager {
     dispatch_sync_callback_ = callback;
   }
 
+  // Set a callback for when the periodicSync event is dispatched, so tests can
+  // observe it.
+  void set_dispatch_periodic_sync_callback(
+      const DispatchSyncCallback& callback) {
+    dispatch_periodic_sync_callback_ = callback;
+  }
+
   // Sets the response to checks for a main frame for register attempts.
   void set_has_main_frame_provider_host(bool value) {
     has_main_frame_provider_host_ = value;
@@ -85,11 +93,28 @@ class TestBackgroundSyncManager : public BackgroundSyncManager {
     return parameters_.get();
   }
 
+  bool IsBrowserWakeupScheduled() const {
+    return !soonest_one_shot_wakeup_delta_.is_max();
+  }
+
+  bool EqualsSoonestOneShotWakeupDelta(base::TimeDelta compare_to) const {
+    return soonest_one_shot_wakeup_delta_ == compare_to;
+  }
+
+  void DispatchPeriodicSyncEvent(
+      const std::string& tag,
+      scoped_refptr<ServiceWorkerVersion> active_version,
+      ServiceWorkerVersion::StatusCallback callback) override;
+
+  // Override to allow the test to cache the result.
+  base::TimeDelta GetSoonestWakeupDelta(
+      blink::mojom::BackgroundSyncType sync_type) override;
+
  protected:
   // Override to allow delays to be injected by tests.
   void StoreDataInBackend(
       int64_t sw_registration_id,
-      const GURL& origin,
+      const url::Origin& origin,
       const std::string& key,
       const std::string& data,
       ServiceWorkerStorage::StatusCallback callback) override;
@@ -115,7 +140,7 @@ class TestBackgroundSyncManager : public BackgroundSyncManager {
 
   // Override to avoid actual check for main frame, instead return the value set
   // by tests.
-  void HasMainFrameProviderHost(const GURL& origin,
+  void HasMainFrameProviderHost(const url::Origin& origin,
                                 BoolCallback callback) override;
 
  private:
@@ -123,7 +148,7 @@ class TestBackgroundSyncManager : public BackgroundSyncManager {
   // delays injected by tests.
   void StoreDataInBackendContinue(
       int64_t sw_registration_id,
-      const GURL& origin,
+      const url::Origin& origin,
       const std::string& key,
       const std::string& data,
       ServiceWorkerStorage::StatusCallback callback);
@@ -140,8 +165,10 @@ class TestBackgroundSyncManager : public BackgroundSyncManager {
   bool last_chance_ = false;
   base::OnceClosure continuation_;
   DispatchSyncCallback dispatch_sync_callback_;
+  DispatchSyncCallback dispatch_periodic_sync_callback_;
   base::OnceClosure delayed_task_;
   base::TimeDelta delayed_task_delta_;
+  base::TimeDelta soonest_one_shot_wakeup_delta_;
 
   DISALLOW_COPY_AND_ASSIGN(TestBackgroundSyncManager);
 };

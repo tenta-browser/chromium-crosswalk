@@ -73,8 +73,7 @@ IN_PROC_BROWSER_TEST_F(RenderFrameMessageFilterBrowserTest, Cookies) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
-  https_server.AddDefaultHandlers(
-      base::FilePath(FILE_PATH_LITERAL("content/test/data")));
+  https_server.AddDefaultHandlers(GetTestDataFilePath());
   ASSERT_TRUE(https_server.Start());
 
   // The server sends a HttpOnly cookie. The RenderFrameMessageFilter should
@@ -286,33 +285,9 @@ IN_PROC_BROWSER_TEST_F(RenderFrameMessageFilterBrowserTest,
       v.DepictFrameTree(tab->GetFrameTree()->root()));
 }
 
-// FrameHostMsg_RenderProcessGone is a synthetic message that's really an
-// implementation detail of RenderProcessHostImpl's crash recovery. It should be
-// ignored if it arrives over the IPC channel.
-IN_PROC_BROWSER_TEST_F(RenderFrameMessageFilterBrowserTest, RenderProcessGone) {
-  GURL web_url("http://foo.com/simple_page.html");
-  NavigateToURL(shell(), web_url);
-  RenderFrameHost* web_rfh = shell()->web_contents()->GetMainFrame();
-
-  ASSERT_TRUE(web_rfh->IsRenderFrameLive());
-  RenderProcessHostKillWaiter kill_waiter(web_rfh->GetProcess());
-  IPC::IpcSecurityTestUtil::PwnMessageReceived(
-      web_rfh->GetProcess()->GetChannel(),
-      FrameHostMsg_RenderProcessGone(
-          web_rfh->GetRoutingID(), base::TERMINATION_STATUS_NORMAL_TERMINATION,
-          0));
-
-  // If the message had gone through, we'd have marked the RFH as dead but
-  // left the RPH and its connection alive, and the Wait below would hang.
-  EXPECT_EQ(bad_message::RFMF_RENDERER_FAKED_ITS_OWN_DEATH, kill_waiter.Wait());
-
-  ASSERT_FALSE(web_rfh->GetProcess()->IsInitializedAndNotDead());
-  ASSERT_FALSE(web_rfh->IsRenderFrameLive());
-}
-
 class WaitingCookieStore : public net::CookieMonster {
  public:
-  WaitingCookieStore() : CookieMonster(nullptr, nullptr, nullptr) {}
+  WaitingCookieStore() : CookieMonster(nullptr, nullptr) {}
 
   void GetCookieListWithOptionsAsync(const GURL& url,
                                      const net::CookieOptions& options,
@@ -320,7 +295,7 @@ class WaitingCookieStore : public net::CookieMonster {
     callback_ = std::move(callback);
   }
 
-  void Finish() { std::move(callback_).Run({}); }
+  void Finish() { std::move(callback_).Run({}, {}); }
 
  private:
   GetCookieListCallback callback_;

@@ -24,6 +24,7 @@
 @synthesize postOpeningAction = _postOpeningAction;
 @synthesize launchInIncognito = _launchInIncognito;
 @synthesize completePaymentRequest = _completePaymentRequest;
+@synthesize textQuery = _textQuery;
 
 - (const GURL&)externalURL {
   return _externalURL;

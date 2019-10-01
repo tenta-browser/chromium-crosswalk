@@ -15,7 +15,8 @@ extern "C" {
 // android to chromium are versioned.
 //
 // 1 is Android Q. This matches kAwDrawGLInfoVersion version 3.
-static const int kAwDrawFnVersion = 1;
+// 2 Adds transfer_function_* and color_space_toXYZD50 to AwDrawFn_DrawGLParams.
+static const int kAwDrawFnVersion = 2;
 
 struct AwDrawFn_OnSyncParams {
   int version;
@@ -38,27 +39,22 @@ struct AwDrawFn_DrawGLParams {
   int width;
   int height;
 
-  // Input: is the View rendered into an independent layer.
-  // If false, the surface is likely to hold to the full screen contents, with
-  // the scissor box set by the caller to the actual View location and size.
-  // Also the transformation matrix will contain at least a translation to the
-  // position of the View to render, plus any other transformations required as
-  // part of any ongoing View animation. View translucency (alpha) is ignored,
-  // although the framework will set is_layer to true for non-opaque cases.
-  // Can be requested via the View.setLayerType(View.LAYER_TYPE_NONE, ...)
-  // Android API method.
-  //
-  // If true, the surface is dedicated to the View and should have its size.
-  // The viewport and scissor box are set by the caller to the whole surface.
-  // Animation transformations are handled by the caller and not reflected in
-  // the provided transformation matrix. Translucency works normally.
-  // Can be requested via the View.setLayerType(View.LAYER_TYPE_HARDWARE, ...)
-  // Android API method.
-  bool is_layer;
+  // Used to be is_layer.
+  bool deprecated_0;
 
   // Input: current transformation matrix in surface pixels.
   // Uses the column-based OpenGL matrix format.
   float transform[16];
+
+  // Input: Color space parameters.
+  float transfer_function_g;
+  float transfer_function_a;
+  float transfer_function_b;
+  float transfer_function_c;
+  float transfer_function_d;
+  float transfer_function_e;
+  float transfer_function_f;
+  float color_space_toXYZD50[9];
 };
 
 struct AwDrawFn_InitVkParams {
@@ -68,7 +64,7 @@ struct AwDrawFn_InitVkParams {
   VkDevice device;
   VkQueue queue;
   uint32_t graphics_queue_index;
-  uint32_t instance_version;
+  uint32_t api_version;
   const char* const* enabled_instance_extension_names;
   uint32_t enabled_instance_extension_names_length;
   const char* const* enabled_device_extension_names;
@@ -86,8 +82,7 @@ struct AwDrawFn_DrawVkParams {
   int width;
   int height;
 
-  // Input: is the render target a FBO
-  bool is_layer;
+  bool deprecated_0;
 
   // Input: current transform matrix
   float transform[16];

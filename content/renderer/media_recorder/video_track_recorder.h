@@ -7,15 +7,18 @@
 
 #include <memory>
 
+#include "base/containers/flat_map.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_checker.h"
+#include "content/common/content_export.h"
 #include "content/public/common/buildflags.h"
-#include "content/public/renderer/media_stream_video_sink.h"
 #include "media/muxers/webm_muxer.h"
+#include "media/video/video_encode_accelerator.h"
 #include "third_party/blink/public/platform/web_media_stream_track.h"
+#include "third_party/blink/public/web/modules/mediastream/media_stream_video_sink.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 
 namespace base {
@@ -49,7 +52,7 @@ namespace content {
 // MediaStreamVideo* classes that are constructed/configured on Main Render
 // thread but that pass frames on Render IO thread. It has an internal Encoder
 // with its own threading subtleties, see the implementation file.
-class CONTENT_EXPORT VideoTrackRecorder : public MediaStreamVideoSink {
+class CONTENT_EXPORT VideoTrackRecorder : public blink::MediaStreamVideoSink {
  public:
   // Do not change the order of codecs; add new ones right before LAST.
   enum class CodecId {
@@ -113,11 +116,10 @@ class CONTENT_EXPORT VideoTrackRecorder : public MediaStreamVideoSink {
     // encode the frame. If the |frame|'s data is not directly available (e.g.
     // it's a texture) then RetrieveFrameOnMainThread() is called, and if even
     // that fails, black frames are sent instead.
-    void StartFrameEncode(const scoped_refptr<media::VideoFrame>& frame,
+    void StartFrameEncode(scoped_refptr<media::VideoFrame> frame,
                           base::TimeTicks capture_timestamp);
-    void RetrieveFrameOnMainThread(
-        const scoped_refptr<media::VideoFrame>& video_frame,
-        base::TimeTicks capture_timestamp);
+    void RetrieveFrameOnMainThread(scoped_refptr<media::VideoFrame> video_frame,
+                                   base::TimeTicks capture_timestamp);
 
     static void OnFrameEncodeCompleted(
         const VideoTrackRecorder::OnEncodedVideoCB& on_encoded_video_cb,
@@ -148,7 +150,7 @@ class CONTENT_EXPORT VideoTrackRecorder : public MediaStreamVideoSink {
         base::TimeTicks capture_timestamp) = 0;
 
     // Called when the frame reference is released after encode.
-    void FrameReleased(const scoped_refptr<media::VideoFrame>& frame);
+    void FrameReleased(scoped_refptr<media::VideoFrame> frame);
 
     // Used to shutdown properly on the same thread we were created.
     const scoped_refptr<base::SingleThreadTaskRunner> main_task_runner_;
@@ -185,10 +187,47 @@ class CONTENT_EXPORT VideoTrackRecorder : public MediaStreamVideoSink {
     DISALLOW_COPY_AND_ASSIGN(Encoder);
   };
 
+  // Class to encapsulate the enumeration of CodecIds/VideoCodecProfiles
+  // supported by the VEA underlying platform. Provides methods to query the
+  // preferred CodecId and to check if a given CodecId is supported.
+  class CONTENT_EXPORT CodecEnumerator {
+   public:
+    CodecEnumerator(const media::VideoEncodeAccelerator::SupportedProfiles&
+                        vea_supported_profiles);
+    ~CodecEnumerator();
+
+    // Returns the first CodecId that has an associated VEA VideoCodecProfile,
+    // or VP8 if none available.
+    CodecId GetPreferredCodecId() const;
+
+    // Returns VEA's first supported VideoCodedProfile for a given CodecId, or
+    // VIDEO_CODEC_PROFILE_UNKNOWN otherwise.
+    media::VideoCodecProfile GetFirstSupportedVideoCodecProfile(
+        CodecId codec) const;
+
+    // Returns a list of supported media::VEA::SupportedProfile for a given
+    // CodecId, or empty vector if CodecId is unsupported.
+    media::VideoEncodeAccelerator::SupportedProfiles GetSupportedProfiles(
+        CodecId codec) const;
+
+   private:
+    // VEA-supported profiles grouped by CodecId.
+    base::flat_map<CodecId, media::VideoEncodeAccelerator::SupportedProfiles>
+        supported_profiles_;
+
+    DISALLOW_COPY_AND_ASSIGN(CodecEnumerator);
+  };
+
   static CodecId GetPreferredCodecId();
+
+  // Returns true if the device has a hardware accelerated encoder which can
+  // encode video of the given |width|x|height| and |framerate| to specific
+  // |codec|.
+  // Note: default framerate value means no restriction.
   static bool CanUseAcceleratedEncoder(CodecId codec,
                                        size_t width,
-                                       size_t height);
+                                       size_t height,
+                                       double framerate = 0.0);
 
   VideoTrackRecorder(
       CodecId codec,
@@ -201,15 +240,16 @@ class CONTENT_EXPORT VideoTrackRecorder : public MediaStreamVideoSink {
   void Pause();
   void Resume();
 
-  void OnVideoFrameForTesting(const scoped_refptr<media::VideoFrame>& frame,
+  void OnVideoFrameForTesting(scoped_refptr<media::VideoFrame> frame,
                               base::TimeTicks capture_time);
+
  private:
   friend class VideoTrackRecorderTest;
   void InitializeEncoder(CodecId codec,
                          const OnEncodedVideoCB& on_encoded_video_callback,
                          int32_t bits_per_second,
                          bool allow_vea_encoder,
-                         const scoped_refptr<media::VideoFrame>& frame,
+                         scoped_refptr<media::VideoFrame> frame,
                          base::TimeTicks capture_time);
   void OnError();
 
@@ -223,7 +263,7 @@ class CONTENT_EXPORT VideoTrackRecorder : public MediaStreamVideoSink {
   scoped_refptr<Encoder> encoder_;
 
   base::Callback<void(bool allow_vea_encoder,
-                      const scoped_refptr<media::VideoFrame>& frame,
+                      scoped_refptr<media::VideoFrame> frame,
                       base::TimeTicks capture_time)>
       initialize_encoder_callback_;
 

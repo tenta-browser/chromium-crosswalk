@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/views/page_info/permission_selector_row.h"
 
+#include "base/bind.h"
 #include "base/i18n/rtl.h"
 #include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
@@ -125,7 +126,6 @@ PermissionCombobox::PermissionCombobox(ComboboxModelAdapter* model,
   SetEnabled(enabled);
   UpdateSelectedIndex(use_default);
   set_size_to_largest_label(false);
-  ModelChanged();
 }
 
 PermissionCombobox::~PermissionCombobox() {}
@@ -145,7 +145,7 @@ gfx::Size PermissionCombobox::CalculatePreferredSize() const {
 }
 
 void PermissionCombobox::OnPerformAction(Combobox* combobox) {
-  model_->OnPerformAction(combobox->selected_index());
+  model_->OnPerformAction(combobox->GetSelectedIndex());
 }
 
 }  // namespace internal

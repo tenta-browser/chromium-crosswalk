@@ -7,6 +7,7 @@
 #include <string>
 
 #include "base/stl_util.h"
+#include "content/shell/test_runner/web_test_delegate.h"
 #include "content/shell/test_runner/web_view_test_proxy.h"
 #include "gin/handle.h"
 #include "gin/object_template_builder.h"
@@ -45,6 +46,7 @@ class AccessibilityControllerBindings
   v8::Local<v8::Object> FocusedElement();
   v8::Local<v8::Object> RootElement();
   v8::Local<v8::Object> AccessibleElementById(const std::string& id);
+  void Reset();
 
   base::WeakPtr<AccessibilityController> controller_;
 
@@ -71,8 +73,10 @@ void AccessibilityControllerBindings::Install(
   if (bindings.IsEmpty())
     return;
   v8::Local<v8::Object> global = context->Global();
-  global->Set(gin::StringToV8(isolate, "accessibilityController"),
-              bindings.ToV8());
+  global
+      ->Set(context, gin::StringToV8(isolate, "accessibilityController"),
+            bindings.ToV8())
+      .Check();
 }
 
 AccessibilityControllerBindings::AccessibilityControllerBindings(
@@ -101,7 +105,8 @@ AccessibilityControllerBindings::GetObjectTemplateBuilder(
       .SetMethod("addNotificationListener",
                  &AccessibilityControllerBindings::SetNotificationListener)
       .SetMethod("removeNotificationListener",
-                 &AccessibilityControllerBindings::UnsetNotificationListener);
+                 &AccessibilityControllerBindings::UnsetNotificationListener)
+      .SetMethod("reset", &AccessibilityControllerBindings::Reset);
 }
 
 void AccessibilityControllerBindings::LogAccessibilityEvents() {
@@ -134,10 +139,15 @@ v8::Local<v8::Object> AccessibilityControllerBindings::AccessibleElementById(
                      : v8::Local<v8::Object>();
 }
 
+void AccessibilityControllerBindings::Reset() {
+  if (controller_)
+    controller_->Reset();
+}
+
 AccessibilityController::AccessibilityController(
-    WebViewTestProxyBase* web_view_test_proxy_base)
+    WebViewTestProxy* web_view_test_proxy)
     : log_accessibility_events_(false),
-      web_view_test_proxy_base_(web_view_test_proxy_base),
+      web_view_test_proxy_(web_view_test_proxy),
       weak_factory_(this) {}
 
 AccessibilityController::~AccessibilityController() {}
@@ -146,6 +156,7 @@ void AccessibilityController::Reset() {
   elements_.Clear();
   notification_callback_.Reset();
   log_accessibility_events_ = false;
+  ax_context_.reset();
 }
 
 void AccessibilityController::Install(blink::WebLocalFrame* frame) {
@@ -160,6 +171,14 @@ bool AccessibilityController::ShouldLogAccessibilityEvents() {
 }
 
 void AccessibilityController::NotificationReceived(
+    const blink::WebAXObject& target,
+    const std::string& notification_name) {
+  web_view_test_proxy_->delegate()->PostTask(
+      base::BindOnce(&AccessibilityController::PostNotification,
+                     weak_factory_.GetWeakPtr(), target, notification_name));
+}
+
+void AccessibilityController::PostNotification(
     const blink::WebAXObject& target,
     const std::string& notification_name) {
   v8::Isolate* isolate = blink::MainThreadIsolate();
@@ -258,7 +277,6 @@ AccessibilityController::FindAccessibleElementByIdRecursive(
   blink::WebNode node = obj.GetNode();
   if (!node.IsNull() && node.IsElementNode()) {
     blink::WebElement element = node.To<blink::WebElement>();
-    element.GetAttribute("id");
     if (element.GetAttribute("id") == id)
       return elements_.GetOrCreate(obj);
   }
@@ -267,7 +285,7 @@ AccessibilityController::FindAccessibleElementByIdRecursive(
   for (unsigned i = 0; i < childCount; i++) {
     v8::Local<v8::Object> result =
         FindAccessibleElementByIdRecursive(obj.ChildAt(i), id);
-    if (*result)
+    if (!result.IsEmpty())
       return result;
   }
 
@@ -275,7 +293,7 @@ AccessibilityController::FindAccessibleElementByIdRecursive(
 }
 
 blink::WebView* AccessibilityController::web_view() {
-  return web_view_test_proxy_base_->web_view();
+  return web_view_test_proxy_->webview();
 }
 
 blink::WebAXObject

@@ -35,9 +35,7 @@
 #include "components/favicon_base/favicon_usage_data.h"
 #include "components/history/core/browser/history_types.h"
 #include "components/history/core/browser/keyword_id.h"
-#include "components/history/core/browser/sync/delete_directive_handler.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "components/sync/model/syncable_service.h"
 #include "sql/init_status.h"
 #include "ui/base/page_transition_types.h"
 
@@ -60,10 +58,16 @@ class FaviconServiceImpl;
 
 namespace syncer {
 class ModelTypeControllerDelegate;
+class SyncableService;
+}  // namespace syncer
+
+namespace sync_pb {
+class HistoryDeleteDirectiveSpecifics;
 }
 
 namespace history {
 
+class DeleteDirectiveHandler;
 struct DownloadRow;
 struct HistoryAddPageArgs;
 class HistoryBackend;
@@ -78,12 +82,9 @@ class URLDatabase;
 class VisitDelegate;
 class WebHistoryService;
 
-// The history service records page titles, and visit times, as well as
-// (eventually) information about autocomplete.
-//
-// This service is thread safe. Each request callback is invoked in the
-// thread that made the request.
-class HistoryService : public syncer::SyncableService, public KeyedService {
+// The history service records page titles, visit times, and favicons, as well
+// as information about downloads.
+class HistoryService : public KeyedService {
  public:
   // Must call Init after construction. The empty constructor provided only for
   // unit tests. When using the full constructor, |history_client| may only be
@@ -137,14 +138,14 @@ class HistoryService : public syncer::SyncableService, public KeyedService {
 
   // Callback for value asynchronously returned by
   // GetCountsAndLastVisitForOrigins().
-  typedef base::Callback<void(const OriginCountAndLastVisitMap&)>
-      GetCountsAndLastVisitForOriginsCallback;
+  using GetCountsAndLastVisitForOriginsCallback =
+      base::OnceCallback<void(OriginCountAndLastVisitMap)>;
 
   // Gets the counts and most recent visit date of URLs that belong to |origins|
   // in the history database.
   void GetCountsAndLastVisitForOriginsForTesting(
       const std::set<GURL>& origins,
-      const GetCountsAndLastVisitForOriginsCallback& callback) const;
+      GetCountsAndLastVisitForOriginsCallback callback) const;
 
   // Navigation ----------------------------------------------------------------
 
@@ -216,11 +217,7 @@ class HistoryService : public syncer::SyncableService, public KeyedService {
   // empty.
   //
   // If success is false, neither the row nor the vector will be valid.
-  typedef base::OnceCallback<void(
-      bool,  // Success flag, when false, nothing else is valid.
-      const URLRow&,
-      const VisitVector&)>
-      QueryURLCallback;
+  using QueryURLCallback = base::OnceCallback<void(QueryURLResult)>;
 
   // Queries the basic information about the URL in the history database. If
   // the caller is interested in the visits (each time the URL is visited),
@@ -235,7 +232,7 @@ class HistoryService : public syncer::SyncableService, public KeyedService {
   // Provides the result of a query. See QueryResults in history_types.h.
   // The common use will be to use QueryResults.Swap to suck the contents of
   // the results out of the passed in parameter and take ownership of them.
-  typedef base::Callback<void(QueryResults*)> QueryHistoryCallback;
+  using QueryHistoryCallback = base::OnceCallback<void(QueryResults)>;
 
   // Queries all history with the given options (see QueryOptions in
   // history_types.h).  If empty, all results matching the given options
@@ -243,7 +240,7 @@ class HistoryService : public syncer::SyncableService, public KeyedService {
   base::CancelableTaskTracker::TaskId QueryHistory(
       const base::string16& text_query,
       const QueryOptions& options,
-      const QueryHistoryCallback& callback,
+      QueryHistoryCallback callback,
       base::CancelableTaskTracker* tracker);
 
   // Called when the results of QueryRedirectsFrom are available.
@@ -257,21 +254,21 @@ class HistoryService : public syncer::SyncableService, public KeyedService {
   // If there is no such URL in the database or the most recent visit has no
   // redirect, the vector will be empty. If the given page has redirected to
   // multiple destinations, this will pick a random one.
-  typedef base::Callback<void(const RedirectList*)> QueryRedirectsCallback;
+  using QueryRedirectsCallback = base::OnceCallback<void(RedirectList)>;
 
   // Schedules a query for the most recent redirect coming out of the given
   // URL. See the RedirectQuerySource above, which is guaranteed to be called
   // if the request is not canceled.
   base::CancelableTaskTracker::TaskId QueryRedirectsFrom(
       const GURL& from_url,
-      const QueryRedirectsCallback& callback,
+      QueryRedirectsCallback callback,
       base::CancelableTaskTracker* tracker);
 
   // Schedules a query to get the most recent redirects ending at the given
   // URL.
   base::CancelableTaskTracker::TaskId QueryRedirectsTo(
       const GURL& to_url,
-      const QueryRedirectsCallback& callback,
+      QueryRedirectsCallback callback,
       base::CancelableTaskTracker* tracker);
 
   // Requests the number of user-visible visits (i.e. no redirects or subframes)
@@ -360,18 +357,19 @@ class HistoryService : public syncer::SyncableService, public KeyedService {
   // Removes all visits to the given URLs in the specified time range. Calls
   // ExpireHistoryBetween() to delete local visits, and handles deletion of
   // synced visits if appropriate.
-  void ExpireLocalAndRemoteHistoryBetween(WebHistoryService* web_history,
-                                          const std::set<GURL>& restrict_urls,
+  void DeleteLocalAndRemoteHistoryBetween(WebHistoryService* web_history,
                                           base::Time begin_time,
                                           base::Time end_time,
-                                          bool user_initiated,
                                           base::OnceClosure callback,
                                           base::CancelableTaskTracker* tracker);
 
+  // Removes all visits to the given url. Calls DeleteUrl() to delete local
+  // visits and handles deletion of synced visits if appropriate.
+  void DeleteLocalAndRemoteUrl(WebHistoryService* web_history, const GURL& url);
+
   // Processes the given |delete_directive| and sends it to the
-  // SyncChangeProcessor (if it exists).  Returns any error resulting
-  // from sending the delete directive to sync.
-  syncer::SyncError ProcessLocalDeleteDirective(
+  // SyncChangeProcessor (if it exists).
+  void ProcessLocalDeleteDirective(
       const sync_pb::HistoryDeleteDirectiveSpecifics& delete_directive);
 
   // Downloads -----------------------------------------------------------------
@@ -510,17 +508,9 @@ class HistoryService : public syncer::SyncableService, public KeyedService {
 
   base::WeakPtr<HistoryService> AsWeakPtr();
 
-  // syncer::SyncableService implementation.
-  syncer::SyncMergeResult MergeDataAndStartSyncing(
-      syncer::ModelType type,
-      const syncer::SyncDataList& initial_sync_data,
-      std::unique_ptr<syncer::SyncChangeProcessor> sync_processor,
-      std::unique_ptr<syncer::SyncErrorFactory> error_handler) override;
-  void StopSyncing(syncer::ModelType type) override;
-  syncer::SyncDataList GetAllSyncData(syncer::ModelType type) const override;
-  syncer::SyncError ProcessSyncChanges(
-      const base::Location& from_here,
-      const syncer::SyncChangeList& change_list) override;
+  // For sync codebase only: returns the SyncableService API that implements
+  // sync datatype HISTORY_DELETE_DIRECTIVES.
+  base::WeakPtr<syncer::SyncableService> GetDeleteDirectivesSyncableService();
 
   // For sync codebase only: instantiates a controller delegate to interact with
   // TypedURLSyncBridge. Must be called from the UI thread.
@@ -533,6 +523,10 @@ class HistoryService : public syncer::SyncableService, public KeyedService {
       scoped_refptr<base::SequencedTaskRunner> task_runner) {
     DCHECK(!backend_task_runner_);
     backend_task_runner_ = std::move(task_runner);
+  }
+
+  void set_origin_queried_closure_for_testing(base::OnceClosure closure) {
+    origin_queried_closure_for_testing_ = std::move(closure);
   }
 
  protected:
@@ -581,7 +575,7 @@ class HistoryService : public syncer::SyncableService, public KeyedService {
   // will be called back on the internal history thread with the history
   // database so it can query. See history_url_provider.h for a diagram.
   void ScheduleAutocomplete(
-      const base::Callback<void(HistoryBackend*, URLDatabase*)>& callback);
+      base::OnceCallback<void(HistoryBackend*, URLDatabase*)> callback);
 
   // Notification from the backend that it has finished loading. Sends
   // notification (NOTIFY_HISTORY_LOADED) and sets backend_loaded_ to true.
@@ -644,7 +638,7 @@ class HistoryService : public syncer::SyncableService, public KeyedService {
       const GURL& icon_url,
       favicon_base::IconType icon_type,
       const std::vector<int>& desired_sizes,
-      const favicon_base::FaviconResultsCallback& callback,
+      favicon_base::FaviconResultsCallback callback,
       base::CancelableTaskTracker* tracker);
 
   // Used by the FaviconService to get favicons mapped to |page_url| for
@@ -664,7 +658,7 @@ class HistoryService : public syncer::SyncableService, public KeyedService {
       const favicon_base::IconTypeSet& icon_types,
       const std::vector<int>& desired_sizes,
       bool fallback_to_host,
-      const favicon_base::FaviconResultsCallback& callback,
+      favicon_base::FaviconResultsCallback callback,
       base::CancelableTaskTracker* tracker);
 
   // Used by FaviconService to find the first favicon bitmap whose width and
@@ -682,7 +676,7 @@ class HistoryService : public syncer::SyncableService, public KeyedService {
       const GURL& page_url,
       const std::vector<favicon_base::IconTypeSet>& icon_types,
       int minimum_size_in_pixels,
-      const favicon_base::FaviconRawBitmapCallback& callback,
+      favicon_base::FaviconRawBitmapCallback callback,
       base::CancelableTaskTracker* tracker);
 
   // Used by the FaviconService to get the favicon bitmap which most closely
@@ -692,7 +686,7 @@ class HistoryService : public syncer::SyncableService, public KeyedService {
   base::CancelableTaskTracker::TaskId GetFaviconForID(
       favicon_base::FaviconID favicon_id,
       int desired_size,
-      const favicon_base::FaviconResultsCallback& callback,
+      favicon_base::FaviconResultsCallback callback,
       base::CancelableTaskTracker* tracker);
 
   // Maps |page_urls| to the favicon at |icon_url| if there is an entry in the
@@ -706,7 +700,7 @@ class HistoryService : public syncer::SyncableService, public KeyedService {
       const GURL& icon_url,
       favicon_base::IconType icon_type,
       const std::vector<int>& desired_sizes,
-      const favicon_base::FaviconResultsCallback& callback,
+      favicon_base::FaviconResultsCallback callback,
       base::CancelableTaskTracker* tracker);
 
   // Deletes favicon mappings for each URL in |page_urls| and their redirects.
@@ -870,7 +864,9 @@ class HistoryService : public syncer::SyncableService, public KeyedService {
   base::CallbackList<void(const std::set<GURL>&, const GURL&)>
       favicon_changed_callback_list_;
 
-  DeleteDirectiveHandler delete_directive_handler_;
+  std::unique_ptr<DeleteDirectiveHandler> delete_directive_handler_;
+
+  base::OnceClosure origin_queried_closure_for_testing_;
 
   // All vended weak pointers are invalidated in Cleanup().
   base::WeakPtrFactory<HistoryService> weak_ptr_factory_;

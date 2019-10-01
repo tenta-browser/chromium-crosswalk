@@ -6,7 +6,6 @@
 
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/media_router/media_router_ui_service.h"
-#include "chrome/browser/ui/toolbar/component_toolbar_actions_factory.h"
 #include "chrome/browser/ui/toolbar/media_router_action_controller.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/media_router/cast_toolbar_button.h"
@@ -159,7 +158,7 @@ void MediaRemotingDialogView::WindowClosing() {
 void MediaRemotingDialogView::ReportPermission(bool allowed) {
   DCHECK(remember_choice_checkbox_);
   DCHECK(permission_callback_);
-  if (remember_choice_checkbox_->checked()) {
+  if (remember_choice_checkbox_->GetChecked()) {
     pref_service_->SetBoolean(::prefs::kMediaRouterMediaRemotingEnabled,
                               allowed);
   }

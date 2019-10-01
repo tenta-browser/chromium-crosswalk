@@ -8,6 +8,7 @@
 #include <set>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/stl_util.h"
 #include "components/password_manager/core/browser/password_store_change.h"
@@ -54,11 +55,16 @@ void PasswordStoreDefault::ReportMetricsImpl(
 }
 
 PasswordStoreChangeList PasswordStoreDefault::AddLoginImpl(
-    const PasswordForm& form) {
+    const PasswordForm& form,
+    AddLoginError* error) {
   DCHECK(background_task_runner()->RunsTasksInCurrentSequence());
-  if (!login_db_)
+  if (!login_db_) {
+    if (error) {
+      *error = AddLoginError::kDbNotAvailable;
+    }
     return PasswordStoreChangeList();
-  return login_db_->AddLogin(form);
+  }
+  return login_db_->AddLogin(form, error);
 }
 
 PasswordStoreChangeList PasswordStoreDefault::UpdateLoginImpl(
@@ -172,16 +178,6 @@ PasswordStoreDefault::FillMatchingLogins(const FormDigest& form) {
   return matched_forms;
 }
 
-std::vector<std::unique_ptr<PasswordForm>>
-PasswordStoreDefault::FillLoginsForSameOrganizationName(
-    const std::string& signon_realm) {
-  std::vector<std::unique_ptr<PasswordForm>> forms;
-  if (login_db_ &&
-      !login_db_->GetLoginsForSameOrganizationName(signon_realm, &forms))
-    return std::vector<std::unique_ptr<PasswordForm>>();
-  return forms;
-}
-
 bool PasswordStoreDefault::FillAutofillableLogins(
     std::vector<std::unique_ptr<PasswordForm>>* forms) {
   DCHECK(background_task_runner()->RunsTasksInCurrentSequence());
@@ -232,15 +228,23 @@ bool PasswordStoreDefault::BeginTransaction() {
   return false;
 }
 
+void PasswordStoreDefault::RollbackTransaction() {
+  if (login_db_)
+    login_db_->RollbackTransaction();
+}
+
 bool PasswordStoreDefault::CommitTransaction() {
   if (login_db_)
     return login_db_->CommitTransaction();
   return false;
 }
 
-bool PasswordStoreDefault::ReadAllLogins(PrimaryKeyToFormMap* key_to_form_map) {
+FormRetrievalResult PasswordStoreDefault::ReadAllLogins(
+    PrimaryKeyToFormMap* key_to_form_map) {
   DCHECK(background_task_runner()->RunsTasksInCurrentSequence());
-  return login_db_ && login_db_->GetAllLogins(key_to_form_map);
+  if (!login_db_)
+    return FormRetrievalResult::kDbError;
+  return login_db_->GetAllLogins(key_to_form_map);
 }
 
 PasswordStoreChangeList PasswordStoreDefault::RemoveLoginByPrimaryKeySync(
@@ -253,7 +257,7 @@ PasswordStoreChangeList PasswordStoreDefault::RemoveLoginByPrimaryKeySync(
   return PasswordStoreChangeList();
 }
 
-syncer::SyncMetadataStore* PasswordStoreDefault::GetMetadataStore() {
+PasswordStoreSync::MetadataStore* PasswordStoreDefault::GetMetadataStore() {
   return login_db_.get();
 }
 

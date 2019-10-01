@@ -86,7 +86,8 @@ ContentSettingsPref::ContentSettingsPref(
       pref_name_(pref_name),
       is_incognito_(incognito),
       updating_preferences_(false),
-      notify_callback_(notify_callback) {
+      notify_callback_(notify_callback),
+      allow_resource_identifiers_(false) {
   DCHECK(prefs_);
 
   ReadContentSettingsFromPref();
@@ -102,6 +103,11 @@ ContentSettingsPref::~ContentSettingsPref() {
 std::unique_ptr<RuleIterator> ContentSettingsPref::GetRuleIterator(
     const ResourceIdentifier& resource_identifier,
     bool incognito) const {
+  // Resource Identifiers have been supported by the API but never used by any
+  // users of the API.
+  // TODO(crbug.com/754178): remove |resource_identifier| from the API.
+  DCHECK(resource_identifier.empty() || allow_resource_identifiers_);
+
   if (incognito)
     return incognito_value_map_.GetRuleIterator(content_type_,
                                                 resource_identifier,
@@ -114,16 +120,21 @@ bool ContentSettingsPref::SetWebsiteSetting(
     const ContentSettingsPattern& secondary_pattern,
     const ResourceIdentifier& resource_identifier,
     base::Time modified_time,
-    base::Value* in_value) {
-  DCHECK(!in_value || IsValueAllowedForType(in_value, content_type_));
+    std::unique_ptr<base::Value>&& in_value) {
+  DCHECK(!in_value || IsValueAllowedForType(in_value.get(), content_type_));
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(prefs_);
   DCHECK(primary_pattern != ContentSettingsPattern::Wildcard() ||
          secondary_pattern != ContentSettingsPattern::Wildcard() ||
-         !resource_identifier.empty());
+         (!resource_identifier.empty() && allow_resource_identifiers_));
+
+  // Resource Identifiers have been supported by the API but never used by any
+  // users of the API.
+  // TODO(crbug.com/754178): remove |resource_identifier| from the API.
+  DCHECK(resource_identifier.empty() || allow_resource_identifiers_);
 
   // At this point take the ownership of the |in_value|.
-  std::unique_ptr<base::Value> value(in_value);
+  std::unique_ptr<base::Value> value(std::move(in_value));
 
   // Update in memory value map.
   OriginIdentifierValueMap* map_to_modify = &incognito_value_map_;
@@ -277,8 +288,8 @@ void ContentSettingsPref::ReadContentSettingsFromPref() {
 
     if (SupportsResourceIdentifiers(content_type_)) {
       const base::DictionaryValue* resource_dictionary = nullptr;
-      if (settings_dictionary->GetDictionary(
-              kPerResourceIdentifierPrefName, &resource_dictionary)) {
+      if (settings_dictionary->GetDictionary(kPerResourceIdentifierPrefName,
+                                             &resource_dictionary)) {
         base::Time last_modified = GetTimeStamp(settings_dictionary);
         for (base::DictionaryValue::Iterator j(*resource_dictionary);
              !j.IsAtEnd();
@@ -404,7 +415,7 @@ void ContentSettingsPref::UpdatePref(
                                                        value->CreateDeepCopy());
           // Update timestamp for whole resource dictionary.
           settings_dictionary->SetKey(kLastModifiedPath,
-                                      base::Value(base::Int64ToString(
+                                      base::Value(base::NumberToString(
                                           last_modified.ToInternalValue())));
         }
       } else {
@@ -418,7 +429,7 @@ void ContentSettingsPref::UpdatePref(
           settings_dictionary->SetWithoutPathExpansion(kSettingPath,
                                                        value->CreateDeepCopy());
           settings_dictionary->SetKey(kLastModifiedPath,
-                                      base::Value(base::Int64ToString(
+                                      base::Value(base::NumberToString(
                                           last_modified.ToInternalValue())));
         }
       }

@@ -4,6 +4,7 @@
 
 #include "content/browser/renderer_host/render_widget_targeter.h"
 
+#include "base/bind.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
@@ -60,7 +61,7 @@ class TracingUmaTracker {
         metric_name_(metric_name) {
     TRACE_EVENT_ASYNC_BEGIN0(
         kTracingCategory, metric_name_,
-        TRACE_ID_WITH_SCOPE(metric_name_, TRACE_ID_LOCAL(id_)));
+        TRACE_ID_WITH_SCOPE("UmaTracker", TRACE_ID_LOCAL(id_)));
   }
   ~TracingUmaTracker() = default;
   TracingUmaTracker(TracingUmaTracker&& tracker) = default;
@@ -73,7 +74,7 @@ class TracingUmaTracker {
   void Stop() {
     TRACE_EVENT_ASYNC_END0(
         kTracingCategory, metric_name_,
-        TRACE_ID_WITH_SCOPE(metric_name_, TRACE_ID_LOCAL(id_)));
+        TRACE_ID_WITH_SCOPE("UmaTracker", TRACE_ID_LOCAL(id_)));
   }
 
  private:
@@ -147,9 +148,9 @@ void RenderWidgetTargeter::FindTargetAndDispatch(
          blink::WebInputEvent::IsTouchEventType(event.GetType()) ||
          (blink::WebInputEvent::IsGestureEventType(event.GetType()) &&
           (static_cast<const blink::WebGestureEvent&>(event).SourceDevice() ==
-               blink::WebGestureDevice::kWebGestureDeviceTouchscreen ||
+               blink::WebGestureDevice::kTouchscreen ||
            static_cast<const blink::WebGestureEvent&>(event).SourceDevice() ==
-               blink::WebGestureDevice::kWebGestureDeviceTouchpad)));
+               blink::WebGestureDevice::kTouchpad)));
 
   if (request_in_flight_) {
     if (!requests_.empty()) {
@@ -206,6 +207,10 @@ void RenderWidgetTargeter::FindTargetAndDispatch(
 
 void RenderWidgetTargeter::ViewWillBeDestroyed(RenderWidgetHostViewBase* view) {
   unresponsive_views_.erase(view);
+}
+
+bool RenderWidgetTargeter::HasEventsPendingDispatch() const {
+  return request_in_flight_ || !requests_.empty();
 }
 
 void RenderWidgetTargeter::QueryClientInternal(

@@ -21,8 +21,6 @@ class MockDisplayClient : public mojom::DisplayClient {
   mojom::DisplayClientPtr BindInterfacePtr();
 
   // mojom::DisplayClient implementation.
-  MOCK_METHOD1(DidSwapAfterSnapshotRequestReceived,
-               void(const std::vector<ui::LatencyInfo>&));
 #if defined(OS_MACOSX)
   MOCK_METHOD1(OnDisplayReceivedCALayerParams, void(const gfx::CALayerParams&));
 #endif
@@ -32,8 +30,11 @@ class MockDisplayClient : public mojom::DisplayClient {
 #endif
 #if defined(OS_ANDROID)
   MOCK_METHOD1(DidCompleteSwapWithSize, void(const gfx::Size&));
-  MOCK_METHOD1(OnFatalOrSurfaceContextCreationFailure,
-               void(gpu::ContextResult));
+  MOCK_METHOD1(OnContextCreationResult, void(gpu::ContextResult));
+  MOCK_METHOD1(SetPreferredRefreshRate, void(float refresh_rate));
+#endif
+#if defined(USE_X11)
+  MOCK_METHOD1(DidCompleteSwapWithNewSize, void(const gfx::Size&));
 #endif
 
  private:

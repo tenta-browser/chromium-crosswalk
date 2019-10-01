@@ -13,6 +13,8 @@ namespace blink {
 
 class Document;
 class CSSStyleSheet;
+class CSSVariableData;
+class CSSValue;
 
 namespace css_test_helpers {
 
@@ -29,7 +31,7 @@ class TestStyleSheet {
   TestStyleSheet();
   ~TestStyleSheet();
 
-  const Document& GetDocument() { return *document_; };
+  const Document& GetDocument() { return *document_; }
 
   void AddCSSRules(const char* rule_text, bool is_empty_sheet = false);
   RuleSet& GetRuleSet();
@@ -45,6 +47,9 @@ void RegisterProperty(Document& document,
                       const String& syntax,
                       const String& initial_value,
                       bool is_inherited);
+
+scoped_refptr<CSSVariableData> CreateVariableData(String);
+const CSSValue* CreateCustomIdent(AtomicString);
 
 }  // namespace css_test_helpers
 }  // namespace blink

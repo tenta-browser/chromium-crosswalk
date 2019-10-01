@@ -531,7 +531,8 @@ void IsPinnedToTaskbarHelper::OnIsPinnedToTaskbarResult(
 }  // namespace
 
 bool SetAsDefaultBrowser() {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   base::FilePath chrome_exe;
   if (!base::PathService::Get(base::FILE_EXE, &chrome_exe)) {
@@ -551,7 +552,8 @@ bool SetAsDefaultBrowser() {
 }
 
 bool SetAsDefaultProtocolClient(const std::string& protocol) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   if (protocol.empty())
     return false;
@@ -584,12 +586,12 @@ DefaultWebClientSetPermission GetDefaultWebClientSetPermission() {
 }
 
 bool IsElevationNeededForSettingDefaultProtocolClient() {
-  return base::win::GetVersion() < base::win::VERSION_WIN8;
+  return base::win::GetVersion() < base::win::Version::WIN8;
 }
 
 base::string16 GetApplicationNameForProtocol(const GURL& url) {
   // Windows 8 or above has a new protocol association query.
-  if (base::win::GetVersion() >= base::win::VERSION_WIN8) {
+  if (base::win::GetVersion() >= base::win::Version::WIN8) {
     base::string16 application_name = GetAppForProtocolUsingAssocQuery(url);
     if (!application_name.empty())
       return application_name;
@@ -631,7 +633,8 @@ DefaultWebClientState IsDefaultProtocolClient(const std::string& protocol) {
 namespace win {
 
 bool SetAsDefaultBrowserUsingIntentPicker() {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   base::FilePath chrome_exe;
   if (!base::PathService::Get(base::FILE_EXE, &chrome_exe)) {
@@ -674,7 +677,8 @@ void SetAsDefaultBrowserUsingSystemSettings(
 }
 
 bool SetAsDefaultProtocolClientUsingIntentPicker(const std::string& protocol) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   base::FilePath chrome_exe;
   if (!base::PathService::Get(base::FILE_EXE, &chrome_exe)) {
@@ -734,7 +738,7 @@ void MigrateTaskbarPins() {
   // urgent task.
   base::CreateCOMSTATaskRunnerWithTraits(
       {base::MayBlock(), base::TaskPriority::BEST_EFFORT})
-      ->PostTask(FROM_HERE, base::Bind(&MigrateTaskbarPinsCallback));
+      ->PostTask(FROM_HERE, base::BindOnce(&MigrateTaskbarPinsCallback));
 }
 
 void GetIsPinnedToTaskbarState(

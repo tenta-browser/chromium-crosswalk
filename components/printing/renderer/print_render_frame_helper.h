@@ -184,8 +184,9 @@ class PrintRenderFrameHelper
 
   // RenderFrameObserver implementation.
   void OnDestruct() override;
-  void DidStartProvisionalLoad(blink::WebDocumentLoader* document_loader,
-                               bool is_content_initiated) override;
+  void DidStartNavigation(
+      const GURL& url,
+      base::Optional<blink::WebNavigationType> navigation_type) override;
   void DidFailProvisionalLoad(const blink::WebURLError& error) override;
   void DidFinishLoad() override;
   void ScriptedPrint(bool user_initiated) override;
@@ -224,8 +225,7 @@ class PrintRenderFrameHelper
 
   // Renders a print preview page. |page_number| is 0-based.
   // Returns true if print preview should continue, false on failure.
-  bool RenderPreviewPage(int page_number,
-                         const PrintMsg_Print_Params& print_params);
+  bool RenderPreviewPage(int page_number);
 
   // Finalize the print ready preview document.
   bool FinalizePrintReadyDocument();

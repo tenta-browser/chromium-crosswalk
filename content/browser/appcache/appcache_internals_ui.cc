@@ -67,9 +67,9 @@ std::unique_ptr<base::DictionaryValue> GetDictionaryValueForResponseEnquiry(
       new base::DictionaryValue());
   dict_value->SetString("manifestURL", response_enquiry.manifest_url);
   dict_value->SetString("groupId",
-                        base::Int64ToString(response_enquiry.group_id));
+                        base::NumberToString(response_enquiry.group_id));
   dict_value->SetString("responseId",
-                        base::Int64ToString(response_enquiry.response_id));
+                        base::NumberToString(response_enquiry.response_id));
   return dict_value;
 }
 
@@ -83,10 +83,18 @@ std::unique_ptr<base::DictionaryValue> GetDictionaryValueForAppCacheInfo(
                         appcache_info.last_update_time.ToJsTime());
   dict_value->SetDouble("lastAccessTime",
                         appcache_info.last_access_time.ToJsTime());
+  dict_value->SetString("responseSizes",
+                        base::UTF16ToUTF8(base::FormatBytesUnlocalized(
+                            appcache_info.response_sizes)));
+  dict_value->SetString("paddingSizes",
+                        base::UTF16ToUTF8(base::FormatBytesUnlocalized(
+                            appcache_info.padding_sizes)));
   dict_value->SetString(
-      "size",
-      base::UTF16ToUTF8(base::FormatBytesUnlocalized(appcache_info.size)));
-  dict_value->SetString("groupId", base::Int64ToString(appcache_info.group_id));
+      "totalSize",
+      base::UTF16ToUTF8(base::FormatBytesUnlocalized(
+          appcache_info.response_sizes + appcache_info.padding_sizes)));
+  dict_value->SetString("groupId",
+                        base::NumberToString(appcache_info.group_id));
 
   return dict_value;
 }
@@ -117,10 +125,16 @@ GetDictionaryValueForAppCacheResourceInfo(
     const blink::mojom::AppCacheResourceInfo& resource_info) {
   std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
   dict->SetString("url", resource_info.url.spec());
-  dict->SetString(
-      "size",
-      base::UTF16ToUTF8(base::FormatBytesUnlocalized(resource_info.size)));
-  dict->SetString("responseId", base::Int64ToString(resource_info.response_id));
+  dict->SetString("responseSize",
+                  base::UTF16ToUTF8(base::FormatBytesUnlocalized(
+                      resource_info.response_size)));
+  dict->SetString("paddingSize", base::UTF16ToUTF8(base::FormatBytesUnlocalized(
+                                     resource_info.padding_size)));
+  dict->SetString("totalSize", base::UTF16ToUTF8(base::FormatBytesUnlocalized(
+                                   resource_info.response_size +
+                                   resource_info.padding_size)));
+  dict->SetString("responseId",
+                  base::NumberToString(resource_info.response_id));
   dict->SetBoolean("isExplicit", resource_info.is_explicit);
   dict->SetBoolean("isManifest", resource_info.is_manifest);
   dict->SetBoolean("isMaster", resource_info.is_master);
@@ -366,7 +380,6 @@ AppCacheInternalsUI::AppCacheInternalsUI(WebUI* web_ui)
   source->AddResourcePath("appcache_internals.js", IDR_APPCACHE_INTERNALS_JS);
   source->AddResourcePath("appcache_internals.css", IDR_APPCACHE_INTERNALS_CSS);
   source->SetDefaultResource(IDR_APPCACHE_INTERNALS_HTML);
-  source->UseGzip();
 
   WebUIDataSource::Add(browser_context(), source);
 
@@ -437,6 +450,7 @@ void AppCacheInternalsUI::OnAllAppCacheInfoReady(
     incognito_path_prefix = "Incognito ";
   web_ui()->CallJavascriptFunctionUnsafe(
       kFunctionOnAllAppCacheInfoReady,
+      base::Value(partition_path.AsUTF8Unsafe()),
       base::Value(incognito_path_prefix + partition_path.AsUTF8Unsafe()),
       *GetListValueFromAppCacheInfoCollection(collection.get()));
 }

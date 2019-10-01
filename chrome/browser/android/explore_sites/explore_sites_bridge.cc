@@ -9,6 +9,7 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
+#include "base/bind.h"
 #include "chrome/browser/android/explore_sites/explore_sites_bridge.h"
 #include "chrome/browser/android/explore_sites/explore_sites_feature.h"
 #include "chrome/browser/android/explore_sites/explore_sites_service.h"
@@ -16,7 +17,7 @@
 #include "chrome/browser/android/explore_sites/explore_sites_types.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_android.h"
-#include "chrome/common/pref_names.h"
+#include "components/language/core/browser/pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "jni/ExploreSitesBridge_jni.h"
 #include "jni/ExploreSitesCategory_jni.h"
@@ -114,6 +115,12 @@ jint JNI_ExploreSitesBridge_GetVariation(JNIEnv* env) {
 }
 
 // static
+jint JNI_ExploreSitesBridge_GetIconVariation(JNIEnv* env) {
+  return static_cast<jint>(
+      chrome::android::explore_sites::GetMostLikelyVariation());
+}
+
+// static
 void JNI_ExploreSitesBridge_GetIcon(
     JNIEnv* env,
     const JavaParamRef<jobject>& j_profile,
@@ -157,7 +164,8 @@ void JNI_ExploreSitesBridge_UpdateCatalogFromNetwork(
   std::string accept_languages;
   PrefService* pref_service = profile->GetPrefs();
   if (pref_service != nullptr) {
-    accept_languages = pref_service->GetString(prefs::kAcceptLanguages);
+    accept_languages =
+        pref_service->GetString(language::prefs::kAcceptLanguages);
   }
 
   service->UpdateCatalogFromNetwork(
@@ -250,4 +258,27 @@ void JNI_ExploreSitesBridge_GetCategoryImage(
       base::BindOnce(&ImageReady,
                      ScopedJavaGlobalRef<jobject>(j_callback_obj)));
 }
+
+// static
+void JNI_ExploreSitesBridge_GetSummaryImage(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& j_profile,
+    const jint j_pixel_size,
+    const JavaParamRef<jobject>& j_callback_obj) {
+  Profile* profile = ProfileAndroid::FromProfileAndroid(j_profile);
+  DCHECK(profile);
+
+  ExploreSitesService* service =
+      ExploreSitesServiceFactory::GetForBrowserContext(profile);
+  if (!service) {
+    DLOG(ERROR) << "Unable to create the ExploreSitesService!";
+    base::android::RunBooleanCallbackAndroid(j_callback_obj, false);
+    return;
+  }
+
+  service->GetSummaryImage(
+      j_pixel_size, base::BindOnce(&ImageReady, ScopedJavaGlobalRef<jobject>(
+                                                    j_callback_obj)));
+}
+
 }  // namespace explore_sites

@@ -31,6 +31,7 @@ import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.document.ChromeLauncherActivity;
 import org.chromium.chrome.browser.favicon.LargeIconBridge;
+import org.chromium.chrome.browser.gesturenav.HistoryNavigationDelegate;
 import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.preferences.PrefChangeRegistrar;
 import org.chromium.chrome.browser.preferences.PrefChangeRegistrar.PrefObserver;
@@ -124,7 +125,7 @@ public class HistoryManager implements OnMenuItemClickListener, SignInStateObser
 
         // 3. Initialize toolbar.
         mToolbar = (HistoryManagerToolbar) mSelectableListLayout.initializeToolbar(
-                R.layout.history_toolbar, mSelectionDelegate, R.string.menu_history, null,
+                R.layout.history_toolbar, mSelectionDelegate, R.string.menu_history,
                 R.id.normal_menu_group, R.id.selection_mode_menu_group, this, true,
                 isSeparateActivity);
         mToolbar.setManager(this);
@@ -278,6 +279,14 @@ public class HistoryManager implements OnMenuItemClickListener, SignInStateObser
         mLargeIconBridge = null;
         SigninManager.get().removeSignInStateObserver(this);
         mPrefChangeRegistrar.destroy();
+    }
+
+    /**
+     * Sets the delegate object needed for history navigation logic.
+     * @param delegate {@link HistoryNavigationDelegate} object.
+     */
+    public void setHistoryNavigationDelegate(HistoryNavigationDelegate delegate) {
+        mSelectableListLayout.setHistoryNavigationDelegate(delegate);
     }
 
     /**

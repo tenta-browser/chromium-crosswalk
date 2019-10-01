@@ -10,11 +10,13 @@ module.exports = {
   },
   'parserOptions': {
     'ecmaVersion': 2017,
+    'sourceType': 'module',
   },
   'rules': {
     // Enabled checks.
     'brace-style': ['error', '1tbs'],
     'curly': ['error', 'multi-line', 'consistent'],
+    'no-extra-boolean-cast': 'error',
     'no-extra-semi': 'error',
     'no-new-wrappers': 'error',
     'no-restricted-properties': [

@@ -89,8 +89,14 @@ async function keyboardCopy(path) {
   await remoteCall.waitForFiles(
       appId, expectedEntryRows, {ignoreLastModifiedTime: true});
   const files = await remoteCall.callRemoteTestUtil('getFileList', appId, []);
-  // The mtimes should not match.
-  chrome.test.assertTrue(files[0][3] != files[1][3], files[1][3]);
+  if (path == RootPath.DRIVE &&
+      await sendTestMessage({name: 'getDriveFsEnabled'}) === 'true') {
+    // DriveFs doesn't preserve mtimes so they shouldn't match.
+    chrome.test.assertTrue(files[0][3] != files[1][3], files[0][3]);
+  } else {
+    // The mtimes should match for Local files.
+    chrome.test.assertTrue(files[0][3] == files[1][3], files[0][3]);
+  }
 }
 
 /**
@@ -276,43 +282,43 @@ async function testRenameFile(path) {
   await remoteCall.waitForFiles(appId, newFile, {ignoreLastModifiedTime: true});
 }
 
-testcase.keyboardCopyDownloads = function() {
+testcase.keyboardCopyDownloads = () => {
   return keyboardCopy(RootPath.DOWNLOADS);
 };
 
-testcase.keyboardCopyDrive = function() {
+testcase.keyboardCopyDrive = () => {
   return keyboardCopy(RootPath.DRIVE);
 };
 
-testcase.keyboardDeleteDownloads = function() {
+testcase.keyboardDeleteDownloads = () => {
   return keyboardDelete(RootPath.DOWNLOADS);
 };
 
-testcase.keyboardDeleteDrive = function() {
+testcase.keyboardDeleteDrive = () => {
   return keyboardDelete(RootPath.DRIVE);
 };
 
-testcase.keyboardDeleteFolderDownloads = function() {
+testcase.keyboardDeleteFolderDownloads = () => {
   return keyboardDeleteFolder(RootPath.DOWNLOADS, TREEITEM_DOWNLOADS);
 };
 
-testcase.keyboardDeleteFolderDrive = function() {
+testcase.keyboardDeleteFolderDrive = () => {
   return keyboardDeleteFolder(RootPath.DRIVE, TREEITEM_DRIVE);
 };
 
-testcase.renameFileDownloads = function() {
+testcase.renameFileDownloads = () => {
   return testRenameFile(RootPath.DOWNLOADS);
 };
 
-testcase.renameFileDrive = function() {
+testcase.renameFileDrive = () => {
   return testRenameFile(RootPath.DRIVE);
 };
 
-testcase.renameNewFolderDownloads = function() {
+testcase.renameNewFolderDownloads = () => {
   return testRenameFolder(RootPath.DOWNLOADS, TREEITEM_DOWNLOADS);
 };
 
-testcase.renameNewFolderDrive = function() {
+testcase.renameNewFolderDrive = () => {
   return testRenameFolder(RootPath.DRIVE, TREEITEM_DRIVE);
 };
 
@@ -320,7 +326,7 @@ testcase.renameNewFolderDrive = function() {
  * Test that selecting "Google Drive" in the directory tree with the keyboard
  * expands it and selects "My Drive".
  */
-testcase.keyboardSelectDriveDirectoryTree = async function() {
+testcase.keyboardSelectDriveDirectoryTree = async () => {
   // Open Files app.
   const appId = await setupAndWaitUntilReady(
       RootPath.DOWNLOADS, [ENTRIES.world], [ENTRIES.hello]);
@@ -353,7 +359,7 @@ testcase.keyboardSelectDriveDirectoryTree = async function() {
  * Tests that while the delete dialog is displayed, it is not possible to press
  * CONTROL-C to copy a file.
  */
-testcase.keyboardDisableCopyWhenDialogDisplayed = async function() {
+testcase.keyboardDisableCopyWhenDialogDisplayed = async () => {
   // Open Files app.
   const appId =
       await setupAndWaitUntilReady(RootPath.DOWNLOADS, [ENTRIES.hello], []);
@@ -390,4 +396,39 @@ testcase.keyboardDisableCopyWhenDialogDisplayed = async function() {
   // Check no files were pasted.
   const files = TestEntryInfo.getExpectedRows([ENTRIES.hello]);
   await remoteCall.waitForFiles(appId, files);
+};
+
+/**
+ * Tests Ctrl+N opens a new windows crbug.com/933302.
+ */
+testcase.keyboardOpenNewWindow = async () => {
+  // Open Files app.
+  const appId =
+      await setupAndWaitUntilReady(RootPath.DOWNLOADS, [ENTRIES.hello], []);
+
+  // Grab the current open windows.
+  const initialWindows =
+      await remoteCall.callRemoteTestUtil('getWindows', null, []);
+  const initialWindowsCount = Object.keys(initialWindows).length;
+  console.log(JSON.stringify(initialWindows));
+
+  // Send Ctrl+N to open a new window.
+  const key = ['#file-list', 'n', true, false, false];
+  chrome.test.assertTrue(
+      await remoteCall.callRemoteTestUtil('fakeKeyDown', appId, key));
+
+  // Wait for the new window to appear.
+  return repeatUntil(async () => {
+    const caller = getCaller();
+    const currentWindows =
+        await remoteCall.callRemoteTestUtil('getWindows', null, []);
+    const currentWindowsIds = Object.keys(currentWindows);
+    if (initialWindowsCount < currentWindowsIds.length) {
+      return true;
+    }
+    return pending(
+        caller,
+        'Waiting for new window to open, current windows: ' +
+            currentWindowsIds);
+  });
 };

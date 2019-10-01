@@ -13,7 +13,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop_current.h"
 #include "ui/base/cursor/ozone/bitmap_cursor_factory_ozone.h"
-#include "ui/display/manager/fake_display_delegate.h"
+#include "ui/display/fake/fake_display_delegate.h"
 #include "ui/events/ozone/layout/keyboard_layout_engine_manager.h"
 #include "ui/events/ozone/layout/stub/stub_keyboard_layout_engine.h"
 #include "ui/events/platform/platform_event_source.h"
@@ -24,6 +24,7 @@
 #include "ui/ozone/platform/scenic/scenic_surface_factory.h"
 #include "ui/ozone/platform/scenic/scenic_window.h"
 #include "ui/ozone/platform/scenic/scenic_window_manager.h"
+#include "ui/ozone/platform/scenic/sysmem_buffer_collection.h"
 #include "ui/ozone/platform_selection.h"
 #include "ui/ozone/public/cursor_factory_ozone.h"
 #include "ui/ozone/public/gpu_platform_support_host.h"
@@ -89,7 +90,7 @@ class OzonePlatformScenic
   std::unique_ptr<PlatformWindow> CreatePlatformWindow(
       PlatformWindowDelegate* delegate,
       PlatformWindowInitProperties properties) override {
-    if (!properties.view_token) {
+    if (!properties.view_token.value) {
       NOTREACHED();
       return nullptr;
     }
@@ -132,14 +133,21 @@ class OzonePlatformScenic
   }
 
   void InitializeGPU(const InitParams& params) override {
-    // TODO(spang, crbug.com/923445): Add message loop to GPU tests.
-    if (base::ThreadTaskRunnerHandle::IsSet()) {
+    if (params.single_process) {
+      if (!surface_factory_) {
+        // Without calling InitializeForUI, window surfaces cannot be created.
+        // Some test such as gpu_unittests do this.
+        // TODO(spang): This is not ideal; perhaps we should move the GL &
+        // vulkan initializers out of SurfaceFactoryOzone.
+        surface_factory_ = std::make_unique<ScenicSurfaceFactory>(nullptr);
+      }
+    } else {
+      DCHECK(!surface_factory_);
       scenic_gpu_service_ = std::make_unique<ScenicGpuService>(
           mojo::MakeRequest(&scenic_gpu_host_ptr_));
+      surface_factory_ =
+          std::make_unique<ScenicSurfaceFactory>(scenic_gpu_host_ptr_.get());
     }
-    DCHECK(!surface_factory_);
-    surface_factory_ =
-        std::make_unique<ScenicSurfaceFactory>(scenic_gpu_host_ptr_.get());
   }
 
   base::MessageLoop::Type GetMessageLoopTypeForGpu() override {
@@ -153,12 +161,25 @@ class OzonePlatformScenic
         base::ThreadTaskRunnerHandle::Get());
   }
 
- private:
-  // Performs graceful cleanup tasks on main message loop teardown.
-  void Shutdown() { window_manager_.reset(); }
+  bool IsNativePixmapConfigSupported(gfx::BufferFormat format,
+                                     gfx::BufferUsage usage) const override {
+    return SysmemBufferCollection::IsNativePixmapConfigSupported(format, usage);
+  }
 
+ private:
   // base::MessageLoopCurrent::DestructionObserver implementation.
-  void WillDestroyCurrentMessageLoop() override { Shutdown(); }
+  void WillDestroyCurrentMessageLoop() override {
+    // We must ensure to destroy any resources which rely on the MessageLoop's
+    // async_dispatcher.
+    scenic_gpu_host_ptr_ = nullptr;
+    surface_factory_ = nullptr;
+    scenic_gpu_host_ = nullptr;
+    overlay_manager_ = nullptr;
+    input_controller_ = nullptr;
+    cursor_factory_ozone_ = nullptr;
+    platform_event_source_ = nullptr;
+    window_manager_ = nullptr;
+  }
 
   std::unique_ptr<ScenicWindowManager> window_manager_;
 

@@ -4,6 +4,7 @@
 
 #include "net/base/upload_data_stream.h"
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/values.h"
 #include "net/base/io_buffer.h"
@@ -14,26 +15,24 @@ namespace net {
 
 namespace {
 
-std::unique_ptr<base::Value> NetLogInitEndInfoCallback(
-    int result,
-    int total_size,
-    bool is_chunked,
-    NetLogCaptureMode /* capture_mode */) {
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+base::Value NetLogInitEndInfoCallback(int result,
+                                      int total_size,
+                                      bool is_chunked,
+                                      NetLogCaptureMode /* capture_mode */) {
+  base::Value dict(base::Value::Type::DICTIONARY);
 
-  dict->SetInteger("net_error", result);
-  dict->SetInteger("total_size", total_size);
-  dict->SetBoolean("is_chunked", is_chunked);
-  return std::move(dict);
+  dict.SetIntKey("net_error", result);
+  dict.SetIntKey("total_size", total_size);
+  dict.SetBoolKey("is_chunked", is_chunked);
+  return dict;
 }
 
-std::unique_ptr<base::Value> NetLogReadInfoCallback(
-    int current_position,
-    NetLogCaptureMode /* capture_mode */) {
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+base::Value NetLogReadInfoCallback(int current_position,
+                                   NetLogCaptureMode /* capture_mode */) {
+  base::Value dict(base::Value::Type::DICTIONARY);
 
-  dict->SetInteger("current_position", current_position);
-  return std::move(dict);
+  dict.SetIntKey("current_position", current_position);
+  return dict;
 }
 
 }  // namespace
@@ -142,7 +141,7 @@ bool UploadDataStream::IsInMemory() const {
 
 const std::vector<std::unique_ptr<UploadElementReader>>*
 UploadDataStream::GetElementReaders() const {
-  return NULL;
+  return nullptr;
 }
 
 void UploadDataStream::OnInitCompleted(int result) {

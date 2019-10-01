@@ -5,12 +5,12 @@
 #ifndef COMPONENTS_EXO_TEXT_INPUT_H_
 #define COMPONENTS_EXO_TEXT_INPUT_H_
 
+#include "ash/keyboard/ui/keyboard_controller_observer.h"
 #include "ui/base/ime/text_input_client.h"
 #include "ui/base/ime/text_input_flags.h"
 #include "ui/base/ime/text_input_mode.h"
 #include "ui/base/ime/text_input_type.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/keyboard/keyboard_controller_observer.h"
 
 namespace ui {
 class InputMethod;
@@ -22,6 +22,9 @@ class KeyboardController;
 
 namespace exo {
 class Surface;
+
+size_t OffsetFromUTF8Offset(const base::StringPiece& text, uint32_t offset);
+size_t OffsetFromUTF16Offset(const base::StringPiece16& text, uint32_t offset);
 
 // This class bridges the ChromeOS input method and a text-input context.
 class TextInput : public ui::TextInputClient,
@@ -47,10 +50,11 @@ class TextInput : public ui::TextInputClient,
     // Commit |text| to the current text input session.
     virtual void Commit(const base::string16& text) = 0;
 
-    // Set the cursor position.
+    // Set the cursor position. The range should be in bytes offset.
     virtual void SetCursor(const gfx::Range& selection) = 0;
 
-    // Delete the surrounding text of the current text input.
+    // Delete the surrounding text of the current text input. The range should
+    // be in the bytes offset.
     virtual void DeleteSurroundingText(const gfx::Range& range) = 0;
 
     // Sends a key event.
@@ -83,7 +87,9 @@ class TextInput : public ui::TextInputClient,
   void Resync();
 
   // Sets the surrounding text in the app.
-  void SetSurroundingText(const base::string16& text, uint32_t cursor_pos);
+  void SetSurroundingText(const base::string16& text,
+                          uint32_t cursor_pos,
+                          uint32_t anchor);
 
   // Sets the text input type, mode, flags, and |should_do_learning|.
   void SetTypeModeFlags(ui::TextInputType type,
@@ -128,6 +134,9 @@ class TextInput : public ui::TextInputClient,
   void SetTextEditCommandForNextKeyEvent(ui::TextEditCommand command) override;
   ukm::SourceId GetClientSourceForMetrics() const override;
   bool ShouldDoLearning() override;
+  bool SetCompositionFromExistingText(
+      const gfx::Range& range,
+      const std::vector<ui::ImeTextSpan>& ui_ime_text_spans) override;
 
   // keyboard::KeyboardControllerObserver:
   void OnKeyboardVisibilityStateChanged(bool is_visible) override;
@@ -148,6 +157,8 @@ class TextInput : public ui::TextInputClient,
   int flags_ = ui::TEXT_INPUT_FLAG_NONE;
   bool should_do_learning_ = true;
   ui::CompositionText composition_;
+  base::string16 surrounding_text_;
+  base::Optional<gfx::Range> cursor_pos_;
   base::i18n::TextDirection direction_ = base::i18n::UNKNOWN_DIRECTION;
 
   DISALLOW_COPY_AND_ASSIGN(TextInput);

@@ -8,8 +8,8 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "remoting/base/compound_buffer.h"
 #include "remoting/proto/test_data_channel_manager.pb.h"
 #include "remoting/protocol/fake_message_pipe.h"
@@ -47,7 +47,7 @@ class FakeNamedMessagePipeHandler final : public NamedMessagePipeHandler {
   bool connected() const { return NamedMessagePipeHandler::connected(); }
 
   void Send(const google::protobuf::MessageLite& message,
-            const base::Closure& done);
+            base::OnceClosure done);
 
  protected:
   ~FakeNamedMessagePipeHandler() override {
@@ -83,15 +83,14 @@ FakeNamedMessagePipeHandler* FakeNamedMessagePipeHandler::Find(
 
 void FakeNamedMessagePipeHandler::Send(
     const google::protobuf::MessageLite& message,
-    const base::Closure& done) {
+    base::OnceClosure done) {
   if (connected()) {
-    NamedMessagePipeHandler::Send(message, done);
+    NamedMessagePipeHandler::Send(message, std::move(done));
     return;
   }
 #if DCHECK_IS_ON()
   ASSERT_DEATH_IF_SUPPORTED(
-    NamedMessagePipeHandler::Send(message, done),
-    "connected");
+      NamedMessagePipeHandler::Send(message, std::move(done)), "connected");
 #endif
 }
 
@@ -100,7 +99,7 @@ std::map<std::string, FakeNamedMessagePipeHandler*>
 FakeNamedMessagePipeHandler::handlers_;
 
 void TestDataChannelManagerFullMatch(bool asynchronous) {
-  base::MessageLoop message_loop;
+  base::test::ScopedTaskEnvironment scoped_task_environment;
   DataChannelManager manager;
   manager.RegisterCreateHandlerCallback("FullMatch", base::Bind(
       [](const std::string& expected_data,
@@ -135,10 +134,8 @@ void TestDataChannelManagerFullMatch(bool asynchronous) {
   {
     DataChannelManagerTestProto message;
     int sent = 0;
-    base::Closure sent_callback = base::Bind([](int* sent) {
-          (*sent)++;
-        },
-        base::Unretained(&sent));
+    base::RepeatingClosure sent_callback = base::BindRepeating(
+        [](int* sent) { (*sent)++; }, base::Unretained(&sent));
     ASSERT_TRUE(handler1->connected());
     handler1->Send(message, sent_callback);
     ASSERT_FALSE(handler2->connected());
@@ -153,10 +150,8 @@ void TestDataChannelManagerFullMatch(bool asynchronous) {
   {
     DataChannelManagerTestProto message;
     int sent = 0;
-    base::Closure sent_callback = base::Bind([](int* sent) {
-          (*sent)++;
-        },
-        base::Unretained(&sent));
+    base::RepeatingClosure sent_callback = base::BindRepeating(
+        [](int* sent) { (*sent)++; }, base::Unretained(&sent));
     ASSERT_TRUE(handler2->connected());
 
     handler1->Send(message, sent_callback);
@@ -196,7 +191,7 @@ void TestDataChannelManagerFullMatch(bool asynchronous) {
 }
 
 void TestDataChannelManagerMultipleRegistrations(bool asynchronous) {
-  base::MessageLoop message_loop;
+  base::test::ScopedTaskEnvironment scoped_task_environment;
   DataChannelManager manager;
   manager.RegisterCreateHandlerCallback("FullMatch", base::Bind(
       [](const std::string& expected_data,

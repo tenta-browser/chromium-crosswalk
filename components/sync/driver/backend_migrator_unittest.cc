@@ -53,7 +53,7 @@ class SyncBackendMigratorTest : public testing::Test {
   // types as synced.
   void SetUnsyncedTypes(ModelTypeSet unsynced_types) {
     WriteTransaction trans(FROM_HERE, test_user_share_.user_share());
-    for (int i = FIRST_REAL_MODEL_TYPE; i < MODEL_TYPE_COUNT; ++i) {
+    for (int i = FIRST_REAL_MODEL_TYPE; i < ModelType::NUM_ENTRIES; ++i) {
       ModelType type = ModelTypeFromInt(i);
       sync_pb::DataTypeProgressMarker progress_marker;
       if (!unsynced_types.Has(type)) {
@@ -287,4 +287,4 @@ TEST_F(SyncBackendMigratorTest, ConfigureFailure) {
   EXPECT_EQ(BackendMigrator::IDLE, migrator()->state());
 }
 
-};  // namespace syncer
+}  // namespace syncer

@@ -13,10 +13,10 @@
 #include "chrome/browser/favicon/favicon_service_factory.h"
 #include "chrome/browser/favicon/large_icon_service_factory.h"
 #include "chrome/browser/history/top_sites_factory.h"
+#include "chrome/browser/image_fetcher/image_decoder_impl.h"
 #include "chrome/browser/ntp_tiles/chrome_custom_links_manager_factory.h"
 #include "chrome/browser/ntp_tiles/chrome_popular_sites_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/search/suggestions/image_decoder_impl.h"
 #include "chrome/browser/search/suggestions/suggestions_service_factory.h"
 #include "chrome/browser/supervised_user/supervised_user_service.h"
 #include "chrome/browser/supervised_user/supervised_user_service_factory.h"
@@ -28,6 +28,10 @@
 #include "components/ntp_tiles/metrics.h"
 #include "components/ntp_tiles/most_visited_sites.h"
 #include "content/public/browser/storage_partition.h"
+
+#if defined(OS_ANDROID)
+#include "chrome/browser/android/explore_sites/most_visited_client.h"
+#endif
 
 using suggestions::SuggestionsServiceFactory;
 
@@ -115,7 +119,7 @@ ChromeMostVisitedSitesFactory::NewForProfile(Profile* profile) {
     return nullptr;
   }
 
-  return std::make_unique<ntp_tiles::MostVisitedSites>(
+  auto most_visited_sites = std::make_unique<ntp_tiles::MostVisitedSites>(
       profile->GetPrefs(), TopSitesFactory::GetForProfile(profile),
       SuggestionsServiceFactory::GetForProfile(profile),
 #if defined(OS_ANDROID)
@@ -133,8 +137,13 @@ ChromeMostVisitedSitesFactory::NewForProfile(Profile* profile) {
               profile, ServiceAccessType::IMPLICIT_ACCESS),
           LargeIconServiceFactory::GetForBrowserContext(profile),
           std::make_unique<image_fetcher::ImageFetcherImpl>(
-              std::make_unique<suggestions::ImageDecoderImpl>(),
+              std::make_unique<ImageDecoderImpl>(),
               content::BrowserContext::GetDefaultStoragePartition(profile)
                   ->GetURLLoaderFactoryForBrowserProcess())),
       std::make_unique<SupervisorBridge>(profile));
+#if defined(OS_ANDROID)
+  most_visited_sites->SetExploreSitesClient(
+      explore_sites::MostVisitedClient::Create());
+#endif
+  return most_visited_sites;
 }

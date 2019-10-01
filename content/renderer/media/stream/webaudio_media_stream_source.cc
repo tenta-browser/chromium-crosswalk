@@ -4,6 +4,8 @@
 
 #include "content/renderer/media/stream/webaudio_media_stream_source.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/logging.h"
@@ -11,8 +13,10 @@
 namespace content {
 
 WebAudioMediaStreamSource::WebAudioMediaStreamSource(
-    blink::WebMediaStreamSource* blink_source)
-    : MediaStreamAudioSource(false /* is_remote */),
+    blink::WebMediaStreamSource* blink_source,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner)
+    : blink::MediaStreamAudioSource(std::move(task_runner),
+                                    false /* is_remote */),
       is_registered_consumer_(false),
       fifo_(base::Bind(&WebAudioMediaStreamSource::DeliverRebufferedAudio,
                        base::Unretained(this))),
@@ -49,7 +53,7 @@ void WebAudioMediaStreamSource::SetFormat(size_t number_of_channels,
                                 fifo_.frames_per_buffer());
   // Take care of the discrete channel layout case.
   params.set_channels_for_discrete(number_of_channels);
-  MediaStreamAudioSource::SetFormat(params);
+  blink::MediaStreamAudioSource::SetFormat(params);
 
   if (!wrapper_bus_ || wrapper_bus_->channels() != params.channels())
     wrapper_bus_ = media::AudioBus::CreateWrapper(params.channels());
@@ -104,8 +108,8 @@ void WebAudioMediaStreamSource::DeliverRebufferedAudio(
       current_reference_time_ +
       base::TimeDelta::FromMicroseconds(
           frame_delay * base::Time::kMicrosecondsPerSecond /
-          MediaStreamAudioSource::GetAudioParameters().sample_rate());
-  MediaStreamAudioSource::DeliverDataToTracks(audio_bus, reference_time);
+          blink::MediaStreamAudioSource::GetAudioParameters().sample_rate());
+  blink::MediaStreamAudioSource::DeliverDataToTracks(audio_bus, reference_time);
 }
 
 }  // namespace content

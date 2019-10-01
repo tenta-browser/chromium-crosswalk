@@ -13,24 +13,17 @@
 #include "base/trace_event/trace_event.h"
 #include "chrome/browser/android/chrome_startup_flags.h"
 #include "chrome/browser/android/metrics/uma_utils.h"
-#include "chrome/browser/media/android/remote/remote_media_player_manager.h"
 #include "components/policy/core/browser/android/android_combined_policy_provider.h"
+#include "components/startup_metric_utils/browser/startup_metric_utils.h"
+#include "content/public/browser/browser_main_runner.h"
+
+#if defined(SAFE_BROWSING_DB_REMOTE)
 #include "components/safe_browsing/android/safe_browsing_api_handler.h"
 #include "components/safe_browsing/android/safe_browsing_api_handler_bridge.h"
-#include "components/startup_metric_utils/browser/startup_metric_utils.h"
-#include "content/browser/media/android/browser_media_player_manager.h"
-#include "content/public/browser/browser_main_runner.h"
+#endif
 
 using safe_browsing::SafeBrowsingApiHandler;
 
-namespace {
-
-content::BrowserMediaPlayerManager* CreateRemoteMediaPlayerManager(
-    content::RenderFrameHost* render_frame_host) {
-  return new remote_media::RemoteMediaPlayerManager(render_frame_host);
-}
-
-} // namespace
 
 // ChromeMainDelegateAndroid is created when the library is loaded. It is always
 // done in the process's main Java thread. But for non browser process, e.g.
@@ -42,14 +35,14 @@ ChromeMainDelegateAndroid::~ChromeMainDelegateAndroid() {
 }
 
 bool ChromeMainDelegateAndroid::BasicStartupComplete(int* exit_code) {
+#if defined(SAFE_BROWSING_DB_REMOTE)
   safe_browsing_api_handler_.reset(
       new safe_browsing::SafeBrowsingApiHandlerBridge());
   SafeBrowsingApiHandler::SetInstance(safe_browsing_api_handler_.get());
+#endif
 
   policy::android::AndroidCombinedPolicyProvider::SetShouldWaitForPolicy(true);
   SetChromeSpecificCommandLineFlags();
-  content::BrowserMediaPlayerManager::RegisterFactory(
-      &CreateRemoteMediaPlayerManager);
 
   return ChromeMainDelegate::BasicStartupComplete(exit_code);
 }
@@ -79,28 +72,37 @@ void ChromeMainDelegateAndroid::SecureDataDirectory() {
 int ChromeMainDelegateAndroid::RunProcess(
     const std::string& process_type,
     const content::MainFunctionParams& main_function_params) {
-  TRACE_EVENT0("startup", "ChromeMainDelegateAndroid::RunProcess")
-  if (process_type.empty()) {
-    SecureDataDirectory();
+  TRACE_EVENT0("startup", "ChromeMainDelegateAndroid::RunProcess");
+  // Defer to the default main method outside the browser process.
+  if (!process_type.empty())
+    return -1;
 
-    // Because the browser process can be started asynchronously as a series of
-    // UI thread tasks a second request to start it can come in while the
-    // first request is still being processed. Chrome must keep the same
-    // browser runner for the second request.
-    // Also only record the start time the first time round, since this is the
-    // start time of the application, and will be same for all requests.
-    if (!browser_runner_.get()) {
-      startup_metric_utils::RecordMainEntryPointTime(
-          chrome::android::GetMainEntryPointTimeTicks());
-      browser_runner_ = content::BrowserMainRunner::Create();
-    }
-    return browser_runner_->Initialize(main_function_params);
+  SecureDataDirectory();
+
+  // Because the browser process can be started asynchronously as a series of
+  // UI thread tasks a second request to start it can come in while the
+  // first request is still being processed. Chrome must keep the same
+  // browser runner for the second request.
+  // Also only record the start time the first time round, since this is the
+  // start time of the application, and will be same for all requests.
+  if (!browser_runner_) {
+    startup_metric_utils::RecordMainEntryPointTime(
+        chrome::android::GetMainEntryPointTimeTicks());
+    browser_runner_ = content::BrowserMainRunner::Create();
   }
 
-  return ChromeMainDelegate::RunProcess(process_type, main_function_params);
+  int exit_code = browser_runner_->Initialize(main_function_params);
+  // On Android we do not run BrowserMain(), so the above initialization of a
+  // BrowserMainRunner is all we want to occur. Return >= 0 to avoid running
+  // BrowserMain, while preserving any error codes > 0.
+  if (exit_code > 0)
+    return exit_code;
+  return 0;
 }
 
 void ChromeMainDelegateAndroid::ProcessExiting(
     const std::string& process_type) {
+#if defined(SAFE_BROWSING_DB_REMOTE)
   SafeBrowsingApiHandler::SetInstance(nullptr);
+#endif
 }

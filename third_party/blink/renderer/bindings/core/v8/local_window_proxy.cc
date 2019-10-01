@@ -57,7 +57,6 @@
 #include "third_party/blink/renderer/platform/bindings/v8_dom_wrapper.h"
 #include "third_party/blink/renderer/platform/bindings/v8_private_property.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
-#include "third_party/blink/renderer/platform/histogram.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/weborigin/security_violation_reporting_policy.h"
@@ -66,6 +65,12 @@
 
 namespace blink {
 
+namespace {
+
+constexpr char kGlobalProxyLabel[] = "WindowProxy::global_proxy_";
+
+}  // namespace
+
 void LocalWindowProxy::Trace(blink::Visitor* visitor) {
   visitor->Trace(script_state_);
   WindowProxy::Trace(visitor);
@@ -73,15 +78,20 @@ void LocalWindowProxy::Trace(blink::Visitor* visitor) {
 
 void LocalWindowProxy::DisposeContext(Lifecycle next_status,
                                       FrameReuseStatus frame_reuse_status) {
-  DCHECK(next_status == Lifecycle::kForciblyPurgeV8Memory ||
+  DCHECK(next_status == Lifecycle::kV8MemoryIsForciblyPurged ||
          next_status == Lifecycle::kGlobalObjectIsDetached ||
-         next_status == Lifecycle::kFrameIsDetached);
+         next_status == Lifecycle::kFrameIsDetached ||
+         next_status == Lifecycle::kFrameIsDetachedAndV8MemoryIsPurged);
 
-  // If the current lifecycle is kForciblyPurgeV8Memory, the next state should
-  // be kGlobalObjectIsDetached. The necessary operations are already done in
-  // kForciblyPurgeMemory and thus can return here.
-  if (lifecycle_ == Lifecycle::kForciblyPurgeV8Memory) {
-    DCHECK(next_status == Lifecycle::kGlobalObjectIsDetached);
+  // If the current lifecycle is kV8MemoryIsForciblyPurged, next status should
+  // be either kFrameIsDetachedAndV8MemoryIsPurged, or kGlobalObjectIsDetached.
+  // If the former, |global_proxy_| should become weak, and if the latter, the
+  // necessary operations are already done so can return here.
+  if (lifecycle_ == Lifecycle::kV8MemoryIsForciblyPurged) {
+    DCHECK(next_status == Lifecycle::kGlobalObjectIsDetached ||
+           next_status == Lifecycle::kFrameIsDetachedAndV8MemoryIsPurged);
+    if (next_status == Lifecycle::kFrameIsDetachedAndV8MemoryIsPurged)
+      global_proxy_.SetPhantom();
     lifecycle_ = next_status;
     return;
   }
@@ -96,7 +106,7 @@ void LocalWindowProxy::DisposeContext(Lifecycle next_status,
   // it returns.
   GetFrame()->Client()->WillReleaseScriptContext(context, world_->GetWorldId());
   MainThreadDebugger::Instance()->ContextWillBeDestroyed(script_state_);
-  if (next_status == Lifecycle::kForciblyPurgeV8Memory ||
+  if (next_status == Lifecycle::kV8MemoryIsForciblyPurged ||
       next_status == Lifecycle::kGlobalObjectIsDetached) {
     // Clean up state on the global proxy, which will be reused.
     if (!global_proxy_.IsEmpty()) {
@@ -134,16 +144,6 @@ void LocalWindowProxy::DisposeContext(Lifecycle next_status,
 void LocalWindowProxy::Initialize() {
   TRACE_EVENT1("v8", "LocalWindowProxy::Initialize", "IsMainFrame",
                GetFrame()->IsMainFrame());
-  DEFINE_STATIC_LOCAL(
-      CustomCountHistogram, main_frame_hist,
-      ("Blink.Binding.InitializeMainLocalWindowProxy", 0, 10000000, 50));
-  DEFINE_STATIC_LOCAL(
-      CustomCountHistogram, non_main_frame_hist,
-      ("Blink.Binding.InitializeNonMainLocalWindowProxy", 0, 10000000, 50));
-  ScopedUsHistogramTimer timer(GetFrame()->IsMainFrame() ? main_frame_hist
-                                                         : non_main_frame_hist);
-  // TODO(alph): Remove this temporary code for debugging
-  // https://crbug.com/728693.
   CHECK(!GetFrame()->IsProvisional());
 
   ScriptForbiddenScope::AllowUserAgentScript allow_script;
@@ -161,6 +161,7 @@ void LocalWindowProxy::Initialize() {
   v8::Local<v8::Context> context = script_state_->GetContext();
   if (global_proxy_.IsEmpty()) {
     global_proxy_.Set(GetIsolate(), context->Global());
+    global_proxy_.Get().AnnotateStrongRetainer(kGlobalProxyLabel);
     CHECK(!global_proxy_.IsEmpty());
   }
 
@@ -215,15 +216,6 @@ void LocalWindowProxy::CreateContext() {
 
   v8::Local<v8::Context> context;
   {
-    DEFINE_STATIC_LOCAL(
-        CustomCountHistogram, main_frame_hist,
-        ("Blink.Binding.CreateV8ContextForMainFrame", 0, 10000000, 50));
-    DEFINE_STATIC_LOCAL(
-        CustomCountHistogram, non_main_frame_hist,
-        ("Blink.Binding.CreateV8ContextForNonMainFrame", 0, 10000000, 50));
-    ScopedUsHistogramTimer timer(
-        GetFrame()->IsMainFrame() ? main_frame_hist : non_main_frame_hist);
-
     v8::Isolate* isolate = GetIsolate();
     V8PerIsolateData::UseCounterDisabledScope use_counter_disabled(
         V8PerIsolateData::From(isolate));
@@ -250,7 +242,7 @@ void LocalWindowProxy::CreateContext() {
   DidAttachGlobalObject();
 #endif
 
-  script_state_ = ScriptState::Create(context, world_);
+  script_state_ = MakeGarbageCollected<ScriptState>(context, world_);
 
   DCHECK(lifecycle_ == Lifecycle::kContextIsUninitialized ||
          lifecycle_ == Lifecycle::kGlobalObjectIsDetached);

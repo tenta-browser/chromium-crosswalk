@@ -5,6 +5,7 @@
 #ifndef ASH_WM_TABLET_MODE_TABLET_MODE_BROWSER_WINDOW_DRAG_DELEGATE_H_
 #define ASH_WM_TABLET_MODE_TABLET_MODE_BROWSER_WINDOW_DRAG_DELEGATE_H_
 
+#include "ash/ash_export.h"
 #include "ash/wm/tablet_mode/tablet_mode_window_drag_delegate.h"
 #include "base/macros.h"
 
@@ -14,7 +15,7 @@ namespace ash {
 // TabletModeWindowDragDelegate, but also has special logic for browser windows,
 // e.g., scales the source window, shows/hides the other windows below the
 // source window.
-class TabletModeBrowserWindowDragDelegate
+class ASH_EXPORT TabletModeBrowserWindowDragDelegate
     : public TabletModeWindowDragDelegate {
  public:
   TabletModeBrowserWindowDragDelegate();
@@ -26,7 +27,7 @@ class TabletModeBrowserWindowDragDelegate
   // TabletModeWindowDragDelegate:
   void PrepareWindowDrag(const gfx::Point& location_in_screen) override;
   void UpdateWindowDrag(const gfx::Point& location_in_screen) override;
-  void EndingWindowDrag(wm::WmToplevelWindowEventHandler::DragResult result,
+  void EndingWindowDrag(ToplevelWindowEventHandler::DragResult result,
                         const gfx::Point& location_in_screen) override;
   void EndedWindowDrag(const gfx::Point& location_in_screen) override;
   void StartFling(const ui::GestureEvent* event) override;

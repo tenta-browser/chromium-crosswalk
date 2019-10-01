@@ -4,7 +4,7 @@
 
 #include "ash/system/unified/sign_out_button.h"
 
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "ash/system/tray/tray_constants.h"
 #include "ash/system/tray/tray_popup_utils.h"
@@ -16,6 +16,7 @@
 #include "ui/views/animation/ink_drop_impl.h"
 #include "ui/views/animation/ink_drop_mask.h"
 #include "ui/views/border.h"
+#include "ui/views/view_class_properties.h"
 
 namespace ash {
 
@@ -29,6 +30,11 @@ RoundedLabelButton::RoundedLabelButton(views::ButtonListener* listener,
   label()->SetFontList(views::Label::GetDefaultFontList().Derive(
       1, gfx::Font::NORMAL, gfx::Font::Weight::MEDIUM));
   TrayPopupUtils::ConfigureTrayPopupButton(this);
+
+  auto path = std::make_unique<SkPath>();
+  path->addRoundRect(gfx::RectToSkRect(gfx::Rect(CalculatePreferredSize())),
+                     kTrayItemSize / 2, kTrayItemSize / 2);
+  SetProperty(views::kHighlightPathKey, path.release());
 }
 
 RoundedLabelButton::~RoundedLabelButton() = default;
@@ -76,6 +82,10 @@ std::unique_ptr<views::InkDropMask> RoundedLabelButton::CreateInkDropMask()
                                                        kTrayItemSize / 2);
 }
 
+const char* RoundedLabelButton::GetClassName() const {
+  return "RoundedLabelButton";
+}
+
 SignOutButton::SignOutButton(views::ButtonListener* listener)
     : RoundedLabelButton(listener,
                          user::GetLocalizedSignOutStringForStatus(
@@ -86,5 +96,9 @@ SignOutButton::SignOutButton(views::ButtonListener* listener)
 }
 
 SignOutButton::~SignOutButton() = default;
+
+const char* SignOutButton::GetClassName() const {
+  return "SignOutButton";
+}
 
 }  // namespace ash

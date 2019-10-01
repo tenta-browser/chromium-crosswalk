@@ -15,10 +15,6 @@
 #include "ui/native_theme/native_theme_dark_aura.h"
 #endif
 
-#if defined(USE_X11)
-#include "ui/views/linux_ui/linux_ui.h"
-#endif
-
 namespace {
 
 SkColor GetColorFromNativeTheme(ui::NativeTheme::ColorId color_id,
@@ -27,11 +23,6 @@ SkColor GetColorFromNativeTheme(ui::NativeTheme::ColorId color_id,
 #if defined(USE_AURA) || defined(OS_MACOSX)
   if (tint == OmniboxTint::DARK)
     native_theme = ui::NativeThemeDarkAura::instance();
-#endif
-#if defined(USE_X11)
-  // Note: passing null to GetNativeTheme() always returns the native GTK theme.
-  if (tint == OmniboxTint::NATIVE && views::LinuxUI::instance())
-    native_theme = views::LinuxUI::instance()->GetNativeTheme(nullptr);
 #endif
   if (!native_theme)
     native_theme = ui::NativeTheme::GetInstanceForNativeUi();
@@ -53,8 +44,6 @@ SkColor GetOmniboxColor(OmniboxPart part,
                         OmniboxPartState state) {
   using NativeId = ui::NativeTheme::ColorId;
 
-  // Note this will use LIGHT for OmniboxTint::NATIVE.
-  // TODO(https://crbug.com/819452): Determine the role GTK should play in this.
   bool dark = tint == OmniboxTint::DARK;
 
   // For high contrast, selected rows use inverted colors to stand out more.
@@ -76,8 +65,6 @@ SkColor GetOmniboxColor(OmniboxPart part,
       return GetSecurityChipColor(tint, state);
     case OmniboxPart::LOCATION_BAR_SELECTED_KEYWORD:
       return dark ? gfx::kGoogleGrey100 : gfx::kGoogleBlue600;
-    case OmniboxPart::LOCATION_BAR_FOCUS_RING:
-      return dark ? gfx::kGoogleBlueDark600 : gfx::kGoogleBlue600;
     case OmniboxPart::RESULTS_BACKGROUND: {
       // High contrast mode needs a darker base - Grey 800 with 14% white
       // overlaid on it (see below) is hard to produce good contrast ratios
@@ -104,16 +91,10 @@ SkColor GetOmniboxColor(OmniboxPart part,
       // This is a pre-lightened (or darkened) variant of the base text color.
       return dark ? gfx::kGoogleGrey400 : gfx::kGoogleGrey700;
 
-    case OmniboxPart::RESULTS_TEXT_INVISIBLE:
-      return SK_ColorTRANSPARENT;
-    case OmniboxPart::RESULTS_TEXT_NEGATIVE:
-      return dark ? gfx::kGoogleRedDark600 : gfx::kGoogleRed600;
-    case OmniboxPart::RESULTS_TEXT_POSITIVE:
-      return dark ? gfx::kGoogleGreenDark600 : gfx::kGoogleGreen600;
     case OmniboxPart::RESULTS_TEXT_URL:
       if (high_contrast)
         return dark ? gfx::kGoogleBlue300 : gfx::kGoogleBlue700;
-      return dark ? gfx::kGoogleBlueDark600 : gfx::kGoogleBlue600;
+      return dark ? gfx::kGoogleBlue300 : gfx::kGoogleBlue600;
 
     case OmniboxPart::LOCATION_BAR_BUBBLE_OUTLINE:
       if (OmniboxFieldTrial::IsExperimentalKeywordModeEnabled())

@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/callback_helpers.h"
@@ -28,6 +29,7 @@
 #include "media/gpu/android/android_video_surface_chooser.h"
 #include "media/gpu/android/codec_allocator.h"
 #include "media/media_buildflags.h"
+#include "media/video/supported_video_decoder_config.h"
 
 #if BUILDFLAG(USE_PROPRIETARY_CODECS)
 #include "media/base/android/extract_sps_and_pps.h"
@@ -120,6 +122,69 @@ PendingDecode::PendingDecode(scoped_refptr<DecoderBuffer> buffer,
 PendingDecode::PendingDecode(PendingDecode&& other) = default;
 PendingDecode::~PendingDecode() = default;
 
+// static
+std::vector<SupportedVideoDecoderConfig>
+MediaCodecVideoDecoder::GetSupportedConfigs() {
+  std::vector<SupportedVideoDecoderConfig> supported_configs;
+
+  if (MediaCodecUtil::IsVp8DecoderAvailable()) {
+    // For unencrypted content, require that the size is at least 360p and that
+    // the MediaCodec implementation is hardware; otherwise fall back to libvpx.
+    if (!MediaCodecUtil::IsKnownUnaccelerated(kCodecVP8,
+                                              MediaCodecDirection::DECODER)) {
+      supported_configs.emplace_back(VP8PROFILE_ANY, VP8PROFILE_ANY,
+                                     gfx::Size(480, 360), gfx::Size(3840, 2160),
+                                     false,   // allow_encrypted
+                                     false);  // require_encrypted
+    }
+
+    // Encrypted content must be decoded by MediaCodec.
+    supported_configs.emplace_back(VP8PROFILE_ANY, VP8PROFILE_ANY,
+                                   gfx::Size(0, 0), gfx::Size(3840, 2160),
+                                   true,   // allow_encrypted
+                                   true);  // require_encrypted
+  }
+
+  if (MediaCodecUtil::IsVp9DecoderAvailable()) {
+    // For unencrypted content, require that the size is at least 360p and that
+    // the MediaCodec implementation is hardware; otherwise fall back to libvpx.
+    if (!MediaCodecUtil::IsKnownUnaccelerated(kCodecVP9,
+                                              MediaCodecDirection::DECODER)) {
+      supported_configs.emplace_back(VP9PROFILE_PROFILE0, VP9PROFILE_PROFILE3,
+                                     gfx::Size(480, 360), gfx::Size(3840, 2160),
+                                     false,   // allow_encrypted
+                                     false);  // require_encrypted
+    }
+
+    // Encrypted content must be decoded by MediaCodec.
+    supported_configs.emplace_back(VP9PROFILE_PROFILE0, VP9PROFILE_PROFILE3,
+                                   gfx::Size(0, 0), gfx::Size(3840, 2160),
+                                   true,   // allow_encrypted
+                                   true);  // require_encrypted
+  }
+
+#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+  // MediaCodec is only guaranteed to support baseline, but some devices may
+  // support others. Advertise support for all H.264 profiles and let the
+  // MediaCodec fail when decoding if it's not actually supported. It's assumed
+  // that there is not software fallback for H.264 on Android.
+  supported_configs.emplace_back(H264PROFILE_BASELINE,
+                                 H264PROFILE_MULTIVIEWHIGH, gfx::Size(0, 0),
+                                 gfx::Size(3840, 2160),
+                                 true,    // allow_encrypted
+                                 false);  // require_encrypted
+
+#if BUILDFLAG(ENABLE_HEVC_DEMUXING)
+  supported_configs.emplace_back(HEVCPROFILE_MAIN, HEVCPROFILE_MAIN10,
+                                 gfx::Size(0, 0), gfx::Size(3840, 2160),
+                                 true,    // allow_encrypted
+                                 false);  // require_encrypted
+#endif
+#endif
+
+  return supported_configs;
+}
+
 MediaCodecVideoDecoder::MediaCodecVideoDecoder(
     const gpu::GpuPreferences& gpu_preferences,
     const gpu::GpuFeatureInfo& gpu_feature_info,
@@ -189,7 +254,7 @@ void MediaCodecVideoDecoder::Destroy() {
 void MediaCodecVideoDecoder::Initialize(const VideoDecoderConfig& config,
                                         bool low_delay,
                                         CdmContext* cdm_context,
-                                        const InitCB& init_cb,
+                                        InitCB init_cb,
                                         const OutputCB& output_cb,
                                         const WaitingCB& waiting_cb) {
   DCHECK(output_cb);
@@ -200,21 +265,21 @@ void MediaCodecVideoDecoder::Initialize(const VideoDecoderConfig& config,
            << " MCVD with config: " << config.AsHumanReadableString()
            << ", cdm_context = " << cdm_context;
 
-  InitCB bound_init_cb = BindToCurrentLoop(init_cb);
   if (!ConfigSupported(config, device_info_)) {
-    bound_init_cb.Run(false);
+    BindToCurrentLoop(std::move(init_cb)).Run(false);
     return;
   }
 
   // Disallow codec changes when reinitializing.
   if (!first_init && decoder_config_.codec() != config.codec()) {
     DVLOG(1) << "Codec changed: cannot reinitialize";
-    bound_init_cb.Run(false);
+    BindToCurrentLoop(std::move(init_cb)).Run(false);
     return;
   }
   decoder_config_ = config;
 
-  surface_chooser_helper_.SetVideoRotation(decoder_config_.video_rotation());
+  surface_chooser_helper_.SetVideoRotation(
+      decoder_config_.video_transformation().rotation);
 
   output_cb_ = output_cb;
   waiting_cb_ = waiting_cb;
@@ -229,22 +294,21 @@ void MediaCodecVideoDecoder::Initialize(const VideoDecoderConfig& config,
   // encrypted config later.
   if (first_init && cdm_context && cdm_context->GetMediaCryptoContext()) {
     DCHECK(media_crypto_.is_null());
-    SetCdm(cdm_context, init_cb);
+    SetCdm(cdm_context, std::move(init_cb));
     return;
   }
 
   if (config.is_encrypted() && media_crypto_.is_null()) {
     DVLOG(1) << "No MediaCrypto to handle encrypted config";
-    bound_init_cb.Run(false);
+    BindToCurrentLoop(std::move(init_cb)).Run(false);
     return;
   }
 
   // Do the rest of the initialization lazily on the first decode.
-  init_cb.Run(true);
+  BindToCurrentLoop(std::move(init_cb)).Run(true);
 }
 
-void MediaCodecVideoDecoder::SetCdm(CdmContext* cdm_context,
-                                    const InitCB& init_cb) {
+void MediaCodecVideoDecoder::SetCdm(CdmContext* cdm_context, InitCB init_cb) {
   DVLOG(1) << __func__;
   DCHECK(cdm_context) << "No CDM provided";
   DCHECK(cdm_context->GetMediaCryptoContext());
@@ -254,12 +318,12 @@ void MediaCodecVideoDecoder::SetCdm(CdmContext* cdm_context,
   // Register CDM callbacks. The callbacks registered will be posted back to
   // this thread via BindToCurrentLoop.
   media_crypto_context_->SetMediaCryptoReadyCB(media::BindToCurrentLoop(
-      base::Bind(&MediaCodecVideoDecoder::OnMediaCryptoReady,
-                 weak_factory_.GetWeakPtr(), init_cb)));
+      base::BindOnce(&MediaCodecVideoDecoder::OnMediaCryptoReady,
+                     weak_factory_.GetWeakPtr(), std::move(init_cb))));
 }
 
 void MediaCodecVideoDecoder::OnMediaCryptoReady(
-    const InitCB& init_cb,
+    InitCB init_cb,
     JavaObjectPtr media_crypto,
     bool requires_secure_video_codec) {
   DVLOG(1) << __func__
@@ -269,21 +333,20 @@ void MediaCodecVideoDecoder::OnMediaCryptoReady(
   DCHECK(media_crypto);
 
   if (media_crypto->is_null()) {
-    media_crypto_context_->SetMediaCryptoReadyCB(
-        MediaCryptoContext::MediaCryptoReadyCB());
+    media_crypto_context_->SetMediaCryptoReadyCB(base::NullCallback());
     media_crypto_context_ = nullptr;
 
     if (decoder_config_.is_encrypted()) {
       LOG(ERROR) << "MediaCrypto is not available";
       EnterTerminalState(State::kError);
-      init_cb.Run(false);
+      std::move(init_cb).Run(false);
       return;
     }
 
     // MediaCrypto is not available, but the stream is clear. So we can still
     // play the current stream. But if we switch to an encrypted stream playback
     // will fail.
-    init_cb.Run(true);
+    std::move(init_cb).Run(true);
     return;
   }
 
@@ -308,7 +371,7 @@ void MediaCodecVideoDecoder::OnMediaCryptoReady(
           : SurfaceChooserHelper::SecureSurfaceMode::kRequested);
 
   // Signal success, and create the codec lazily on the first decode.
-  init_cb.Run(true);
+  std::move(init_cb).Run(true);
 }
 
 void MediaCodecVideoDecoder::OnKeyAdded() {
@@ -323,19 +386,26 @@ void MediaCodecVideoDecoder::StartLazyInit() {
   lazy_init_pending_ = false;
   codec_allocator_->StartThread(this);
 
-  // SurfaceControl allows TextureOwner to be promoted to an overlay in the
-  // compositing pipeline itself.
-  const bool use_texture_owner_as_overlays = is_surface_control_enabled_;
-
   // Only ask for promotion hints if we can actually switch surfaces, since we
   // wouldn't be able to do anything with them. Also, if threaded texture
-  // mailboxes are enabled, then we turn off overlays anyway. And if texture
-  // owner can be used as an overlay, no promotion hints are necessary.
+  // mailboxes are enabled, then we turn off overlays anyway.
   const bool want_promotion_hints =
       device_info_->IsSetOutputSurfaceSupported() &&
-      !enable_threaded_texture_mailboxes_ && !use_texture_owner_as_overlays;
+      !enable_threaded_texture_mailboxes_;
+
+  VideoFrameFactory::OverlayMode overlay_mode =
+      VideoFrameFactory::OverlayMode::kDontRequestPromotionHints;
+  if (is_surface_control_enabled_) {
+    overlay_mode =
+        requires_secure_codec_
+            ? VideoFrameFactory::OverlayMode::kSurfaceControlSecure
+            : VideoFrameFactory::OverlayMode::kSurfaceControlInsecure;
+  } else if (want_promotion_hints) {
+    overlay_mode = VideoFrameFactory::OverlayMode::kRequestPromotionHints;
+  }
+
   video_frame_factory_->Initialize(
-      want_promotion_hints, use_texture_owner_as_overlays,
+      overlay_mode,
       base::Bind(&MediaCodecVideoDecoder::OnVideoFrameFactoryInitialized,
                  weak_factory_.GetWeakPtr()));
 }
@@ -524,10 +594,10 @@ void MediaCodecVideoDecoder::OnCodecConfigured(
 }
 
 void MediaCodecVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
-                                    const DecodeCB& decode_cb) {
+                                    DecodeCB decode_cb) {
   DVLOG(3) << __func__ << ": " << buffer->AsHumanReadableString();
   if (state_ == State::kError) {
-    decode_cb.Run(DecodeStatus::DECODE_ERROR);
+    std::move(decode_cb).Run(DecodeStatus::DECODE_ERROR);
     return;
   }
   pending_decodes_.emplace_back(std::move(buffer), std::move(decode_cb));
@@ -680,7 +750,7 @@ bool MediaCodecVideoDecoder::QueueInput() {
     DCHECK(!eos_decode_cb_);
     eos_decode_cb_ = std::move(pending_decode.decode_cb);
   } else {
-    pending_decode.decode_cb.Run(DecodeStatus::OK);
+    std::move(pending_decode.decode_cb).Run(DecodeStatus::OK);
   }
   pending_decodes_.pop_front();
   return true;
@@ -777,14 +847,22 @@ void MediaCodecVideoDecoder::RunEosDecodeCb(int reset_generation) {
 void MediaCodecVideoDecoder::ForwardVideoFrame(
     int reset_generation,
     std::unique_ptr<ScopedAsyncTrace> async_trace,
-    const scoped_refptr<VideoFrame>& frame) {
+    scoped_refptr<VideoFrame> frame) {
   DVLOG(3) << __func__ << " : "
            << (frame ? frame->AsHumanReadableString() : "null");
+
+  // No |frame| indicates an error creating it.
+  if (!frame) {
+    DLOG(ERROR) << __func__ << " |frame| is null";
+    EnterTerminalState(State::kError);
+    return;
+  }
+
   if (reset_generation == reset_generation_) {
     // TODO(liberato): We might actually have a SW decoder.  Consider setting
     // this to false if so, especially for higher bitrates.
     frame->metadata()->SetBoolean(VideoFrameMetadata::POWER_EFFICIENT, true);
-    output_cb_.Run(frame);
+    output_cb_.Run(std::move(frame));
   }
 }
 
@@ -792,7 +870,7 @@ void MediaCodecVideoDecoder::ForwardVideoFrame(
 // After |closure| runs:
 // 1) no VideoFrames from before the Reset() will be output, and
 // 2) no DecodeCBs (including EOS) from before the Reset() will be run.
-void MediaCodecVideoDecoder::Reset(const base::Closure& closure) {
+void MediaCodecVideoDecoder::Reset(base::OnceClosure closure) {
   DVLOG(2) << __func__;
   DCHECK(!reset_cb_);
   reset_generation_++;
@@ -889,7 +967,7 @@ bool MediaCodecVideoDecoder::InTerminalState() {
 
 void MediaCodecVideoDecoder::CancelPendingDecodes(DecodeStatus status) {
   for (auto& pending_decode : pending_decodes_)
-    pending_decode.decode_cb.Run(status);
+    std::move(pending_decode.decode_cb).Run(status);
   pending_decodes_.clear();
   if (eos_decode_cb_)
     std::move(eos_decode_cb_).Run(status);

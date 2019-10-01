@@ -13,14 +13,15 @@
 namespace ash {
 namespace login_views_utils {
 
-views::View* WrapViewForPreferredSize(views::View* view) {
-  auto* proxy = new NonAccessibleView();
+std::unique_ptr<views::View> WrapViewForPreferredSize(
+    std::unique_ptr<views::View> view) {
+  auto proxy = std::make_unique<NonAccessibleView>();
   auto layout_manager =
       std::make_unique<views::BoxLayout>(views::BoxLayout::kVertical);
   layout_manager->set_cross_axis_alignment(
-      views::BoxLayout::CROSS_AXIS_ALIGNMENT_START);
+      views::BoxLayout::CrossAxisAlignment::kStart);
   proxy->SetLayoutManager(std::move(layout_manager));
-  proxy->AddChildView(view);
+  proxy->AddChildView(std::move(view));
   return proxy;
 }
 
@@ -72,6 +73,15 @@ views::Label* CreateBubbleLabel(const base::string16& message, SkColor color) {
   label->SetFontList(base_font_list.Derive(0, gfx::Font::FontStyle::NORMAL,
                                            gfx::Font::Weight::NORMAL));
   return label;
+}
+
+views::View* GetTopLevelParentView(views::View* view) {
+  views::View* v = view;
+
+  while (v->parent() != nullptr)
+    v = v->parent();
+
+  return v;
 }
 
 }  // namespace login_views_utils

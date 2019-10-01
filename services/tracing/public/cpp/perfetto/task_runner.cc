@@ -7,7 +7,16 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
+#include "base/no_destructor.h"
+#include "base/task/common/checked_lock_impl.h"
+#include "base/task/common/scoped_defer_task_posting.h"
+#include "base/task/post_task.h"
+#include "base/task/thread_pool/thread_pool.h"
 #include "base/threading/sequenced_task_runner_handle.h"
+#include "base/threading/thread_local.h"
+#include "base/threading/thread_local_storage.h"
+#include "services/tracing/public/cpp/perfetto/trace_event_data_source.h"
 
 namespace tracing {
 
@@ -18,17 +27,47 @@ PerfettoTaskRunner::PerfettoTaskRunner(
 PerfettoTaskRunner::~PerfettoTaskRunner() = default;
 
 void PerfettoTaskRunner::PostTask(std::function<void()> task) {
-  task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce([](std::function<void()> task) { task(); }, task));
+  base::ScopedDeferTaskPosting::PostOrDefer(
+      GetOrCreateTaskRunner(), FROM_HERE,
+      base::BindOnce(
+          [](std::function<void()> task) {
+            // We block any trace events that happens while any
+            // Perfetto task is running, or we'll get deadlocks in
+            // situations where the StartupTraceWriterRegistry tries
+            // to bind a writer which in turn causes a PostTask where
+            // a trace event can be emitted, which then deadlocks as
+            // it needs a new chunk from the same StartupTraceWriter
+            // which we're trying to bind and are keeping the lock
+            // to.
+            // TODO(oysteine): Try to see if we can be more selective
+            // about this.
+            AutoThreadLocalBoolean thread_is_in_trace_event(
+                TraceEventDataSource::GetThreadIsInTraceEventTLS());
+            task();
+          },
+          task));
 }
 
 void PerfettoTaskRunner::PostDelayedTask(std::function<void()> task,
                                          uint32_t delay_ms) {
-  task_runner_->PostDelayedTask(
+  if (delay_ms == 0) {
+    PostTask(std::move(task));
+    return;
+  }
+
+  // There's currently nothing which uses PostDelayedTask on the ProducerClient
+  // side, where PostTask sometimes requires blocking. If this DCHECK ever
+  // triggers, support for deferring delayed tasks need to be added.
+  DCHECK(!base::ScopedDeferTaskPosting::IsPresent());
+  GetOrCreateTaskRunner()->PostDelayedTask(
       FROM_HERE,
       base::BindOnce([](std::function<void()> task) { task(); }, task),
       base::TimeDelta::FromMilliseconds(delay_ms));
+}
+
+bool PerfettoTaskRunner::RunsTasksOnCurrentThread() const {
+  DCHECK(task_runner_);
+  return task_runner_->RunsTasksInCurrentSequence();
 }
 
 void PerfettoTaskRunner::AddFileDescriptorWatch(int fd, std::function<void()>) {
@@ -42,6 +81,23 @@ void PerfettoTaskRunner::RemoveFileDescriptorWatch(int fd) {
 void PerfettoTaskRunner::ResetTaskRunnerForTesting(
     scoped_refptr<base::SequencedTaskRunner> task_runner) {
   task_runner_ = std::move(task_runner);
+}
+
+void PerfettoTaskRunner::SetTaskRunner(
+    scoped_refptr<base::SequencedTaskRunner> task_runner) {
+  DCHECK(!task_runner_);
+  task_runner_ = std::move(task_runner);
+}
+
+scoped_refptr<base::SequencedTaskRunner>
+PerfettoTaskRunner::GetOrCreateTaskRunner() {
+  if (!task_runner_) {
+    DCHECK(base::ThreadPoolInstance::Get());
+    task_runner_ = base::CreateSequencedTaskRunnerWithTraits(
+        {base::MayBlock(), base::TaskPriority::USER_BLOCKING});
+  }
+
+  return task_runner_;
 }
 
 }  // namespace tracing

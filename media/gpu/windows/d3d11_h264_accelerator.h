@@ -49,18 +49,36 @@ class D3D11H264Accelerator : public H264Decoder::H264Accelerator {
                              const H264Picture::Vector& ref_pic_listp0,
                              const H264Picture::Vector& ref_pic_listb0,
                              const H264Picture::Vector& ref_pic_listb1,
-                             const scoped_refptr<H264Picture>& pic) override;
+                             scoped_refptr<H264Picture> pic) override;
   Status SubmitSlice(const H264PPS* pps,
                      const H264SliceHeader* slice_hdr,
                      const H264Picture::Vector& ref_pic_list0,
                      const H264Picture::Vector& ref_pic_list1,
-                     const scoped_refptr<H264Picture>& pic,
+                     scoped_refptr<H264Picture> pic,
                      const uint8_t* data,
                      size_t size,
                      const std::vector<SubsampleEntry>& subsamples) override;
-  Status SubmitDecode(const scoped_refptr<H264Picture>& pic) override;
+  Status SubmitDecode(scoped_refptr<H264Picture> pic) override;
   void Reset() override;
-  bool OutputPicture(const scoped_refptr<H264Picture>& pic) override;
+  bool OutputPicture(scoped_refptr<H264Picture> pic) override;
+
+  // Gets a pic params struct with the constant fields set.
+  void FillPicParamsWithConstants(DXVA_PicParams_H264* pic_param);
+
+  // Populate the pic params with fields from the SPS structure.
+  void PicParamsFromSPS(DXVA_PicParams_H264* pic_param,
+                        const H264SPS* sps,
+                        bool field_pic);
+
+  // Populate the pic params with fields from the PPS structure.
+  bool PicParamsFromPPS(DXVA_PicParams_H264* pic_param, const H264PPS* pps);
+
+  // Populate the pic params with fields from the slice header structure.
+  void PicParamsFromSliceHeader(DXVA_PicParams_H264* pic_param,
+                                const H264SliceHeader* pps);
+
+  void PicParamsFromPic(DXVA_PicParams_H264* pic_param,
+                        scoped_refptr<H264Picture> pic);
 
  private:
   bool SubmitSliceData();

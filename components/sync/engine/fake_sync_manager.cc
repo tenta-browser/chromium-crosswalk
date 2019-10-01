@@ -15,6 +15,7 @@
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "components/sync/base/weak_handle.h"
 #include "components/sync/engine/engine_components_factory.h"
+#include "components/sync/engine/fake_model_type_connector.h"
 #include "components/sync/engine/net/http_post_provider_factory.h"
 #include "components/sync/syncable/directory.h"
 
@@ -197,21 +198,23 @@ UserShare* FakeSyncManager::GetUserShare() {
   return test_user_share_.user_share();
 }
 
-ModelTypeConnector* FakeSyncManager::GetModelTypeConnector() {
-  return &fake_model_type_connector_;
-}
-
 std::unique_ptr<ModelTypeConnector>
 FakeSyncManager::GetModelTypeConnectorProxy() {
   return std::make_unique<FakeModelTypeConnector>();
 }
 
-const std::string FakeSyncManager::cache_guid() {
+std::string FakeSyncManager::cache_guid() {
   return test_user_share_.user_share()->directory->cache_guid();
 }
 
-bool FakeSyncManager::ReceivedExperiment(Experiments* experiments) {
-  return false;
+std::string FakeSyncManager::birthday() {
+  NOTIMPLEMENTED();
+  return std::string();
+}
+
+std::string FakeSyncManager::bag_of_chips() {
+  NOTIMPLEMENTED();
+  return std::string();
 }
 
 bool FakeSyncManager::HasUnsyncedItemsForTest() {
@@ -257,10 +260,6 @@ ModelTypeSet FakeSyncManager::GetLastRefreshRequestTypes() {
 
 void FakeSyncManager::SetInvalidatorEnabled(bool invalidator_enabled) {
   // Do nothing.
-}
-
-void FakeSyncManager::ClearServerData(const base::Closure& callback) {
-  callback.Run();
 }
 
 void FakeSyncManager::OnCookieJarChanged(bool account_mismatch,

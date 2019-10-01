@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "services/media_session/public/cpp/test/audio_focus_test_util.h"
+#include "base/bind.h"
 
 namespace media_session {
 namespace test {
@@ -38,12 +39,6 @@ void TestAudioFocusObserver::OnFocusLost(
 
   if (wait_for_lost_)
     run_loop_.Quit();
-}
-
-void TestAudioFocusObserver::OnActiveSessionChanged(
-    media_session::mojom::AudioFocusRequestStatePtr session) {
-  active_session_ = std::move(session);
-  notifications_.push_back(NotificationType::kActiveSessionChanged);
 }
 
 void TestAudioFocusObserver::WaitForGainedEvent() {

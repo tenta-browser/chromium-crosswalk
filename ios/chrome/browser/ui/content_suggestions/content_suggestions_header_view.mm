@@ -6,10 +6,16 @@
 
 #import <UIKit/UIKit.h>
 
+#include "base/feature_list.h"
 #include "base/logging.h"
-#import "ios/chrome/browser/ui/UIView+SizeClassSupport.h"
+#include "components/strings/grit/components_strings.h"
+#import "ios/chrome/browser/signin/feature_flags.h"
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_collection_utils.h"
+#import "ios/chrome/browser/ui/content_suggestions/ntp_home_constant.h"
 #import "ios/chrome/browser/ui/ntp/new_tab_page_header_constants.h"
+#import "ios/chrome/browser/ui/omnibox/omnibox_constants.h"
+#import "ios/chrome/browser/ui/omnibox/omnibox_container_view.h"
+#import "ios/chrome/browser/ui/omnibox/omnibox_text_field_ios.h"
 #import "ios/chrome/browser/ui/toolbar/buttons/toolbar_button_factory.h"
 #import "ios/chrome/browser/ui/toolbar/buttons/toolbar_configuration.h"
 #import "ios/chrome/browser/ui/toolbar/public/toolbar_constants.h"
@@ -18,6 +24,7 @@
 #import "ios/chrome/browser/ui/util/named_guide_util.h"
 #import "ios/chrome/browser/ui/util/uikit_ui_util.h"
 #import "ios/chrome/common/ui_util/constraints_ui_util.h"
+#include "ui/base/l10n/l10n_util.h"
 #import "ui/gfx/ios/NSString+CrStringDrawing.h"
 #import "ui/gfx/ios/uikit_util.h"
 
@@ -45,42 +52,34 @@ CGFloat ToolbarHeight() {
       [UIApplication sharedApplication].preferredContentSizeCategory);
 }
 
+// Returns the amount of vertical space to allow for the existence of a top
+// toolbar when iPhone is in landscape orientation.
+CGFloat IdentityDiscToolbarOffset(id<UITraitEnvironment> environment) {
+  return IsCompactHeight(environment) ? ToolbarHeight() : 0;
+}
+
 }  // namespace
 
 @interface ContentSuggestionsHeaderView ()
 
 @property(nonatomic, strong, readwrite) UIButton* voiceSearchButton;
 
+@property(nonatomic, strong) UIView* separator;
+
 // Layout constraints for fake omnibox background image and blur.
 @property(nonatomic, strong) NSLayoutConstraint* fakeLocationBarTopConstraint;
 @property(nonatomic, strong)
     NSLayoutConstraint* fakeLocationBarHeightConstraint;
-@property(nonatomic, strong)
-    NSLayoutConstraint* fakeLocationBarLeadingConstraint;
-@property(nonatomic, strong)
-    NSLayoutConstraint* fakeLocationBarTrailingConstraint;
 @property(nonatomic, strong) NSLayoutConstraint* fakeToolbarTopConstraint;
 @property(nonatomic, strong) NSLayoutConstraint* hintLabelLeadingConstraint;
 @property(nonatomic, strong) NSLayoutConstraint* voiceSearchTrailingConstraint;
-@property(nonatomic, strong) UIView* fakeLocationBar;
-@property(nonatomic, strong) UILabel* searchHintLabel;
+// Layout constraints for Identity Disc that need to be adjusted based on
+// device size class changes.
+@property(nonatomic, strong) NSLayoutConstraint* identityDiscTopConstraint;
 
 @end
 
 @implementation ContentSuggestionsHeaderView
-
-@synthesize fakeLocationBar = _fakeLocationBar;
-@synthesize fakeLocationBarTopConstraint = _fakeLocationBarTopConstraint;
-@synthesize fakeLocationBarHeightConstraint = _fakeLocationBarHeightConstraint;
-@synthesize fakeLocationBarLeadingConstraint =
-    _fakeLocationBarLeadingConstraint;
-@synthesize fakeLocationBarTrailingConstraint =
-    _fakeLocationBarTrailingConstraint;
-@synthesize fakeToolbarTopConstraint = _fakeToolbarTopConstraint;
-@synthesize voiceSearchTrailingConstraint = _voiceSearchTrailingConstraint;
-@synthesize hintLabelLeadingConstraint = _hintLabelLeadingConstraint;
-@synthesize toolBarView = _toolBarView;
-@synthesize searchHintLabel = _searchHintLabel;
 
 #pragma mark - Public
 
@@ -101,6 +100,29 @@ CGFloat ToolbarHeight() {
     [toolbarView.topAnchor constraintEqualToAnchor:layoutGuide.topAnchor],
     [toolbarView.heightAnchor constraintEqualToConstant:ToolbarHeight()],
     [toolbarView.trailingAnchor constraintEqualToAnchor:self.trailingAnchor]
+  ]];
+}
+
+- (void)setIdentityDiscView:(UIView*)identityDiscView {
+  DCHECK(identityDiscView);
+  _identityDiscView = identityDiscView;
+  [self addSubview:_identityDiscView];
+
+  // Sets the layout constraints for size of Identity Disc and the placement
+  // based on whether there is a top toolbar or not.
+  self.identityDiscView.translatesAutoresizingMaskIntoConstraints = NO;
+  id<LayoutGuideProvider> layoutGuide = self.safeAreaLayoutGuide;
+  self.identityDiscTopConstraint = [self.identityDiscView.topAnchor
+      constraintEqualToAnchor:layoutGuide.topAnchor
+                     constant:IdentityDiscToolbarOffset(self)];
+  CGFloat dimension =
+      ntp_home::kIdentityAvatarDimension + 2 * ntp_home::kIdentityAvatarMargin;
+  [NSLayoutConstraint activateConstraints:@[
+    [self.identityDiscView.heightAnchor constraintEqualToConstant:dimension],
+    [self.identityDiscView.widthAnchor constraintEqualToConstant:dimension],
+    [self.identityDiscView.trailingAnchor
+        constraintEqualToAnchor:layoutGuide.trailingAnchor],
+    self.identityDiscTopConstraint
   ]];
 }
 
@@ -128,6 +150,39 @@ CGFloat ToolbarHeight() {
   // Fake location bar.
   [fakeToolbarContentView addSubview:self.fakeLocationBar];
 
+  // Omnibox, used for animations.
+  // TODO(crbug.com/936811): See if it is possible to share some initialization
+  // code with the real Omnibox.
+  UIColor* color = [UIColor colorWithWhite:0 alpha:kOmniboxPlaceholderAlpha];
+  OmniboxContainerView* omnibox =
+      [[OmniboxContainerView alloc] initWithFrame:CGRectZero
+                                        textColor:color
+                                    textFieldTint:color
+                                         iconTint:color];
+  omnibox.textField.placeholderTextColor = color;
+  omnibox.textField.placeholder =
+      l10n_util::GetNSString(IDS_OMNIBOX_EMPTY_HINT);
+  [omnibox.textField setText:@""];
+  omnibox.translatesAutoresizingMaskIntoConstraints = NO;
+  [searchField addSubview:omnibox];
+  AddSameConstraints(omnibox, self.fakeLocationBar);
+  omnibox.textField.userInteractionEnabled = NO;
+  omnibox.hidden = YES;
+  self.omnibox = omnibox;
+
+  // Cancel button, used in animation.
+  ToolbarButtonFactory* factory =
+      [[ToolbarButtonFactory alloc] initWithStyle:NORMAL];
+  self.cancelButton = [factory cancelButton];
+  [searchField addSubview:self.cancelButton];
+  self.cancelButton.translatesAutoresizingMaskIntoConstraints = NO;
+  [NSLayoutConstraint activateConstraints:@[
+    [self.cancelButton.centerYAnchor
+        constraintEqualToAnchor:self.fakeLocationBar.centerYAnchor],
+    [self.cancelButton.leadingAnchor
+        constraintEqualToAnchor:self.fakeLocationBar.trailingAnchor],
+  ]];
+
   // Hint label.
   self.searchHintLabel = [[UILabel alloc] init];
   content_suggestions::configureSearchHintLabel(self.searchHintLabel,
@@ -136,6 +191,8 @@ CGFloat ToolbarHeight() {
       constraintGreaterThanOrEqualToAnchor:[searchField leadingAnchor]
                                   constant:ntp_header::kHintLabelSidePadding];
   [NSLayoutConstraint activateConstraints:@[
+    [self.searchHintLabel.centerXAnchor
+        constraintEqualToAnchor:self.fakeLocationBar.centerXAnchor],
     self.hintLabelLeadingConstraint,
     [self.searchHintLabel.heightAnchor
         constraintEqualToAnchor:self.fakeLocationBar.heightAnchor
@@ -181,14 +238,40 @@ CGFloat ToolbarHeight() {
     self.fakeLocationBarHeightConstraint,
   ]];
 
+  // The voice search button should always be at least inside the fake omnibox.
+  // When the fake omnibox is shrinked, the position from the trailing side of
+  // the search field should yield.
   self.voiceSearchTrailingConstraint = [self.voiceSearchButton.trailingAnchor
       constraintEqualToAnchor:[searchField trailingAnchor]];
+  self.voiceSearchTrailingConstraint.priority = UILayoutPriorityDefaultHigh + 1;
+
   [NSLayoutConstraint activateConstraints:@[
     [self.voiceSearchButton.centerYAnchor
         constraintEqualToAnchor:self.fakeLocationBar.centerYAnchor],
     [self.searchHintLabel.trailingAnchor
         constraintLessThanOrEqualToAnchor:self.voiceSearchButton.leadingAnchor],
-    self.voiceSearchTrailingConstraint
+    self.voiceSearchTrailingConstraint,
+    [self.voiceSearchButton.trailingAnchor
+        constraintLessThanOrEqualToAnchor:self.fakeLocationBar.trailingAnchor],
+  ]];
+}
+
+- (void)addSeparatorToSearchField:(UIView*)searchField {
+  DCHECK(searchField.superview == self);
+
+  self.separator = [[UIView alloc] init];
+  self.separator.backgroundColor =
+      [UIColor colorWithWhite:0 alpha:kToolbarSeparatorAlpha];
+  self.separator.alpha = 0;
+  self.separator.translatesAutoresizingMaskIntoConstraints = NO;
+  [searchField addSubview:self.separator];
+  [NSLayoutConstraint activateConstraints:@[
+    [self.separator.leadingAnchor constraintEqualToAnchor:self.leadingAnchor],
+    [self.separator.trailingAnchor constraintEqualToAnchor:self.trailingAnchor],
+    [self.separator.topAnchor constraintEqualToAnchor:searchField.bottomAnchor],
+    [self.separator.heightAnchor
+        constraintEqualToConstant:ui::AlignValueToUpperPixel(
+                                      kToolbarSeparatorHeight)],
   ]];
 }
 
@@ -244,9 +327,12 @@ CGFloat ToolbarHeight() {
     self.fakeLocationBarTrailingConstraint.constant = 0;
     self.fakeLocationBarTopConstraint.constant = 0;
 
+    self.separator.alpha = 0;
+
     return;
   } else {
     self.alpha = 1;
+    self.separator.alpha = percent;
   }
 
   // Grow the blur to cover the safeArea top.
@@ -308,6 +394,27 @@ CGFloat ToolbarHeight() {
                          [UIColor colorWithWhite:0 alpha:alpha];
                    }
                    completion:nil];
+}
+
+#pragma mark - UITraitEnvironment
+
+// Adjusts the autolayout constraints for |identityDiscView| when view changes
+// size. When an iPhone is rotated from portrait (no top toolbar) to landscape
+// (with top toolbar), the placement of Identity Disc has to be shifted down
+// below the top toolbar. Otherwise, the Identity Disc may be obscured by the
+// top toolbar in landscape mode.
+- (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
+  [super traitCollectionDidChange:previousTraitCollection];
+  // identityDiscView may not be set if feature is not enabled.
+  if (!self.identityDiscView)
+    return;
+  DCHECK(IsIdentityDiscFeatureEnabled());
+  if ((self.traitCollection.verticalSizeClass !=
+       previousTraitCollection.verticalSizeClass) ||
+      (self.traitCollection.horizontalSizeClass !=
+       previousTraitCollection.horizontalSizeClass)) {
+    self.identityDiscTopConstraint.constant = IdentityDiscToolbarOffset(self);
+  }
 }
 
 #pragma mark - Property accessors

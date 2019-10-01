@@ -7,6 +7,7 @@
 #include <cmath>
 #include <string>
 
+#include "base/bind.h"
 #include "base/metrics/user_metrics.h"
 #include "base/task/post_task.h"
 #include "chrome/browser/autocomplete/autocomplete_classifier_factory.h"
@@ -114,7 +115,7 @@ BrowserRootView::~BrowserRootView() = default;
 bool BrowserRootView::GetDropFormats(
     int* formats,
     std::set<ui::ClipboardFormatType>* format_types) {
-  if (tabstrip()->visible() || toolbar()->visible()) {
+  if (tabstrip()->GetVisible() || toolbar()->GetVisible()) {
     *formats = ui::OSExchangeData::URL | ui::OSExchangeData::STRING;
     return true;
   }
@@ -130,7 +131,7 @@ bool BrowserRootView::CanDrop(const ui::OSExchangeData& data) {
   if (!browser_view_->IsBrowserTypeNormal())
     return false;
 
-  if (!tabstrip()->visible() && !toolbar()->visible())
+  if (!tabstrip()->GetVisible() && !toolbar()->GetVisible())
     return false;
 
   // If there is a URL, we'll allow the drop.
@@ -275,14 +276,16 @@ bool BrowserRootView::OnMouseWheel(const ui::MouseWheelEvent& event) {
       // Switch to the next tab only if not at the end of the tab-strip.
       if (whole_scroll_offset < 0 &&
           model->active_index() + 1 < model->count()) {
-        chrome::SelectNextTab(browser);
+        chrome::SelectNextTab(
+            browser, {TabStripModel::GestureType::kWheel, event.time_stamp()});
         return true;
       }
 
       // Switch to the previous tab only if not at the beginning of the
       // tab-strip.
       if (whole_scroll_offset > 0 && model->active_index() > 0) {
-        chrome::SelectPreviousTab(browser);
+        chrome::SelectPreviousTab(
+            browser, {TabStripModel::GestureType::kWheel, event.time_stamp()});
         return true;
       }
     }
@@ -327,7 +330,7 @@ void BrowserRootView::PaintChildren(const views::PaintInfo& paint_info) {
     int active_tab_index = tabstrip()->controller()->GetActiveIndex();
     if (active_tab_index != ui::ListSelectionModel::kUnselectedIndex) {
       Tab* active_tab = tabstrip()->tab_at(active_tab_index);
-      if (active_tab && active_tab->visible()) {
+      if (active_tab && active_tab->GetVisible()) {
         gfx::RectF bounds(active_tab->GetMirroredBounds());
         ConvertRectToTarget(tabstrip(), this, &bounds);
         canvas->ClipRect(bounds, SkClipOp::kDifference);
@@ -359,7 +362,7 @@ void BrowserRootView::OnEventProcessingStarted(ui::Event* event) {
 BrowserRootView::DropTarget* BrowserRootView::GetDropTarget(
     const ui::DropTargetEvent& event) {
   // See if we should drop links onto tabstrip first.
-  if (tabstrip()->visible()) {
+  if (tabstrip()->GetVisible()) {
     // Allow the drop as long as the mouse is over tabstrip or vertically
     // before it.
     gfx::Point tabstrip_loc_in_host;

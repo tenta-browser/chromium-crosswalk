@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_UI_PAGE_INFO_PAGE_INFO_H_
 #define CHROME_BROWSER_UI_PAGE_INFO_PAGE_INFO_H_
 
+#include <vector>
+
 #include "base/macros.h"
 #include "base/strings/string16.h"
 #include "build/build_config.h"
@@ -128,10 +130,10 @@ class PageInfo : public TabSpecificContentSettings::SiteDataObserver,
   struct ChooserUIInfo {
     ContentSettingsType content_settings_type;
     ChooserContextBase* (*get_context)(Profile*);
-    int label_string_id;
-    int secondary_label_string_id;
+    int description_string_id;
+    int allowed_by_policy_description_string_id;
     int delete_tooltip_string_id;
-    const char* ui_name_key;
+    std::string (*get_object_name)(const base::Value&);
   };
 
   // Creates a PageInfo for the passed |url| using the given |ssl| status
@@ -142,8 +144,15 @@ class PageInfo : public TabSpecificContentSettings::SiteDataObserver,
            TabSpecificContentSettings* tab_specific_content_settings,
            content::WebContents* web_contents,
            const GURL& url,
-           const security_state::SecurityInfo& security_info);
+           security_state::SecurityLevel security_level,
+           const security_state::VisibleSecurityState& visible_security_state);
   ~PageInfo() override;
+
+  // This method is called to update the presenter's security state and forwards
+  // that change on to the UI to be redrawn.
+  void UpdateSecurityState(
+      security_state::SecurityLevel security_level,
+      const security_state::VisibleSecurityState& visible_security_state);
 
   void RecordPageInfoAction(PageInfoAction action);
 
@@ -152,10 +161,12 @@ class PageInfo : public TabSpecificContentSettings::SiteDataObserver,
 
   // This method is called whenever access to an object is revoked.
   void OnSiteChosenObjectDeleted(const ChooserUIInfo& ui_info,
-                                 const base::DictionaryValue& object);
+                                 const base::Value& object);
 
   // This method is called by the UI when the UI is closing.
-  void OnUIClosing();
+  // If specified, |reload_prompt| is set to whether closing the UI resulted in
+  // a prompt to the user to reload the page.
+  void OnUIClosing(bool* reload_prompt);
 
   // This method is called when the revoke SSL error bypass button is pressed.
   void OnRevokeSSLErrorBypassButtonPressed();
@@ -190,8 +201,12 @@ class PageInfo : public TabSpecificContentSettings::SiteDataObserver,
   FRIEND_TEST_ALL_PREFIXES(PageInfoTest,
                            NonFactoryDefaultAndRecentlyChangedPermissionsShown);
   friend class PageInfoBubbleViewBrowserTest;
-  // Initializes the |PageInfo|.
-  void Init(const GURL& url, const security_state::SecurityInfo& security_info);
+  // Populates this object's UI state with provided security context. This
+  // function does not update visible UI-- that's part of Present*().
+  void ComputeUIInputs(
+      const GURL& url,
+      const security_state::SecurityLevel security_level,
+      const security_state::VisibleSecurityState& visible_security_state);
 
   // Sets (presents) the information about the site's permissions in the |ui_|.
   void PresentSitePermissions();
@@ -202,6 +217,16 @@ class PageInfo : public TabSpecificContentSettings::SiteDataObserver,
   // Sets (presents) the information about the site's identity and connection
   // in the |ui_|.
   void PresentSiteIdentity();
+
+  // Presents feature related info in the |ui_|; like, if VR content is being
+  // presented in a headset.
+  void PresentPageFeatureInfo();
+
+#if defined(FULL_SAFE_BROWSING)
+  // Records a password reuse event. If FULL_SAFE_BROWSING is defined, this
+  // function WILL record an event. Callers should check conditions beforehand.
+  void RecordPasswordReuseEvent();
+#endif
 
   // Helper function to get the site identification status and details by
   // malicious content status.
@@ -279,7 +304,7 @@ class PageInfo : public TabSpecificContentSettings::SiteDataObserver,
 
   security_state::SecurityLevel security_level_;
 
-#if defined(SAFE_BROWSING_DB_LOCAL)
+#if defined(FULL_SAFE_BROWSING)
   // Used to handle changing password, and whitelisting site.
   safe_browsing::ChromePasswordProtectionService* password_protection_service_;
 #endif
@@ -290,7 +315,10 @@ class PageInfo : public TabSpecificContentSettings::SiteDataObserver,
   // whitelist current site.
   bool show_change_password_buttons_;
 
+  // The time the Page Info UI is opened, for measuring total time open.
   base::TimeTicks start_time_;
+
+  // Records whether the user interacted with the bubble beyond opening it.
   bool did_perform_action_;
 
   DISALLOW_COPY_AND_ASSIGN(PageInfo);

@@ -5,6 +5,8 @@
 #ifndef IOS_CHROME_BROWSER_SIGNIN_IDENTITY_TEST_ENVIRONMENT_CHROME_BROWSER_STATE_ADAPTOR_H_
 #define IOS_CHROME_BROWSER_SIGNIN_IDENTITY_TEST_ENVIRONMENT_CHROME_BROWSER_STATE_ADAPTOR_H_
 
+#include <memory>
+
 #include "ios/chrome/browser/browser_state/test_chrome_browser_state.h"
 #include "services/identity/public/cpp/identity_test_environment.h"
 
@@ -33,12 +35,15 @@ class IdentityTestEnvironmentChromeBrowserStateAdaptor {
   CreateChromeBrowserStateForIdentityTestEnvironment(
       const TestChromeBrowserState::TestingFactories& input_factories);
 
-  // Creates and returns a TestChromeBrowserState that has been configured with
-  // the given |builder|.
+  // Creates and returns a TestChromeBrowserState that has been configured
+  // with the given |builder|. Optionally, use a
+  // ProfileOAuth2TokenServiceIOSDelegate to build the
+  // FakeProfileOAuth2TokenService.
   // See the above variant for comments on common parameters.
   static std::unique_ptr<TestChromeBrowserState>
   CreateChromeBrowserStateForIdentityTestEnvironment(
-      TestChromeBrowserState::Builder& builder);
+      TestChromeBrowserState::Builder& builder,
+      bool use_ios_token_service_delegate = false);
 
   // Sets the testing factories that identity::IdentityTestEnvironment
   // requires explicitly on a Profile that is passed to it.
@@ -78,6 +83,15 @@ class IdentityTestEnvironmentChromeBrowserStateAdaptor {
   }
 
  private:
+  // Testing factory that creates an IdentityManager with a
+  // FakeProfileOAuth2TokenService.
+  static std::unique_ptr<KeyedService> BuildIdentityManagerForTests(
+      web::BrowserState* browser_state);
+  static std::unique_ptr<KeyedService>
+  BuildIdentityManagerForTestWithIOSDelegate(web::BrowserState* browser_state);
+  static TestChromeBrowserState::TestingFactories
+  GetIdentityTestEnvironmentFactories(bool use_ios_token_service_delegate);
+
   identity::IdentityTestEnvironment identity_test_env_;
 
   DISALLOW_COPY_AND_ASSIGN(IdentityTestEnvironmentChromeBrowserStateAdaptor);

@@ -189,6 +189,8 @@ void LayoutSVGText::UpdateLayout() {
   DCHECK(!needs_reordering_);
   LayoutAnalyzer::Scope analyzer(*this);
 
+  ClearOffsetMappingIfNeeded();
+
   // When laying out initially, build the character data map and propagate
   // resulting layout attributes to all LayoutSVGInlineText children in the
   // subtree.
@@ -302,6 +304,7 @@ void LayoutSVGText::UpdateLayout() {
 }
 
 void LayoutSVGText::RecalcVisualOverflow() {
+  ClearVisualOverflow();
   LayoutObject::RecalcVisualOverflow();
   AddSelfVisualOverflow(LayoutRect(ObjectBoundingBox()));
   AddVisualEffectOverflow();
@@ -326,7 +329,8 @@ bool LayoutSVGText::NodeAtPoint(HitTestResult& result,
                                             LocalToSVGParentTransform());
   if (!local_location)
     return false;
-  if (!SVGLayoutSupport::IntersectsClipPath(*this, *local_location))
+  if (!SVGLayoutSupport::IntersectsClipPath(*this, ObjectBoundingBox(),
+                                            *local_location))
     return false;
 
   if (LayoutBlock::NodeAtPoint(result, *local_location, accumulated_offset,
@@ -411,10 +415,10 @@ FloatRect LayoutSVGText::VisualRectInLocalSVGCoordinates() const {
   return visual_rect;
 }
 
-void LayoutSVGText::AddOutlineRects(Vector<LayoutRect>& rects,
-                                    const LayoutPoint&,
+void LayoutSVGText::AddOutlineRects(Vector<PhysicalRect>& rects,
+                                    const PhysicalOffset&,
                                     NGOutlineType) const {
-  rects.push_back(LayoutRect(ObjectBoundingBox()));
+  rects.push_back(PhysicalRect::EnclosingRect(ObjectBoundingBox()));
 }
 
 bool LayoutSVGText::IsObjectBoundingBoxValid() const {

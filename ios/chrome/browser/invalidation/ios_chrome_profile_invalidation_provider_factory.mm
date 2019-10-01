@@ -7,13 +7,13 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/no_destructor.h"
 #include "components/gcm_driver/gcm_profile_service.h"
 #include "components/gcm_driver/instance_id/instance_id_profile_service.h"
 #include "components/invalidation/impl/fcm_invalidation_service.h"
 #include "components/invalidation/impl/invalidator_storage.h"
-#include "components/invalidation/impl/json_unsafe_parser.h"
 #include "components/invalidation/impl/profile_identity_provider.h"
 #include "components/invalidation/impl/profile_invalidation_provider.h"
 #include "components/keyed_service/ios/browser_state_dependency_manager.h"
@@ -23,6 +23,7 @@
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/gcm/instance_id/ios_chrome_instance_id_profile_service_factory.h"
 #include "ios/chrome/browser/gcm/ios_chrome_gcm_profile_service_factory.h"
+#include "ios/chrome/browser/json_parser/in_process_json_parser.h"
 #include "ios/chrome/browser/signin/identity_manager_factory.h"
 #include "ios/web/public/web_client.h"
 #include "net/url_request/url_request_context_getter.h"
@@ -82,7 +83,7 @@ IOSChromeProfileInvalidationProviderFactory::BuildServiceInstanceFor(
               browser_state)
               ->driver(),
           browser_state->GetPrefs(),
-          base::BindRepeating(&syncer::JsonUnsafeParser::Parse),
+          base::BindRepeating(&InProcessJsonParser::Parse),
           browser_state->GetURLLoaderFactory());
   service->Init();
 

@@ -5,7 +5,6 @@
 package org.chromium.chrome.browser.init;
 
 import android.annotation.SuppressLint;
-import android.annotation.TargetApi;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.Configuration;
@@ -18,10 +17,8 @@ import android.provider.Settings;
 import android.provider.Settings.SettingNotFoundException;
 import android.support.annotation.CallSuper;
 import android.support.annotation.Nullable;
-import android.support.v7.app.AppCompatActivity;
 import android.view.Display;
 import android.view.Menu;
-import android.view.Surface;
 import android.view.View;
 import android.view.ViewTreeObserver;
 import android.view.ViewTreeObserver.OnPreDrawListener;
@@ -34,37 +31,43 @@ import org.chromium.base.VisibleForTesting;
 import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.base.library_loader.LoaderErrors;
 import org.chromium.base.library_loader.ProcessInitException;
+import org.chromium.base.task.PostTask;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeApplication;
+import org.chromium.chrome.browser.ChromeBaseAppCompatActivity;
 import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.LaunchIntentDispatcher;
 import org.chromium.chrome.browser.WarmupManager;
 import org.chromium.chrome.browser.firstrun.FirstRunFlowSequencer;
+import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
+import org.chromium.chrome.browser.multiwindow.MultiWindowModeStateDispatcher;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.chrome.browser.tabmodel.DocumentModeAssassin;
-import org.chromium.chrome.browser.upgrade.UpgradeActivity;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 import org.chromium.ui.base.ActivityWindowAndroid;
 import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.display.DisplayAndroid;
 import org.chromium.ui.display.DisplayUtil;
 import org.chromium.ui.modaldialog.ModalDialogManager;
+import org.chromium.ui.modaldialog.ModalDialogManagerHolder;
 
 import java.lang.reflect.Field;
 
 /**
  * An activity that talks with application and activity level delegates for async initialization.
  */
-public abstract class AsyncInitializationActivity extends AppCompatActivity implements
-        ChromeActivityNativeDelegate, BrowserParts {
+public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatActivity
+        implements ChromeActivityNativeDelegate, BrowserParts, ModalDialogManagerHolder {
     private static final String TAG = "AsyncInitActivity";
     protected final Handler mHandler;
 
     private final NativeInitializationController mNativeInitializationController =
             new NativeInitializationController(this);
 
-    private final ActivityLifecycleDispatcher mLifecycleDispatcher =
-            new ActivityLifecycleDispatcher();
+    private final ActivityLifecycleDispatcherImpl mLifecycleDispatcher =
+            new ActivityLifecycleDispatcherImpl();
+    private final MultiWindowModeStateDispatcher mMultiWindowModeStateDispatcher =
+            new MultiWindowModeStateDispatcher(this);
 
     /** Time at which onCreate is called. This is realtime, counted in ms since device boot. */
     private long mOnCreateTimestampMs;
@@ -75,7 +78,7 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
     private ActivityWindowAndroid mWindowAndroid;
     private ModalDialogManager mModalDialogManager;
     private Bundle mSavedInstanceState;
-    private int mCurrentOrientation = Surface.ROTATION_0;
+    private int mCurrentOrientation;
     private boolean mDestroyed;
     private long mLastUserInteractionTime;
     private boolean mIsTablet;
@@ -114,36 +117,38 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
         mLifecycleDispatcher.dispatchOnDestroy();
     }
 
-    @CallSuper
     @Override
-    @TargetApi(Build.VERSION_CODES.N)
-    protected void attachBaseContext(Context newBase) {
-        super.attachBaseContext(newBase);
+    @CallSuper
+    protected boolean applyOverrides(Context baseContext, Configuration overrideConfig) {
+        super.applyOverrides(baseContext, overrideConfig);
 
         // We override the smallestScreenWidthDp here for two reasons:
         // 1. To prevent multi-window from hiding the tabstrip when on a tablet.
         // 2. To ensure mIsTablet only needs to be set once. Since the override lasts for the life
         //    of the activity, it will never change via onConfigurationUpdated().
         // See crbug.com/588838, crbug.com/662338, crbug.com/780593.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
-            DisplayAndroid display = DisplayAndroid.getNonMultiDisplay(newBase);
-            int targetSmallestScreenWidthDp =
-                    DisplayUtil.pxToDp(display, DisplayUtil.getSmallestWidth(display));
-            Configuration config = new Configuration();
-            // Pre-Android O, fontScale gets initialized to 1 in the constructor. Set it to 0 so
-            // that applyOverrideConfiguration() does not interpret it as an overridden value.
-            // https://crbug.com/834191
-            config.fontScale = 0;
-            config.smallestScreenWidthDp = targetSmallestScreenWidthDp;
-            applyOverrideConfiguration(config);
-        }
+        DisplayAndroid display = DisplayAndroid.getNonMultiDisplay(baseContext);
+        int targetSmallestScreenWidthDp =
+                DisplayUtil.pxToDp(display, DisplayUtil.getSmallestWidth(display));
+        overrideConfig.smallestScreenWidthDp = targetSmallestScreenWidthDp;
+        return true;
     }
 
-    @CallSuper
     @Override
-    public void preInflationStartup() {
+    public final void preInflationStartup() {
+        performPreInflationStartup();
+    }
+
+    /**
+     * Perform pre-inflation startup for the activity. Sub-classes providing custom pre-inflation
+     * startup logic should override this method.
+     */
+    @CallSuper
+    protected void performPreInflationStartup() {
         mIsTablet = DeviceFormFactor.isNonMultiDisplayContextOnTablet(this);
         mHadWarmStart = LibraryLoader.getInstance().isInitialized();
+        // TODO(https://crbug.com/948745): Dispatch in #preInflationStartup instead so that
+        // subclass's #performPreInflationStartup has executed before observers are notified.
         mLifecycleDispatcher.dispatchPreInflationStartup();
     }
 
@@ -167,28 +172,38 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
     /** Controls the parameter of {@link NativeInitializationController#startBackgroundTasks}.*/
     @VisibleForTesting
     public boolean shouldAllocateChildConnection() {
-        return true;
+        // If a spare WebContents exists, a child connection has already been allocated that will be
+        // used by the next created tab.
+        return !WarmupManager.getInstance().hasSpareWebContents();
     }
 
-    @CallSuper
     @Override
-    public void postInflationStartup() {
+    public final void postInflationStartup() {
+        performPostInflationStartup();
+        mLifecycleDispatcher.dispatchPostInflationStartup();
+    }
+
+    /**
+     * Perform post-inflation startup for the activity. Sub-classes providing custom post-inflation
+     * startup logic should override this method.
+     */
+    @CallSuper
+    protected void performPostInflationStartup() {
         final View firstDrawView = getViewToBeDrawnBeforeInitializingNative();
         assert firstDrawView != null;
         ViewTreeObserver.OnPreDrawListener firstDrawListener =
                 new ViewTreeObserver.OnPreDrawListener() {
-            @Override
-            public boolean onPreDraw() {
-                firstDrawView.getViewTreeObserver().removeOnPreDrawListener(this);
-                mFirstDrawComplete = true;
-                if (!mStartupDelayed) {
-                    onFirstDrawComplete();
-                }
-                return true;
-            }
-        };
+                    @Override
+                    public boolean onPreDraw() {
+                        firstDrawView.getViewTreeObserver().removeOnPreDrawListener(this);
+                        mFirstDrawComplete = true;
+                        if (!mStartupDelayed) {
+                            onFirstDrawComplete();
+                        }
+                        return true;
+                    }
+                };
         firstDrawView.getViewTreeObserver().addOnPreDrawListener(firstDrawListener);
-        mLifecycleDispatcher.dispatchPostInflationStartup();
     }
 
     /**
@@ -278,19 +293,6 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
         int dispatchAction = maybeDispatchLaunchIntent(getIntent());
         if (dispatchAction != LaunchIntentDispatcher.Action.CONTINUE) {
             abortLaunch(dispatchAction);
-            return;
-        }
-        if (DocumentModeAssassin.getInstance().isMigrationNecessary()) {
-            // Some Samsung devices load fonts from disk, crbug.com/691706.
-            try (StrictModeContext unused = StrictModeContext.allowDiskReads()) {
-                super.onCreate(null);
-            }
-
-            // Kick the user to the MigrationActivity.
-            UpgradeActivity.launchInstance(this, getIntent());
-
-            // Don't remove this task -- it may be a DocumentActivity that exists only in Recents.
-            finish();
             return;
         }
 
@@ -534,13 +536,14 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
     }
 
     @Override
-    public boolean isActivityDestroyed() {
-        return mDestroyed;
+    public boolean isActivityFinishingOrDestroyed() {
+        return mDestroyed || isFinishing();
     }
 
     @Override
-    public boolean isActivityFinishing() {
-        return isFinishing();
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        mLifecycleDispatcher.dispatchOnConfigurationChanged(newConfig);
     }
 
     @Override
@@ -556,7 +559,7 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
         assert mFirstDrawComplete;
         assert !mStartupDelayed;
 
-        mHandler.post(new Runnable() {
+        PostTask.postTask(UiThreadTaskTraits.BOOTSTRAP, new Runnable() {
             @Override
             public void run() {
                 mNativeInitializationController.firstDrawComplete();
@@ -600,6 +603,7 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
      * @return The {@link ModalDialogManager} that manages the display of modal dialogs (e.g.
      *         JavaScript dialogs).
      */
+    @Override
     public ModalDialogManager getModalDialogManager() {
         return mModalDialogManager;
     }
@@ -622,6 +626,7 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
                 && mWindowAndroid.onActivityResult(requestCode, resultCode, intent)) {
             return true;
         }
+        mLifecycleDispatcher.dispatchOnActivityResultWithNative(requestCode, resultCode, intent);
         super.onActivityResult(requestCode, resultCode, intent);
         return false;
     }
@@ -697,9 +702,8 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
     /**
      * Called when the orientation of the device changes.  The orientation is checked/detected on
      * root view layouts.
-     * @param orientation One of {@link Surface#ROTATION_0} (no rotation),
-     *                    {@link Surface#ROTATION_90}, {@link Surface#ROTATION_180}, or
-     *                    {@link Surface#ROTATION_270}.
+     * @param orientation One of {@link Configuration#ORIENTATION_PORTRAIT} or
+     *                    {@link Configuration#ORIENTATION_LANDSCAPE}.
      */
     protected void onOrientationChange(int orientation) {
     }
@@ -712,7 +716,7 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
         if (display == null) return;
 
         int oldOrientation = mCurrentOrientation;
-        mCurrentOrientation = display.getRotation();
+        mCurrentOrientation = getResources().getConfiguration().orientation;
 
         if (oldOrientation != mCurrentOrientation) onOrientationChange(mCurrentOrientation);
     }
@@ -766,6 +770,13 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
      */
     public ActivityLifecycleDispatcher getLifecycleDispatcher() {
         return mLifecycleDispatcher;
+    }
+
+    /**
+     * @return {@link MultiWindowModeStateDispatcher} associated with this activity.
+     */
+    public MultiWindowModeStateDispatcher getMultiWindowModeStateDispatcher() {
+        return mMultiWindowModeStateDispatcher;
     }
 
     /**

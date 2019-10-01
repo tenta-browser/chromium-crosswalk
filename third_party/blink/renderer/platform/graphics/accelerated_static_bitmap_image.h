@@ -16,6 +16,10 @@
 
 class GrContext;
 
+namespace viz {
+class SingleReleaseCallback;
+}  // namespace viz
+
 namespace blink {
 class WebGraphicsContext3DProviderWrapper;
 class TextureHolder;
@@ -28,16 +32,24 @@ class PLATFORM_EXPORT AcceleratedStaticBitmapImage final
   static scoped_refptr<AcceleratedStaticBitmapImage> CreateFromSkImage(
       sk_sp<SkImage>,
       base::WeakPtr<WebGraphicsContext3DProviderWrapper>);
+
   // Can specify the GrContext that created the texture backing. Ideally all
-  // callers would use this option. The |mailbox| is a name for the texture
-  // backing, allowing other contexts to use the same backing.
+  // callers would use this option.
+  // The |mailbox| is a name for the texture backing, allowing other contexts to
+  // use the same backing.
+  // |mailbox_type| indicates whether |mailbox| is a SharedImage identifier or a
+  // deprecated mailbox (generated via ProduceTextureDirectCHROMIUM).
+  // |release_callback| is an optional callback to be invoked when this image
+  // is destroyed. It can be invoked on any thread.
   static scoped_refptr<AcceleratedStaticBitmapImage>
   CreateFromWebGLContextImage(
       const gpu::Mailbox&,
       const gpu::SyncToken&,
       unsigned texture_id,
       base::WeakPtr<WebGraphicsContext3DProviderWrapper>&&,
-      IntSize mailbox_size);
+      IntSize mailbox_size,
+      bool is_origin_top_left,
+      std::unique_ptr<viz::SingleReleaseCallback> release_callback = nullptr);
 
   bool CurrentFrameKnownToBeOpaque() override;
   IntSize Size() const override;
@@ -65,6 +77,7 @@ class PLATFORM_EXPORT AcceleratedStaticBitmapImage final
   bool CopyToTexture(gpu::gles2::GLES2Interface* dest_gl,
                      GLenum dest_target,
                      GLuint dest_texture_id,
+                     GLint dest_level,
                      bool unpack_premultiply_alpha,
                      bool unpack_flip_y,
                      const IntPoint& dest_point,
@@ -99,7 +112,9 @@ class PLATFORM_EXPORT AcceleratedStaticBitmapImage final
       const gpu::SyncToken&,
       unsigned texture_id,
       base::WeakPtr<WebGraphicsContext3DProviderWrapper>&&,
-      IntSize mailbox_size);
+      IntSize mailbox_size,
+      bool is_origin_top_left,
+      std::unique_ptr<viz::SingleReleaseCallback> release_callback);
 
   void CreateImageFromMailboxIfNeeded();
   void WaitSyncTokenIfNeeded();
@@ -115,6 +130,8 @@ class PLATFORM_EXPORT AcceleratedStaticBitmapImage final
   scoped_refptr<base::SingleThreadTaskRunner> original_skia_image_task_runner_;
   base::WeakPtr<WebGraphicsContext3DProviderWrapper>
       original_skia_image_context_provider_wrapper_;
+
+  std::unique_ptr<viz::SingleReleaseCallback> release_callback_;
 };
 
 }  // namespace blink

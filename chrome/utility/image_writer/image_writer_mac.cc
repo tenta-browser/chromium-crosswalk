@@ -11,6 +11,7 @@
 #include <stddef.h>
 #include <sys/socket.h>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/scoped_file.h"
 #include "base/mac/scoped_cftyperef.h"
@@ -32,40 +33,26 @@ static const char kAuthOpenPath[] = "/usr/libexec/authopen";
 bool ImageWriter::IsValidDevice() {
   base::ScopedCFTypeRef<CFStringRef> cf_bsd_name(
       base::SysUTF8ToCFStringRef(device_path_.value()));
-  CFMutableDictionaryRef matching = IOServiceMatching(kIOMediaClass);
+  base::ScopedCFTypeRef<CFMutableDictionaryRef> matching(
+      IOServiceMatching(kIOMediaClass));
   CFDictionaryAddValue(matching, CFSTR(kIOMediaWholeKey), kCFBooleanTrue);
   CFDictionaryAddValue(matching, CFSTR(kIOMediaWritableKey), kCFBooleanTrue);
   CFDictionaryAddValue(matching, CFSTR(kIOBSDNameKey), cf_bsd_name);
 
-  io_service_t disk_obj =
-      IOServiceGetMatchingService(kIOMasterPortDefault, matching);
-  base::mac::ScopedIOObject<io_service_t> iterator_ref(disk_obj);
+  // IOServiceGetMatchingService consumes a reference to the matching dictionary
+  // passed to it.
+  base::mac::ScopedIOObject<io_service_t> disk_obj(
+      IOServiceGetMatchingService(kIOMasterPortDefault, matching.release()));
+  if (!disk_obj)
+    return false;
 
-  if (disk_obj) {
-    CFMutableDictionaryRef dict;
-    if (IORegistryEntryCreateCFProperties(
-            disk_obj, &dict, kCFAllocatorDefault, 0) != KERN_SUCCESS) {
-      LOG(ERROR) << "Unable to get properties of disk object.";
-      return false;
-    }
-    base::ScopedCFTypeRef<CFMutableDictionaryRef> dict_ref(dict);
-
-    CFBooleanRef cf_removable = base::mac::GetValueFromDictionary<CFBooleanRef>(
-        dict, CFSTR(kIOMediaRemovableKey));
-    bool removable = CFBooleanGetValue(cf_removable);
-
-    bool is_usb = extensions::IsUsbDevice(disk_obj);
-
-    return removable || is_usb;
-  }
-
-  return false;
+  return extensions::IsSuitableRemovableStorageDevice(disk_obj, nullptr,
+                                                      nullptr, nullptr);
 }
 
 void ImageWriter::UnmountVolumes(const base::Closure& continuation) {
-  if (unmounter_ == NULL) {
+  if (!unmounter_)
     unmounter_.reset(new DiskUnmounterMac());
-  }
 
   unmounter_->Unmount(
       device_path_.value(),
@@ -107,7 +94,7 @@ bool ImageWriter::OpenDevice() {
   }
 
   // Build the command line.
-  std::string rdwr = base::IntToString(O_RDWR);
+  std::string rdwr = base::NumberToString(O_RDWR);
 
   base::CommandLine cmd_line = base::CommandLine(base::FilePath(kAuthOpenPath));
   cmd_line.AppendSwitch("-stdoutpipe");

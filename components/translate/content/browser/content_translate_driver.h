@@ -16,6 +16,7 @@
 #include "components/translate/core/common/translate_errors.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
+#include "services/metrics/public/cpp/ukm_source_id.h"
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
 
 namespace content {
@@ -26,8 +27,6 @@ class WebContents;
 namespace language {
 class UrlLanguageHistogram;
 }  // namespace language
-
-class TemplateURLService;
 
 namespace translate {
 
@@ -43,20 +42,20 @@ class ContentTranslateDriver : public TranslateDriver,
   class Observer {
    public:
     // Handles when the value of IsPageTranslated is changed.
-    virtual void OnIsPageTranslatedChanged(content::WebContents* source) {};
+    virtual void OnIsPageTranslatedChanged(content::WebContents* source) {}
 
     // Handles when the value of translate_enabled is changed.
-    virtual void OnTranslateEnabledChanged(content::WebContents* source) {};
+    virtual void OnTranslateEnabledChanged(content::WebContents* source) {}
 
     // Called when the page language has been determined.
     virtual void OnLanguageDetermined(
-        const translate::LanguageDetectionDetails& details) {};
+        const translate::LanguageDetectionDetails& details) {}
 
     // Called when the page has been translated.
-    virtual void OnPageTranslated(
-        const std::string& original_lang,
-        const std::string& translated_lang,
-        translate::TranslateErrors::Type error_type) {};
+    virtual void OnPageTranslated(const std::string& original_lang,
+                                  const std::string& translated_lang,
+                                  translate::TranslateErrors::Type error_type) {
+    }
 
    protected:
     virtual ~Observer() {}
@@ -64,7 +63,6 @@ class ContentTranslateDriver : public TranslateDriver,
 
   ContentTranslateDriver(
       content::NavigationController* nav_controller,
-      const TemplateURLService* template_url_service,
       language::UrlLanguageHistogram* url_language_histogram);
   ~ContentTranslateDriver() override;
 
@@ -98,6 +96,7 @@ class ContentTranslateDriver : public TranslateDriver,
   const std::string& GetContentsMimeType() override;
   const GURL& GetLastCommittedURL() override;
   const GURL& GetVisibleURL() override;
+  ukm::SourceId GetUkmSourceId() override;
   bool HasCurrentPage() override;
   void OpenUrlInNewTab(const GURL& url) override;
 
@@ -122,8 +121,12 @@ class ContentTranslateDriver : public TranslateDriver,
  private:
   void OnPageAway(int page_seq_no);
 
-  bool IsDefaultSearchEngineOriginator(
-      const url::Origin& originating_origin) const;
+  // Creates a URLLoaderFactory that may be used by the translate scripts that
+  // get injected into isolated worlds within the page to be translated.  Such
+  // scripts (or rather, their isolated worlds) are associated with a
+  // translate-specific origin like https://translate.googleapis.com and use
+  // this origin as |request_initiator| of http requests.
+  network::mojom::URLLoaderFactoryPtr CreateURLLoaderFactory();
 
   // Creates a URLLoaderFactory that may be used by the translate scripts that
   // get injected into isolated worlds within the page to be translated.  Such
@@ -141,8 +144,6 @@ class ContentTranslateDriver : public TranslateDriver,
 
   // Max number of attempts before checking if a page has been reloaded.
   int max_reload_check_attempts_;
-
-  const TemplateURLService* template_url_service_;
 
   // Records mojo connections with all current alive pages.
   int next_page_seq_no_;

@@ -66,6 +66,9 @@ public class MockWebContents implements WebContents {
     }
 
     @Override
+    public void clearNativeReference() {}
+
+    @Override
     public NavigationController getNavigationController() {
         return null;
     }
@@ -73,6 +76,11 @@ public class MockWebContents implements WebContents {
     @Override
     public RenderFrameHost getMainFrame() {
         return renderFrameHost;
+    }
+
+    @Override
+    public RenderFrameHost getFocusedFrame() {
+        return null;
     }
 
     @Override
@@ -193,6 +201,11 @@ public class MockWebContents implements WebContents {
     }
 
     @Override
+    public int getLoadProgress() {
+        return 0;
+    }
+
+    @Override
     public void requestSmartClipExtract(int x, int y, int width, int height) {}
 
     @Override
@@ -214,6 +227,9 @@ public class MockWebContents implements WebContents {
 
     @Override
     public void setOverscrollRefreshHandler(OverscrollRefreshHandler handler) {}
+
+    @Override
+    public void setSpatialNavigationDisabled(boolean disabled) {}
 
     @Override
     public void writeContentBitmapToDiskAsync(
@@ -261,4 +277,7 @@ public class MockWebContents implements WebContents {
 
     @Override
     public void setDisplayCutoutSafeArea(Rect insets) {}
+
+    @Override
+    public void notifyRendererPreferenceUpdate() {}
 }

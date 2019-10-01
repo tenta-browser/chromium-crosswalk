@@ -50,11 +50,11 @@ const char kRuleId3[] = "rule3";
 const char kRuleId4[] = "rule4";
 
 // Creates a main-frame navigation request to |url|.
-WebRequestInfo CreateRequest(const GURL& url) {
-  WebRequestInfo info;
+WebRequestInfoInitParams CreateRequestParams(const GURL& url) {
+  WebRequestInfoInitParams info;
   info.url = url;
   info.is_browser_side_navigation = true;
-  info.type = content::RESOURCE_TYPE_MAIN_FRAME;
+  info.type = content::ResourceType::kMainFrame;
   info.web_request_type = WebRequestResourceType::MAIN_FRAME;
   return info;
 }
@@ -206,7 +206,7 @@ class WebRequestRulesRegistryTest : public testing::Test {
     json_description += attributes;
     json_description += "}";
 
-    return base::test::ParseJson(json_description);
+    return base::test::ParseJsonDeprecated(json_description);
   }
 
   // Create a rule with the ID |rule_id| and with conditions created from the
@@ -286,7 +286,7 @@ TEST_F(WebRequestRulesRegistryTest, AddRulesImpl) {
   std::set<const WebRequestRule*> matches;
 
   GURL http_url("http://www.example.com");
-  WebRequestInfo http_request_info = CreateRequest(http_url);
+  WebRequestInfo http_request_info(CreateRequestParams(http_url));
   WebRequestData request_data(&http_request_info, ON_BEFORE_REQUEST);
   matches = registry->GetMatches(request_data);
   EXPECT_EQ(2u, matches.size());
@@ -300,7 +300,7 @@ TEST_F(WebRequestRulesRegistryTest, AddRulesImpl) {
       base::ContainsKey(matches_ids, std::make_pair(kExtensionId, kRuleId2)));
 
   GURL foobar_url("http://www.foobar.com");
-  WebRequestInfo foobar_request_info = CreateRequest(foobar_url);
+  WebRequestInfo foobar_request_info(CreateRequestParams(foobar_url));
   request_data.request = &foobar_request_info;
   matches = registry->GetMatches(request_data);
   EXPECT_EQ(1u, matches.size());
@@ -436,7 +436,7 @@ TEST_F(WebRequestRulesRegistryTest, Precedences) {
   }
 
   GURL url("http://www.google.com");
-  WebRequestInfo request_info = CreateRequest(url);
+  WebRequestInfo request_info(CreateRequestParams(url));
   WebRequestData request_data(&request_info, ON_BEFORE_REQUEST);
   EventResponseDeltas deltas =
       registry->CreateDeltas(NULL, request_data, false);
@@ -488,7 +488,7 @@ TEST_F(WebRequestRulesRegistryTest, Priorities) {
   }
 
   GURL url("http://www.google.com/index.html");
-  WebRequestInfo request_info = CreateRequest(url);
+  WebRequestInfo request_info(CreateRequestParams(url));
   WebRequestData request_data(&request_info, ON_BEFORE_REQUEST);
   EventResponseDeltas deltas =
       registry->CreateDeltas(nullptr, request_data, false);
@@ -542,9 +542,11 @@ TEST_F(WebRequestRulesRegistryTest, IgnoreRulesByTag) {
       "  \"priority\": 300                                               \n"
       "}                                                                 ";
 
-  std::unique_ptr<base::Value> value1 = base::JSONReader::Read(kRule1);
+  std::unique_ptr<base::Value> value1 =
+      base::JSONReader::ReadDeprecated(kRule1);
   ASSERT_TRUE(value1.get());
-  std::unique_ptr<base::Value> value2 = base::JSONReader::Read(kRule2);
+  std::unique_ptr<base::Value> value2 =
+      base::JSONReader::ReadDeprecated(kRule2);
   ASSERT_TRUE(value2.get());
 
   std::vector<const api::events::Rule*> rules;
@@ -562,7 +564,7 @@ TEST_F(WebRequestRulesRegistryTest, IgnoreRulesByTag) {
   EXPECT_FALSE(registry->IsEmpty());
 
   GURL url("http://www.foo.com/test");
-  WebRequestInfo request_info = CreateRequest(url);
+  WebRequestInfo request_info(CreateRequestParams(url));
   WebRequestData request_data(&request_info, ON_BEFORE_REQUEST);
   EventResponseDeltas deltas =
       registry->CreateDeltas(NULL, request_data, false);
@@ -612,7 +614,7 @@ TEST_F(WebRequestRulesRegistryTest, GetMatchesCheckFulfilled) {
   std::set<const WebRequestRule*> matches;
 
   GURL http_url("http://www.example.com");
-  WebRequestInfo http_request_info = CreateRequest(http_url);
+  WebRequestInfo http_request_info(CreateRequestParams(http_url));
   WebRequestData request_data(&http_request_info, ON_BEFORE_REQUEST);
   matches = registry->GetMatches(request_data);
   EXPECT_EQ(1u, matches.size());
@@ -672,8 +674,9 @@ TEST_F(WebRequestRulesRegistryTest, GetMatchesDifferentUrls) {
 
   for (size_t i = 0; i < base::size(matchingRuleIds); ++i) {
     // Construct the inputs.
-    WebRequestInfo http_request_info = CreateRequest(urls[i]);
-    http_request_info.site_for_cookies = firstPartyUrls[i];
+    WebRequestInfoInitParams params = CreateRequestParams(urls[i]);
+    params.site_for_cookies = firstPartyUrls[i];
+    WebRequestInfo http_request_info(std::move(params));
     WebRequestData request_data(&http_request_info, ON_BEFORE_REQUEST);
     // Now run both rules on the input.
     matches = registry->GetMatches(request_data);
@@ -712,7 +715,7 @@ TEST(WebRequestRulesRegistrySimpleTest, StageChecker) {
       "  \"priority\": 200                                                \n"
       "}                                                                  ";
 
-  std::unique_ptr<base::Value> value = base::JSONReader::Read(kRule);
+  std::unique_ptr<base::Value> value = base::JSONReader::ReadDeprecated(kRule);
   ASSERT_TRUE(value);
 
   api::events::Rule rule;
@@ -745,7 +748,8 @@ TEST(WebRequestRulesRegistrySimpleTest, HostPermissionsChecker) {
       "  \"instanceType\": \"declarativeWebRequest.RedirectRequest\",\n"
       "  \"redirectUrl\": \"http://bar.com\"                         \n"
       "}                                                             ";
-  std::unique_ptr<base::Value> action_value = base::JSONReader::Read(kAction);
+  std::unique_ptr<base::Value> action_value =
+      base::JSONReader::ReadDeprecated(kAction);
   ASSERT_TRUE(action_value);
 
   WebRequestActionSet::Values actions;
@@ -801,7 +805,7 @@ TEST_F(WebRequestRulesRegistryTest, CheckOriginAndPathRegEx) {
       "  \"priority\": 200                                               \n"
       "}                                                                 ";
 
-  std::unique_ptr<base::Value> value = base::JSONReader::Read(kRule);
+  std::unique_ptr<base::Value> value = base::JSONReader::ReadDeprecated(kRule);
   ASSERT_TRUE(value.get());
 
   std::vector<const api::events::Rule*> rules;
@@ -820,14 +824,14 @@ TEST_F(WebRequestRulesRegistryTest, CheckOriginAndPathRegEx) {
 
   // No match because match is in the query parameter.
   GURL url1("http://bar.com/index.html?foo.com");
-  WebRequestInfo request1_info = CreateRequest(url1);
+  WebRequestInfo request1_info(CreateRequestParams(url1));
   WebRequestData request_data1(&request1_info, ON_BEFORE_REQUEST);
   deltas = registry->CreateDeltas(NULL, request_data1, false);
   EXPECT_EQ(0u, deltas.size());
 
   // This is a correct match.
   GURL url2("http://foo.com/index.html");
-  WebRequestInfo request2_info = CreateRequest(url2);
+  WebRequestInfo request2_info(CreateRequestParams(url2));
   WebRequestData request_data2(&request2_info, ON_BEFORE_REQUEST);
   deltas = registry->CreateDeltas(NULL, request_data2, false);
   EXPECT_EQ(1u, deltas.size());

@@ -4,9 +4,9 @@
 
 #include "components/cronet/ios/cronet_environment.h"
 
+#include <atomic>
 #include <utility>
 
-#include "base/atomicops.h"
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
@@ -27,9 +27,10 @@
 #include "components/prefs/pref_filter.h"
 #include "ios/net/cookies/cookie_store_ios.h"
 #include "ios/net/cookies/cookie_store_ios_client.h"
-#include "ios/web/public/global_state/ios_global_state.h"
-#include "ios/web/public/global_state/ios_global_state_configuration.h"
+#include "ios/web/public/init/ios_global_state.h"
+#include "ios/web/public/init/ios_global_state_configuration.h"
 #include "ios/web/public/user_agent.h"
+#include "net/base/http_user_agent_settings.h"
 #include "net/base/network_change_notifier.h"
 #include "net/base/url_util.h"
 #include "net/cert/cert_verifier.h"
@@ -45,10 +46,8 @@
 #include "net/log/net_log_util.h"
 #include "net/proxy_resolution/proxy_resolution_service.h"
 #include "net/socket/ssl_client_socket.h"
-#include "net/ssl/channel_id_service.h"
 #include "net/ssl/ssl_key_logger_impl.h"
-#include "net/third_party/quic/core/quic_versions.h"
-#include "net/url_request/http_user_agent_settings.h"
+#include "net/third_party/quiche/src/quic/core/quic_versions.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_builder.h"
 #include "net/url_request/url_request_context_storage.h"
@@ -267,7 +266,7 @@ void CronetEnvironment::Start() {
 
   main_context_getter_ = new CronetURLRequestContextGetter(
       this, CronetEnvironment::GetNetworkThreadTaskRunner());
-  base::subtle::MemoryBarrier();
+  std::atomic_thread_fence(std::memory_order_seq_cst);
   PostToNetworkThread(FROM_HERE,
                       base::Bind(&CronetEnvironment::InitializeOnNetworkThread,
                                  base::Unretained(this)));
@@ -279,7 +278,7 @@ void CronetEnvironment::CleanUpOnNetworkThread() {
 
   // TODO(lilyhoughton) this can only be run once, so right now leaking it.
   // Should be be called when the _last_ CronetEnvironment is destroyed.
-  // base::TaskScheduler* ts = base::TaskScheduler::GetInstance();
+  // base::ThreadPoolInstance* ts = base::ThreadPoolInstance::Get();
   // if (ts)
   //  ts->Shutdown();
 
@@ -359,9 +358,11 @@ void CronetEnvironment::InitializeOnNetworkThread() {
   effective_experimental_options_ =
       std::move(config->effective_experimental_options);
 
+  // TODO(crbug.com/934402): Use a shared HostResolverManager instead of a
+  // global HostResolver.
   std::unique_ptr<net::MappedHostResolver> mapped_host_resolver(
       new net::MappedHostResolver(
-          net::HostResolver::CreateDefaultResolver(nullptr)));
+          net::HostResolver::CreateStandaloneResolver(nullptr)));
 
   if (!config->storage_path.empty()) {
     cronet_prefs_manager_ = std::make_unique<CronetPrefsManager>(
@@ -400,7 +401,7 @@ void CronetEnvironment::InitializeOnNetworkThread() {
                                          quic_hint.port());
     main_context_->http_server_properties()->SetQuicAlternativeService(
         quic_hint_server, alternative_service, base::Time::Max(),
-        quic::QuicTransportVersionVector());
+        quic::ParsedQuicVersionVector());
   }
 
   main_context_->transport_security_state()

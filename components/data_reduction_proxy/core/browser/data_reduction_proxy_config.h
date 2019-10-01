@@ -25,7 +25,6 @@
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_server.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_type_info.h"
 #include "components/data_reduction_proxy/proto/client_config.pb.h"
-#include "components/previews/core/previews_experiments.h"
 #include "net/proxy_resolution/proxy_config.h"
 #include "net/proxy_resolution/proxy_retry_info.h"
 #include "services/network/public/cpp/network_connection_tracker.h"
@@ -101,7 +100,8 @@ class DataReductionProxyConfig
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       WarmupURLFetcher::CreateCustomProxyConfigCallback
           create_custom_proxy_config_callback,
-      NetworkPropertiesManager* manager);
+      NetworkPropertiesManager* manager,
+      const std::string& user_agent);
 
   // Sets the proxy configs, enabling or disabling the proxy according to
   // the value of |enabled|. If |restricted| is true, only enable the fallback

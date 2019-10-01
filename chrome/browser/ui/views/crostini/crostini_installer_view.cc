@@ -8,7 +8,9 @@
 #include <vector>
 
 #include "ash/public/cpp/ash_typography.h"
+#include "base/bind.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/numerics/ranges.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -29,7 +31,8 @@
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "net/base/network_change_notifier.h"
+#include "content/public/browser/network_service_instance.h"
+#include "services/network/public/cpp/network_connection_tracker.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/text/bytes_formatting.h"
@@ -53,6 +56,12 @@ CrostiniInstallerView* g_crostini_installer_view = nullptr;
 // The size of the download for the VM image.
 // TODO(timloh): This is just a placeholder.
 constexpr int kDownloadSizeInBytes = 300 * 1024 * 1024;
+// The minimum feasible size for a VM disk image.
+constexpr int64_t kMinimumDiskSize = 1ll * 1024 * 1024 * 1024;  // 1 GiB
+// Minimum amount of free disk space to install crostini successfully.
+constexpr int kMinimumFreeDiskSpace = kDownloadSizeInBytes + kMinimumDiskSize;
+
+constexpr int kUninitializedDiskSpace = -1;
 
 constexpr gfx::Insets kOOBEButtonRowInsets(32, 64, 32, 64);
 constexpr int kOOBEWindowWidth = 768;
@@ -68,6 +77,22 @@ constexpr char kCrostiniSetupSourceHistogram[] = "Crostini.SetupSource";
 constexpr char kCrostiniTimeFromDeviceSetupToInstall[] =
     "Crostini.TimeFromDeviceSetupToInstall";
 constexpr char kCrostiniDiskImageSizeHistogram[] = "Crostini.DiskImageSize";
+constexpr char kCrostiniTimeToInstallSuccess[] =
+    "Crostini.TimeToInstallSuccess";
+constexpr char kCrostiniTimeToInstallCancel[] = "Crostini.TimeToInstallCancel";
+constexpr char kCrostiniTimeToInstallError[] = "Crostini.TimeToInstallError";
+constexpr char kCrostiniAvailableDiskSuccess[] =
+    "Crostini.AvailableDiskSuccess";
+constexpr char kCrostiniAvailableDiskCancel[] = "Crostini.AvailableDiskCancel";
+constexpr char kCrostiniAvailableDiskError[] = "Crostini.AvailableDiskError";
+
+// Generates a Google Help URL which includes a "board type" parameter. Some
+// help pages need to be adjusted depending on the type of CrOS device that is
+// accessing the page.
+base::string16 GetHelpUrlWithBoard(const std::string& original_url) {
+  return base::ASCIIToUTF16(original_url +
+                            "&b=" + base::SysInfo::GetLsbReleaseBoard());
+}
 
 void RecordTimeFromDeviceSetupToInstallMetric() {
   base::PostTaskWithTraitsAndReplyWithResult(
@@ -113,6 +138,24 @@ void CrostiniInstallerView::Show(Profile* profile) {
   // set it to the desired value.
   g_crostini_installer_view->SetBigMessageLabel();
   g_crostini_installer_view->GetWidget()->Show();
+
+  crostini::CrostiniManager::GetForProfile(profile)->SetInstallerViewStatus(
+      true);
+
+  base::PostTaskWithTraitsAndReplyWithResult(
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
+      base::BindOnce(&base::SysInfo::AmountOfFreeDiskSpace,
+                     base::FilePath(crostini::kHomeDirectory)),
+      base::BindOnce(
+          &CrostiniInstallerView::OnAvailableDiskSpace,
+          g_crostini_installer_view->weak_ptr_factory_.GetWeakPtr()));
+}
+
+void CrostiniInstallerView::OnAvailableDiskSpace(int64_t bytes) {
+  free_disk_space_ = bytes;
+  if (free_disk_space_callback_for_testing_) {
+    std::move(free_disk_space_callback_for_testing_).Run();
+  }
 }
 
 int CrostiniInstallerView::GetDialogButtons() const {
@@ -136,6 +179,14 @@ base::string16 CrostiniInstallerView::GetDialogButtonLabel(
   return l10n_util::GetStringUTF16(IDS_APP_CANCEL);
 }
 
+bool CrostiniInstallerView::IsDialogButtonEnabled(
+    ui::DialogButton button) const {
+  if (button == ui::DIALOG_BUTTON_CANCEL &&
+      (state_ == State::CLEANUP || state_ == State::CLEANUP_FINISHED)) {
+    return false;
+  }
+  return true;
+}
 
 bool CrostiniInstallerView::ShouldShowCloseButton() const {
   return false;
@@ -145,29 +196,61 @@ bool CrostiniInstallerView::ShouldShowWindowTitle() const {
   return false;
 }
 
+void CrostiniInstallerView::PressAccept() {
+  GetDialogClientView()->AcceptWindow();
+}
+
 bool CrostiniInstallerView::Accept() {
   // This dialog can be accepted from State::ERROR. In that case, we're doing a
   // Retry.
   DCHECK(state_ == State::PROMPT || state_ == State::ERROR);
 
+  // Delay starting the install process until we can check if there's enough
+  // disk space.
+  if (free_disk_space_ == kUninitializedDiskSpace) {
+    base::PostDelayedTaskWithTraits(
+        FROM_HERE, {content::BrowserThread::UI},
+        base::BindOnce(&CrostiniInstallerView::PressAccept,
+                       weak_ptr_factory_.GetWeakPtr()),
+        base::TimeDelta::FromMilliseconds(50));
+    return false;
+  }
+
   UpdateState(State::INSTALL_START);
   profile_->GetPrefs()->SetBoolean(crostini::prefs::kCrostiniEnabled, true);
+  install_start_time_ = base::TimeTicks::Now();
 
-  progress_bar_->SetVisible(true);
+  // The default value of kCrostiniContainers is set to migrate existing
+  // crostini users who don't have the pref set. If crostini is being installed,
+  // then we know the user must not actually have any containers yet, so we set
+  // this pref to the empty list.
+  profile_->GetPrefs()->Set(crostini::prefs::kCrostiniContainers,
+                            base::Value(base::Value::Type::LIST));
 
   // |learn_more_link_| should only be present in State::PROMPT.
   delete learn_more_link_;
   learn_more_link_ = nullptr;
 
-  StepProgress();
-
   // HandleError needs the |progress_bar_|, so we delay our Offline check until
   // it exists.
-  if (net::NetworkChangeNotifier::IsOffline()) {
+  if (content::GetNetworkConnectionTracker()->IsOffline()) {
     const base::string16 device_type = ui::GetChromeOSDeviceName();
     HandleError(l10n_util::GetStringFUTF16(IDS_CROSTINI_INSTALLER_OFFLINE_ERROR,
                                            device_type),
                 SetupResult::kErrorOffline);
+    return false;  // should not close the dialog.
+  }
+
+  // Don't enforce minimum disk size on dev box or trybots because
+  // base::SysInfo::AmountOfFreeDiskSpace returns zero in testing.
+  if (free_disk_space_ < kMinimumFreeDiskSpace &&
+      base::SysInfo::IsRunningOnChromeOS()) {
+    HandleError(l10n_util::GetStringFUTF16(
+                    IDS_CROSTINI_INSTALLER_INSUFFICIENT_DISK,
+                    ui::FormatBytesWithUnits(kMinimumFreeDiskSpace,
+                                             ui::DATA_UNITS_GIBIBYTE,
+                                             /*show_units=*/true)),
+                SetupResult::kErrorInsufficientDiskSpace);
     return false;  // should not close the dialog.
   }
 
@@ -184,13 +267,26 @@ bool CrostiniInstallerView::Accept() {
 }
 
 bool CrostiniInstallerView::Cancel() {
+  if (!has_logged_timing_result_ &&
+      restart_id_ == crostini::CrostiniManager::kUninitializedRestartId) {
+    UMA_HISTOGRAM_LONG_TIMES(kCrostiniTimeToInstallCancel,
+                             base::TimeTicks::Now() - install_start_time_);
+    has_logged_timing_result_ = true;
+  }
+  if (!has_logged_free_disk_result_ &&
+      restart_id_ == crostini::CrostiniManager::kUninitializedRestartId &&
+      free_disk_space_ != kUninitializedDiskSpace) {
+    base::UmaHistogramCounts1M(kCrostiniAvailableDiskCancel,
+                               free_disk_space_ >> 20);
+    has_logged_free_disk_result_ = true;
+  }
   if (state_ != State::INSTALL_END && state_ != State::CLEANUP &&
       state_ != State::CLEANUP_FINISHED &&
       restart_id_ != crostini::CrostiniManager::kUninitializedRestartId) {
     // Abort the long-running flow, and prevent our RestartObserver methods
     // being called after "this" has been destroyed.
     crostini::CrostiniManager::GetForProfile(profile_)->AbortRestartCrostini(
-        restart_id_);
+        restart_id_, base::DoNothing());
 
     SetupResult result = SetupResult::kUserCancelledStart;
     result = static_cast<SetupResult>(static_cast<int>(result) +
@@ -207,7 +303,6 @@ bool CrostiniInstallerView::Cancel() {
               base::Unretained(
                   crostini::CrostiniManager::GetForProfile(profile_)),
               crostini::kCrostiniDefaultVmName,
-              crostini::kCrostiniDefaultContainerName,
               base::BindOnce(&CrostiniInstallerView::FinishCleanup,
                              weak_ptr_factory_.GetWeakPtr())));
       UpdateState(State::CLEANUP);
@@ -229,8 +324,9 @@ gfx::Size CrostiniInstallerView::CalculatePreferredSize() const {
 void CrostiniInstallerView::LinkClicked(views::Link* source, int event_flags) {
   DCHECK_EQ(source, learn_more_link_);
 
-  NavigateParams params(profile_, GURL(chrome::kLinuxAppsLearnMoreURL),
-                        ui::PAGE_TRANSITION_LINK);
+  NavigateParams params(
+      profile_, GURL(GetHelpUrlWithBoard(chrome::kLinuxAppsLearnMoreURL)),
+      ui::PAGE_TRANSITION_LINK);
   params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
   Navigate(&params);
 }
@@ -239,15 +335,22 @@ void CrostiniInstallerView::OnComponentLoaded(CrostiniResult result) {
   DCHECK_EQ(state_, State::INSTALL_IMAGE_LOADER);
 
   if (result != CrostiniResult::SUCCESS) {
-    LOG(ERROR) << "Failed to install the cros-termina component";
-    HandleError(
-        l10n_util::GetStringUTF16(IDS_CROSTINI_INSTALLER_LOAD_TERMINA_ERROR),
-        SetupResult::kErrorLoadingTermina);
+    if (content::GetNetworkConnectionTracker()->IsOffline()) {
+      LOG(ERROR) << "Network connection dropped while downloading cros-termina";
+      const base::string16 device_type = ui::GetChromeOSDeviceName();
+      HandleError(l10n_util::GetStringFUTF16(
+                      IDS_CROSTINI_INSTALLER_OFFLINE_ERROR, device_type),
+                  SetupResult::kErrorOffline);
+    } else {
+      LOG(ERROR) << "Failed to install the cros-termina component";
+      HandleError(
+          l10n_util::GetStringUTF16(IDS_CROSTINI_INSTALLER_LOAD_TERMINA_ERROR),
+          SetupResult::kErrorLoadingTermina);
+    }
     return;
   }
   VLOG(1) << "cros-termina install success";
   UpdateState(State::START_CONCIERGE);
-  StepProgress();
 }
 
 void CrostiniInstallerView::OnConciergeStarted(CrostiniResult result) {
@@ -262,7 +365,6 @@ void CrostiniInstallerView::OnConciergeStarted(CrostiniResult result) {
   }
   VLOG(1) << "Concierge service started";
   UpdateState(State::CREATE_DISK_IMAGE);
-  StepProgress();
 }
 
 void CrostiniInstallerView::OnDiskImageCreated(
@@ -287,7 +389,6 @@ void CrostiniInstallerView::OnDiskImageCreated(
   }
   VLOG(1) << "Created crostini disk image";
   UpdateState(State::START_TERMINA_VM);
-  StepProgress();
 }
 
 void CrostiniInstallerView::OnVmStarted(CrostiniResult result) {
@@ -302,7 +403,6 @@ void CrostiniInstallerView::OnVmStarted(CrostiniResult result) {
   }
   VLOG(1) << "Started Termina VM successfully";
   UpdateState(State::CREATE_CONTAINER);
-  StepProgress();
 }
 
 void CrostiniInstallerView::OnContainerDownloading(int32_t download_percent) {
@@ -315,8 +415,31 @@ void CrostiniInstallerView::OnContainerDownloading(int32_t download_percent) {
 void CrostiniInstallerView::OnContainerCreated(CrostiniResult result) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DCHECK_EQ(state_, State::CREATE_CONTAINER);
+  UpdateState(State::SETUP_CONTAINER);
+}
+
+void CrostiniInstallerView::OnContainerSetup(CrostiniResult result) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  DCHECK_EQ(state_, State::SETUP_CONTAINER);
+
+  if (result != CrostiniResult::SUCCESS) {
+    if (content::GetNetworkConnectionTracker()->IsOffline()) {
+      LOG(ERROR) << "Network connection dropped while downloading container";
+      const base::string16 device_type = ui::GetChromeOSDeviceName();
+      HandleError(l10n_util::GetStringFUTF16(
+                      IDS_CROSTINI_INSTALLER_OFFLINE_ERROR, device_type),
+                  SetupResult::kErrorOffline);
+    } else {
+      LOG(ERROR) << "Failed to set up container with error code: "
+                 << static_cast<int>(result);
+      HandleError(l10n_util::GetStringUTF16(
+                      IDS_CROSTINI_INSTALLER_SETUP_CONTAINER_ERROR),
+                  SetupResult::kErrorSettingUpContainer);
+    }
+    return;
+  }
+  VLOG(1) << "Set up container successfully";
   UpdateState(State::START_CONTAINER);
-  StepProgress();
 }
 
 void CrostiniInstallerView::OnContainerStarted(CrostiniResult result) {
@@ -332,25 +455,7 @@ void CrostiniInstallerView::OnContainerStarted(CrostiniResult result) {
     return;
   }
   VLOG(1) << "Started container successfully";
-  UpdateState(State::SETUP_CONTAINER);
-  StepProgress();
-}
-
-void CrostiniInstallerView::OnContainerSetup(CrostiniResult result) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  DCHECK_EQ(state_, State::SETUP_CONTAINER);
-
-  if (result != CrostiniResult::SUCCESS) {
-    LOG(ERROR) << "Failed to set up container with error code: "
-               << static_cast<int>(result);
-    HandleError(
-        l10n_util::GetStringUTF16(IDS_CROSTINI_INSTALLER_SETUP_CONTAINER_ERROR),
-        SetupResult::kErrorSettingUpContainer);
-    return;
-  }
-  VLOG(1) << "Set up container successfully";
   UpdateState(State::FETCH_SSH_KEYS);
-  StepProgress();
 }
 
 void CrostiniInstallerView::OnSshKeysFetched(CrostiniResult result) {
@@ -367,7 +472,6 @@ void CrostiniInstallerView::OnSshKeysFetched(CrostiniResult result) {
   }
   VLOG(1) << "Fetched ssh keys successfully";
   UpdateState(State::MOUNT_CONTAINER);
-  StepProgress();
 }
 
 // static
@@ -375,8 +479,29 @@ CrostiniInstallerView* CrostiniInstallerView::GetActiveViewForTesting() {
   return g_crostini_installer_view;
 }
 
+void CrostiniInstallerView::SetCloseCallbackForTesting(
+    base::OnceClosure quit_closure) {
+  quit_closure_for_testing_ = std::move(quit_closure);
+}
+
+void CrostiniInstallerView::SetProgressBarCallbackForTesting(
+    base::RepeatingCallback<void(double)> callback) {
+  progress_bar_callback_for_testing_ = callback;
+}
+
+void CrostiniInstallerView::SetGetFreeDiskSpaceCallbackForTesting(
+    base::OnceClosure quit_closure) {
+  if (free_disk_space_ == kUninitializedDiskSpace) {
+    free_disk_space_callback_for_testing_ = std::move(quit_closure);
+  } else {
+    std::move(free_disk_space_callback_for_testing_).Run();
+  }
+}
+
 CrostiniInstallerView::CrostiniInstallerView(Profile* profile)
-    : profile_(profile), weak_ptr_factory_(this) {
+    : profile_(profile),
+      free_disk_space_(kUninitializedDiskSpace),
+      weak_ptr_factory_(this) {
   // Layout constants from the spec.
   constexpr gfx::Insets kDialogInsets(60, 64, 0, 64);
   constexpr int kDialogSpacingVertical = 32;
@@ -403,7 +528,7 @@ CrostiniInstallerView::CrostiniInstallerView(Profile* profile)
   logo_image_->SetImage(
       ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
           IDR_LOGO_CROSTINI_DEFAULT_32));
-  logo_image_->SetHorizontalAlignment(views::ImageView::LEADING);
+  logo_image_->SetHorizontalAlignment(views::ImageView::Alignment::kLeading);
   upper_container_view->AddChildView(logo_image_);
 
   const base::string16 device_type = ui::GetChromeOSDeviceName();
@@ -454,14 +579,19 @@ CrostiniInstallerView::CrostiniInstallerView(Profile* profile)
 
   // Make sure the lower_container_view is pinned to the bottom of the dialog.
   lower_container_layout->set_main_axis_alignment(
-      views::BoxLayout::MAIN_AXIS_ALIGNMENT_END);
+      views::BoxLayout::MainAxisAlignment::kEnd);
   layout->SetFlexForView(lower_container_view, 1, true);
 
   chrome::RecordDialogCreation(chrome::DialogIdentifier::CROSTINI_INSTALLER);
 }
 
 CrostiniInstallerView::~CrostiniInstallerView() {
+  crostini::CrostiniManager::GetForProfile(profile_)->SetInstallerViewStatus(
+      false);
   g_crostini_installer_view = nullptr;
+  if (quit_closure_for_testing_) {
+    std::move(quit_closure_for_testing_).Run();
+  }
 }
 
 void CrostiniInstallerView::FinishCleanup(CrostiniResult result) {
@@ -482,13 +612,23 @@ void CrostiniInstallerView::HandleError(const base::string16& error_message,
   if (state_ == State::ERROR)
     return;
 
+  if (!has_logged_timing_result_) {
+    UMA_HISTOGRAM_LONG_TIMES(kCrostiniTimeToInstallError,
+                             base::TimeTicks::Now() - install_start_time_);
+    has_logged_timing_result_ = true;
+  }
+  if (!has_logged_free_disk_result_ &&
+      free_disk_space_ != kUninitializedDiskSpace) {
+    base::UmaHistogramCounts1M(kCrostiniAvailableDiskError,
+                               free_disk_space_ >> 20);
+    has_logged_free_disk_result_ = true;
+  }
+
   RecordSetupResultHistogram(result);
   restart_id_ = crostini::CrostiniManager::kUninitializedRestartId;
   UpdateState(State::ERROR);
   message_label_->SetVisible(true);
   message_label_->SetText(error_message);
-  SetBigMessageLabel();
-  progress_bar_->SetVisible(false);
 
   // Remove the buttons so they get recreated with correct color and
   // highlighting. Without this it is possible for both buttons to be styled as
@@ -509,7 +649,6 @@ void CrostiniInstallerView::MountContainerFinished(CrostiniResult result) {
         SetupResult::kErrorMountingContainer);
     return;
   }
-  StepProgress();
   ShowLoginShell();
 }
 
@@ -523,10 +662,20 @@ void CrostiniInstallerView::ShowLoginShell() {
       crostini::kCrostiniDefaultVmName, crostini::kCrostiniDefaultContainerName,
       std::vector<std::string>());
 
-  StepProgress();
   RecordSetupResultHistogram(SetupResult::kSuccess);
   crostini_manager->UpdateLaunchMetricsForEnterpriseReporting();
   RecordTimeFromDeviceSetupToInstallMetric();
+  if (!has_logged_timing_result_) {
+    UMA_HISTOGRAM_LONG_TIMES(kCrostiniTimeToInstallSuccess,
+                             base::TimeTicks::Now() - install_start_time_);
+    has_logged_timing_result_ = true;
+  }
+  if (!has_logged_free_disk_result_ &&
+      free_disk_space_ != kUninitializedDiskSpace) {
+    base::UmaHistogramCounts1M(kCrostiniAvailableDiskSuccess,
+                               free_disk_space_ >> 20);
+    has_logged_free_disk_result_ = true;
+  }
   GetWidget()->Close();
 }
 
@@ -567,18 +716,22 @@ void CrostiniInstallerView::StepProgress() {
       state_end_mark = 0.90;
       state_max_seconds = 180;
       break;
-    case State::START_CONTAINER:
+    case State::SETUP_CONTAINER:
       state_start_mark = 0.90;
       state_end_mark = 0.95;
       state_max_seconds = 8;
       break;
-    case State::SETUP_CONTAINER:
+    case State::START_CONTAINER:
       state_start_mark = 0.95;
       state_end_mark = 0.99;
       state_max_seconds = 8;
       break;
     case State::FETCH_SSH_KEYS:
       state_start_mark = 0.99;
+      state_end_mark = 1;
+      break;
+    case State::MOUNT_CONTAINER:
+      state_start_mark = 1;
       state_end_mark = 1;
       break;
 
@@ -600,6 +753,12 @@ void CrostiniInstallerView::StepProgress() {
     progress_bar_->SetValue(state_start_mark +
                             base::ClampToRange(state_fraction, 0.0, 1.0) *
                                 (state_end_mark - state_start_mark));
+    progress_bar_->SetVisible(true);
+    if (progress_bar_callback_for_testing_) {
+      progress_bar_callback_for_testing_.Run(progress_bar_->current_value());
+    }
+  } else if (state_ == State::CLEANUP) {
+    progress_bar_->SetValue(-1);
     progress_bar_->SetVisible(true);
   } else {
     progress_bar_->SetVisible(false);
@@ -625,6 +784,8 @@ void CrostiniInstallerView::UpdateState(State new_state) {
       state_progress_timer_->AbandonAndStop();
     }
   }
+
+  StepProgress();
 }
 
 void CrostiniInstallerView::SetMessageLabel() {
@@ -659,6 +820,9 @@ void CrostiniInstallerView::SetMessageLabel() {
     case State::MOUNT_CONTAINER:
       message_id = IDS_CROSTINI_INSTALLER_MOUNT_CONTAINER_MESSAGE;
       break;
+    case State::CLEANUP:
+      message_id = IDS_CROSTINI_INSTALLER_CANCELING;
+      break;
     default:
       break;
   }
@@ -685,6 +849,10 @@ void CrostiniInstallerView::SetBigMessageLabel() {
       break;
     case State::INSTALL_END:
       message = l10n_util::GetStringUTF16(IDS_CROSTINI_INSTALLER_COMPLETE);
+      break;
+    case State::CLEANUP:
+      message =
+          l10n_util::GetStringUTF16(IDS_CROSTINI_INSTALLER_CANCELING_TITLE);
       break;
 
     default:

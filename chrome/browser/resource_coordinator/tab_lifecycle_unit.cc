@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
@@ -69,6 +70,11 @@ bool IsValidStateChange(LifecycleUnitState from,
         case LifecycleUnitState::DISCARDED: {
           return reason == StateChangeReason::SYSTEM_MEMORY_PRESSURE ||
                  reason == StateChangeReason::EXTENSION_INITIATED;
+        }
+        case LifecycleUnitState::FROZEN: {
+          // Render-initiated freezing, which happens when freezing a page
+          // through ChromeDriver.
+          return reason == StateChangeReason::RENDERER_INITIATED;
         }
         default:
           return false;
@@ -174,7 +180,7 @@ StateChangeReason DiscardReasonToStateChangeReason(
 }
 
 struct FeatureUsageEntry {
-  SiteFeatureUsage usage;
+  performance_manager::SiteFeatureUsage usage;
   DecisionFailureReason failure_reason;
 };
 
@@ -194,9 +200,10 @@ void CheckFeatureUsage(const SiteCharacteristicsDataReader* reader,
 
   const auto* last = features + base::size(features);
   for (const auto* f = features; f != last; f++) {
-    if (f->usage == SiteFeatureUsage::kSiteFeatureInUse) {
+    if (f->usage == performance_manager::SiteFeatureUsage::kSiteFeatureInUse) {
       details->AddReason(f->failure_reason);
-    } else if (f->usage == SiteFeatureUsage::kSiteFeatureUsageUnknown) {
+    } else if (f->usage == performance_manager::SiteFeatureUsage::
+                               kSiteFeatureUsageUnknown) {
       insufficient_observation = true;
     }
   }
@@ -271,6 +278,10 @@ class TabLifecycleUnitExternalImpl : public TabLifecycleUnitExternal {
 
   int GetDiscardCount() const override {
     return tab_lifecycle_unit_->GetDiscardCount();
+  }
+
+  bool IsFrozen() const override {
+    return IsFrozenOrPendingFreeze(tab_lifecycle_unit_->GetState());
   }
 
  private:
@@ -449,15 +460,6 @@ base::ProcessHandle TabLifecycleUnitSource::TabLifecycleUnit::GetProcessHandle()
 
 LifecycleUnit::SortKey TabLifecycleUnitSource::TabLifecycleUnit::GetSortKey()
     const {
-  if (base::FeatureList::IsEnabled(features::kTabRanker)) {
-    const base::Optional<float> reactivation_score =
-        resource_coordinator::TabActivityWatcher::GetInstance()
-            ->CalculateReactivationScore(web_contents());
-    if (reactivation_score.has_value())
-      return SortKey(reactivation_score.value(), last_focused_time_);
-    return SortKey(SortKey::kMaxScore, last_focused_time_);
-  }
-
   return SortKey(last_focused_time_);
 }
 
@@ -490,11 +492,6 @@ bool TabLifecycleUnitSource::TabLifecycleUnit::Load() {
 int TabLifecycleUnitSource::TabLifecycleUnit::
     GetEstimatedMemoryFreedOnDiscardKB() const {
   return GetPrivateMemoryKB(GetProcessHandle());
-}
-
-bool TabLifecycleUnitSource::TabLifecycleUnit::CanPurge() const {
-  // A renderer can be purged if it's not playing media.
-  return !IsMediaTabImpl(nullptr);
 }
 
 bool TabLifecycleUnitSource::TabLifecycleUnit::CanFreeze(
@@ -779,7 +776,7 @@ void TabLifecycleUnitSource::TabLifecycleUnit::FinishDiscard(
   DCHECK_EQ(GetLoadingState(), LifecycleUnitLoadingState::UNLOADED);
 }
 
-bool TabLifecycleUnitSource::TabLifecycleUnit::DiscardImpl(
+bool TabLifecycleUnitSource::TabLifecycleUnit::Discard(
     LifecycleUnitDiscardReason reason) {
   // Can't discard a tab when it isn't in a tabstrip.
   if (!tab_strip_model_) {
@@ -802,6 +799,8 @@ bool TabLifecycleUnitSource::TabLifecycleUnit::DiscardImpl(
                       << target_state << " is not allowed.";
     return false;
   }
+
+  discard_reason_ = reason;
 
   // If the tab is not going through an urgent discard, it should be frozen
   // first. Freeze the tab and set a timer to callback to FinishDiscard() in
@@ -893,7 +892,16 @@ void TabLifecycleUnitSource::TabLifecycleUnit::OnLifecycleUnitStateChanged(
   const bool is_discarded = IsDiscardedOrPendingDiscard(GetState());
   if (was_discarded != is_discarded) {
     for (auto& observer : *observers_)
-      observer.OnDiscardedStateChange(web_contents(), is_discarded);
+      observer.OnDiscardedStateChange(web_contents(), GetDiscardReason(),
+                                      is_discarded);
+  }
+
+  // Invoke OnFrozenStateChange() if necessary.
+  const bool was_frozen = IsFrozenOrPendingFreeze(last_state);
+  const bool is_frozen = IsFrozenOrPendingFreeze(GetState());
+  if (was_frozen != is_frozen) {
+    for (auto& observer : *observers_)
+      observer.OnFrozenStateChange(web_contents(), is_frozen);
   }
 }
 
@@ -1012,6 +1020,11 @@ void TabLifecycleUnitSource::TabLifecycleUnit::CanDiscardHeuristicsChecks(
         break;
     }
   }
+}
+
+LifecycleUnitDiscardReason
+TabLifecycleUnitSource::TabLifecycleUnit::GetDiscardReason() const {
+  return discard_reason_;
 }
 
 }  // namespace resource_coordinator

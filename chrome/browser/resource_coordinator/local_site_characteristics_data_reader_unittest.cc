@@ -4,8 +4,11 @@
 
 #include "chrome/browser/resource_coordinator/local_site_characteristics_data_reader.h"
 
+#include <memory>
+
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/test/bind_test_util.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "chrome/browser/resource_coordinator/local_site_characteristics_data_impl.h"
 #include "chrome/browser/resource_coordinator/local_site_characteristics_data_unittest_utils.h"
@@ -37,18 +40,17 @@ class MockLocalSiteCharacteristicsDatabase
                         ReadSiteCharacteristicsFromDBCallback&));
 
   MOCK_METHOD2(WriteSiteCharacteristicsIntoDB,
-               void(const url::Origin&, const SiteCharacteristicsProto&));
+               void(const url::Origin&, const SiteDataProto&));
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockLocalSiteCharacteristicsDatabase);
 };
 
-void InitializeSiteCharacteristicsProto(
-    SiteCharacteristicsProto* site_characteristics) {
+void InitializeSiteDataProto(SiteDataProto* site_characteristics) {
   DCHECK(site_characteristics);
   site_characteristics->set_last_loaded(42);
 
-  SiteCharacteristicsFeatureProto used_feature_proto;
+  SiteDataFeatureProto used_feature_proto;
   used_feature_proto.set_observation_duration(0U);
   used_feature_proto.set_use_timestamp(1U);
 
@@ -86,7 +88,8 @@ class LocalSiteCharacteristicsDataReaderTest : public ::testing::Test {
   }
 
   ~LocalSiteCharacteristicsDataReaderTest() override {
-    test_impl_->NotifySiteUnloaded(TabVisibility::kBackground);
+    test_impl_->NotifySiteUnloaded(
+        performance_manager::TabVisibility::kBackground);
   }
 
   base::SimpleTestTickClock test_clock_;
@@ -113,32 +116,32 @@ class LocalSiteCharacteristicsDataReaderTest : public ::testing::Test {
 
 TEST_F(LocalSiteCharacteristicsDataReaderTest, TestAccessors) {
   // Initially we have no information about any of the features.
-  EXPECT_EQ(SiteFeatureUsage::kSiteFeatureUsageUnknown,
+  EXPECT_EQ(performance_manager::SiteFeatureUsage::kSiteFeatureUsageUnknown,
             reader_->UpdatesFaviconInBackground());
-  EXPECT_EQ(SiteFeatureUsage::kSiteFeatureUsageUnknown,
+  EXPECT_EQ(performance_manager::SiteFeatureUsage::kSiteFeatureUsageUnknown,
             reader_->UpdatesTitleInBackground());
-  EXPECT_EQ(SiteFeatureUsage::kSiteFeatureUsageUnknown,
+  EXPECT_EQ(performance_manager::SiteFeatureUsage::kSiteFeatureUsageUnknown,
             reader_->UsesAudioInBackground());
-  EXPECT_EQ(SiteFeatureUsage::kSiteFeatureUsageUnknown,
+  EXPECT_EQ(performance_manager::SiteFeatureUsage::kSiteFeatureUsageUnknown,
             reader_->UsesNotificationsInBackground());
 
   // Simulates a title update event, make sure it gets reported directly.
   test_impl_->NotifyUpdatesTitleInBackground();
 
-  EXPECT_EQ(SiteFeatureUsage::kSiteFeatureInUse,
+  EXPECT_EQ(performance_manager::SiteFeatureUsage::kSiteFeatureInUse,
             reader_->UpdatesTitleInBackground());
 
   // Advance the clock by a large amount of time, enough for the unused features
   // observation windows to expire.
   test_clock_.Advance(base::TimeDelta::FromDays(31));
 
-  EXPECT_EQ(SiteFeatureUsage::kSiteFeatureNotInUse,
+  EXPECT_EQ(performance_manager::SiteFeatureUsage::kSiteFeatureNotInUse,
             reader_->UpdatesFaviconInBackground());
-  EXPECT_EQ(SiteFeatureUsage::kSiteFeatureInUse,
+  EXPECT_EQ(performance_manager::SiteFeatureUsage::kSiteFeatureInUse,
             reader_->UpdatesTitleInBackground());
-  EXPECT_EQ(SiteFeatureUsage::kSiteFeatureNotInUse,
+  EXPECT_EQ(performance_manager::SiteFeatureUsage::kSiteFeatureNotInUse,
             reader_->UsesAudioInBackground());
-  EXPECT_EQ(SiteFeatureUsage::kSiteFeatureNotInUse,
+  EXPECT_EQ(performance_manager::SiteFeatureUsage::kSiteFeatureNotInUse,
             reader_->UsesNotificationsInBackground());
 }
 
@@ -149,14 +152,13 @@ TEST_F(LocalSiteCharacteristicsDataReaderTest,
 
   // Override the read callback to simulate a successful read from the
   // database.
-  SiteCharacteristicsProto proto = {};
-  InitializeSiteCharacteristicsProto(&proto);
+  SiteDataProto proto = {};
+  InitializeSiteDataProto(&proto);
   auto read_from_db_mock_impl =
       [&](const url::Origin& origin,
           LocalSiteCharacteristicsDatabase::
               ReadSiteCharacteristicsFromDBCallback& callback) {
-        std::move(callback).Run(
-            base::Optional<SiteCharacteristicsProto>(proto));
+        std::move(callback).Run(base::Optional<SiteDataProto>(proto));
       };
 
   EXPECT_CALL(database, OnReadSiteCharacteristicsFromDB(
@@ -179,6 +181,71 @@ TEST_F(LocalSiteCharacteristicsDataReaderTest,
       .Times(0);
   reader.reset();
   ::testing::Mock::VerifyAndClear(&database);
+}
+
+TEST_F(LocalSiteCharacteristicsDataReaderTest, OnDataLoadedCallbackInvoked) {
+  const url::Origin kOrigin = url::Origin::Create(GURL("foo.com"));
+  ::testing::StrictMock<MockLocalSiteCharacteristicsDatabase> database;
+
+  // Create the impl.
+  EXPECT_CALL(database, OnReadSiteCharacteristicsFromDB(
+                            ::testing::Property(&url::Origin::Serialize,
+                                                kOrigin.Serialize()),
+                            ::testing::_));
+  scoped_refptr<internal::LocalSiteCharacteristicsDataImpl> impl =
+      base::WrapRefCounted(new internal::LocalSiteCharacteristicsDataImpl(
+          kOrigin, &delegate_, &database));
+
+  // Create the reader.
+  std::unique_ptr<LocalSiteCharacteristicsDataReader> reader =
+      base::WrapUnique(new LocalSiteCharacteristicsDataReader(impl));
+  EXPECT_FALSE(reader->DataLoaded());
+
+  // Register a data ready closure.
+  bool on_data_loaded = false;
+  reader->RegisterDataLoadedCallback(base::BindLambdaForTesting(
+      [&on_data_loaded]() { on_data_loaded = true; }));
+
+  // Transition the impl to fully initialized, which should cause the callbacks
+  // to fire.
+  EXPECT_FALSE(impl->DataLoaded());
+  EXPECT_FALSE(on_data_loaded);
+  impl->TransitionToFullyInitialized();
+  EXPECT_TRUE(impl->DataLoaded());
+  EXPECT_TRUE(on_data_loaded);
+}
+
+TEST_F(LocalSiteCharacteristicsDataReaderTest,
+       DestroyingReaderCancelsPendingCallbacks) {
+  const url::Origin kOrigin = url::Origin::Create(GURL("foo.com"));
+  ::testing::StrictMock<MockLocalSiteCharacteristicsDatabase> database;
+
+  // Create the impl.
+  EXPECT_CALL(database, OnReadSiteCharacteristicsFromDB(
+                            ::testing::Property(&url::Origin::Serialize,
+                                                kOrigin.Serialize()),
+                            ::testing::_));
+  scoped_refptr<internal::LocalSiteCharacteristicsDataImpl> impl =
+      base::WrapRefCounted(new internal::LocalSiteCharacteristicsDataImpl(
+          kOrigin, &delegate_, &database));
+
+  // Create the reader.
+  std::unique_ptr<LocalSiteCharacteristicsDataReader> reader =
+      base::WrapUnique(new LocalSiteCharacteristicsDataReader(impl));
+  EXPECT_FALSE(reader->DataLoaded());
+
+  // Register a data ready closure.
+  reader->RegisterDataLoadedCallback(
+      base::MakeExpectedNotRunClosure(FROM_HERE));
+
+  // Reset the reader.
+  reader.reset();
+
+  // Transition the impl to fully initialized, which should cause the callbacks
+  // to fire. The reader's callback should *not* be invoked.
+  EXPECT_FALSE(impl->DataLoaded());
+  impl->TransitionToFullyInitialized();
+  EXPECT_TRUE(impl->DataLoaded());
 }
 
 }  // namespace resource_coordinator

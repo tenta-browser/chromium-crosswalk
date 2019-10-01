@@ -5,6 +5,8 @@
 #ifndef CHROME_TEST_BASE_BROWSER_WITH_TEST_WINDOW_TEST_H_
 #define CHROME_TEST_BASE_BROWSER_WITH_TEST_WINDOW_TEST_H_
 
+#include <memory>
+
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "build/build_config.h"
@@ -35,7 +37,6 @@ class GURL;
 
 #if defined(TOOLKIT_VIEWS)
 namespace views {
-class MusClient;
 class TestViewsDelegate;
 }  // namespace views
 #endif
@@ -74,13 +75,13 @@ class BrowserWithTestWindowTest : public testing::Test {
   struct HostedApp {};
 
   struct ValidTraits {
-    ValidTraits(content::TestBrowserThreadBundle::ValidTraits);
-    ValidTraits(HostedApp);
-    ValidTraits(Browser::Type);
+    explicit ValidTraits(content::TestBrowserThreadBundle::ValidTraits);
+    explicit ValidTraits(HostedApp);
+    explicit ValidTraits(Browser::Type);
 
     // TODO(alexclarke): Make content::TestBrowserThreadBundle::ValidTraits
     // imply this.
-    ValidTraits(base::test::ScopedTaskEnvironment::ValidTrait);
+    explicit ValidTraits(base::test::ScopedTaskEnvironment::ValidTrait);
   };
 
   // Creates a BrowserWithTestWindowTest with zero or more traits. By default
@@ -159,7 +160,8 @@ class BrowserWithTestWindowTest : public testing::Test {
                                            const GURL& url,
                                            const base::string16& title);
 
-  // Creates the profile used by this test. The caller owns the return value.
+  // Creates the profile used by this test. The caller doesn't own the return
+  // value.
   virtual TestingProfile* CreateProfile();
 
   // Returns a vector of testing factories to be used when creating the profile.
@@ -167,16 +169,16 @@ class BrowserWithTestWindowTest : public testing::Test {
   // method is overridden.
   virtual TestingProfile::TestingFactories GetTestingFactories();
 
-  // Creates the BrowserWindow used by this test. The caller owns the return
-  // value. Can return NULL to use the default window created by Browser.
-  virtual BrowserWindow* CreateBrowserWindow();
+  // Creates the BrowserWindow used by this test. Can return NULL to use the
+  // default window created by Browser.
+  virtual std::unique_ptr<BrowserWindow> CreateBrowserWindow();
 
   // Creates the browser given |profile|, |browser_type|, |hosted_app|, and
-  // |browser_window|. The caller owns the return value.
-  virtual Browser* CreateBrowser(Profile* profile,
-                                 Browser::Type browser_type,
-                                 bool hosted_app,
-                                 BrowserWindow* browser_window);
+  // |browser_window|.
+  virtual std::unique_ptr<Browser> CreateBrowser(Profile* profile,
+                                                 Browser::Type browser_type,
+                                                 bool hosted_app,
+                                                 BrowserWindow* browser_window);
 
 #if defined(TOOLKIT_VIEWS)
   views::TestViewsDelegate* test_views_delegate() {
@@ -216,7 +218,6 @@ class BrowserWithTestWindowTest : public testing::Test {
 
 #if defined(OS_CHROMEOS)
   ash::AshTestHelper ash_test_helper_;
-  std::unique_ptr<views::MusClient> mus_client_;
 #elif defined(TOOLKIT_VIEWS)
   std::unique_ptr<views::ScopedViewsTestHelper> views_test_helper_;
 #endif

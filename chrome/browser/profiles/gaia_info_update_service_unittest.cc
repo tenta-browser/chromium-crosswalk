@@ -82,7 +82,7 @@ class GAIAInfoUpdateServiceTestBase : public ProfileInfoCacheTest {
 
     identity_test_env_adaptor_ =
         std::make_unique<IdentityTestEnvironmentProfileAdaptor>(profile());
-  };
+  }
 
   void TearDown() override {
     if (downloader_)
@@ -361,7 +361,7 @@ TEST_F(GAIAInfoUpdateServiceTest, LogOut) {
   ProfileAttributesEntry* entry = storage()->GetAllProfilesAttributes().front();
   entry->SetGAIAName(gaia_name);
   gfx::Image gaia_picture = gfx::test::CreateImage(256, 256);
-  entry->SetGAIAPicture(&gaia_picture);
+  entry->SetGAIAPicture(gaia_picture);
 
   // Set a fake picture URL.
   profile()->GetPrefs()->SetString(prefs::kProfileGAIAInfoPictureURL,
@@ -392,7 +392,7 @@ TEST_F(GAIAInfoUpdateServiceMiscTest, ClearGaiaInfoOnStartup) {
   entry->SetGAIAName(base::UTF8ToUTF16("foo"));
   entry->SetGAIAGivenName(base::UTF8ToUTF16("Pat Foo"));
   gfx::Image gaia_picture = gfx::test::CreateImage(256, 256);
-  entry->SetGAIAPicture(&gaia_picture);
+  entry->SetGAIAPicture(gaia_picture);
 
   GetCache()->AddObserver(this);
 

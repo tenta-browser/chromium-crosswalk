@@ -28,12 +28,7 @@ constexpr base::TimeDelta kDefaultTimeout = base::TimeDelta::FromSeconds(5);
 // Maximum cache expiry time. Even if a CORS-preflight response contains
 // Access-Control-Max-Age header that specifies a longer expiry time, this
 // maximum time is applied.
-//
-// Note: Should be short enough to minimize the risk of using a poisoned cache
-// after switching to a secure network.
-// TODO(toyoshim): Consider to invalidate all entries when network configuration
-// is changed. See also discussion at https://crbug.com/131368.
-constexpr base::TimeDelta kMaxTimeout = base::TimeDelta::FromSeconds(600);
+constexpr base::TimeDelta kMaxTimeout = base::TimeDelta::FromHours(2);
 
 // Holds TickClock instance to overwrite TimeTicks::Now() for testing.
 const base::TickClock* tick_clock_for_testing = nullptr;
@@ -130,6 +125,15 @@ base::Optional<CorsErrorStatus> PreflightResult::EnsureAllowedCrossOriginMethod(
                          method);
 }
 
+size_t PreflightResult::EstimateMemoryPressureInBytes() const {
+  size_t bytes = 0;
+  for (const auto& method : methods_)
+    bytes += method.size();
+  for (const auto& header : headers_)
+    bytes += header.size();
+  return bytes;
+}
+
 base::Optional<CorsErrorStatus>
 PreflightResult::EnsureAllowedCrossOriginHeaders(
     const net::HttpRequestHeaders& headers,
@@ -153,14 +157,15 @@ PreflightResult::EnsureAllowedCrossOriginHeaders(
   return base::nullopt;
 }
 
+bool PreflightResult::IsExpired() const {
+  return absolute_expiry_time_ <= Now();
+}
+
 bool PreflightResult::EnsureAllowedRequest(
     mojom::FetchCredentialsMode credentials_mode,
     const std::string& method,
     const net::HttpRequestHeaders& headers,
     bool is_revalidating) const {
-  if (absolute_expiry_time_ <= Now())
-    return false;
-
   if (!credentials_ &&
       credentials_mode == mojom::FetchCredentialsMode::kInclude) {
     return false;

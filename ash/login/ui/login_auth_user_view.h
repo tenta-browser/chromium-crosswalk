@@ -12,12 +12,13 @@
 #include "ash/login/ui/login_password_view.h"
 #include "ash/login/ui/login_user_view.h"
 #include "ash/login/ui/non_accessible_view.h"
-#include "ash/public/interfaces/user_info.mojom.h"
+#include "ash/public/cpp/login_types.h"
+#include "ash/public/cpp/session/user_info.h"
 #include "base/memory/weak_ptr.h"
 #include "base/optional.h"
 #include "base/scoped_observer.h"
 #include "base/time/time.h"
-#include "chromeos/dbus/power_manager_client.h"
+#include "chromeos/dbus/power/power_manager_client.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/view.h"
 
@@ -97,8 +98,7 @@ class ASH_EXPORT LoginAuthUserView
                                     // message to user.
   };
 
-  LoginAuthUserView(const mojom::LoginUserInfoPtr& user,
-                    const Callbacks& callbacks);
+  LoginAuthUserView(const LoginUserInfo& user, const Callbacks& callbacks);
   ~LoginAuthUserView() override;
 
   // Set the displayed set of auth methods. |auth_methods| contains or-ed
@@ -108,7 +108,7 @@ class ASH_EXPORT LoginAuthUserView
   AuthMethods auth_methods() const { return auth_methods_; }
 
   // Add an easy unlock icon.
-  void SetEasyUnlockIcon(mojom::EasyUnlockIconId id,
+  void SetEasyUnlockIcon(EasyUnlockIconId id,
                          const base::string16& accessibility_label);
 
   // Captures any metadata about the current view state that will be used for
@@ -119,19 +119,19 @@ class ASH_EXPORT LoginAuthUserView
   void ApplyAnimationPostLayout();
 
   // Update the displayed name, icon, etc to that of |user|.
-  void UpdateForUser(const mojom::LoginUserInfoPtr& user);
+  void UpdateForUser(const LoginUserInfo& user);
 
   // Update the current fingerprint state.
-  void SetFingerprintState(mojom::FingerprintState state);
+  void SetFingerprintState(FingerprintState state);
 
   // Called to show a fingerprint authentication attempt result.
   void NotifyFingerprintAuthResult(bool success);
 
-  // Set the time when auth will be reenabled. It will be included in the
-  // message shown to user when auth method is |AUTH_DISABLED|.
-  void SetAuthReenabledTime(const base::Time& auth_reenabled_time);
+  // Set the parameters needed to render the message that is shown to user when
+  // auth method is |AUTH_DISABLED|.
+  void SetAuthDisabledMessage(const AuthDisabledData& auth_disabled_data);
 
-  const mojom::LoginUserInfoPtr& current_user() const;
+  const LoginUserInfo& current_user() const;
 
   LoginPasswordView* password_view() { return password_view_; }
   LoginUserView* user_view() { return user_view_; }

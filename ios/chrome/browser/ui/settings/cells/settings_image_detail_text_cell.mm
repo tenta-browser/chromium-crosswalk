@@ -57,7 +57,7 @@
   _detailTextLabel = [[UILabel alloc] init];
   _detailTextLabel.numberOfLines = 0;
   _detailTextLabel.font =
-      [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+      [UIFont preferredFontForTextStyle:kTableViewSublabelFontStyle];
   _detailTextLabel.adjustsFontForContentSizeCategory = YES;
   _detailTextLabel.textColor =
       UIColorFromRGB(kTableViewSecondaryLabelLightGrayTextColor);
@@ -95,18 +95,20 @@
         constraintEqualToAnchor:contentView.centerYAnchor],
     [_imageView.topAnchor
         constraintGreaterThanOrEqualToAnchor:contentView.topAnchor
-                                    constant:kTableViewLargeVerticalSpacing],
+                                    constant:kTableViewVerticalSpacing],
     [contentView.bottomAnchor
         constraintGreaterThanOrEqualToAnchor:_imageView.bottomAnchor
-                                    constant:kTableViewLargeVerticalSpacing],
+                                    constant:kTableViewVerticalSpacing],
     [textStackView.centerYAnchor
         constraintEqualToAnchor:contentView.centerYAnchor],
     [textStackView.topAnchor
         constraintGreaterThanOrEqualToAnchor:contentView.topAnchor
-                                    constant:kTableViewLargeVerticalSpacing],
+                                    constant:
+                                        kTableViewTwoLabelsCellVerticalSpacing],
     [contentView.bottomAnchor
         constraintGreaterThanOrEqualToAnchor:textStackView.bottomAnchor
-                                    constant:kTableViewLargeVerticalSpacing],
+                                    constant:
+                                        kTableViewTwoLabelsCellVerticalSpacing],
   ]];
 }
 

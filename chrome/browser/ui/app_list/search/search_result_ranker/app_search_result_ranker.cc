@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/app_list/search/search_result_ranker/app_search_result_ranker.h"
 
 #include "ash/public/cpp/app_list/app_list_features.h"
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/files/important_file_writer.h"
 #include "base/task/post_task.h"
@@ -52,7 +53,7 @@ void SaveToDiskOnWorkerThread(const base::FilePath& predictor_filename,
   bool write_result;
   {
     base::ScopedBlockingCall scoped_blocking_call(
-        base::BlockingType::MAY_BLOCK);
+        FROM_HERE, base::BlockingType::MAY_BLOCK);
     write_result = base::ImportantFileWriter::WriteFileAtomically(
         predictor_filename, proto_str, "AppSearchResultRanker");
   }
@@ -65,7 +66,8 @@ void SaveToDiskOnWorkerThread(const base::FilePath& predictor_filename,
 std::unique_ptr<AppLaunchPredictor> LoadPredictorFromDiskOnWorkerThread(
     const base::FilePath& predictor_filename,
     const std::string predictor_name) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   // Loads proto string from local disk.
   std::string proto_str;
@@ -92,9 +94,13 @@ AppSearchResultRanker::AppSearchResultRanker(const base::FilePath& profile_path,
     : predictor_filename_(
           profile_path.AppendASCII(kAppLaunchPredictorFilename)),
       weak_factory_(this) {
-  if (!app_list_features::IsAppSearchResultRankerEnabled())
+  if (!app_list_features::IsZeroStateAppsRankerEnabled()) {
+    LOG(ERROR) << "AppSearchResultRanker: ZeroStateAppsRanker is not enabled.";
     return;
-
+  }
+  // TODO(charleszhao): remove these logs once the test review is done.
+  LOG(ERROR) << "AppSearchResultRanker::AppSearchResultRankerPredictorName "
+             << app_list_features::AppSearchResultRankerPredictorName();
   predictor_ =
       CreatePredictor(app_list_features::AppSearchResultRankerPredictorName());
 
@@ -154,6 +160,8 @@ void AppSearchResultRanker::OnLoadFromDiskComplete(
     predictor_.swap(predictor);
   }
   load_from_disk_completed_ = true;
+  LOG(ERROR) << "AppSearchResultRanker::OnLoadFromDiskComplete "
+             << predictor_->GetPredictorName();
 }
 
 }  // namespace app_list

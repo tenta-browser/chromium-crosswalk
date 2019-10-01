@@ -48,6 +48,10 @@ LayoutUnit SnapEnd(float value, TextDirection direction) {
                           : LayoutUnit::FromFloatFloor(value);
 }
 
+inline bool IsBreakableSpace(UChar ch) {
+  return LazyLineBreakIterator::IsBreakableSpace(ch);
+}
+
 bool IsAllSpaces(const String& text, unsigned start, unsigned end) {
   return StringView(text, start, end - start)
       .IsAllSpecialCharacters<LazyLineBreakIterator::IsBreakableSpace>();
@@ -59,6 +63,15 @@ bool ShouldHyphenate(const String& text, unsigned start, unsigned end) {
   if (IsAllSpaces(text, end, text.length()))
     return IsAllSpaces(text, 0, start);
   return true;
+}
+
+inline void CheckBreakOffset(unsigned offset, unsigned start, unsigned end) {
+  // It is critical to move the offset forward, or NGLineBreaker may keep adding
+  // NGInlineItemResult until all the memory is consumed.
+  CHECK_GT(offset, start);
+  // The offset must be within the given range, or NGLineBreaker will fail to
+  // sync item with offset.
+  CHECK_LE(offset, end);
 }
 
 }  // namespace
@@ -255,7 +268,7 @@ scoped_refptr<const ShapeResultView> ShapingLineBreaker::ShapeLine(
       return ShapeToEnd(start, first_safe, range_start, range_end);
     }
   }
-  DCHECK_GT(break_opportunity.offset, start);
+  CheckBreakOffset(break_opportunity.offset, start, range_end);
 
   // If the start offset is not at a safe-to-break boundary the content between
   // the start and the next safe-to-break boundary needs to be reshaped and the
@@ -265,6 +278,7 @@ scoped_refptr<const ShapeResultView> ShapingLineBreaker::ShapeLine(
     if (first_safe >= break_opportunity.offset) {
       // There is no safe-to-break, reshape the whole range.
       result_out->break_offset = break_opportunity.offset;
+      CheckBreakOffset(result_out->break_offset, start, range_end);
       return ShapeResultView::Create(
           Shape(start, break_opportunity.offset).get());
     }
@@ -281,7 +295,12 @@ scoped_refptr<const ShapeResultView> ShapingLineBreaker::ShapeLine(
 
   scoped_refptr<const ShapeResult> line_end_result;
   unsigned last_safe = break_opportunity.offset;
-  if (break_opportunity.offset > start) {
+  bool reshape_line_end = true;
+  if (options & kDontReshapeEndIfAtSpace) {
+    if (IsBreakableSpace(text[break_opportunity.offset]))
+      reshape_line_end = false;
+  }
+  if (reshape_line_end) {
     // If the previous valid break opportunity is not at a safe-to-break
     // boundary reshape between the safe-to-break offset and the valid break
     // offset. If the resulting width exceeds the available space the
@@ -321,10 +340,20 @@ scoped_refptr<const ShapeResultView> ShapingLineBreaker::ShapeLine(
       // because none can fit. The one after candidate_break is better for
       // ligatures, but the one before is better for kernings.
       break_opportunity = PreviousBreakOpportunity(candidate_break, start);
+      if (break_opportunity.offset <= start) {
+        break_opportunity = NextBreakOpportunity(
+            std::max(candidate_break, start + 1), start, range_end);
+        if (break_opportunity.offset >= range_end) {
+          result_out->break_offset = range_end;
+          return ShapeToEnd(start, first_safe, range_start, range_end);
+        }
+      }
       // Loop once more to compute last_safe for the new break opportunity.
       is_overflow = true;
     }
   }
+  // It is critical to move forward, or callers may end up in an infinite loop.
+  CheckBreakOffset(break_opportunity.offset, start, range_end);
   DCHECK_GE(break_opportunity.offset, last_safe);
   DCHECK_EQ(break_opportunity.offset - start,
             (line_start_result ? line_start_result->NumCharacters() : 0) +
@@ -343,9 +372,6 @@ scoped_refptr<const ShapeResultView> ShapingLineBreaker::ShapeLine(
   if (line_end_result)
     segments[count++] = {line_end_result.get(), last_safe, max_length};
   auto line_result = ShapeResultView::Create(&segments[0], count);
-
-  DCHECK_GT(break_opportunity.offset, start);
-  DCHECK_LE(break_opportunity.offset, range_end);
   DCHECK_EQ(break_opportunity.offset - start, line_result->NumCharacters());
 
   result_out->break_offset = break_opportunity.offset;

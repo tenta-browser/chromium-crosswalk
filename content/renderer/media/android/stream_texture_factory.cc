@@ -4,6 +4,7 @@
 
 #include "content/renderer/media/android/stream_texture_factory.h"
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
 #include "gpu/ipc/client/command_buffer_proxy_impl.h"
@@ -38,7 +39,7 @@ void StreamTextureProxy::ClearReceivedFrameCB() {
 }
 
 void StreamTextureProxy::BindToTaskRunner(
-    const base::Closure& received_frame_cb,
+    const base::RepeatingClosure& received_frame_cb,
     scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
   DCHECK(task_runner.get());
 
@@ -55,8 +56,9 @@ void StreamTextureProxy::BindToTaskRunner(
   }
   // Unretained is safe here only because the object is deleted on |loop_|
   // thread.
-  task_runner->PostTask(FROM_HERE, base::Bind(&StreamTextureProxy::BindOnThread,
-                                              base::Unretained(this)));
+  task_runner->PostTask(FROM_HERE,
+                        base::BindOnce(&StreamTextureProxy::BindOnThread,
+                                       base::Unretained(this)));
 }
 
 void StreamTextureProxy::BindOnThread() {

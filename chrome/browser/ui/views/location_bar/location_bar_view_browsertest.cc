@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 
+#include "base/bind.h"
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/path_service.h"
@@ -17,12 +18,13 @@
 #include "chrome/browser/ui/views/frame/toolbar_button_provider.h"
 #include "chrome/browser/ui/views/location_bar/zoom_bubble_view.h"
 #include "chrome/browser/ui/views/omnibox/omnibox_view_views.h"
-#include "chrome/browser/ui/views/page_action/page_action_icon_container_view.h"
+#include "chrome/browser/ui/views/page_action/omnibox_page_action_icon_container_view.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/omnibox/browser/location_bar_model_impl.h"
 #include "components/omnibox/browser/omnibox_field_trial.h"
+#include "components/omnibox/common/omnibox_features.h"
 #include "components/security_state/core/security_state.h"
 #include "components/zoom/zoom_controller.h"
 #include "content/public/browser/browser_thread.h"
@@ -48,7 +50,7 @@ class LocationBarViewBrowserTest : public InProcessBrowserTest {
   PageActionIconView* GetZoomView() {
     return BrowserView::GetBrowserViewForBrowser(browser())
         ->toolbar_button_provider()
-        ->GetPageActionIconContainerView()
+        ->GetOmniboxPageActionIconContainerView()
         ->GetPageActionIconView(PageActionIconType::kZoom);
   }
 
@@ -66,38 +68,38 @@ IN_PROC_BROWSER_TEST_F(LocationBarViewBrowserTest, LocationBarDecoration) {
   PageActionIconView* zoom_view = GetZoomView();
 
   ASSERT_TRUE(zoom_view);
-  EXPECT_FALSE(zoom_view->visible());
+  EXPECT_FALSE(zoom_view->GetVisible());
   EXPECT_FALSE(ZoomBubbleView::GetZoomBubble());
 
   // Altering zoom should display a bubble. Note ZoomBubbleView closes
   // asynchronously, so precede checks with a run loop flush.
   zoom_controller->SetZoomLevel(content::ZoomFactorToZoomLevel(1.5));
   base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(zoom_view->visible());
+  EXPECT_TRUE(zoom_view->GetVisible());
   EXPECT_TRUE(ZoomBubbleView::GetZoomBubble());
 
   // Close the bubble at other than 100% zoom. Icon should remain visible.
   ZoomBubbleView::CloseCurrentBubble();
   base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(zoom_view->visible());
+  EXPECT_TRUE(zoom_view->GetVisible());
   EXPECT_FALSE(ZoomBubbleView::GetZoomBubble());
 
   // Show the bubble again.
   zoom_controller->SetZoomLevel(content::ZoomFactorToZoomLevel(2.0));
   base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(zoom_view->visible());
+  EXPECT_TRUE(zoom_view->GetVisible());
   EXPECT_TRUE(ZoomBubbleView::GetZoomBubble());
 
   // Remains visible at 100% until the bubble is closed.
   zoom_controller->SetZoomLevel(content::ZoomFactorToZoomLevel(1.0));
   base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(zoom_view->visible());
+  EXPECT_TRUE(zoom_view->GetVisible());
   EXPECT_TRUE(ZoomBubbleView::GetZoomBubble());
 
   // Closing at 100% hides the icon.
   ZoomBubbleView::CloseCurrentBubble();
   base::RunLoop().RunUntilIdle();
-  EXPECT_FALSE(zoom_view->visible());
+  EXPECT_FALSE(zoom_view->GetVisible());
   EXPECT_FALSE(ZoomBubbleView::GetZoomBubble());
 }
 
@@ -110,11 +112,11 @@ IN_PROC_BROWSER_TEST_F(LocationBarViewBrowserTest, BubblesCloseOnHide) {
   PageActionIconView* zoom_view = GetZoomView();
 
   ASSERT_TRUE(zoom_view);
-  EXPECT_FALSE(zoom_view->visible());
+  EXPECT_FALSE(zoom_view->GetVisible());
 
   zoom_controller->SetZoomLevel(content::ZoomFactorToZoomLevel(1.5));
   base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(zoom_view->visible());
+  EXPECT_TRUE(zoom_view->GetVisible());
   EXPECT_TRUE(ZoomBubbleView::GetZoomBubble());
 
   chrome::NewTab(browser());
@@ -141,8 +143,7 @@ IN_PROC_BROWSER_TEST_F(TouchLocationBarViewBrowserTest, OmniboxViewViewsSize) {
   // (currently, the LocationIconView is *always* added as a leading decoration,
   // so it's not possible to test the leading side).
   views::View* omnibox_view_views = GetLocationBarView()->omnibox_view();
-  for (int i = 0; i < GetLocationBarView()->child_count(); ++i) {
-    views::View* child = GetLocationBarView()->child_at(i);
+  for (views::View* child : GetLocationBarView()->children()) {
     if (child != omnibox_view_views)
       child->SetVisible(false);
   }
@@ -167,14 +168,13 @@ IN_PROC_BROWSER_TEST_F(TouchLocationBarViewBrowserTest,
   OmniboxViewViews* omnibox_view_views = GetLocationBarView()->omnibox_view();
   views::Label* ime_inline_autocomplete_view =
       GetLocationBarView()->ime_inline_autocomplete_view_;
-  for (int i = 0; i < GetLocationBarView()->child_count(); ++i) {
-    views::View* child = GetLocationBarView()->child_at(i);
+  for (views::View* child : GetLocationBarView()->children()) {
     if (child != omnibox_view_views)
       child->SetVisible(false);
   }
   omnibox_view_views->SetText(base::UTF8ToUTF16("谷"));
   GetLocationBarView()->SetImeInlineAutocompletion(base::UTF8ToUTF16("歌"));
-  EXPECT_TRUE(ime_inline_autocomplete_view->visible());
+  EXPECT_TRUE(ime_inline_autocomplete_view->GetVisible());
 
   GetLocationBarView()->Layout();
 
@@ -298,7 +298,6 @@ IN_PROC_BROWSER_TEST_F(SecurityIndicatorTest, CheckIndicatorText) {
             {kBothToLockVariation, kMockNonsecureURL, 0, security_state::NONE,
              false, kEmptyString}};
 
-  security_state::SecurityInfo security_info;
   content::WebContents* tab =
       browser()->tab_strip_model()->GetActiveWebContents();
   ASSERT_TRUE(tab);
@@ -319,8 +318,7 @@ IN_PROC_BROWSER_TEST_F(SecurityIndicatorTest, CheckIndicatorText) {
     }
     SetUpInterceptor(c.cert_status);
     ui_test_utils::NavigateToURL(browser(), c.url);
-    helper->GetSecurityInfo(&security_info);
-    EXPECT_EQ(c.security_level, security_info.security_level);
+    EXPECT_EQ(c.security_level, helper->GetSecurityLevel());
     EXPECT_EQ(c.should_show_text,
               location_bar_view->location_icon_view()->ShouldShowLabel());
     EXPECT_EQ(c.indicator_text,

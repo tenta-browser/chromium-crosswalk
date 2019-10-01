@@ -47,10 +47,7 @@ MetadataParser.prototype.vlog = function(var_args) {
  * @return {Object} Metadata object with the minimal set of properties.
  */
 MetadataParser.prototype.createDefaultMetadata = function() {
-  return {
-    type: this.type,
-    mimeType: this.mimeType
-  };
+  return {type: this.type, mimeType: this.mimeType};
 };
 
 /**
@@ -61,14 +58,16 @@ MetadataParser.prototype.createDefaultMetadata = function() {
  * @param {function(File, ByteReader)} callback Callback to invoke.
  * @param {function(string)} onError Error handler.
  */
-MetadataParser.readFileBytes = function(file, begin, end, callback, onError) {
-  var fileReader = new FileReader();
-  fileReader.onerror = function(event) {
+MetadataParser.readFileBytes = (file, begin, end, callback, onError) => {
+  const fileReader = new FileReader();
+  fileReader.onerror = event => {
     onError(event.type);
   };
-  fileReader.onloadend = function() {
-    callback(file, new ByteReader(
-        /** @type {ArrayBuffer} */ (fileReader.result)));
+  fileReader.onloadend = () => {
+    callback(
+        file,
+        new ByteReader(
+            /** @type {ArrayBuffer} */ (fileReader.result)));
   };
   fileReader.readAsArrayBuffer(file.slice(begin, end));
 };
@@ -87,4 +86,6 @@ function ImageParser(parent, type, urlFilter) {
   this.mimeType = 'image/' + this.type;
 }
 
-ImageParser.prototype = {__proto__: MetadataParser.prototype};
+ImageParser.prototype = {
+  __proto__: MetadataParser.prototype
+};

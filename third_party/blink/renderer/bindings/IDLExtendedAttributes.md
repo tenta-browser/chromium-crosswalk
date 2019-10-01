@@ -112,19 +112,17 @@ The remaining extended attribute, `[ImplementedAs]`, is mandatory. A partial
 interface must have `[ImplementedAs]` extended attribute to specify a static-only C++ class.
 This is stored internally via `[PartialInterfaceImplementedAs]` (see below).
 
-### implements
+### interface mixins
 
-Extended attributes on members of an implemented interface work as normal. However, only the following 5 extended attributes can be used on the implemented interface itself; otherwise extended attributes should appear on the main (implementing) interface definition:
+Extended attributes on members of an interface mixin work as normal. However, only the following 4 extended attributes can be used on the interface mixin itself; otherwise extended attributes should appear on the main (including) interface definition:
 
-* `[LegacyTreatAsPartialInterface]` is part of an ongoing change, as implemented interfaces used to be treated internally as partial interfaces.
+* `[LegacyTreatAsPartialInterface]` is part of an ongoing change, as interface mixins used to be treated internally as partial interfaces.
 
-* `[ImplementedAs]` is only necessary for these legacy files: otherwise the class (C++) implementing (IDL) implemented interfaces does not need to be specified, as this is handled in Blink C++.
+* `[ImplementedAs]` is only necessary for these legacy files: otherwise the class (C++) implementing (IDL) interface mixins does not need to be specified, as this is handled in Blink C++.
 
 * `[OriginTrialEnabled]` behaves as for partial interfaces.
 
 * `[RuntimeEnabled]` behaves as for partial interfaces.
-
-* `[NoInterfaceObject]` is _always_ specified on implemented interfaces.
 
 ### Inheritance
 
@@ -142,10 +140,10 @@ Undocumented: `[TreatNonObjectAsNull]`
 
 ### [CEReactions] _(m, a)_
 
-Standard: [CEReactions](https://html.spec.whatwg.org/multipage/scripting.html#cereactions)
+Standard: [CEReactions](https://html.spec.whatwg.org/C/#cereactions)
 
 Summary: `[CEReactions]` indicates that
-[custom element reactions](https://html.spec.whatwg.org/multipage/scripting.html#concept-custom-element-reaction)
+[custom element reactions](https://html.spec.whatwg.org/C/#concept-custom-element-reaction)
 are triggered for this method or attribute.
 
 Usage: `[CEReactions]` takes no arguments.
@@ -304,7 +302,7 @@ The identifier argument or identifier list argument the `[Global]` extended attr
 
 ### [HTMLConstructor]
 
-Standard: [HTMLConstructor](https://html.spec.whatwg.org/multipage/dom.html#html-element-constructors)
+Standard: [HTMLConstructor](https://html.spec.whatwg.org/C/#html-element-constructors)
 
 Summary: HTML Elements have special constructor behavior. Interface object of given interface with the `[HTMLConstructor]` attribute will have specific behavior when called.
 
@@ -484,7 +482,7 @@ interface Window {
 
 ### [Serializable] _(i)_
 
-Standard: [Serializable](https://html.spec.whatwg.org/multipage/structured-data.html#serializable)
+Standard: [Serializable](https://html.spec.whatwg.org/C/#serializable)
 
 Summary: Serializable objects support being serialized, and later deserialized, for persistence in storage APIs or for passing with `postMessage()`.
 
@@ -498,7 +496,7 @@ This attribute has no effect on code generation and should simply be used in Bli
 
 ### [Transferable] _(i)_
 
-Standard: [Transferable](https://html.spec.whatwg.org/multipage/structured-data.html#transferable)
+Standard: [Transferable](https://html.spec.whatwg.org/C/#transferable)
 
 Summary: Transferable objects support being transferred across Realms with `postMessage()`.
 
@@ -616,9 +614,7 @@ Summary: `[CallWith]` indicates that the bindings code calls the Blink implement
 
 Each value changes the signature of the Blink methods by adding an additional parameter to the head of the parameter list, such as `ScriptState*` for `[CallWith=ScriptState]`.
 
-There are also three rarely used values: `CurrentWindow`, `EnteredWindow`, `ThisValue`.
-
-`[SetterCallWith]` applies to attributes, and only affects the signature of the setter; this is only used in Location.idl, with `CurrentWindow&EnteredWindow`.
+`[SetterCallWith]` applies to attributes, and only affects the signature of the setter.
 
 #### [CallWith=ScriptState] _(m, a*)_
 
@@ -673,10 +669,6 @@ String Example::func(ExecutionContext* context, bool a, bool b);
 ```
 
 _(rare CallWith values)_
-
-#### [CallWith=CurrentWindow&EnteredWindow] _(m, a)_
-
-`EnteredWindow` is the `Window` object that corresponds to the responsible document of the entry settings object.
 
 #### [CallWith=ThisValue] _(m)_
 
@@ -1499,7 +1491,7 @@ These extended attributes are _temporary_ and are only in use while some change 
 
 ### [LegacyTreatAsPartialInterface] _(i)_
 
-Summary: `[LegacyTreatAsPartialInterface]` on an interface that is the target of an `implements` statement means that the interface is treated as a partial interface, meaning members are accessed via static member functions in a separate class, rather than as instance methods on the instance object `*impl` or class methods on the C++ class implementing the (main) interface. This is legacy from original implementation of `implements`, and is being removed ([Bug 360435](https://crbug.com/360435), nbarth@).
+Summary: `[LegacyTreatAsPartialInterface]` on an interface mixin means that the mixin is treated as a partial interface, meaning members are accessed via static member functions in a separate class, rather than as instance methods on the instance object `*impl` or class methods on the C++ class implementing the (main) interface. This is legacy from original implementation of mixins, and is being removed ([Bug 360435](https://crbug.com/360435), nbarth@).
 
 
 ### [CachedAccessor] _(a)_
@@ -1640,10 +1632,8 @@ Added to members of a partial interface definition (and implemented interfaces w
 ***
 
 * `[ImmutablePrototype]`
-* `[LegacyInterfaceTypeChecking]`
 * `[LogAllWorlds]`
 * `[PerWorldBindings]` :: interacts with `[LogActivity]`
-* `[WebAgentAPI]`
 
 -------------
 
@@ -1662,4 +1652,4 @@ Redistribution and use in source and binary forms, with or without modification,
 THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS “AS IS” AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ***
 
-[CrossOriginProperties]: https://html.spec.whatwg.org/multipage/browsers.html#crossoriginproperties-(-o-)
+[CrossOriginProperties]: https://html.spec.whatwg.org/C/#crossoriginproperties-(-o-)

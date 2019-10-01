@@ -32,13 +32,27 @@ namespace gl {
 class ProgressReporter;
 }
 
+namespace media {
+class SharedImageVideo;
+}
+
 namespace gpu {
 class DecoderContext;
+class ExternalVkImageBacking;
+class ExternalVkImageGlRepresentation;
 class ServiceDiscardableManager;
 class SharedImageBackingGLTexture;
 class SharedImageBackingFactoryGLTexture;
 class SharedImageBackingAHB;
 class SharedImageRepresentationGLTexture;
+class SharedImageRepresentationGLTextureAHB;
+class SharedImageRepresentationSkiaGLAHB;
+class SharedImageBackingIOSurface;
+class SharedImageRepresentationGLTextureIOSurface;
+class SharedImageRepresentationSkiaIOSurface;
+class SharedImageBackingDXGISwapChain;
+class StreamTexture;
+class SwapChainFactoryDXGI;
 
 namespace gles2 {
 class GLStreamTextureImage;
@@ -72,6 +86,12 @@ class GPU_GLES2_EXPORT TexturePassthrough final
   void SetLevelImage(GLenum target, GLint level, gl::GLImage* image);
   gl::GLImage* GetLevelImage(GLenum target, GLint level) const;
 
+  void SetStreamLevelImage(GLenum target,
+                           GLint level,
+                           GLStreamTextureImage* stream_texture_image,
+                           GLuint service_id);
+  GLStreamTextureImage* GetStreamLevelImage(GLenum target, GLint level) const;
+
   // Return true if and only if the decoder should BindTexImage / CopyTexImage
   // us before sampling.
   bool is_bind_pending() const { return is_bind_pending_; }
@@ -86,7 +106,17 @@ class GPU_GLES2_EXPORT TexturePassthrough final
   ~TexturePassthrough() override;
 
  private:
+  bool LevelInfoExists(GLenum target, GLint level, size_t* out_face_idx) const;
+
+  void SetLevelImageInternal(GLenum target,
+                             GLint level,
+                             gl::GLImage* image,
+                             GLStreamTextureImage* stream_texture_image,
+                             GLuint service_id);
+
   friend class base::RefCounted<TexturePassthrough>;
+
+  GLuint owned_service_id_ = 0;
 
   bool have_context_;
   bool is_bind_pending_ = false;
@@ -94,7 +124,16 @@ class GPU_GLES2_EXPORT TexturePassthrough final
   size_t estimated_size_ = 0;
 
   // Bound images divided into faces and then levels
-  std::vector<std::vector<scoped_refptr<gl::GLImage>>> level_images_;
+  struct LevelInfo {
+    LevelInfo();
+    LevelInfo(const LevelInfo& rhs);
+    ~LevelInfo();
+
+    scoped_refptr<gl::GLImage> image;
+    scoped_refptr<GLStreamTextureImage> stream_texture_image;
+  };
+
+  std::vector<std::vector<LevelInfo>> level_images_;
 
   DISALLOW_COPY_AND_ASSIGN(TexturePassthrough);
 };
@@ -253,7 +292,9 @@ class GPU_GLES2_EXPORT Texture final : public TextureBase {
   // Set the ImageState for the image bound to the given level.
   void SetLevelImageState(GLenum target, GLint level, ImageState state);
 
-  bool CompatibleWithSamplerUniformType(GLenum type) const;
+  bool CompatibleWithSamplerUniformType(
+      GLenum type,
+      const SamplerState& sampler_state) const;
 
   // Get the image associated with a particular level. Returns NULL if level
   // does not exist.
@@ -364,9 +405,21 @@ class GPU_GLES2_EXPORT Texture final : public TextureBase {
  private:
   friend class MailboxManagerSync;
   friend class MailboxManagerTest;
+  friend class gpu::ExternalVkImageBacking;
+  friend class gpu::ExternalVkImageGlRepresentation;
+  friend class media::SharedImageVideo;
   friend class gpu::SharedImageBackingGLTexture;
   friend class gpu::SharedImageBackingFactoryGLTexture;
   friend class gpu::SharedImageBackingAHB;
+  friend class gpu::SharedImageRepresentationGLTextureAHB;
+  friend class gpu::SharedImageRepresentationSkiaGLAHB;
+  friend class gpu::SharedImageBackingIOSurface;
+  friend class gpu::SharedImageBackingDXGISwapChain;
+  friend class gpu::SwapChainFactoryDXGI;
+  friend class gpu::SharedImageRepresentationGLTextureIOSurface;
+  friend class gpu::SharedImageRepresentationSkiaIOSurface;
+  friend class gpu::StreamTexture;
+  friend class AbstractTextureImplOnSharedContext;
   friend class TextureDefinition;
   friend class TextureManager;
   friend class TextureRef;
@@ -585,6 +638,11 @@ class GPU_GLES2_EXPORT Texture final : public TextureBase {
 
   void UpdateBaseLevel(GLint base_level, const FeatureInfo* feature_info);
   void UpdateMaxLevel(GLint max_level);
+  void UpdateFaceNumMipLevels(size_t face_index,
+                              GLint width,
+                              GLint height,
+                              GLint depth);
+  void UpdateFaceNumMipLevels(size_t face_index);
   void UpdateNumMipLevels();
 
   // Increment the generation counter for all managers that have a reference to
@@ -935,15 +993,15 @@ class GPU_GLES2_EXPORT TextureManager
   bool ClearRenderableLevels(DecoderContext* decoder, TextureRef* ref);
 
   // Clear a specific level.
-  bool ClearTextureLevel(DecoderContext* decoder,
-                         TextureRef* ref,
-                         GLenum target,
-                         GLint level);
+  static bool ClearTextureLevel(DecoderContext* decoder,
+                                TextureRef* ref,
+                                GLenum target,
+                                GLint level);
 
-  bool ClearTextureLevel(DecoderContext* decoder,
-                         Texture* texture,
-                         GLenum target,
-                         GLint level);
+  static bool ClearTextureLevel(DecoderContext* decoder,
+                                Texture* texture,
+                                GLenum target,
+                                GLint level);
 
   // Creates a new texture info.
   TextureRef* CreateTexture(GLuint client_id, GLuint service_id);
@@ -1011,7 +1069,11 @@ class GPU_GLES2_EXPORT TextureManager
       case GL_SAMPLER_2D_RECT_ARB:
         return black_texture_ids_[kRectangleARB];
       default:
-        NOTREACHED();
+        // The above covers ES 2, but ES 3 has many more sampler types. Rather
+        // than create a texture for all of them, just use the 0 texture, which
+        // should always be incomplete, and rely on the driver to return black
+        // when sampling it. Hopefully ES 3 drivers are better about actually
+        // returning black when sampling an incomplete texture.
         return 0;
     }
   }
@@ -1169,7 +1231,8 @@ class GPU_GLES2_EXPORT TextureManager
       const gles2::FeatureInfo* feature_info,
       GLenum format);
   static GLenum AdjustTexInternalFormat(const gles2::FeatureInfo* feature_info,
-                                        GLenum format);
+                                        GLenum format,
+                                        GLenum type);
   static GLenum AdjustTexFormat(const gles2::FeatureInfo* feature_info,
                                 GLenum format);
 

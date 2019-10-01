@@ -40,6 +40,7 @@ class JourneyLogger {
     COMPLETION_STATUS_COMPLETED = 0,
     COMPLETION_STATUS_USER_ABORTED = 1,
     COMPLETION_STATUS_OTHER_ABORTED = 2,
+    COMPLETION_STATUS_COULD_NOT_SHOW = 3,
     COMPLETION_STATUS_MAX,
   };
 
@@ -91,6 +92,13 @@ class JourneyLogger {
     EVENT_SELECTED_CREDIT_CARD = 1 << 18,
     EVENT_SELECTED_GOOGLE = 1 << 19,
     EVENT_SELECTED_OTHER = 1 << 20,
+    // hasEnrolledInstrument was called with a result of "true" or "false",
+    // respectively. An absence of both events means hasEnrolledInstrument was
+    // not called, or the user was in incognito mode.
+    EVENT_HAS_ENROLLED_INSTRUMENT_TRUE = 1 << 21,
+    EVENT_HAS_ENROLLED_INSTRUMENT_FALSE = 1 << 22,
+    // True when a NotShownReason is set.
+    EVENT_COULD_NOT_SHOW = 1 << 23,
     EVENT_ENUM_MAX = 2097152,
   };
 
@@ -140,9 +148,13 @@ class JourneyLogger {
                                    int number,
                                    bool has_valid_suggestion);
 
-  // Records the fact that the merchant called CanMakePayment and records it's
+  // Records the fact that the merchant called CanMakePayment and records its
   // return value.
   void SetCanMakePaymentValue(bool value);
+
+  // Records the fact that the merchant called HasEnrolledInstrument and records
+  // its return value.
+  void SetHasEnrolledInstrumentValue(bool value);
 
   // Records that an event occurred.
   void SetEventOccurred(Event event);
@@ -215,6 +227,9 @@ class JourneyLogger {
   // Records the metric about the different events that happened during the
   // Payment Request.
   void RecordEventsMetric(CompletionStatus completion_status);
+
+  // Validates the recorded event sequence during the Payment Request.
+  void ValidateEventBits() const;
 
   // Returns whether this Payment Request was triggered (shown or skipped show).
   bool WasPaymentRequestTriggered();

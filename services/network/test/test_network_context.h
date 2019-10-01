@@ -54,10 +54,6 @@ class TestNetworkContext : public mojom::NetworkContext {
   void ComputeHttpCacheSize(base::Time start_time,
                             base::Time end_time,
                             ComputeHttpCacheSizeCallback callback) override {}
-  void ClearChannelIds(base::Time start_time,
-                       base::Time end_time,
-                       mojom::ClearDataFilterPtr filter,
-                       ClearChannelIdsCallback callback) override {}
   void ClearHostCache(mojom::ClearDataFilterPtr filter,
                       ClearHostCacheCallback callback) override {}
   void ClearHttpAuthCache(base::Time start_time,
@@ -82,6 +78,8 @@ class TestNetworkContext : public mojom::NetworkContext {
                    const GURL& url,
                    const base::Optional<std::string>& user_agent,
                    base::Value body) override {}
+  void QueueSignedExchangeReport(
+      mojom::SignedExchangeReportPtr report) override {}
   void CloseAllConnections(CloseAllConnectionsCallback callback) override {}
   void CloseIdleConnections(CloseIdleConnectionsCallback callback) override {}
   void SetNetworkConditions(const base::UnguessableToken& throttling_profile_id,
@@ -135,7 +133,9 @@ class TestNetworkContext : public mojom::NetworkContext {
                        int32_t process_id,
                        int32_t render_frame_id,
                        const url::Origin& origin,
-                       mojom::AuthenticationHandlerPtr auth_handler) override {}
+                       uint32_t options,
+                       mojom::AuthenticationHandlerPtr auth_handler,
+                       mojom::TrustedHeaderClientPtr header_client) override {}
   void LookUpProxyForURL(
       const GURL& url,
       ::network::mojom::ProxyLookupClientPtr proxy_lookup_client) override {}
@@ -153,7 +153,7 @@ class TestNetworkContext : public mojom::NetworkContext {
   void WriteCacheMetadata(const GURL& url,
                           net::RequestPriority priority,
                           base::Time expected_response_time,
-                          const std::vector<uint8_t>& data) override {}
+                          mojo_base::BigBuffer data) override {}
   void VerifyCertForSignedExchange(
       const scoped_refptr<net::X509Certificate>& certificate,
       const GURL& url,
@@ -182,6 +182,7 @@ class TestNetworkContext : public mojom::NetworkContext {
       const scoped_refptr<net::X509Certificate>& certificate,
       const std::string& hostname,
       const std::string& ocsp_response,
+      const std::string& sct_list,
       VerifyCertificateForTestingCallback callback) override {}
   void PreconnectSockets(uint32_t num_streams,
                          const GURL& url,
@@ -212,6 +213,8 @@ class TestNetworkContext : public mojom::NetworkContext {
   void LookupBasicAuthCredentials(
       const GURL& url,
       LookupBasicAuthCredentialsCallback callback) override {}
+  void GetOriginPolicyManager(
+      mojom::OriginPolicyManagerRequest request) override {}
 };
 
 }  // namespace network

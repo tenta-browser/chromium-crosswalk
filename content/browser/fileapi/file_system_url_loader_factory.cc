@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
@@ -27,12 +28,14 @@
 #include "content/public/common/child_process_host.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
 #include "mojo/public/cpp/system/string_data_pipe_producer.h"
+#include "net/base/completion_repeating_callback.h"
 #include "net/base/directory_listing.h"
 #include "net/base/io_buffer.h"
 #include "net/base/mime_sniffer.h"
 #include "net/base/mime_util.h"
 #include "net/http/http_byte_range.h"
 #include "net/http/http_util.h"
+#include "services/network/public/mojom/url_loader.mojom.h"
 #include "storage/browser/fileapi/file_stream_reader.h"
 #include "storage/browser/fileapi/file_system_context.h"
 #include "storage/browser/fileapi/file_system_operation_runner.h"
@@ -158,8 +161,11 @@ class FileSystemEntryURLLoader
       return;
     }
 
+    // If the requested URL is not commitable in the current process, block the
+    // request.  This prevents one origin from fetching filesystem: resources
+    // belonging to another origin, see https://crbug.com/964245.
     if (params_.render_process_host_id != ChildProcessHost::kInvalidUniqueID &&
-        !ChildProcessSecurityPolicyImpl::GetInstance()->CanRequestURL(
+        !ChildProcessSecurityPolicyImpl::GetInstance()->CanCommitURL(
             params_.render_process_host_id, request.url)) {
       DVLOG(1) << "Denied unauthorized request for "
                << request.url.possibly_invalid_spec();
@@ -296,7 +302,7 @@ class FileSystemDirectoryURLLoader : public FileSystemEntryURLLoader {
     const DirectoryEntry& entry = entries_[index];
     const FileSystemURL entry_url =
         params_.file_system_context->CreateCrackedFileSystemURL(
-            url_.origin(), url_.type(),
+            url_.origin().GetURL(), url_.type(),
             url_.path().Append(base::FilePath(entry.name)));
     DCHECK(entry_url.is_valid());
     params_.file_system_context->operation_runner()->GetMetadata(
@@ -333,8 +339,7 @@ class FileSystemDirectoryURLLoader : public FileSystemEntryURLLoader {
     options.struct_size = sizeof(MojoCreateDataPipeOptions);
     options.flags = MOJO_CREATE_DATA_PIPE_FLAG_NONE;
     options.element_num_bytes = 1;
-    options.capacity_num_bytes =
-        std::max(data_.size(), kDefaultFileSystemUrlPipeSize);
+    options.capacity_num_bytes = kDefaultFileSystemUrlPipeSize;
 
     mojo::ScopedDataPipeProducerHandle producer_handle;
     mojo::ScopedDataPipeConsumerHandle consumer_handle;
@@ -346,7 +351,7 @@ class FileSystemDirectoryURLLoader : public FileSystemEntryURLLoader {
     }
 
     network::ResourceResponseHead head;
-    head.mime_type = "text/plain";
+    head.mime_type = "text/html";
     head.charset = "utf-8";
     head.content_length = data_.size();
     head.headers = CreateHttpResponseHeaders(200);
@@ -472,7 +477,7 @@ class FileSystemFileURLLoader : public FileSystemEntryURLLoader {
     options.struct_size = sizeof(MojoCreateDataPipeOptions);
     options.flags = MOJO_CREATE_DATA_PIPE_FLAG_NONE;
     options.element_num_bytes = 1;
-    options.capacity_num_bytes = remaining_bytes_;
+    options.capacity_num_bytes = kDefaultFileSystemUrlPipeSize;
 
     mojo::ScopedDataPipeProducerHandle producer_handle;
     MojoResult rv =
@@ -490,15 +495,16 @@ class FileSystemFileURLLoader : public FileSystemEntryURLLoader {
     data_producer_ = std::make_unique<mojo::StringDataPipeProducer>(
         std::move(producer_handle));
 
-    file_data_ =
-        base::MakeRefCounted<net::IOBuffer>(kDefaultFileSystemUrlPipeSize);
+    size_t bytes_to_read = std::min(
+        static_cast<int64_t>(kDefaultFileSystemUrlPipeSize), remaining_bytes_);
+    file_data_ = base::MakeRefCounted<net::IOBuffer>(bytes_to_read);
     ReadMoreFileData();
   }
 
   void ReadMoreFileData() {
     int64_t bytes_to_read = std::min(
         static_cast<int64_t>(kDefaultFileSystemUrlPipeSize), remaining_bytes_);
-    if (!bytes_to_read) {
+    if (bytes_to_read == 0) {
       if (consumer_handle_.is_valid()) {
         // This was an empty file; make sure to call OnReceiveResponse and
         // OnStartLoadingResponseBody regardless.
@@ -508,7 +514,7 @@ class FileSystemFileURLLoader : public FileSystemEntryURLLoader {
       OnFileWritten(MOJO_RESULT_OK);
       return;
     }
-    net::CompletionCallback read_callback = base::BindRepeating(
+    net::CompletionRepeatingCallback read_callback = base::BindRepeating(
         &FileSystemFileURLLoader::DidReadMoreFileData, base::AsWeakPtr(this));
     const int rv =
         reader_->Read(file_data_.get(), bytes_to_read, read_callback);

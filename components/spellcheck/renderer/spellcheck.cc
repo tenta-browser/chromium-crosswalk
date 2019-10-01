@@ -22,7 +22,6 @@
 #include "components/spellcheck/common/spellcheck_common.h"
 #include "components/spellcheck/common/spellcheck_features.h"
 #include "components/spellcheck/common/spellcheck_result.h"
-#include "components/spellcheck/common/spellcheck_switches.h"
 #include "components/spellcheck/renderer/spellcheck_language.h"
 #include "components/spellcheck/renderer/spellcheck_provider.h"
 #include "components/spellcheck/spellcheck_buildflags.h"
@@ -119,21 +118,22 @@ std::vector<WebString> FilterReplacementSuggestions(
 
 class SpellCheck::SpellcheckRequest {
  public:
-  SpellcheckRequest(const base::string16& text,
-                    blink::WebTextCheckingCompletion* completion)
-      : text_(text), completion_(completion) {
-    DCHECK(completion);
+  SpellcheckRequest(
+      const base::string16& text,
+      std::unique_ptr<blink::WebTextCheckingCompletion> completion)
+      : text_(text), completion_(std::move(completion)) {
+    DCHECK(completion_);
   }
   ~SpellcheckRequest() {}
 
   base::string16 text() { return text_; }
-  blink::WebTextCheckingCompletion* completion() { return completion_; }
+  blink::WebTextCheckingCompletion* completion() { return completion_.get(); }
 
  private:
   base::string16 text_;  // Text to be checked in this task.
 
   // The interface to send the misspelled ranges to WebKit.
-  blink::WebTextCheckingCompletion* completion_;
+  std::unique_ptr<blink::WebTextCheckingCompletion> completion_;
 
   DISALLOW_COPY_AND_ASSIGN(SpellcheckRequest);
 };
@@ -244,11 +244,11 @@ void SpellCheck::AddSpellcheckLanguage(base::File file,
 
 bool SpellCheck::SpellCheckWord(
     const base::char16* text_begin,
-    int position_in_text,
-    int text_length,
+    size_t position_in_text,
+    size_t text_length,
     int tag,
-    int* misspelling_start,
-    int* misspelling_len,
+    size_t* misspelling_start,
+    size_t* misspelling_len,
     std::vector<base::string16>* optional_suggestions) {
   DCHECK(text_length >= position_in_text);
   DCHECK(misspelling_start && misspelling_len) << "Out vars must be given.";
@@ -260,10 +260,10 @@ bool SpellCheck::SpellCheckWord(
 
   // These are for holding misspelling or skippable word positions and lengths
   // between calls to SpellcheckLanguage::SpellCheckWord.
-  int possible_misspelling_start;
-  int possible_misspelling_len;
+  size_t possible_misspelling_start;
+  size_t possible_misspelling_len;
   // The longest sequence of text that all languages agree is skippable.
-  int agreed_skippable_len;
+  size_t agreed_skippable_len;
   // A vector of vectors containing spelling suggestions from different
   // languages.
   std::vector<std::vector<base::string16>> suggestions_list;
@@ -356,8 +356,8 @@ bool SpellCheck::SpellCheckParagraph(
   // position and length of the first misspelled word and returns false when
   // the text includes misspelled words. Therefore, we just repeat calling the
   // function until it returns true to check the whole text.
-  int misspelling_start = 0;
-  int misspelling_length = 0;
+  size_t misspelling_start = 0;
+  size_t misspelling_length = 0;
   while (position_in_text <= length) {
     if (SpellCheckWord(text.c_str(), position_in_text, length, kNoTag,
                        &misspelling_start, &misspelling_length, nullptr)) {
@@ -369,7 +369,8 @@ bool SpellCheck::SpellCheckParagraph(
             text, misspelling_start, misspelling_length)) {
       textcheck_results.push_back(
           WebTextCheckingResult(blink::kWebTextDecorationTypeSpelling,
-                                misspelling_start, misspelling_length));
+                                base::checked_cast<int>(misspelling_start),
+                                base::checked_cast<int>(misspelling_length)));
     }
     position_in_text = misspelling_start + misspelling_length;
   }
@@ -387,13 +388,13 @@ bool SpellCheck::SpellCheckParagraph(
 #if !BUILDFLAG(USE_BROWSER_SPELLCHECKER)
 void SpellCheck::RequestTextChecking(
     const base::string16& text,
-    blink::WebTextCheckingCompletion* completion) {
+    std::unique_ptr<blink::WebTextCheckingCompletion> completion) {
   // Clean up the previous request before starting a new request.
   if (pending_request_param_)
     pending_request_param_->completion()->DidCancelCheckingText();
 
-  pending_request_param_.reset(new SpellcheckRequest(
-      text, completion));
+  pending_request_param_.reset(
+      new SpellcheckRequest(text, std::move(completion)));
   // We will check this text after we finish loading the hunspell dictionary.
   if (InitializeIfNeeded())
     return;
@@ -485,8 +486,8 @@ void SpellCheck::CreateTextCheckingResults(
       // Double-check misspelled words with out spellchecker and attach grammar
       // markers to them if our spellchecker tells us they are correct words,
       // i.e. they are probably contextually-misspelled words.
-      int unused_misspelling_start = 0;
-      int unused_misspelling_length = 0;
+      size_t unused_misspelling_start = 0;
+      size_t unused_misspelling_length = 0;
       if (decoration == SpellCheckResult::SPELLING &&
           SpellCheckWord(misspelled_word.c_str(), kNoOffset,
                          misspelled_word.length(), kNoTag,

@@ -14,6 +14,7 @@
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/hosted_app_button_container.h"
 #include "chrome/browser/ui/views/toolbar/app_menu.h"
+#include "chrome/browser/ui/views/toolbar/toolbar_ink_drop_util.h"
 #include "chrome/grit/generated_resources.h"
 #include "ui/base/hit_test.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -21,7 +22,8 @@
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/views/animation/ink_drop.h"
 #include "ui/views/border.h"
-#include "ui/views/controls/button/menu_button.h"
+#include "ui/views/controls/button/button.h"
+#include "ui/views/view_class_properties.h"
 #include "ui/views/window/hit_test_utils.h"
 
 HostedAppMenuButton::HostedAppMenuButton(BrowserView* browser_view)
@@ -37,13 +39,21 @@ HostedAppMenuButton::HostedAppMenuButton(BrowserView* browser_view)
   // Get the app name only, aka "Google Docs" instead of "My Doc - Google Docs",
   // because the menu applies to the entire app.
   base::string16 app_name = base::UTF8ToUTF16(
-      browser_view->browser()->hosted_app_controller()->GetAppShortName());
+      browser_view->browser()->app_controller()->GetAppShortName());
   SetAccessibleName(app_name);
   SetTooltipText(
       l10n_util::GetStringFUTF16(IDS_HOSTED_APPMENU_TOOLTIP, app_name));
-  int size = GetLayoutConstant(HOSTED_APP_MENU_BUTTON_SIZE);
+
+  constexpr int focus_mode_app_menu_button_size = 34;
+  bool is_focus_mode = browser_view->browser()->is_focus_mode();
+  int size = is_focus_mode ? focus_mode_app_menu_button_size
+                           : GetLayoutConstant(HOSTED_APP_MENU_BUTTON_SIZE);
   SetMinSize(gfx::Size(size, size));
   SetHorizontalAlignment(gfx::ALIGN_CENTER);
+  if (!is_focus_mode) {
+    constexpr gfx::Insets kInkDropInsets(2);
+    *GetProperty(views::kInternalPaddingKey) = kInkDropInsets;
+  }
 }
 
 HostedAppMenuButton::~HostedAppMenuButton() {}
@@ -66,14 +76,15 @@ void HostedAppMenuButton::StartHighlightAnimation() {
                              this, &HostedAppMenuButton::FadeHighlightOff);
 }
 
-void HostedAppMenuButton::OnMenuButtonClicked(views::MenuButton* source,
+void HostedAppMenuButton::OnMenuButtonClicked(views::Button* source,
                                               const gfx::Point& point,
                                               const ui::Event* event) {
   Browser* browser = browser_view_->browser();
-  InitMenu(std::make_unique<HostedAppMenuModel>(browser_view_, browser),
-           browser, AppMenu::NO_FLAGS);
-
-  menu()->RunMenu(this);
+  RunMenu(std::make_unique<HostedAppMenuModel>(browser_view_, browser), browser,
+          event && event->IsKeyEvent()
+              ? views::MenuRunner::SHOULD_SHOW_MNEMONICS
+              : views::MenuRunner::NO_FLAGS,
+          false);
 
   // Add UMA for how many times the hosted app menu button are clicked.
   base::RecordAction(

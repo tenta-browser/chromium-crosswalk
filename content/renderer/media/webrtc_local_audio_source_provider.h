@@ -15,9 +15,9 @@
 #include "base/thread_annotations.h"
 #include "base/time/time.h"
 #include "content/common/content_export.h"
-#include "content/public/renderer/media_stream_audio_sink.h"
 #include "media/base/audio_converter.h"
 #include "media/base/reentrancy_checker.h"
+#include "third_party/blink/public/platform/modules/mediastream/web_media_stream_audio_sink.h"
 #include "third_party/blink/public/platform/web_audio_source_provider.h"
 #include "third_party/blink/public/platform/web_media_stream_track.h"
 #include "third_party/blink/public/platform/web_vector.h"
@@ -52,15 +52,16 @@ namespace content {
 class CONTENT_EXPORT WebRtcLocalAudioSourceProvider
     : public blink::WebAudioSourceProvider,
       public media::AudioConverter::InputCallback,
-      public MediaStreamAudioSink {
+      public blink::WebMediaStreamAudioSink {
  public:
   static const size_t kWebAudioRenderBufferSize;
 
   explicit WebRtcLocalAudioSourceProvider(
-      const blink::WebMediaStreamTrack& track);
+      const blink::WebMediaStreamTrack& track,
+      int context_sample_rate);
   ~WebRtcLocalAudioSourceProvider() override;
 
-  // MediaStreamAudioSink implementation.
+  // blink::WebMediaStreamAudioSink implementation.
   void OnData(const media::AudioBus& audio_bus,
               base::TimeTicks estimated_capture_time) override;
   void OnSetFormat(const media::AudioParameters& params) override;

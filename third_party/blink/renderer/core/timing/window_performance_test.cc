@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/core/timing/window_performance.h"
 
+#include "base/test/test_mock_time_task_runner.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/bindings/core/v8/string_or_double.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
@@ -17,7 +18,6 @@
 #include "third_party/blink/renderer/core/timing/dom_window_performance.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
-#include "third_party/blink/renderer/platform/testing/wtf/scoped_mock_clock.h"
 
 namespace blink {
 
@@ -32,10 +32,11 @@ TimeTicks GetTimeOrigin() {
 class WindowPerformanceTest : public testing::Test {
  protected:
   void SetUp() override {
+    test_task_runner_ = base::MakeRefCounted<base::TestMockTimeTaskRunner>();
     ResetPerformance();
 
     // Create another dummy page holder and pretend this is the iframe.
-    another_page_holder_ = DummyPageHolder::Create(IntSize(400, 300));
+    another_page_holder_ = std::make_unique<DummyPageHolder>(IntSize(400, 300));
     another_page_holder_->GetDocument().SetURL(KURL("https://iframed.com/bar"));
   }
 
@@ -63,7 +64,7 @@ class WindowPerformanceTest : public testing::Test {
   }
 
   void SimulateSwapPromise(TimeTicks timestamp) {
-    performance_->ReportEventTimings(WebLayerTreeView::SwapResult::kDidSwap,
+    performance_->ReportEventTimings(WebWidgetClient::SwapResult::kDidSwap,
                                      timestamp);
   }
 
@@ -86,16 +87,22 @@ class WindowPerformanceTest : public testing::Test {
   }
 
   void ResetPerformance() {
-    page_holder_ = DummyPageHolder::Create(IntSize(800, 600));
+    page_holder_ = std::make_unique<DummyPageHolder>(IntSize(800, 600));
     page_holder_->GetDocument().SetURL(KURL("https://example.com"));
-    performance_ =
-        WindowPerformance::Create(page_holder_->GetDocument().domWindow());
+    performance_ = MakeGarbageCollected<WindowPerformance>(
+        page_holder_->GetDocument().domWindow());
+    unified_clock_ = std::make_unique<Performance::UnifiedClock>(
+        test_task_runner_->GetMockClock(),
+        test_task_runner_->GetMockTickClock());
+    performance_->SetClocksForTesting(unified_clock_.get());
     performance_->time_origin_ = GetTimeOrigin();
   }
 
   Persistent<WindowPerformance> performance_;
   std::unique_ptr<DummyPageHolder> page_holder_;
   std::unique_ptr<DummyPageHolder> another_page_holder_;
+  scoped_refptr<base::TestMockTimeTaskRunner> test_task_runner_;
+  std::unique_ptr<Performance::UnifiedClock> unified_clock_;
 };
 
 TEST_F(WindowPerformanceTest, LongTaskObserverInstrumentation) {
@@ -146,7 +153,7 @@ TEST_F(WindowPerformanceTest, NavigateAway) {
   DocumentInit init = DocumentInit::Create().WithDocumentLoader(
       GetFrame()->Loader().GetDocumentLoader());
   GetDocument()->Shutdown();
-  GetFrame()->SetDOMWindow(LocalDOMWindow::Create(*GetFrame()));
+  GetFrame()->SetDOMWindow(MakeGarbageCollected<LocalDOMWindow>(*GetFrame()));
   GetFrame()->DomWindow()->InstallNewDocument(AtomicString(), init, false);
 
   // m_performance is still alive, and should not crash when notified.
@@ -158,8 +165,7 @@ TEST_F(WindowPerformanceTest, NavigateAway) {
 // This happens when a page opens a new window and it navigates to a same-origin
 // document.
 TEST(PerformanceLifetimeTest, SurviveContextSwitch) {
-  std::unique_ptr<DummyPageHolder> page_holder =
-      DummyPageHolder::Create(IntSize(800, 600));
+  auto page_holder = std::make_unique<DummyPageHolder>(IntSize(800, 600));
 
   WindowPerformance* perf =
       DOMWindowPerformance::performance(*page_holder->GetFrame().DomWindow());
@@ -192,16 +198,17 @@ TEST(PerformanceLifetimeTest, SurviveContextSwitch) {
 // order. (http://crbug.com/767560)
 TEST_F(WindowPerformanceTest, EnsureEntryListOrder) {
   V8TestingScope scope;
-  WTF::ScopedMockClock clock;
-  clock.Advance(GetTimeOrigin() - TimeTicks());
+  auto initial_offset =
+      test_task_runner_->NowTicks().since_origin().InSecondsF();
+  test_task_runner_->FastForwardBy(GetTimeOrigin() - TimeTicks());
 
   DummyExceptionStateForTesting exception_state;
-  clock.Advance(TimeDelta::FromSeconds(2));
+  test_task_runner_->FastForwardBy(TimeDelta::FromSeconds(2));
   for (int i = 0; i < 8; i++) {
     performance_->mark(scope.GetScriptState(), AtomicString::Number(i),
                        exception_state);
   }
-  clock.Advance(TimeDelta::FromSeconds(2));
+  test_task_runner_->FastForwardBy(TimeDelta::FromSeconds(2));
   for (int i = 8; i < 17; i++) {
     performance_->mark(scope.GetScriptState(), AtomicString::Number(i),
                        exception_state);
@@ -210,11 +217,11 @@ TEST_F(WindowPerformanceTest, EnsureEntryListOrder) {
   EXPECT_EQ(17U, entries.size());
   for (int i = 0; i < 8; i++) {
     EXPECT_EQ(AtomicString::Number(i), entries[i]->name());
-    EXPECT_NEAR(2000, entries[i]->startTime(), 0.005);
+    EXPECT_NEAR(2000, entries[i]->startTime() - initial_offset, 0.005);
   }
   for (int i = 8; i < 17; i++) {
     EXPECT_EQ(AtomicString::Number(i), entries[i]->name());
-    EXPECT_NEAR(4000, entries[i]->startTime(), 0.005);
+    EXPECT_NEAR(4000, entries[i]->startTime() - initial_offset, 0.005);
   }
 }
 
@@ -253,6 +260,28 @@ TEST_F(WindowPerformanceTest, EventTimingBeforeOnLoad) {
   performance_->clearEventTimings();
 }
 
+TEST_F(WindowPerformanceTest, Expose100MsEvents) {
+  ScopedEventTimingForTest event_timing(true);
+  TimeTicks start_time = GetTimeOrigin() + TimeDelta::FromSeconds(1);
+  TimeTicks processing_start = start_time + TimeDelta::FromMilliseconds(10);
+  TimeTicks processing_end = processing_start + TimeDelta::FromMilliseconds(10);
+  performance_->RegisterEventTiming("mousedown", start_time, processing_start,
+                                    processing_end, false);
+
+  TimeTicks start_time2 = start_time + TimeDelta::FromMicroseconds(200);
+  performance_->RegisterEventTiming("click", start_time2, processing_start,
+                                    processing_end, false);
+
+  // The swap time is 100.1 ms after |start_time| but only 99.9 ms after
+  // |start_time2|.
+  TimeTicks swap_time = start_time + TimeDelta::FromMicroseconds(100100);
+  SimulateSwapPromise(swap_time);
+  // Only the longer event should have been reported.
+  EXPECT_EQ(1u, performance_->getEntriesByType("event").size());
+  EXPECT_EQ(1u, performance_->getEntriesByName("mousedown", "event").size());
+  EXPECT_EQ(0u, performance_->getEntriesByName("click", "event").size());
+}
+
 TEST_F(WindowPerformanceTest, EventTimingDuration) {
   ScopedEventTimingForTest event_timing(true);
 
@@ -271,7 +300,7 @@ TEST_F(WindowPerformanceTest, EventTimingDuration) {
   performance_->RegisterEventTiming("click", start_time, processing_start,
                                     processing_end, true);
   TimeTicks long_swap_time =
-      GetTimeOrigin() + TimeDelta::FromMilliseconds(1100);
+      GetTimeOrigin() + TimeDelta::FromMilliseconds(2000);
   SimulateSwapPromise(long_swap_time);
   EXPECT_EQ(1u, performance_->getEntriesByName("click", "event").size());
 

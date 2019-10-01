@@ -15,8 +15,8 @@
 #include "base/callback_forward.h"
 #include "base/memory/weak_ptr.h"
 #include "base/supports_user_data.h"
+#include "ios/web/public/deprecated/url_verification_constants.h"
 #include "ios/web/public/referrer.h"
-#include "ios/web/public/web_state/url_verification_constants.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
 #include "mojo/public/cpp/system/message_pipe.h"
 #include "ui/base/page_transition_types.h"
@@ -75,14 +75,22 @@ class WebState : public base::SupportsUserData {
   // Parameters for the OpenURL() method.
   struct OpenURLParams {
     OpenURLParams(const GURL& url,
+                  const GURL& virtual_url,
                   const Referrer& referrer,
                   WindowOpenDisposition disposition,
                   ui::PageTransition transition,
                   bool is_renderer_initiated);
+    OpenURLParams(const GURL& url,
+                  const Referrer& referrer,
+                  WindowOpenDisposition disposition,
+                  ui::PageTransition transition,
+                  bool is_renderer_initiated);
+    OpenURLParams(const OpenURLParams& params);
     ~OpenURLParams();
 
-    // The URL/referrer to be opened.
+    // The URL/virtualURL/referrer to be opened.
     GURL url;
+    GURL virtual_url;
     Referrer referrer;
 
     // The disposition requested by the navigation source.
@@ -124,6 +132,11 @@ class WebState : public base::SupportsUserData {
   virtual void WasShown() = 0;
   virtual void WasHidden() = 0;
 
+  // When |true|, attempt to prevent the WebProcess from suspending. Embedder
+  // must override WebClient::GetWindowedContainer to maintain this
+  // functionality.
+  virtual void SetKeepRenderProcessAlive(bool keep_alive) = 0;
+
   // Gets the BrowserState associated with this WebState. Can never return null.
   virtual BrowserState* GetBrowserState() const = 0;
 
@@ -151,6 +164,10 @@ class WebState : public base::SupportsUserData {
 
   // Gets the CRWJSInjectionReceiver associated with this WebState.
   virtual CRWJSInjectionReceiver* GetJSInjectionReceiver() const = 0;
+
+  // Loads |data| of type |mime_type| and replaces last committed URL with the
+  // given |url|.
+  virtual void LoadData(NSData* data, NSString* mime_type, const GURL& url) = 0;
 
   // DISCOURAGED. Prefer using |WebFrame CallJavaScriptFunction| instead because
   // it restricts JavaScript execution to functions within __gCrWeb and can also
@@ -220,14 +237,10 @@ class WebState : public base::SupportsUserData {
   // Returns the WebState view of the current URL. Moreover, this method
   // will set the trustLevel enum to the appropriate level from a security point
   // of view. The caller has to handle the case where |trust_level| is not
-  // appropriate.
+  // appropriate.  Passing |null| will skip the trust check.
   // TODO(stuartmorgan): Figure out a clean API for this.
   // See http://crbug.com/457679
   virtual GURL GetCurrentURL(URLVerificationTrustLevel* trust_level) const = 0;
-
-  // Resizes |content_view| to the content area's size and adds it to the
-  // hierarchy.  A navigation will remove the view from the hierarchy.
-  virtual void ShowTransientContentView(CRWContentView* content_view) = 0;
 
   // Returns true if a WebInterstitial is currently displayed.
   virtual bool IsShowingWebInterstitial() const = 0;

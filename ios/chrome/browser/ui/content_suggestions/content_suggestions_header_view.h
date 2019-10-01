@@ -15,8 +15,27 @@
 // Returns the toolbar view.
 @property(nonatomic, readonly) UIView* toolBarView;
 
+// The Identity Disc showing the current user's avatar on NTP.
+@property(nonatomic, strong) UIView* identityDiscView;
+
 // Voice search button.
 @property(nonatomic, strong, readonly) UIButton* voiceSearchButton;
+
+// Fake cancel button, used for animations. Hidden by default.
+@property(nonatomic, strong) UIView* cancelButton;
+// Fake omnibox, used for animations. Hidden by default.
+@property(nonatomic, strong) UIView* omnibox;
+
+@property(nonatomic, strong)
+    NSLayoutConstraint* fakeLocationBarLeadingConstraint;
+@property(nonatomic, strong)
+    NSLayoutConstraint* fakeLocationBarTrailingConstraint;
+@property(nonatomic, strong) UIView* fakeLocationBar;
+@property(nonatomic, strong) UILabel* searchHintLabel;
+
+// Adds the separator to the searchField. Must be called after the searchField
+// is added as a subview.
+- (void)addSeparatorToSearchField:(UIView*)searchField;
 
 // Adds the |toolbarView| to the view implementing this protocol.
 // Can only be added once.

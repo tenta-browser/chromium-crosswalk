@@ -19,6 +19,7 @@ var glAttribs = {
 var gl = null;
 var onMagicWindowXRFrameCallback = null;
 var onImmersiveXRFrameCallback = null;
+var onSessionStartedCallback = null;
 var onPoseCallback = null;
 var shouldSubmitFrame = true;
 var hasPresentedFrame = false;
@@ -31,10 +32,17 @@ var sessionTypes = Object.freeze({
 });
 var sessionTypeToRequest = sessionTypes.IMMERSIVE;
 
+var referenceSpaceMap = {
+  [sessionTypes.IMMERSIVE]: 'local',
+  [sessionTypes.MAGIC_WINDOW]: 'viewer',
+  [sessionTypes.AR]: 'viewer'
+}
+
 class SessionInfo {
   constructor() {
     this.session = null;
     this.frameOfRef = null;
+    this.error = null;
   }
 
   get currentSession() {
@@ -56,6 +64,7 @@ class SessionInfo {
   clearSession() {
     this.session = null;
     this.frameOfRef = null;
+    this.error = null;
   }
 }
 
@@ -67,8 +76,7 @@ sessionInfos[sessionTypes.MAGIC_WINDOW] = new SessionInfo();
 function getSessionType(session) {
   if (session.mode == 'immersive-vr') {
     return sessionTypes.IMMERSIVE;
-  } else if (session.mode == 'immersive-ar' ||
-             session.mode == 'legacy-inline-ar') {
+  } else if (session.mode == 'immersive-ar') {
     return sessionTypes.AR;
   } else {
     return sessionTypes.MAGIC_WINDOW;
@@ -78,24 +86,28 @@ function getSessionType(session) {
 function onRequestSession() {
   switch (sessionTypeToRequest) {
     case sessionTypes.IMMERSIVE:
-      console.info('Requesting immersive session');
-      navigator.xr.requestSession({mode: 'immersive-vr'}).then( (session) => {
-        console.info('Immersive session request succeeded');
+      console.info('Requesting immersive VR session');
+      navigator.xr.requestSession('immersive-vr').then( (session) => {
+        session.mode = 'immersive-vr';
+        console.info('Immersive VR session request succeeded');
         sessionInfos[sessionTypes.IMMERSIVE].currentSession = session;
         onSessionStarted(session);
       }, (error) => {
-        console.info('Immersive session request rejected with: ' + error);
+        sessionInfos[sessionTypes.IMMERSIVE].error = error;
+        console.info('Immersive VR session request rejected with: ' + error);
       });
       break;
     case sessionTypes.AR:
-      console.info('Requesting AR session');
-      navigator.xr.requestSession({mode: 'immersive-ar'}).then((session) => {
-        console.info('AR session request succeeded');
+      console.info('Requesting Immersive AR session');
+      navigator.xr.requestSession('immersive-ar').then((session) => {
+        session.mode = 'immersive-ar';
+        console.info('Immersive AR session request succeeded');
         sessionInfos[sessionTypes.AR].currentSession = session;
         onSessionStarted(session);
       }, (error) => {
-        console.info('AR session request rejected with: ' + error);
-      });
+        sessionInfos[sessionTypes.AR].error = error;
+        console.info('Immersive AR session request rejected with: ' + error);
+     });
       break;
     default:
       throw 'Given unsupported WebXR session type enum ' + sessionTypeToRequest;
@@ -118,10 +130,19 @@ function onSessionStarted(session) {
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   }
 
-  session.baseLayer = new XRWebGLLayer(session, gl);
-  session.requestReferenceSpace({ type: 'stationary', subtype: 'eye-level' })
+  if (onSessionStartedCallback) {
+    onSessionStartedCallback(session);
+  }
+
+  let sessionType = getSessionType(session);
+
+  session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl, {
+      compositionDisabled: sessionType == sessionTypes.MAGIC_WINDOW
+    })
+  });
+  session.requestReferenceSpace(referenceSpaceMap[sessionType])
       .then( (refSpace) => {
-        sessionInfos[getSessionType(session)].currentRefSpace = refSpace;
+        sessionInfos[sessionType].currentRefSpace = refSpace;
         session.requestAnimationFrame(onXRFrame);
       });
 }
@@ -146,7 +167,7 @@ function onXRFrame(t, frame) {
     return;
   }
 
-  gl.bindFramebuffer(gl.FRAMEBUFFER, session.baseLayer.framebuffer);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, session.renderState.baseLayer.framebuffer);
 
   // If in an immersive session, set canvas to blue.
   // If in an AR session, just draw the camera.
@@ -173,11 +194,22 @@ function onXRFrame(t, frame) {
   hasPresentedFrame = true;
 }
 
-if (navigator.xr) {
-
+function requestMagicWindowSession() {
   // Set up an inline session (magic window) drawing into the full screen canvas
   // on the page
-  let ctx = webglCanvas.getContext('xrpresent');
+  navigator.xr.requestSession('inline')
+  .then((session) => {
+    session.mode = 'inline';
+    sessionInfos[sessionTypes.MAGIC_WINDOW].currentSession = session;
+    onSessionStarted(session);
+  })
+  .then( () => {
+    initializationSteps['magicWindowStarted'] = true;
+  });
+}
+
+if (navigator.xr) {
+
   // WebXR for VR tests want an inline session to be automatically
   // created on page load to reduce the amount of boilerplate code necessary.
   // However, doing so during AR tests currently fails due to AR sessions
@@ -186,12 +218,13 @@ if (navigator.xr) {
   // inline session creation.
   if (typeof shouldAutoCreateNonImmersiveSession === 'undefined'
       || shouldAutoCreateNonImmersiveSession === true) {
-    navigator.xr.requestSession({outputContext: ctx})
-        .then((session) => {
-          onSessionStarted(session);
-        }).then( () => {
-          initializationSteps['magicWindowStarted'] = true;
-        });
+
+    // Separate if statement to keep the logic around setting initialization
+    // steps cleaner.
+    if (typeof shouldDeferNonImmersiveSessionCreation === 'undefined'
+      || shouldDeferNonImmersiveSessionCreation === false) {
+      requestMagicWindowSession();
+    }
   } else {
     initializationSteps['magicWindowStarted'] = true;
   }

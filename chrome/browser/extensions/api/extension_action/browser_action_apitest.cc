@@ -145,8 +145,12 @@ class BrowserActionApiTest : public ExtensionApiTest {
   }
 
   ExtensionAction* GetBrowserAction(const Extension& extension) {
-    return ExtensionActionManager::Get(browser()->profile())->
-        GetBrowserAction(extension);
+    ExtensionAction* extension_action =
+        ExtensionActionManager::Get(browser()->profile())
+            ->GetExtensionAction(extension);
+    return extension_action->action_type() == ActionInfo::TYPE_BROWSER
+               ? extension_action
+               : nullptr;
   }
 
  private:
@@ -452,7 +456,8 @@ IN_PROC_BROWSER_TEST_F(BrowserActionApiTest, TabSpecificBrowserActionState) {
   EXPECT_EQ("hi!", GetBrowserActionsBar()->GetTooltip(0));
 
   // Go back to first tab, changed title should reappear.
-  browser()->tab_strip_model()->ActivateTabAt(0, true);
+  browser()->tab_strip_model()->ActivateTabAt(
+      0, {TabStripModel::GestureType::kOther});
   EXPECT_EQ("Showing icon 2", GetBrowserActionsBar()->GetTooltip(0));
 
   // Reload that tab, default title should come back.

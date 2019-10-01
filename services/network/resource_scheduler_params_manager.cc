@@ -19,7 +19,11 @@ namespace {
 
 // The maximum number of delayable requests to allow to be in-flight at any
 // point in time (across all hosts).
-static const size_t kDefaultMaxNumDelayableRequestsPerClient = 10;
+constexpr size_t kDefaultMaxNumDelayableRequestsPerClient = 10;
+
+// Value by which HTTP RTT estimate is multiplied to get the maximum queuing
+// duration.
+constexpr int kHttpRttMultiplierForQueuingDuration = 30;
 
 // Reads experiment parameters and returns them.
 ResourceSchedulerParamsManager::ParamsForNetworkQualityContainer
@@ -49,14 +53,21 @@ GetParamsForNetworkQualityContainer() {
   ResourceSchedulerParamsManager::ParamsForNetworkQualityContainer result;
   // Set the default params for networks with ECT Slow2G and 2G. These params
   // can still be overridden using the field trial.
-  result.emplace(
-      std::make_pair(net::EFFECTIVE_CONNECTION_TYPE_SLOW_2G,
-                     ResourceSchedulerParamsManager::ParamsForNetworkQuality(
-                         8, 3.0, false, base::nullopt)));
-  result.emplace(
-      std::make_pair(net::EFFECTIVE_CONNECTION_TYPE_2G,
-                     ResourceSchedulerParamsManager::ParamsForNetworkQuality(
-                         8, 3.0, false, base::nullopt)));
+  result.emplace(std::make_pair(
+      net::EFFECTIVE_CONNECTION_TYPE_SLOW_2G,
+      ResourceSchedulerParamsManager::ParamsForNetworkQuality(
+          8, 3.0, false /* delay_requests_on_multiplexed_connections */,
+          base::nullopt)));
+  result.emplace(std::make_pair(
+      net::EFFECTIVE_CONNECTION_TYPE_2G,
+      ResourceSchedulerParamsManager::ParamsForNetworkQuality(
+          8, 3.0, false /* delay_requests_on_multiplexed_connections */,
+          base::nullopt)));
+  result.emplace(std::make_pair(
+      net::EFFECTIVE_CONNECTION_TYPE_3G,
+      ResourceSchedulerParamsManager::ParamsForNetworkQuality(
+          8, 3.0, false /* delay_requests_on_multiplexed_connections */,
+          base::nullopt)));
 
   for (int config_param_index = 1; config_param_index <= 20;
        ++config_param_index) {
@@ -65,7 +76,7 @@ GetParamsForNetworkQualityContainer() {
     if (!base::StringToSizeT(base::GetFieldTrialParamValueByFeature(
                                  features::kThrottleDelayable,
                                  kMaxDelayableRequestsBase +
-                                     base::IntToString(config_param_index)),
+                                     base::NumberToString(config_param_index)),
                              &max_delayable_requests)) {
       break;
     }
@@ -75,12 +86,13 @@ GetParamsForNetworkQualityContainer() {
             base::GetFieldTrialParamValueByFeature(
                 features::kThrottleDelayable,
                 kEffectiveConnectionTypeBase +
-                    base::IntToString(config_param_index)));
+                    base::NumberToString(config_param_index)));
     DCHECK(effective_connection_type.has_value());
 
     double non_delayable_weight = base::GetFieldTrialParamByFeatureAsDouble(
         features::kThrottleDelayable,
-        kNonDelayableWeightBase + base::IntToString(config_param_index), 0.0);
+        kNonDelayableWeightBase + base::NumberToString(config_param_index),
+        0.0);
 
     // Check if the entry is already present. This will happen if the default
     // params are being overridden by the field trial.
@@ -132,38 +144,39 @@ GetParamsForNetworkQualityContainer() {
     }
   }
 
-  if (base::FeatureList::IsEnabled(
-          features::kUnthrottleRequestsAfterLongQueuingDelay)) {
-    int http_rtt_multiplier = base::GetFieldTrialParamByFeatureAsInt(
-        features::kUnthrottleRequestsAfterLongQueuingDelay,
-        "http_rtt_multiplier", -1);
+  for (int ect = net::EFFECTIVE_CONNECTION_TYPE_UNKNOWN;
+       ect <= net::EFFECTIVE_CONNECTION_TYPE_4G; ++ect) {
+    net::EffectiveConnectionType effective_connection_type =
+        static_cast<net::EffectiveConnectionType>(ect);
+    base::TimeDelta http_rtt =
+        net::NetworkQualityEstimatorParams::GetDefaultTypicalHttpRtt(
+            effective_connection_type);
+    base::TimeDelta max_queuing_time =
+        http_rtt * kHttpRttMultiplierForQueuingDuration;
 
-    if (http_rtt_multiplier > 0) {
-      for (int ect = net::EFFECTIVE_CONNECTION_TYPE_SLOW_2G;
-           ect <= net::EFFECTIVE_CONNECTION_TYPE_4G; ++ect) {
-        net::EffectiveConnectionType effective_connection_type =
-            static_cast<net::EffectiveConnectionType>(ect);
-        base::TimeDelta http_rtt =
-            net::NetworkQualityEstimatorParams::GetDefaultTypicalHttpRtt(
-                effective_connection_type);
-        base::TimeDelta max_queuing_time = http_rtt * http_rtt_multiplier;
-        if (max_queuing_time < kLowerBoundQueuingDuration)
-          max_queuing_time = kLowerBoundQueuingDuration;
-        if (max_queuing_time > kUpperBoundQueuingDuration)
-          max_queuing_time = kUpperBoundQueuingDuration;
+    // If GetDefaultTypicalHttpRtt returns a null value, set
+    // |max_queuing_time| to kUpperBoundQueuingDuration, This may happen
+    // when |ect| is UNKNOWN or OFFLINE. Both these cases are very rare, but
+    // it's important to handle them to ensure that |max_queuing_time|
+    // is set to some non-zero value in all cases. This ensures that the
+    // requests that are queued for too long are always unthrottled.
+    if (http_rtt.is_zero())
+      max_queuing_time = kUpperBoundQueuingDuration;
+    if (max_queuing_time < kLowerBoundQueuingDuration)
+      max_queuing_time = kLowerBoundQueuingDuration;
+    if (max_queuing_time > kUpperBoundQueuingDuration)
+      max_queuing_time = kUpperBoundQueuingDuration;
 
-        ResourceSchedulerParamsManager::ParamsForNetworkQualityContainer::
-            iterator iter = result.find(effective_connection_type);
-        if (iter != result.end()) {
-          iter->second.max_queuing_time = max_queuing_time;
-        } else {
-          result.emplace(std::make_pair(
-              effective_connection_type,
-              ResourceSchedulerParamsManager::ParamsForNetworkQuality(
-                  kDefaultMaxNumDelayableRequestsPerClient, 0.0, false,
-                  max_queuing_time)));
-        }
-      }
+    ResourceSchedulerParamsManager::ParamsForNetworkQualityContainer::iterator
+        iter = result.find(effective_connection_type);
+    if (iter != result.end()) {
+      iter->second.max_queuing_time = max_queuing_time;
+    } else {
+      result.emplace(std::make_pair(
+          effective_connection_type,
+          ResourceSchedulerParamsManager::ParamsForNetworkQuality(
+              kDefaultMaxNumDelayableRequestsPerClient, 0.0, false,
+              max_queuing_time)));
     }
   }
 

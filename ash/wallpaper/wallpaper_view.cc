@@ -4,36 +4,29 @@
 
 #include "ash/wallpaper/wallpaper_view.h"
 
-#include "ash/public/cpp/login_constants.h"
-#include "ash/public/cpp/wallpaper_types.h"
 #include "ash/public/cpp/window_animation_types.h"
 #include "ash/root_window_controller.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
-#include "ash/wallpaper/wallpaper_controller.h"
+#include "ash/wallpaper/wallpaper_controller_impl.h"
 #include "ash/wallpaper/wallpaper_widget_controller.h"
 #include "ash/wm/overview/overview_controller.h"
 #include "ash/wm/overview/overview_utils.h"
+#include "cc/paint/render_surface_filters.h"
 #include "ui/aura/window.h"
 #include "ui/display/display.h"
 #include "ui/display/manager/display_manager.h"
 #include "ui/display/manager/managed_display_info.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/canvas.h"
-#include "ui/gfx/color_analysis.h"
-#include "ui/gfx/color_utils.h"
-#include "ui/gfx/geometry/safe_integer_conversions.h"
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/transform.h"
 #include "ui/views/widget/widget.h"
 #include "ui/wm/core/window_animations.h"
 
 namespace ash {
-namespace {
 
-// The value used for alpha to apply a dark filter to the wallpaper in tablet
-// mode. A higher number up to 255 results in a darker wallpaper.
-constexpr int kWallpaperDimnessInTabletMode = 102;
+namespace {
 
 // A view that controls the child view's layer so that the layer always has the
 // same size as the display's original, un-scaled size in DIP. The layer is then
@@ -59,8 +52,8 @@ class LayerControlView : public views::View {
     display::ManagedDisplayInfo info =
         Shell::Get()->display_manager()->GetDisplayInfo(display.id());
 
-    DCHECK_EQ(1, child_count());
-    views::View* child = child_at(0);
+    DCHECK_EQ(1u, children().size());
+    views::View* child = children().front();
     child->SetBounds(0, 0, display.size().width(), display.size().height());
     gfx::Transform transform;
     // Apply RTL transform explicitly becacuse Views layer code
@@ -72,26 +65,6 @@ class LayerControlView : public views::View {
  private:
   DISALLOW_COPY_AND_ASSIGN(LayerControlView);
 };
-
-// Returns the color used to dim the wallpaper.
-SkColor GetWallpaperDarkenColor() {
-  SkColor darken_color =
-      Shell::Get()->wallpaper_controller()->GetProminentColor(
-          color_utils::ColorProfile(color_utils::LumaRange::DARK,
-                                    color_utils::SaturationRange::MUTED));
-  if (darken_color == kInvalidWallpaperColor)
-    darken_color = login_constants::kDefaultBaseColor;
-
-  darken_color = color_utils::GetResultingPaintColor(
-      SkColorSetA(login_constants::kDefaultBaseColor,
-                  login_constants::kTranslucentColorDarkenAlpha),
-      SkColorSetA(darken_color, 0xFF));
-  return SkColorSetA(darken_color, login_constants::kTranslucentAlpha);
-}
-
-SkColor GetWallpaperDarkenColorForTabletMode() {
-  return SkColorSetA(GetWallpaperDarkenColor(), kWallpaperDimnessInTabletMode);
-}
 
 }  // namespace
 
@@ -119,7 +92,7 @@ class PreEventDispatchHandler : public ui::EventHandler {
   void HandleClickOrTap(ui::Event* event) {
     CHECK_EQ(ui::EP_PRETARGET, event->phase());
     OverviewController* controller = Shell::Get()->overview_controller();
-    if (!controller->IsSelecting())
+    if (!controller->InOverviewSession())
       return;
     // Events that happen while app list is sliding out during overview should
     // be ignored to prevent overview from disappearing out from under the user.
@@ -134,136 +107,110 @@ class PreEventDispatchHandler : public ui::EventHandler {
 ////////////////////////////////////////////////////////////////////////////////
 // WallpaperView, public:
 
-WallpaperView::WallpaperView()
-    : pre_dispatch_handler_(new PreEventDispatchHandler()) {
+WallpaperView::WallpaperView(int blur, float opacity)
+    : repaint_blur_(blur),
+      repaint_opacity_(opacity),
+      pre_dispatch_handler_(std::make_unique<PreEventDispatchHandler>()) {
   set_context_menu_controller(this);
   AddPreTargetHandler(pre_dispatch_handler_.get());
-  tablet_mode_observer_.Add(Shell::Get()->tablet_mode_controller());
-  is_tablet_mode_ = Shell::Get()
-                        ->tablet_mode_controller()
-                        ->IsTabletModeWindowManagerEnabled();
 }
 
 WallpaperView::~WallpaperView() {
   RemovePreTargetHandler(pre_dispatch_handler_.get());
 }
 
-void WallpaperView::OnTabletModeStarted() {
-  is_tablet_mode_ = true;
-  SchedulePaint();
-}
-
-void WallpaperView::OnTabletModeEnded() {
-  is_tablet_mode_ = false;
-  SchedulePaint();
-}
-
-void WallpaperView::OnTabletControllerDestroyed() {
-  tablet_mode_observer_.RemoveAll();
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// WallpaperView, views::View overrides:
-
-void WallpaperView::OnPaint(gfx::Canvas* canvas) {
-  // Scale the image while maintaining the aspect ratio, cropping as necessary
-  // to fill the wallpaper. Ideally the image should be larger than the largest
-  // display supported, if not we will scale and center it if the layout is
-  // WALLPAPER_LAYOUT_CENTER_CROPPED.
-  WallpaperController* controller = Shell::Get()->wallpaper_controller();
-  gfx::ImageSkia wallpaper = controller->GetWallpaper();
-  WallpaperLayout layout = controller->GetWallpaperLayout();
-
-  // Wallpapers with png format could be partially transparent. Fill the canvas
-  // with black to make it opaque before painting the wallpaper.
-  canvas->FillRect(GetLocalBounds(), SK_ColorBLACK);
-
-  if (wallpaper.isNull())
+void WallpaperView::RepaintBlurAndOpacity(int repaint_blur,
+                                          float repaint_opacity) {
+  if (repaint_blur_ == repaint_blur && repaint_opacity_ == repaint_opacity)
     return;
 
-  cc::PaintFlags flags;
-  if (controller->ShouldApplyDimming()) {
-    flags.setColorFilter(SkColorFilter::MakeModeFilter(
-        GetWallpaperDarkenColor(), SkBlendMode::kDarken));
-  } else if (is_tablet_mode_) {
-    flags.setColorFilter(SkColorFilter::MakeModeFilter(
-        GetWallpaperDarkenColorForTabletMode(), SkBlendMode::kDarken));
-  }
+  repaint_blur_ = repaint_blur;
+  repaint_opacity_ = repaint_opacity;
+  SchedulePaint();
+}
 
-  switch (layout) {
-    case WALLPAPER_LAYOUT_CENTER_CROPPED: {
-      // The dimension with the smallest ratio must be cropped, the other one
-      // is preserved. Both are set in gfx::Size cropped_size.
-      double horizontal_ratio =
-          static_cast<double>(width()) / static_cast<double>(wallpaper.width());
-      double vertical_ratio = static_cast<double>(height()) /
-                              static_cast<double>(wallpaper.height());
-
-      gfx::Size cropped_size;
-      if (vertical_ratio > horizontal_ratio) {
-        cropped_size = gfx::Size(
-            gfx::ToFlooredInt(static_cast<double>(width()) / vertical_ratio),
-            wallpaper.height());
-      } else {
-        cropped_size = gfx::Size(
-            wallpaper.width(), gfx::ToFlooredInt(static_cast<double>(height()) /
-                                                 horizontal_ratio));
-      }
-
-      gfx::Rect wallpaper_cropped_rect(0, 0, wallpaper.width(),
-                                       wallpaper.height());
-      wallpaper_cropped_rect.ClampToCenteredSize(cropped_size);
-      canvas->DrawImageInt(
-          wallpaper, wallpaper_cropped_rect.x(), wallpaper_cropped_rect.y(),
-          wallpaper_cropped_rect.width(), wallpaper_cropped_rect.height(), 0, 0,
-          width(), height(), true, flags);
-      break;
-    }
-    case WALLPAPER_LAYOUT_TILE: {
-      canvas->TileImageInt(wallpaper, 0, 0, 0, 0, width(), height(), 1.0f,
-                           SkShader::kRepeat_TileMode,
-                           SkShader::kRepeat_TileMode, &flags);
-      break;
-    }
-    case WALLPAPER_LAYOUT_STRETCH: {
-      // This is generally not recommended as it may show artifacts.
-      canvas->DrawImageInt(wallpaper, 0, 0, wallpaper.width(),
-                           wallpaper.height(), 0, 0, width(), height(), true,
-                           flags);
-      break;
-    }
-    case WALLPAPER_LAYOUT_CENTER: {
-      float image_scale = canvas->image_scale();
-      gfx::Rect wallpaper_rect(0, 0, wallpaper.width() / image_scale,
-                               wallpaper.height() / image_scale);
-      // Simply centered and not scaled (but may be clipped).
-      canvas->DrawImageInt(
-          wallpaper, 0, 0, wallpaper.width(), wallpaper.height(),
-          (width() - wallpaper_rect.width()) / 2,
-          (height() - wallpaper_rect.height()) / 2, wallpaper_rect.width(),
-          wallpaper_rect.height(), true, flags);
-      break;
-    }
-    default: {
-      NOTREACHED();
-      break;
-    }
-  }
+const char* WallpaperView::GetClassName() const {
+  return "WallpaperView";
 }
 
 bool WallpaperView::OnMousePressed(const ui::MouseEvent& event) {
   return true;
 }
 
-void WallpaperView::ShowContextMenuForView(views::View* source,
-                                           const gfx::Point& point,
-                                           ui::MenuSourceType source_type) {
+void WallpaperView::ShowContextMenuForViewImpl(views::View* source,
+                                               const gfx::Point& point,
+                                               ui::MenuSourceType source_type) {
   Shell::Get()->ShowContextMenu(point, source_type);
 }
 
+void WallpaperView::DrawWallpaper(const gfx::ImageSkia& wallpaper,
+                                  const gfx::Rect& src,
+                                  const gfx::Rect& dst,
+                                  const cc::PaintFlags& flags,
+                                  gfx::Canvas* canvas) {
+  // The amount we downsample the original image by before applying filters to
+  // improve performance.
+  constexpr float quality = 0.3f;
+  gfx::Rect quality_adjusted_rect = gfx::ScaleToEnclosingRect(dst, quality);
+  // Draw the wallpaper to a cached image the first time it is drawn or if the
+  // size has changed.
+  if (!small_image_ || small_image_->size() != quality_adjusted_rect.size()) {
+    gfx::Canvas small_canvas(quality_adjusted_rect.size(),
+                             /*image_scale=*/1.f,
+                             /*is_opaque=*/false);
+    small_canvas.DrawImageInt(wallpaper, src.x(), src.y(), src.width(),
+                              src.height(), 0, 0, quality_adjusted_rect.width(),
+                              quality_adjusted_rect.height(), true);
+    small_image_ = base::make_optional(
+        gfx::ImageSkia::CreateFrom1xBitmap(small_canvas.GetBitmap()));
+  }
+
+  if (repaint_blur_ == 0 && repaint_opacity_ == 1.f) {
+    canvas->DrawImageInt(wallpaper, src.x(), src.y(), src.width(), src.height(),
+                         dst.x(), dst.y(), dst.width(), dst.height(),
+                         /*filter=*/true, flags);
+    return;
+  }
+
+  float blur = repaint_blur_ * quality;
+  // Create the blur and brightness filter to apply to the downsampled image.
+  cc::PaintFlags filter_flags;
+  cc::FilterOperations operations;
+  operations.Append(
+      cc::FilterOperation::CreateBrightnessFilter(repaint_opacity_));
+  operations.Append(cc::FilterOperation::CreateBlurFilter(
+      blur, SkBlurImageFilter::kClamp_TileMode));
+  sk_sp<cc::PaintFilter> filter = cc::RenderSurfaceFilters::BuildImageFilter(
+      operations, gfx::SizeF(dst.size()), gfx::Vector2dF());
+  filter_flags.setImageFilter(filter);
+
+  gfx::Canvas filtered_canvas(small_image_->size(),
+                              /*image_scale=*/1.f,
+                              /*is_opaque=*/false);
+  filtered_canvas.sk_canvas()->saveLayer(nullptr, &filter_flags);
+  filtered_canvas.DrawImageInt(
+      *small_image_, 0, 0, small_image_->width(), small_image_->height(), 0, 0,
+      small_image_->width(), small_image_->height(), true);
+  filtered_canvas.sk_canvas()->restore();
+
+  // Draw the downsampled and filtered image onto |canvas|. Draw a inseted
+  // version of the image to avoid drawing a blackish border caused by the blur
+  // filter. This is what we do on the login screen as well.
+  gfx::ImageSkia filtered_wallpaper =
+      gfx::ImageSkia::CreateFrom1xBitmap(filtered_canvas.GetBitmap());
+  canvas->DrawImageInt(filtered_wallpaper, blur, blur,
+                       small_image_->width() - 2 * blur,
+                       small_image_->height() - 2 * blur, dst.x(), dst.y(),
+                       dst.width(), dst.height(),
+                       /*filter=*/true, flags);
+}
+
 views::Widget* CreateWallpaperWidget(aura::Window* root_window,
-                                     int container_id) {
-  WallpaperController* controller = Shell::Get()->wallpaper_controller();
+                                     int container_id,
+                                     int blur,
+                                     float opacity,
+                                     WallpaperView** out_wallpaper_view) {
+  auto* controller = Shell::Get()->wallpaper_controller();
 
   views::Widget* wallpaper_widget = new views::Widget;
   views::Widget::InitParams params(
@@ -273,8 +220,10 @@ views::Widget* CreateWallpaperWidget(aura::Window* root_window,
     params.opacity = views::Widget::InitParams::TRANSLUCENT_WINDOW;
   params.parent = root_window->GetChildById(container_id);
   wallpaper_widget->Init(params);
-  WallpaperView* wallpaper_view = new WallpaperView();  // Owned by views.
+  // Owned by views.
+  WallpaperView* wallpaper_view = new WallpaperView(blur, opacity);
   wallpaper_widget->SetContentsView(new LayerControlView(wallpaper_view));
+  *out_wallpaper_view = wallpaper_view;
   int animation_type =
       controller->ShouldShowInitialAnimation()
           ? wm::WINDOW_VISIBILITY_ANIMATION_TYPE_BRIGHTNESS_GRAYSCALE

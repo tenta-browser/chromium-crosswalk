@@ -21,6 +21,7 @@
 #include "base/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "content/common/content_export.h"
+#include "content/public/common/previews_state.h"
 #include "content/public/common/resource_load_info.mojom.h"
 #include "content/public/common/resource_type.h"
 #include "content/public/common/url_loader_throttle.h"
@@ -127,8 +128,7 @@ class CONTENT_EXPORT ResourceDispatcher {
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       std::vector<std::unique_ptr<URLLoaderThrottle>> throttles,
       std::unique_ptr<NavigationResponseOverrideParameters>
-          response_override_params,
-      base::OnceClosure* continue_navigation_function);
+          response_override_params);
 
   // Removes a request from the |pending_requests_| list, returning true if the
   // request was found and removed.
@@ -207,6 +207,7 @@ class CONTENT_EXPORT ResourceDispatcher {
     // it's not completed. Used both to distinguish completion from
     // cancellation, and to log histograms.
     int net_error = net::ERR_IO_PENDING;
+    PreviewsState previews_state = PreviewsTypes::PREVIEWS_UNSPECIFIED;
 
     // These stats will be sent to the browser process.
     mojom::ResourceLoadInfoPtr resource_load_info;
@@ -227,8 +228,7 @@ class CONTENT_EXPORT ResourceDispatcher {
   // Message response handlers, called by the message handler for this process.
   void OnUploadProgress(int request_id, int64_t position, int64_t size);
   void OnReceivedResponse(int request_id, const network::ResourceResponseHead&);
-  void OnReceivedCachedMetadata(int request_id,
-                                const std::vector<uint8_t>& data);
+  void OnReceivedCachedMetadata(int request_id, base::span<const uint8_t> data);
   void OnReceivedRedirect(
       int request_id,
       const net::RedirectInfo& redirect_info,

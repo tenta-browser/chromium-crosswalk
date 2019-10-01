@@ -7,12 +7,17 @@
 #import <Foundation/Foundation.h>
 #import <WebKit/WebKit.h>
 
+#include "base/ios/ios_util.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/strings/sys_string_conversions.h"
+#include "ios/web/common/features.h"
 #include "ios/web/public/browser_state.h"
-#include "ios/web/public/features.h"
+#include "ios/web/public/web_client.h"
 #import "ios/web/web_state/js/page_script_util.h"
 #import "ios/web/web_state/ui/crw_wk_script_message_router.h"
+#import "ios/web/web_state/ui/wk_web_view_configuration_provider_observer.h"
+#import "ios/web/webui/crw_web_ui_scheme_handler.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -21,6 +26,7 @@
 namespace web {
 
 namespace {
+
 // A key used to associate a WKWebViewConfigurationProvider with a BrowserState.
 const char kWKWebViewConfigProviderKeyName[] = "wk_web_view_config_provider";
 
@@ -74,8 +80,7 @@ WKWebViewConfigurationProvider::WKWebViewConfigurationProvider(
     BrowserState* browser_state)
     : browser_state_(browser_state) {}
 
-WKWebViewConfigurationProvider::~WKWebViewConfigurationProvider() {
-}
+WKWebViewConfigurationProvider::~WKWebViewConfigurationProvider() = default;
 
 WKWebViewConfiguration*
 WKWebViewConfigurationProvider::GetWebViewConfiguration() {
@@ -105,7 +110,34 @@ WKWebViewConfigurationProvider::GetWebViewConfiguration() {
                           browser_state_)];
     [[configuration_ userContentController]
         addUserScript:InternalGetDocumentEndScriptForAllFrames(browser_state_)];
+
+    if (!scheme_handler_) {
+      scoped_refptr<network::SharedURLLoaderFactory> shared_loader_factory =
+          browser_state_->GetSharedURLLoaderFactory();
+      scheme_handler_ = [[CRWWebUISchemeHandler alloc]
+          initWithURLLoaderFactory:shared_loader_factory];
+    }
+    WebClient::Schemes schemes;
+    GetWebClient()->AddAdditionalSchemes(&schemes);
+    GetWebClient()->GetAdditionalWebUISchemes(&(schemes.standard_schemes));
+    for (std::string scheme : schemes.standard_schemes) {
+      [configuration_ setURLSchemeHandler:scheme_handler_
+                             forURLScheme:base::SysUTF8ToNSString(scheme)];
+    }
+
+    for (auto& observer : observers_)
+      observer.DidCreateNewConfiguration(this, configuration_);
+
+    // Workaround to force the creation of the WKWebsiteDataStore. This
+    // workaround need to be done here, because this method returns a copy of
+    // the already created configuration.
+    NSSet* data_types = [NSSet setWithObject:WKWebsiteDataTypeCookies];
+    [configuration_.websiteDataStore
+        fetchDataRecordsOfTypes:data_types
+              completionHandler:^(NSArray<WKWebsiteDataRecord*>* records){
+              }];
   }
+
   // This is a shallow copy to prevent callers from changing the internals of
   // configuration.
   return [configuration_ copy];
@@ -127,6 +159,16 @@ void WKWebViewConfigurationProvider::Purge() {
   DCHECK([NSThread isMainThread]);
   configuration_ = nil;
   router_ = nil;
+}
+
+void WKWebViewConfigurationProvider::AddObserver(
+    WKWebViewConfigurationProviderObserver* observer) {
+  observers_.AddObserver(observer);
+}
+
+void WKWebViewConfigurationProvider::RemoveObserver(
+    WKWebViewConfigurationProviderObserver* observer) {
+  observers_.RemoveObserver(observer);
 }
 
 }  // namespace web

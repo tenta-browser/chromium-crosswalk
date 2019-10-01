@@ -8,11 +8,11 @@
 #include "base/bind_helpers.h"
 #include "base/metrics/histogram_macros.h"
 #include "chrome/browser/loader/chrome_navigation_data.h"
+#include "chrome/browser/previews/previews_content_util.h"
 #include "chrome/browser/previews/previews_service.h"
 #include "chrome/browser/previews/previews_service_factory.h"
 #include "chrome/browser/previews/previews_ui_tab_helper.h"
 #include "chrome/browser/profiles/profile.h"
-#include "components/previews/content/previews_content_util.h"
 #include "components/previews/content/previews_ui_service.h"
 #include "components/previews/content/previews_user_data.h"
 #include "components/previews/core/previews_experiments.h"
@@ -56,6 +56,13 @@ void ResourceLoadingHintsWebContentsObserver::DidFinishNavigation(
   if (!previews_user_data ||
       previews_user_data->committed_previews_type() !=
           previews::PreviewsType::RESOURCE_LOADING_HINTS) {
+    return;
+  }
+  // The committed previews type can sometimes not be cleared out if there were
+  // no pre-commit previews allowed, so make sure we are not in the coin flip
+  // holdback before proceeding with sending resource loading hints.
+  if (previews_user_data->coin_flip_holdback_result() ==
+      previews::CoinFlipHoldbackResult::kHoldback) {
     return;
   }
 

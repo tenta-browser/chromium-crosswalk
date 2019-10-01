@@ -8,7 +8,6 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/test/base/in_process_browser_test.h"
-#include "ui/base/ui_base_features.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/views/widget/widget.h"
@@ -16,39 +15,6 @@
 
 namespace {
 
-// Waits for the given widget's bounds to change to the given rect.
-class WidgetBoundsWatcher : public views::WidgetObserver {
- public:
-  WidgetBoundsWatcher(views::Widget* widget, const gfx::Rect& target_bounds)
-      : widget_(widget), target_bounds_(target_bounds) {}
-
-  ~WidgetBoundsWatcher() override {}
-
-  void Wait() {
-    // Unconditionally wait for the widget bounds to update, even if the bounds
-    // already match |target_bounds_|. Otherwise multiple values for
-    // |target_bounds_| will pass the test (either the current or re-positioned
-    // bounds would be accepted).
-    widget_->AddObserver(this);
-    run_loop_.Run();
-  }
-
- private:
-  void OnWidgetBoundsChanged(views::Widget* widget,
-                             const gfx::Rect& new_bounds) override {
-    if (new_bounds == target_bounds_) {
-      run_loop_.Quit();
-      widget_->RemoveObserver(this);
-    }
-  }
-
-  views::Widget* widget_;
-  const gfx::Rect target_bounds_;
-  base::RunLoop run_loop_;
-  DISALLOW_COPY_AND_ASSIGN(WidgetBoundsWatcher);
-};
-
-// Tests both BrowserFrameAsh and BrowserFrameMus.
 class BrowserTestParam : public InProcessBrowserTest,
                          public testing::WithParamInterface<bool> {
  public:
@@ -77,18 +43,11 @@ IN_PROC_BROWSER_TEST_P(BrowserTestParam,
                         "test_browser_app", true /* trusted_source */,
                         gfx::Rect(), browser()->profile(), true)
                   : Browser::CreateParams(browser()->profile(), true);
-  gfx::Rect original_bounds(gfx::Rect(150, 250, 400, 100));
+  gfx::Rect original_bounds(gfx::Rect(150, 250, 510, 150));
   params.initial_show_state = ui::SHOW_STATE_NORMAL;
   params.initial_bounds = original_bounds;
   Browser* browser = new Browser(params);
   browser->window()->Show();
-
-  if (features::IsUsingWindowService()) {
-    WidgetBoundsWatcher watch(
-        BrowserView::GetBrowserViewForBrowser(browser)->GetWidget(),
-        original_bounds);
-    watch.Wait();
-  }
 
   // The bounds passed via |initial_bounds| should be respected regardless of
   // the window type.
@@ -114,17 +73,10 @@ IN_PROC_BROWSER_TEST_P(BrowserTestParam,
     expectation.set_y(original_bounds.y());
   }
 
-  if (features::IsUsingWindowService()) {
-    WidgetBoundsWatcher watch(
-        BrowserView::GetBrowserViewForBrowser(browser)->GetWidget(),
-        expectation);
-    watch.Wait();
-  }
-
   EXPECT_EQ(expectation, browser->window()->GetBounds())
       << (is_test_app ? "for app window" : "for tabbed browser window");
 }
 
-INSTANTIATE_TEST_CASE_P(BrowserTestTabbedOrApp,
-                        BrowserTestParam,
-                        testing::Bool());
+INSTANTIATE_TEST_SUITE_P(BrowserTestTabbedOrApp,
+                         BrowserTestParam,
+                         testing::Bool());

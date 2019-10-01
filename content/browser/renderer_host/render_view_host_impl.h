@@ -80,26 +80,21 @@ class CONTENT_EXPORT RenderViewHostImpl : public RenderViewHost,
                      int32_t main_frame_routing_id,
                      bool swapped_out,
                      bool has_initialized_audio_host);
-  // TODO(ajwong): Make destructor private. Deletion of this object should only
-  // be done via ShutdownAndDestroy(). https://crbug.com/545684
   ~RenderViewHostImpl() override;
-
-  // Shuts down this RenderViewHost and deletes it.
-  void ShutdownAndDestroy();
 
   // RenderViewHost implementation.
   bool Send(IPC::Message* msg) override;
-  RenderWidgetHostImpl* GetWidget() const override;
-  RenderProcessHost* GetProcess() const override;
-  int GetRoutingID() const override;
+  RenderWidgetHostImpl* GetWidget() override;
+  RenderProcessHost* GetProcess() override;
+  int GetRoutingID() override;
   RenderFrameHost* GetMainFrame() override;
   void EnablePreferredSizeMode() override;
   void ExecutePluginActionAtLocation(
       const gfx::Point& location,
       const blink::WebPluginAction& action) override;
-  RenderViewHostDelegate* GetDelegate() const override;
-  SiteInstanceImpl* GetSiteInstance() const override;
-  bool IsRenderViewLive() const override;
+  RenderViewHostDelegate* GetDelegate() override;
+  SiteInstanceImpl* GetSiteInstance() override;
+  bool IsRenderViewLive() override;
   void NotifyMoveOrResizeStarted() override;
   void SetWebUIProperty(const std::string& name,
                         const std::string& value) override;
@@ -133,10 +128,6 @@ class CONTENT_EXPORT RenderViewHostImpl : public RenderViewHost,
       const base::UnguessableToken& devtools_frame_token,
       const FrameReplicationState& replicated_frame_state,
       bool window_was_created_with_opener);
-
-  base::TerminationStatus render_view_termination_status() const {
-    return render_view_termination_status_;
-  }
 
   // Tracks whether this RenderViewHost is in an active state (rather than
   // pending swap out or swapped out), according to its main frame
@@ -222,6 +213,9 @@ class CONTENT_EXPORT RenderViewHostImpl : public RenderViewHost,
   // Marks all views in the frame tree as evicted.
   std::vector<viz::SurfaceId> CollectSurfaceIdsForEviction();
 
+  // Manual RTTI to ensure safe downcasts in tests.
+  virtual bool IsTestRenderViewHost() const;
+
   // NOTE: Do not add functions that just send an IPC message that are called in
   // one or two places. Have the caller send the IPC message directly (unless
   // the caller places are in different platforms, in which case it's better
@@ -231,7 +225,6 @@ class CONTENT_EXPORT RenderViewHostImpl : public RenderViewHost,
   // RenderWidgetHostOwnerDelegate overrides.
   void RenderWidgetDidInit() override;
   void RenderWidgetDidClose() override;
-  void RenderWidgetNeedsToRouteCloseEvent() override;
   void RenderWidgetDidFirstVisuallyNonEmptyPaint() override;
   void RenderWidgetDidCommitAndDrawCompositorFrame() override;
   void RenderWidgetGotFocus() override;
@@ -257,6 +250,7 @@ class CONTENT_EXPORT RenderViewHostImpl : public RenderViewHost,
                   bool user_gesture);
   void OnShowWidget(int widget_route_id, const gfx::Rect& initial_rect);
   void OnShowFullscreenWidget(int widget_route_id);
+  void OnRouteCloseEvent();
   void OnUpdateTargetURL(const GURL& url);
   void OnDocumentAvailableInMainFrame(bool uses_temporary_zoom_level);
   void OnDidContentsPreferredSizeChange(const gfx::Size& new_size);
@@ -342,9 +336,6 @@ class CONTENT_EXPORT RenderViewHostImpl : public RenderViewHost,
 
   // True if the render view can be shut down suddenly.
   bool sudden_termination_allowed_;
-
-  // The termination status of the last render view that terminated.
-  base::TerminationStatus render_view_termination_status_;
 
   // This is updated every time UpdateWebkitPreferences is called. That method
   // is in turn called when any of the settings change that the WebPreferences

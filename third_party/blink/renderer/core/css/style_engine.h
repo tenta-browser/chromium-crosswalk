@@ -33,6 +33,7 @@
 #include <memory>
 #include <utility>
 #include "base/auto_reset.h"
+#include "third_party/blink/public/common/css/preferred_color_scheme.h"
 #include "third_party/blink/public/web/web_document.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/active_style_sheets.h"
@@ -50,7 +51,6 @@
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/tree_ordered_list.h"
 #include "third_party/blink/renderer/platform/bindings/name_client.h"
-#include "third_party/blink/renderer/platform/bindings/trace_wrapper_member.h"
 #include "third_party/blink/renderer/platform/fonts/font_selector_client.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/allocator.h"
@@ -87,18 +87,6 @@ class CORE_EXPORT StyleEngine final
   USING_GARBAGE_COLLECTED_MIXIN(StyleEngine);
 
  public:
-  class IgnoringPendingStylesheet {
-    STACK_ALLOCATED();
-
-   public:
-    IgnoringPendingStylesheet(StyleEngine& engine)
-        : scope_(&engine.ignore_pending_stylesheets_,
-                 !RuntimeEnabledFeatures::CSSInBodyDoesNotBlockPaintEnabled()) {
-    }
-
-   private:
-    base::AutoReset<bool> scope_;
-  };
 
   class DOMRemovalScope {
     STACK_ALLOCATED();
@@ -111,18 +99,13 @@ class CORE_EXPORT StyleEngine final
     base::AutoReset<bool> in_removal_;
   };
 
-  static StyleEngine* Create(Document& document) {
-    return MakeGarbageCollected<StyleEngine>(document);
-  }
-
-  StyleEngine(Document&);
+  explicit StyleEngine(Document&);
   ~StyleEngine() override;
 
-  const HeapVector<TraceWrapperMember<StyleSheet>>&
-  StyleSheetsForStyleSheetList(TreeScope&);
+  const HeapVector<Member<StyleSheet>>& StyleSheetsForStyleSheetList(
+      TreeScope&);
 
-  const HeapVector<
-      std::pair<StyleSheetKey, TraceWrapperMember<CSSStyleSheet>>>&
+  const HeapVector<std::pair<StyleSheetKey, Member<CSSStyleSheet>>>&
   InjectedAuthorStyleSheets() const {
     return injected_author_style_sheets_;
   }
@@ -145,6 +128,7 @@ class CORE_EXPORT StyleEngine final
   void MediaQueriesChangedInScope(TreeScope&);
   void WatchedSelectorsChanged();
   void InitialStyleChanged();
+  void ColorSchemeChanged();
   void InitialViewportChanged();
   void ViewportRulesChanged();
   void HtmlImportAddedOrRemoved();
@@ -195,9 +179,6 @@ class CORE_EXPORT StyleEngine final
   }
   bool HaveRenderBlockingStylesheetsLoaded() const {
     return !HasPendingRenderBlockingSheets();
-  }
-  bool IgnoringPendingStylesheets() const {
-    return ignore_pending_stylesheets_;
   }
 
   unsigned MaxDirectAdjacentSelectors() const {
@@ -357,9 +338,16 @@ class CORE_EXPORT StyleEngine final
 
   scoped_refptr<StyleInitialData> MaybeCreateAndGetInitialData();
 
-  void RecalcStyle(StyleRecalcChange change);
+  void RecalcStyle(const StyleRecalcChange change);
   void RebuildLayoutTree();
   bool InRebuildLayoutTree() const { return in_layout_tree_rebuild_; }
+
+  void SetColorSchemeFromMeta(const CSSValue* color_scheme);
+  const CSSValue* GetMetaColorSchemeValue() const { return meta_color_scheme_; }
+  PreferredColorScheme GetPreferredColorScheme() const {
+    return preferred_color_scheme_;
+  }
+  void UpdateColorSchemeBackground();
 
   void Trace(blink::Visitor*) override;
   const char* NameInHeapSnapshot() const override { return "StyleEngine"; }
@@ -453,6 +441,9 @@ class CORE_EXPORT StyleEngine final
   void AddUserKeyframeRules(const RuleSet&);
   void AddUserKeyframeStyle(StyleRuleKeyframes*);
 
+  void UpdateColorScheme();
+  bool SupportsDarkColorScheme();
+
   Member<Document> document_;
   bool is_master_;
 
@@ -466,8 +457,7 @@ class CORE_EXPORT StyleEngine final
 
   Member<CSSStyleSheet> inspector_style_sheet_;
 
-  TraceWrapperMember<DocumentStyleSheetCollection>
-      document_style_sheet_collection_;
+  Member<DocumentStyleSheetCollection> document_style_sheet_collection_;
 
   Member<StyleRuleUsageTracker> tracker_;
 
@@ -487,7 +477,6 @@ class CORE_EXPORT StyleEngine final
   String preferred_stylesheet_set_name_;
 
   bool uses_rem_units_ = false;
-  bool ignore_pending_stylesheets_ = false;
   bool in_layout_tree_rebuild_ = false;
   bool in_dom_removal_ = false;
 
@@ -518,9 +507,9 @@ class CORE_EXPORT StyleEngine final
   std::unique_ptr<StyleResolverStats> style_resolver_stats_;
   unsigned style_for_element_count_ = 0;
 
-  HeapVector<std::pair<StyleSheetKey, TraceWrapperMember<CSSStyleSheet>>>
+  HeapVector<std::pair<StyleSheetKey, Member<CSSStyleSheet>>>
       injected_user_style_sheets_;
-  HeapVector<std::pair<StyleSheetKey, TraceWrapperMember<CSSStyleSheet>>>
+  HeapVector<std::pair<StyleSheetKey, Member<CSSStyleSheet>>>
       injected_author_style_sheets_;
 
   ActiveStyleSheetVector active_user_style_sheets_;
@@ -538,7 +527,20 @@ class CORE_EXPORT StyleEngine final
   // font-family.
   HashMap<AtomicString, FontDisplay> default_font_display_map_;
 
+  // Color schemes explicitly supported by the author through the viewport meta
+  // tag. E.g. <meta name="color-scheme" content="light dark">. A dark color-
+  // scheme is used to opt-out of forced darkening.
+  Member<const CSSValue> meta_color_scheme_;
+
+  // The preferred color scheme is set in settings, but may be overridden by the
+  // ForceDarkMode setting where the preferred_color_scheme_ will be set no
+  // kNoPreference to avoid dark styling to be applied before auto darkening.
+  PreferredColorScheme preferred_color_scheme_ =
+      PreferredColorScheme::kNoPreference;
+
+  friend class NodeTest;
   friend class StyleEngineTest;
+  friend class WhitespaceAttacherTest;
 };
 
 }  // namespace blink

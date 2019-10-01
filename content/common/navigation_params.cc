@@ -35,21 +35,6 @@ InitiatorCSPInfo::InitiatorCSPInfo(const InitiatorCSPInfo& other) = default;
 
 InitiatorCSPInfo::~InitiatorCSPInfo() = default;
 
-bool IsNavigationDownloadAllowed(NavigationDownloadPolicy policy) {
-  switch (policy) {
-    case NavigationDownloadPolicy::kDisallowViewSource:
-    case NavigationDownloadPolicy::kDisallowInterstitial:
-    case NavigationDownloadPolicy::kDisallowSandbox:
-      return false;
-    case NavigationDownloadPolicy::kAllow:
-    case NavigationDownloadPolicy::kAllowOpener:
-    case NavigationDownloadPolicy::kAllowOpenerNoGesture:
-    case NavigationDownloadPolicy::kAllowOpenerCrossOrigin:
-    case NavigationDownloadPolicy::kAllowOpenerCrossOriginNoGesture:
-      return true;
-  }
-}
-
 CommonNavigationParams::CommonNavigationParams() = default;
 
 CommonNavigationParams::CommonNavigationParams(
@@ -70,7 +55,9 @@ CommonNavigationParams::CommonNavigationParams(
     bool started_from_context_menu,
     bool has_user_gesture,
     const InitiatorCSPInfo& initiator_csp_info,
+    const std::vector<int>& initiator_origin_trial_features,
     const std::string& href_translate,
+    bool is_history_navigation_in_new_child_frame,
     base::TimeTicks input_start)
     : url(url),
       initiator_origin(initiator_origin),
@@ -89,7 +76,10 @@ CommonNavigationParams::CommonNavigationParams(
       started_from_context_menu(started_from_context_menu),
       has_user_gesture(has_user_gesture),
       initiator_csp_info(initiator_csp_info),
+      initiator_origin_trial_features(initiator_origin_trial_features),
       href_translate(href_translate),
+      is_history_navigation_in_new_child_frame(
+          is_history_navigation_in_new_child_frame),
       input_start(input_start) {
   // |method != "POST"| should imply absence of |post_data|.
   if (method != "POST" && post_data) {
@@ -103,7 +93,8 @@ CommonNavigationParams::CommonNavigationParams(
 
 CommonNavigationParams::~CommonNavigationParams() = default;
 
-CommitNavigationParams::CommitNavigationParams() = default;
+CommitNavigationParams::CommitNavigationParams()
+    : navigation_token(base::UnguessableToken::Create()) {}
 
 CommitNavigationParams::CommitNavigationParams(
     const base::Optional<url::Origin>& origin_to_commit,
@@ -114,7 +105,6 @@ CommitNavigationParams::CommitNavigationParams(
     bool can_load_local_resources,
     const PageState& page_state,
     int nav_entry_id,
-    bool is_history_navigation_in_new_child,
     std::map<std::string, bool> subframe_unique_names,
     bool intended_as_new_entry,
     int pending_history_list_offset,
@@ -130,14 +120,14 @@ CommitNavigationParams::CommitNavigationParams(
       can_load_local_resources(can_load_local_resources),
       page_state(page_state),
       nav_entry_id(nav_entry_id),
-      is_history_navigation_in_new_child(is_history_navigation_in_new_child),
       subframe_unique_names(subframe_unique_names),
       intended_as_new_entry(intended_as_new_entry),
       pending_history_list_offset(pending_history_list_offset),
       current_history_list_offset(current_history_list_offset),
       current_history_list_length(current_history_list_length),
       is_view_source(is_view_source),
-      should_clear_history_list(should_clear_history_list) {}
+      should_clear_history_list(should_clear_history_list),
+      navigation_token(base::UnguessableToken::Create()) {}
 
 CommitNavigationParams::CommitNavigationParams(
     const CommitNavigationParams& other) = default;

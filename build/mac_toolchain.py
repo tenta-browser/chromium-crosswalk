@@ -16,6 +16,8 @@ The toolchain version can be overridden by setting MAC_TOOLCHAIN_REVISION with
 the full revision, e.g. 9A235.
 """
 
+from __future__ import print_function
+
 import os
 import platform
 import shutil
@@ -25,18 +27,12 @@ import sys
 
 # This can be changed after running:
 #    mac_toolchain upload -xcode-path path/to/Xcode.app
-MAC_TOOLCHAIN_VERSION = '8E2002'
+MAC_TOOLCHAIN_VERSION = '9E501'
 
 # The toolchain will not be downloaded if the minimum OS version is not met.
-# 16 is the major version number for macOS 10.12.
-MAC_MINIMUM_OS_VERSION = 16
-
-# The toolchain will not be downloaded if the maximum OS version is exceeded.
-# 17 is the major version number for macOS 10.13. Xcode 8 does not run on macOS
-# 10.14.
-# TODO(https://crbug.com/780980): Once we build with 10.13 SDK, Xcode 9, we
-# should be able to remove this upper bound.
-MAC_MAXIMUM_OS_VERSION = 17
+# 17 is the major version number for macOS 10.13.
+# 9E145 (Xcode 9.3) only runs on 10.13.2 and newer.
+MAC_MINIMUM_OS_VERSION = 17
 
 MAC_TOOLCHAIN_INSTALLER = 'mac_toolchain'
 
@@ -54,8 +50,7 @@ STAMP_FILE = os.path.join(TOOLCHAIN_ROOT, 'toolchain_build_revision')
 
 def PlatformMeetsHermeticXcodeRequirements():
   major_version = int(platform.release().split('.')[0])
-  return (major_version >= MAC_MINIMUM_OS_VERSION and
-          major_version <= MAC_MAXIMUM_OS_VERSION)
+  return major_version >= MAC_MINIMUM_OS_VERSION
 
 
 def _UseHermeticToolchain():
@@ -68,22 +63,22 @@ def _UseHermeticToolchain():
 def RequestCipdAuthentication():
   """Requests that the user authenticate to access Xcode CIPD packages."""
 
-  print 'Access to Xcode CIPD package requires authentication.'
-  print '-----------------------------------------------------------------'
-  print
-  print 'You appear to be a Googler.'
-  print
-  print 'I\'m sorry for the hassle, but you may need to do a one-time manual'
-  print 'authentication. Please run:'
-  print
-  print '    cipd auth-login'
-  print
-  print 'and follow the instructions.'
-  print
-  print 'NOTE: Use your google.com credentials, not chromium.org.'
-  print
-  print '-----------------------------------------------------------------'
-  print
+  print('Access to Xcode CIPD package requires authentication.')
+  print('-----------------------------------------------------------------')
+  print()
+  print('You appear to be a Googler.')
+  print()
+  print('I\'m sorry for the hassle, but you may need to do a one-time manual')
+  print('authentication. Please run:')
+  print()
+  print('    cipd auth-login')
+  print()
+  print('and follow the instructions.')
+  print()
+  print('NOTE: Use your google.com credentials, not chromium.org.')
+  print()
+  print('-----------------------------------------------------------------')
+  print()
   sys.stdout.flush()
 
 
@@ -139,11 +134,11 @@ def main():
     return 0
 
   if not _UseHermeticToolchain():
-    print 'Skipping Mac toolchain installation for mac'
+    print('Skipping Mac toolchain installation for mac')
     return 0
 
   if not PlatformMeetsHermeticXcodeRequirements():
-    print 'OS version does not support toolchain.'
+    print('OS version does not support toolchain.')
     return 0
 
   toolchain_version = os.environ.get('MAC_TOOLCHAIN_REVISION',
@@ -163,8 +158,8 @@ def main():
   # TODO(crbug.com/797051): remove this once the old "hermetic" solution is no
   # longer in use.
   if os.path.exists(stamp_file):
-    print 'Detected old hermetic installation at %s. Deleting.' % (
-      toolchain_root)
+    print(
+        'Detected old hermetic installation at %s. Deleting.' % toolchain_root)
     shutil.rmtree(toolchain_root)
 
   success = InstallXcode(toolchain_version, installer_cmd, xcode_app_path)

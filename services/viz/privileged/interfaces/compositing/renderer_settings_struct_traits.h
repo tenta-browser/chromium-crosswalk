@@ -4,12 +4,17 @@
 #ifndef SERVICES_VIZ_PRIVILEGED_INTERFACES_COMPOSITING_RENDERER_SETTINGS_STRUCT_TRAITS_H_
 #define SERVICES_VIZ_PRIVILEGED_INTERFACES_COMPOSITING_RENDERER_SETTINGS_STRUCT_TRAITS_H_
 
+#include <vector>
+
 #include "build/build_config.h"
 #include "components/viz/common/display/renderer_settings.h"
+#include "services/viz/privileged/cpp/overlay_strategy_struct_traits.h"
 #include "services/viz/privileged/interfaces/compositing/renderer_settings.mojom.h"
-#include "services/viz/privileged/interfaces/compositing/renderer_settings_struct_traits.h"
 #include "ui/gfx/geometry/mojo/geometry_struct_traits.h"
-#include "ui/gfx/ipc/color/gfx_param_traits.h"
+
+#if defined(USE_OZONE)
+#include "components/viz/common/display/overlay_strategy.h"
+#endif
 
 namespace mojo {
 template <>
@@ -53,10 +58,6 @@ struct StructTraits<viz::mojom::RendererSettingsDataView,
     return input.show_overdraw_feedback;
   }
 
-  static bool enable_draw_occlusion(const viz::RendererSettings& input) {
-    return input.enable_draw_occlusion;
-  }
-
   static int highp_threshold_min(const viz::RendererSettings& input) {
     return input.highp_threshold_min;
   }
@@ -68,6 +69,10 @@ struct StructTraits<viz::mojom::RendererSettingsDataView,
 
   static bool use_skia_renderer(const viz::RendererSettings& input) {
     return input.use_skia_renderer;
+  }
+
+  static bool use_skia_renderer_non_ddl(const viz::RendererSettings& input) {
+    return input.use_skia_renderer_non_ddl;
   }
 
   static bool record_sk_picture(const viz::RendererSettings& input) {
@@ -89,6 +94,13 @@ struct StructTraits<viz::mojom::RendererSettingsDataView,
 
   static gfx::ColorSpace color_space(const viz::RendererSettings& input) {
     return input.color_space;
+  }
+#endif
+
+#if defined(USE_OZONE)
+  static std::vector<viz::OverlayStrategy> overlay_strategies(
+      const viz::RendererSettings& input) {
+    return input.overlay_strategies;
   }
 #endif
 

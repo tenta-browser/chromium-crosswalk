@@ -36,15 +36,13 @@ enum class EventSource {
 
 // Finds the target for a given location based on the AggregatedHitTestRegion
 // list aggregated by HitTestAggregator.
-// TODO(riajiang): Handle 3d space cases correctly.
+// TODO(crbug.com/966939): Handle 3d space cases correctly.
 class VIZ_HOST_EXPORT HitTestQuery {
  public:
   explicit HitTestQuery(
       base::RepeatingClosure shut_down_gpu_callback = base::RepeatingClosure());
   virtual ~HitTestQuery();
 
-  // TODO(riajiang): Need to validate the data received.
-  // http://crbug.com/746470
   // HitTestAggregator has sent the most recent |hit_test_data| for targeting/
   // transforming requests.
   void OnAggregatedHitTestRegionListUpdated(
@@ -93,7 +91,6 @@ class VIZ_HOST_EXPORT HitTestQuery {
   // |target_ancestors.front()| is the target, and |target_ancestors.back()|
   // is the root.
   bool TransformLocationForTarget(
-      EventSource event_source,
       const std::vector<FrameSinkId>& target_ancestors,
       const gfx::PointF& location_in_root,
       gfx::PointF* transformed_location) const;
@@ -143,7 +140,6 @@ class VIZ_HOST_EXPORT HitTestQuery {
   // |location_in_target| is in the coordinate space of |region_index|'s parent
   // at the beginning.
   bool TransformLocationForTargetRecursively(
-      EventSource event_source,
       const std::vector<FrameSinkId>& target_ancestors,
       size_t target_ancestor,
       size_t region_index,

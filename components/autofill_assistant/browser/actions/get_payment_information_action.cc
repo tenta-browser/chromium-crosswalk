@@ -4,17 +4,19 @@
 
 #include "components/autofill_assistant/browser/actions/get_payment_information_action.h"
 
+#include <algorithm>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/autofill_data_util.h"
-#include "components/autofill/core/browser/autofill_profile.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/autofill_assistant/browser/actions/action_delegate.h"
 #include "components/autofill_assistant/browser/client_memory.h"
+#include "components/autofill_assistant/browser/service.pb.h"
 #include "third_party/blink/public/mojom/payments/payment_request.mojom.h"
 
 namespace autofill_assistant {
@@ -33,8 +35,9 @@ void GetPaymentInformationAction::InternalProcessAction(
   const GetPaymentInformationProto& get_payment_information =
       proto_.get_payment_information();
 
-  payments::mojom::PaymentOptionsPtr payment_options =
-      payments::mojom::PaymentOptions::New();
+  auto payment_options = std::make_unique<PaymentRequestOptions>();
+  payment_options->request_terms_and_conditions =
+      get_payment_information.request_terms_and_conditions();
   if (get_payment_information.has_contact_details()) {
     auto contact_details = get_payment_information.contact_details();
     payment_options->request_payer_email =
@@ -44,23 +47,36 @@ void GetPaymentInformationAction::InternalProcessAction(
         contact_details.request_payer_phone();
   }
 
-  std::vector<std::string> supported_basic_card_networks;
   std::copy(get_payment_information.supported_basic_card_networks().begin(),
             get_payment_information.supported_basic_card_networks().end(),
-            std::back_inserter(supported_basic_card_networks));
+            std::back_inserter(payment_options->supported_basic_card_networks));
 
   payment_options->request_shipping =
       !get_payment_information.shipping_address_name().empty();
+  payment_options->request_payment_method =
+      get_payment_information.ask_for_payment();
+  payment_options->confirm_button_text =
+      get_payment_information.confirm_button_text();
+  switch (get_payment_information.terms_and_conditions_state()) {
+    case GetPaymentInformationProto::NOT_SELECTED:
+      payment_options->initial_terms_and_conditions = NOT_SELECTED;
+      break;
+    case GetPaymentInformationProto::ACCEPTED:
+      payment_options->initial_terms_and_conditions = ACCEPTED;
+      break;
+    case GetPaymentInformationProto::REVIEW_REQUIRED:
+      payment_options->initial_terms_and_conditions = REQUIRES_REVIEW;
+      break;
+  }
 
-  delegate->GetPaymentInformation(
-      std::move(payment_options),
+  payment_options->callback =
       base::BindOnce(&GetPaymentInformationAction::OnGetPaymentInformation,
                      weak_ptr_factory_.GetWeakPtr(), delegate,
-                     std::move(get_payment_information), std::move(callback)),
-      get_payment_information.prompt(), supported_basic_card_networks);
+                     std::move(get_payment_information), std::move(callback));
   if (get_payment_information.has_prompt()) {
     delegate->SetStatusMessage(get_payment_information.prompt());
   }
+  delegate->GetPaymentInformation(std::move(payment_options));
 }
 
 void GetPaymentInformationAction::OnGetPaymentInformation(
@@ -80,6 +96,13 @@ void GetPaymentInformationAction::OnGetPaymentInformation(
           ->set_card_issuer_network(card_issuer_network);
       delegate->GetClientMemory()->set_selected_card(
           std::move(payment_information->card));
+
+      if (!get_payment_information.billing_address_name().empty()) {
+        DCHECK(payment_information->billing_address);
+        delegate->GetClientMemory()->set_selected_address(
+            get_payment_information.billing_address_name(),
+            std::move(payment_information->billing_address));
+      }
     }
 
     if (!get_payment_information.shipping_address_name().empty()) {
@@ -87,13 +110,6 @@ void GetPaymentInformationAction::OnGetPaymentInformation(
       delegate->GetClientMemory()->set_selected_address(
           get_payment_information.shipping_address_name(),
           std::move(payment_information->shipping_address));
-    }
-
-    if (!get_payment_information.billing_address_name().empty()) {
-      DCHECK(payment_information->billing_address);
-      delegate->GetClientMemory()->set_selected_address(
-          get_payment_information.billing_address_name(),
-          std::move(payment_information->billing_address));
     }
 
     if (get_payment_information.has_contact_details()) {
@@ -122,7 +138,8 @@ void GetPaymentInformationAction::OnGetPaymentInformation(
     }
     processed_action_proto_->mutable_payment_details()
         ->set_is_terms_and_conditions_accepted(
-            payment_information->is_terms_and_conditions_accepted);
+            payment_information->terms_and_conditions ==
+            TermsAndConditionsState::ACCEPTED);
     processed_action_proto_->mutable_payment_details()->set_payer_email(
         payment_information->payer_email);
   }

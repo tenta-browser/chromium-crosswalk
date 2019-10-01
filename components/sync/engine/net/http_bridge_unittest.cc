@@ -8,6 +8,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/bit_cast.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
@@ -89,8 +90,7 @@ class MAYBE_SyncHttpBridgeTest : public testing::Test {
     CustomHttpBridge()
         : HttpBridge(kUserAgent,
                      nullptr /*SharedURLLoaderFactoryInfo*/,
-                     NetworkTimeUpdateCallback(),
-                     BindToTrackerCallback()) {}
+                     NetworkTimeUpdateCallback()) {}
 
    protected:
     ~CustomHttpBridge() override {}
@@ -125,8 +125,7 @@ class ShuntedHttpBridge : public HttpBridge {
       : HttpBridge(
             kUserAgent,
             nullptr /*SharedURLLoaderFactoryInfo, unneeded as we mock stuff*/,
-            NetworkTimeUpdateCallback(),
-            BindToTrackerCallback()),
+            NetworkTimeUpdateCallback()),
         test_(test),
         never_finishes_(never_finishes) {}
 
@@ -150,8 +149,7 @@ class ShuntedHttpBridge : public HttpBridge {
     ASSERT_TRUE(test_->GetIOThreadTaskRunner()->BelongsToCurrentThread());
 
     // Set up a dummy content response.
-    OnURLLoadCompleteInternal(200, net::OK, 0 /* content length, irrelevant */,
-                              GURL("http://www.google.com"),
+    OnURLLoadCompleteInternal(200, net::OK, GURL("http://www.google.com"),
                               std::make_unique<std::string>("success!"));
   }
   MAYBE_SyncHttpBridgeTest* test_;

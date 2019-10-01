@@ -6,7 +6,10 @@
 #define CHROME_BROWSER_WEB_APPLICATIONS_COMPONENTS_WEB_APP_TAB_HELPER_BASE_H_
 
 #include "base/macros.h"
+#include "base/scoped_observer.h"
 #include "base/unguessable_token.h"
+#include "chrome/browser/web_applications/components/app_registrar.h"
+#include "chrome/browser/web_applications/components/app_registrar_observer.h"
 #include "chrome/browser/web_applications/components/web_app_helpers.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
@@ -23,21 +26,23 @@ class WebAppAudioFocusIdMap;
 // (or legacy bookmark app).
 class WebAppTabHelperBase
     : public content::WebContentsObserver,
-      public content::WebContentsUserData<WebAppTabHelperBase> {
+      public content::WebContentsUserData<WebAppTabHelperBase>,
+      AppRegistrarObserver {
  public:
   ~WebAppTabHelperBase() override;
 
-  // This provides a weak reference to the current audio focus id map instance
-  // which is owned by WebAppProvider. This is used to ensure that all web
-  // contents associated with a web app shared the same audio focus group id.
-  void SetAudioFocusIdMap(WebAppAudioFocusIdMap* audio_focus_id_map);
+  // |audio_focus_id_map| is a weak reference to the current audio focus id map
+  // instance which is owned by WebAppProvider. This is used to ensure that all
+  // web contents associated with a web app shared the same audio focus group
+  // id.
+  void Init(WebAppAudioFocusIdMap* audio_focus_id_map);
 
   const AppId& app_id() const { return app_id_; }
 
-  // Set app_id on web app installation or tab restore.
+  bool HasAssociatedApp() const;
+
+  // Set associated app_id.
   void SetAppId(const AppId& app_id);
-  // Clear app_id on web app uninstallation.
-  void ResetAppId();
 
   // content::WebContentsObserver:
   void DidFinishNavigation(
@@ -65,9 +70,7 @@ class WebAppTabHelperBase
   virtual WebAppTabHelperBase* CloneForWebContents(
       content::WebContents* web_contents) const = 0;
 
-  // Gets AppId from derived platform-specific TabHelper and updates
-  // app_id_ with it.
-  virtual AppId GetAppId(const GURL& url) = 0;
+  virtual AppId FindAppIdInScopeOfUrl(const GURL& url) = 0;
 
   // Returns whether the associated web contents belongs to an app window.
   virtual bool IsInAppWindow() const = 0;
@@ -75,11 +78,24 @@ class WebAppTabHelperBase
  private:
   friend class WebAppAudioFocusBrowserTest;
 
+  void SetAudioFocusIdMap(WebAppAudioFocusIdMap* audio_focus_id_map);
+
+  // AppRegistrarObserver:
+  void OnWebAppInstalled(const AppId& installed_app_id) override;
+  void OnWebAppUninstalled(const AppId& uninstalled_app_id) override;
+  void OnAppRegistrarShutdown() override;
+  void OnAppRegistrarDestroyed() override;
+
+  void ResetAppId();
+
   // Runs any logic when the associated app either changes or is removed.
   void OnAssociatedAppChanged();
 
   // Updates the audio focus group id based on the current web app.
   void UpdateAudioFocusGroupId();
+
+  // Triggers a reinstall of a placeholder app for |url|.
+  void ReinstallPlaceholderAppIfNecessary(const GURL& url);
 
   // WebApp associated with this tab. Empty string if no app associated.
   AppId app_id_;
@@ -90,6 +106,8 @@ class WebAppTabHelperBase
 
   // Weak reference to audio focus group id storage.
   WebAppAudioFocusIdMap* audio_focus_id_map_ = nullptr;
+
+  ScopedObserver<AppRegistrar, AppRegistrarObserver> observer_{this};
 
   DISALLOW_COPY_AND_ASSIGN(WebAppTabHelperBase);
 };

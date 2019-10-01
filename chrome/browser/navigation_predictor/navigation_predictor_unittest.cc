@@ -25,12 +25,15 @@ class TestNavigationPredictor : public NavigationPredictor {
  public:
   explicit TestNavigationPredictor(
       mojo::InterfaceRequest<AnchorElementMetricsHost> request,
-      content::RenderFrameHost* render_frame_host)
+      content::RenderFrameHost* render_frame_host,
+      bool init_feature_list)
       : NavigationPredictor(render_frame_host), binding_(this) {
     binding_.Bind(std::move(request));
-    const std::vector<base::Feature> features = {
-        blink::features::kNavigationPredictor};
-    feature_list_.InitWithFeatures(features, {});
+    if (init_feature_list) {
+      const std::vector<base::Feature> features = {
+          blink::features::kNavigationPredictor};
+      feature_list_.InitWithFeatures(features, {});
+    }
   }
 
   ~TestNavigationPredictor() override {}
@@ -100,7 +103,8 @@ class NavigationPredictorTest : public ChromeRenderViewHostTestHarness {
   void SetUp() override {
     ChromeRenderViewHostTestHarness::SetUp();
     predictor_service_helper_ = std::make_unique<TestNavigationPredictor>(
-        mojo::MakeRequest(&predictor_service_), main_rfh());
+        mojo::MakeRequest(&predictor_service_), main_rfh(),
+        !field_trial_initiated_);
   }
 
   void SetupFieldTrial(base::Optional<int> preconnect_origin_score_threshold,
@@ -115,11 +119,11 @@ class NavigationPredictorTest : public ChromeRenderViewHostTestHarness {
     std::map<std::string, std::string> params;
     if (preconnect_origin_score_threshold.has_value()) {
       params["preconnect_origin_score_threshold"] =
-          base::IntToString(preconnect_origin_score_threshold.value());
+          base::NumberToString(preconnect_origin_score_threshold.value());
     }
     if (prefetch_url_score_threshold.has_value()) {
       params["prefetch_url_score_threshold"] =
-          base::IntToString(prefetch_url_score_threshold.value());
+          base::NumberToString(prefetch_url_score_threshold.value());
     }
     scoped_feature_list.InitAndEnableFeatureWithParameters(
         blink::features::kNavigationPredictor, params);
@@ -489,7 +493,7 @@ class NavigationPredictorPrefetchDisabledTest : public NavigationPredictorTest {
   void SetUp() override {
     ChromeRenderViewHostTestHarness::SetUp();
     predictor_service_helper_ = std::make_unique<TestNavigationPredictor>(
-        mojo::MakeRequest(&predictor_service_), main_rfh());
+        mojo::MakeRequest(&predictor_service_), main_rfh(), false);
   }
 };
 
@@ -585,7 +589,7 @@ class NavigationPredictorPreconnectPrefetchDisabledTest
   void SetUp() override {
     ChromeRenderViewHostTestHarness::SetUp();
     predictor_service_helper_ = std::make_unique<TestNavigationPredictor>(
-        mojo::MakeRequest(&predictor_service_), main_rfh());
+        mojo::MakeRequest(&predictor_service_), main_rfh(), false);
   }
 };
 

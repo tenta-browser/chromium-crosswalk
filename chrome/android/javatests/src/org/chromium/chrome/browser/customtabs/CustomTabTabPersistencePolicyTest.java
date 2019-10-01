@@ -24,13 +24,16 @@ import org.chromium.base.ApplicationStatus;
 import org.chromium.base.Callback;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.StreamUtil;
-import org.chromium.base.ThreadUtils;
-import org.chromium.base.task.AsyncTask;
+import org.chromium.base.task.PostTask;
+import org.chromium.base.task.SequencedTaskRunner;
+import org.chromium.base.task.TaskRunner;
+import org.chromium.base.task.TaskTraits;
 import org.chromium.base.test.util.AdvancedMockContext;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.compositor.layouts.content.TabContentManager;
+import org.chromium.chrome.browser.tab.MockTab;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabState;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
@@ -40,6 +43,7 @@ import org.chromium.chrome.browser.tabmodel.TabPersistentStore;
 import org.chromium.chrome.browser.tabmodel.TestTabModelDirectory;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.util.browser.tabmodel.MockTabModel;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -48,7 +52,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Callable;
-import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -58,7 +61,8 @@ import java.util.concurrent.atomic.AtomicReference;
 public class CustomTabTabPersistencePolicyTest {
     private TestTabModelDirectory mMockDirectory;
     private AdvancedMockContext mAppContext;
-
+    private SequencedTaskRunner mSequencedTaskRunner =
+            PostTask.createSequencedTaskRunner(TaskTraits.USER_VISIBLE);
     @Rule
     public UiThreadTestRule mRule = new UiThreadTestRule();
 
@@ -83,7 +87,7 @@ public class CustomTabTabPersistencePolicyTest {
         mMockDirectory.tearDown();
 
         for (Activity activity : ApplicationStatus.getRunningActivities()) {
-            ThreadUtils.runOnUiThreadBlocking(
+            TestThreadUtils.runOnUiThreadBlocking(
                     () -> ApplicationStatus.onStateChangeForTesting(
                             activity, ActivityState.DESTROYED));
         }
@@ -166,7 +170,7 @@ public class CustomTabTabPersistencePolicyTest {
         Assert.assertTrue(existingStateFile.createNewFile());
 
         Assert.assertTrue(existingStateFile.exists());
-        policy.performInitialization(AsyncTask.SERIAL_EXECUTOR);
+        policy.performInitialization(mSequencedTaskRunner);
         policy.waitForInitializationToFinish();
         Assert.assertFalse(existingStateFile.exists());
     }
@@ -271,7 +275,7 @@ public class CustomTabTabPersistencePolicyTest {
 
         // Create a tab model and associated tabs. Ensure it is not marked for deletion as it is
         // new enough.
-        byte[] data = ThreadUtils.runOnUiThreadBlockingNoException(new Callable<byte[]>() {
+        byte[] data = TestThreadUtils.runOnUiThreadBlockingNoException(new Callable<byte[]>() {
             @Override
             public byte[] call() throws Exception {
                 TabModelSelectorImpl selectorImpl =
@@ -329,7 +333,7 @@ public class CustomTabTabPersistencePolicyTest {
                 System.currentTimeMillis() - CustomTabTabPersistencePolicy.STATE_EXPIRY_THRESHOLD;
         Assert.assertTrue(metadataFile.setLastModified(previousTimestamp));
 
-        policy.performInitialization(AsyncTask.SERIAL_EXECUTOR);
+        policy.performInitialization(mSequencedTaskRunner);
         policy.waitForInitializationToFinish();
 
         Assert.assertTrue(metadataFile.lastModified() > previousTimestamp);
@@ -384,7 +388,7 @@ public class CustomTabTabPersistencePolicyTest {
             }
 
             @Override
-            public boolean performInitialization(Executor executor) {
+            public boolean performInitialization(TaskRunner taskRunner) {
                 return false;
             }
 
@@ -439,7 +443,7 @@ public class CustomTabTabPersistencePolicyTest {
                 new MockTabModel.MockTabModelDelegate() {
                     @Override
                     public Tab createTab(int id, boolean incognito) {
-                        return new Tab(id, incognito, null) {
+                        return new MockTab(id, incognito) {
                             @Override
                             public String getUrl() {
                                 return "https://www.google.com";

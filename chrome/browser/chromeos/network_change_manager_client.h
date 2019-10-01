@@ -9,7 +9,7 @@
 
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "chromeos/dbus/power_manager_client.h"
+#include "chromeos/dbus/power/power_manager_client.h"
 #include "chromeos/network/network_state_handler_observer.h"
 #include "net/base/network_change_notifier.h"
 #include "services/network/public/mojom/network_change_manager.mojom.h"
@@ -42,6 +42,8 @@ class NetworkChangeManagerClient
   friend class NetworkChangeManagerClientUpdateTest;
   FRIEND_TEST_ALL_PREFIXES(NetworkChangeManagerClientTest,
                            ConnectionTypeFromShill);
+  FRIEND_TEST_ALL_PREFIXES(NetworkChangeManagerClientTest,
+                           NetworkChangeNotifierConnectionTypeUpdated);
 
   void ConnectToNetworkChangeManager();
   void ReconnectToNetworkChangeManager();

@@ -22,6 +22,7 @@ import org.chromium.base.task.AsyncTask;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.ChromeFeatureList;
+import org.chromium.chrome.browser.DeviceConditions;
 import org.chromium.chrome.browser.FileProviderHelper;
 import org.chromium.chrome.browser.UrlConstants;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -52,7 +53,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 
 /**
  * A class holding static util functions for offline pages.
@@ -228,6 +228,13 @@ public class OfflinePageUtils {
     }
 
     /**
+     * Returns false if offline pages features should be disabled.
+     */
+    public static boolean isEnabled() {
+        return org.chromium.chrome.browser.BuildConfig.ENABLE_OFFLINE_PAGES;
+    }
+
+    /**
      * Returns the number of free bytes on the storage.
      */
     public static long getFreeSpaceInBytes() {
@@ -256,9 +263,6 @@ public class OfflinePageUtils {
     public static void saveBookmarkOffline(BookmarkId bookmarkId, Tab tab) {
         // If bookmark ID is missing there is nothing to save here.
         if (bookmarkId == null) return;
-
-        // Making sure the feature is enabled.
-        if (!OfflinePageBridge.isOfflineBookmarksEnabled()) return;
 
         // Making sure tab is worth keeping.
         if (shouldSkipSavingTabOffline(tab)) return;
@@ -341,9 +345,7 @@ public class OfflinePageUtils {
             return;
         }
         RecordHistogram.recordLongTimesHistogram(
-                "OfflinePages.Wakeup.DelayTime",
-                delayInMilliseconds,
-                TimeUnit.MILLISECONDS);
+                "OfflinePages.Wakeup.DelayTime", delayInMilliseconds);
     }
 
     /**
@@ -404,8 +406,6 @@ public class OfflinePageUtils {
      */
     public static boolean maybeShareOfflinePage(
             final Activity activity, Tab tab, final Callback<ShareParams> shareCallback) {
-        if (!OfflinePageBridge.isPageSharingEnabled()) return false;
-
         if (tab == null) return false;
 
         boolean isOfflinePage = OfflinePageUtils.isOfflinePage(tab);

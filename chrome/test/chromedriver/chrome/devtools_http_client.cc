@@ -34,8 +34,7 @@ WebViewInfo::WebViewInfo(const WebViewInfo& other) = default;
 WebViewInfo::~WebViewInfo() {}
 
 bool WebViewInfo::IsFrontend() const {
-  return base::StartsWith(url, "chrome-devtools://",
-                          base::CompareCase::SENSITIVE);
+  return base::StartsWith(url, "devtools://", base::CompareCase::SENSITIVE);
 }
 
 bool WebViewInfo::IsInactiveBackgroundPage() const {
@@ -279,7 +278,7 @@ Status ParseType(const std::string& type_as_string, WebViewInfo::Type* type) {
 namespace internal {
 
 Status ParseWebViewsInfo(const std::string& data, WebViewsInfo* views_info) {
-  std::unique_ptr<base::Value> value = base::JSONReader::Read(data);
+  std::unique_ptr<base::Value> value = base::JSONReader::ReadDeprecated(data);
   if (!value.get())
     return Status(kUnknownError, "DevTools returned invalid JSON");
   base::ListValue* list;

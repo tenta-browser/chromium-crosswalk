@@ -51,7 +51,8 @@ namespace {
 const char kUnknownActionType[] = "unknownType";
 
 std::unique_ptr<WebRequestActionSet> CreateSetOfActions(const char* json) {
-  std::unique_ptr<base::Value> parsed_value(base::test::ParseJson(json));
+  std::unique_ptr<base::Value> parsed_value(
+      base::test::ParseJsonDeprecated(json));
   const base::ListValue* parsed_list;
   CHECK(parsed_value->GetAsList(&parsed_list));
 
@@ -154,8 +155,9 @@ bool WebRequestActionWithThreadsTest::ActionWorksOnRequest(
   EventResponseDeltas deltas;
   scoped_refptr<net::HttpResponseHeaders> headers(
       new net::HttpResponseHeaders(""));
-  WebRequestInfo request_info(regular_request.get());
-  request_info.render_process_id = kRendererId;
+  WebRequestInfoInitParams request_params(regular_request.get());
+  request_params.render_process_id = kRendererId;
+  WebRequestInfo request_info(std::move(request_params));
   WebRequestData request_data(&request_info, stage, headers.get());
   std::set<std::string> ignored_tags;
   WebRequestAction::ApplyInfo apply_info = { extension_info_map_.get(),
@@ -163,7 +165,7 @@ bool WebRequestActionWithThreadsTest::ActionWorksOnRequest(
                                              false /*crosses_incognito*/,
                                              &deltas, &ignored_tags };
   action_set->Apply(extension_id, base::Time(), &apply_info);
-  return (1u == deltas.size() || 0u < ignored_tags.size());
+  return (1u == deltas.size() || !ignored_tags.empty());
 }
 
 void WebRequestActionWithThreadsTest::CheckActionNeedsAllUrls(

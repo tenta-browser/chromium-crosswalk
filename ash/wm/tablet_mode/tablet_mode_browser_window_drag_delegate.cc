@@ -6,24 +6,26 @@
 
 #include <vector>
 
-#include "ash/app_list/app_list_controller_impl.h"
+#include "ash/home_screen/home_screen_controller.h"
+#include "ash/public/cpp/wallpaper_types.h"
 #include "ash/root_window_controller.h"
 #include "ash/scoped_animation_disabler.h"
 #include "ash/shell.h"
+#include "ash/wallpaper/wallpaper_view.h"
 #include "ash/wallpaper/wallpaper_widget_controller.h"
 #include "ash/wm/mru_window_tracker.h"
 #include "ash/wm/overview/overview_constants.h"
 #include "ash/wm/overview/overview_controller.h"
-#include "ash/wm/overview/overview_grid.h"
 #include "ash/wm/overview/overview_utils.h"
 #include "ash/wm/splitview/split_view_constants.h"
-#include "ash/wm/tablet_mode/tablet_mode_browser_window_drag_controller.h"
 #include "ash/wm/tablet_mode/tablet_mode_window_state.h"
 #include "ash/wm/window_util.h"
 #include "ui/aura/window.h"
 #include "ui/compositor/layer_animation_observer.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/display/screen.h"
+#include "ui/gfx/color_analysis.h"
+#include "ui/gfx/color_utils.h"
 #include "ui/views/widget/widget.h"
 #include "ui/wm/core/coordinate_conversion.h"
 
@@ -126,11 +128,11 @@ class TabletModeBrowserWindowDragDelegate::WindowsHider
     source_window->SetProperty(kBackdropWindowMode,
                                BackdropWindowMode::kDisabled);
 
-    DCHECK(!Shell::Get()->overview_controller()->IsSelecting());
+    DCHECK(!Shell::Get()->overview_controller()->InOverviewSession());
 
     aura::Window* root_window = dragged_window->GetRootWindow();
     std::vector<aura::Window*> windows =
-        Shell::Get()->mru_window_tracker()->BuildMruWindowList();
+        Shell::Get()->mru_window_tracker()->BuildMruWindowList(kActiveDesk);
     for (aura::Window* window : windows) {
       if (window == dragged_window || window == source_window ||
           window->GetRootWindow() != root_window) {
@@ -146,28 +148,16 @@ class TabletModeBrowserWindowDragDelegate::WindowsHider
     }
 
     // Hide the home launcher if it's enabled during dragging.
-    // TODO(xdai): Move the hide/show home launcher logic to a general place in
-    // TabletModeWindowDragDelegate.
-    Shell::Get()->app_list_controller()->OnWindowDragStarted();
+    Shell::Get()->home_screen_controller()->OnWindowDragStarted();
 
     // Blurs the wallpaper background.
-    RootWindowController::ForWindow(root_window)
-        ->wallpaper_widget_controller()
-        ->SetWallpaperBlur(kWallpaperBlurSigma);
-
-    // Darken the background.
-    shield_widget_ = CreateBackgroundWidget(
-        root_window, ui::LAYER_SOLID_COLOR, SK_ColorTRANSPARENT, 0, 0,
-        SK_ColorTRANSPARENT, /*initial_opacity*/ 1.f, /*parent=*/nullptr,
-        /*stack_on_top=*/true);
-    aura::Window* widget_window = shield_widget_->GetNativeWindow();
-    const gfx::Rect bounds = widget_window->parent()->bounds();
-    widget_window->SetBounds(bounds);
-    views::View* shield_view = new views::View();
-    shield_view->SetPaintToLayer(ui::LAYER_SOLID_COLOR);
-    shield_view->layer()->SetColor(OverviewGrid::GetShieldColor());
-    shield_view->layer()->SetOpacity(kShieldOpacity);
-    shield_widget_->SetContentsView(shield_view);
+    auto* wallpaper_view = RootWindowController::ForWindow(root_window)
+                               ->wallpaper_widget_controller()
+                               ->wallpaper_view();
+    if (wallpaper_view) {
+      wallpaper_view->RepaintBlurAndOpacity(kWallpaperBlurSigma,
+                                            kShieldOpacity);
+    }
   }
 
   ~WindowsHider() override {
@@ -186,18 +176,18 @@ class TabletModeBrowserWindowDragDelegate::WindowsHider
       }
     }
 
-    DCHECK(!Shell::Get()->overview_controller()->IsSelecting());
+    DCHECK(!Shell::Get()->overview_controller()->InOverviewSession());
 
     // May reshow the home launcher after dragging.
-    Shell::Get()->app_list_controller()->OnWindowDragEnded();
+    Shell::Get()->home_screen_controller()->OnWindowDragEnded();
 
     // Clears the background wallpaper blur.
-    RootWindowController::ForWindow(dragged_window_->GetRootWindow())
-        ->wallpaper_widget_controller()
-        ->SetWallpaperBlur(kWallpaperClearBlurSigma);
-
-    // Clears the background darken widget.
-    shield_widget_.reset();
+    auto* wallpaper_view =
+        RootWindowController::ForWindow(dragged_window_->GetRootWindow())
+            ->wallpaper_widget_controller()
+            ->wallpaper_view();
+    if (wallpaper_view)
+      wallpaper_view->RepaintBlurAndOpacity(kWallpaperClearBlurSigma, 1.f);
   }
 
   // aura::WindowObserver:
@@ -222,10 +212,6 @@ class TabletModeBrowserWindowDragDelegate::WindowsHider
   // The currently dragged window. Guaranteed to be non-nullptr during the
   // lifetime of |this|.
   aura::Window* dragged_window_;
-
-  // A shield that darkens the entire background during dragging. It should
-  // have the same effect as in overview.
-  std::unique_ptr<views::Widget> shield_widget_;
 
   // Maintains the map between windows and their visibilities. All windows
   // except the dragged window and the source window should stay hidden during
@@ -262,9 +248,9 @@ void TabletModeBrowserWindowDragDelegate::UpdateWindowDrag(
 }
 
 void TabletModeBrowserWindowDragDelegate::EndingWindowDrag(
-    wm::WmToplevelWindowEventHandler::DragResult result,
+    ToplevelWindowEventHandler::DragResult result,
     const gfx::Point& location_in_screen) {
-  if (result == wm::WmToplevelWindowEventHandler::DragResult::SUCCESS)
+  if (result == ToplevelWindowEventHandler::DragResult::SUCCESS)
     wm::GetWindowState(dragged_window_)->OnCompleteDrag(location_in_screen);
   else
     wm::GetWindowState(dragged_window_)->OnRevertDrag(location_in_screen);
@@ -277,18 +263,8 @@ void TabletModeBrowserWindowDragDelegate::EndedWindowDrag(
 
 void TabletModeBrowserWindowDragDelegate::StartFling(
     const ui::GestureEvent* event) {
-  if (ShouldFlingIntoOverview(event)) {
-    DCHECK(Shell::Get()->overview_controller()->IsSelecting());
-    Shell::Get()->overview_controller()->overview_session()->AddItem(
-        dragged_window_, /*reposition=*/true, /*animate=*/false);
-  } else {
-    aura::Window* source_window =
-        dragged_window_->GetProperty(ash::kTabDraggingSourceWindowKey);
-    if (source_window &&
-        event->details().velocity_y() > kFlingToStayAsNewWindowThreshold) {
-      can_merge_back_to_source_window_ = false;
-    }
-  }
+  if (event->details().velocity_y() > kFlingToStayAsNewWindowThreshold)
+    can_merge_back_to_source_window_ = false;
 }
 
 bool TabletModeBrowserWindowDragDelegate::ShouldOpenOverviewWhenDragStarts() {
@@ -306,8 +282,7 @@ void TabletModeBrowserWindowDragDelegate::UpdateSourceWindow(
   aura::Window* source_window =
       dragged_window_->GetProperty(ash::kTabDraggingSourceWindowKey);
   if (!source_window || source_window == dragged_window_ ||
-      source_window == split_view_controller_->left_window() ||
-      source_window == split_view_controller_->right_window() ||
+      split_view_controller_->IsWindowInSplitView(source_window) ||
       source_window->GetProperty(ash::kIsShowingInOverviewKey)) {
     return;
   }
@@ -363,13 +338,9 @@ void TabletModeBrowserWindowDragDelegate::MergeBackToSourceWindowIfApplicable(
 
   aura::Window* source_window =
       dragged_window_->GetProperty(ash::kTabDraggingSourceWindowKey);
-  // Do not merge back if there is no source window or the source window or
-  // the dragged window is currently in overview.
-  if (!source_window ||
-      source_window->GetProperty(ash::kIsShowingInOverviewKey) ||
-      dragged_window_->GetProperty(ash::kIsShowingInOverviewKey)) {
+  // Do not merge back if there is no source window.
+  if (!source_window)
     return;
-  }
 
   // Do not merge back if the dragged window is not capable of merging back.
   // This may happen if the drag ends because of a fling event and the fling
@@ -390,21 +361,26 @@ void TabletModeBrowserWindowDragDelegate::MergeBackToSourceWindowIfApplicable(
       GetSnapPosition(location_in_screen);
   // If splitscreen is not active, do not merge back if the dragged window is
   // in the drag-to-snap preview area.
-  if (!split_view_controller_->IsSplitViewModeActive() &&
+  if (!split_view_controller_->InSplitViewMode() &&
       desired_snap_position != SplitViewController::NONE) {
     return;
   }
 
-  // If source window is currently showing in splitscreen, do not merge back if
-  // the dragged window has been dragged to the other side of the split.
-  if (split_view_controller_->IsSplitViewModeActive() &&
-      wm::GetWindowState(source_window)->IsSnapped()) {
-    if ((source_window == split_view_controller_->left_window() &&
-         desired_snap_position == SplitViewController::RIGHT) ||
-        (source_window == split_view_controller_->right_window() &&
-         desired_snap_position == SplitViewController::LEFT)) {
+  // In splitscreen, do not merge back if the drag point is on one side of the
+  // split view divider and the source window is snapped on the opposite side.
+  if (split_view_controller_->InSplitViewMode()) {
+    const int drag_position = IsCurrentScreenOrientationLandscape()
+                                  ? location_in_screen.x()
+                                  : location_in_screen.y();
+    const bool is_dragging_on_left =
+        IsCurrentScreenOrientationPrimary()
+            ? drag_position < split_view_controller_->divider_position()
+            : drag_position > split_view_controller_->divider_position();
+    aura::Window* window_on_opposite_side =
+        is_dragging_on_left ? split_view_controller_->right_window()
+                            : split_view_controller_->left_window();
+    if (source_window == window_on_opposite_side)
       return;
-    }
   }
 
   // Arriving here we know the dragged window should merge back into its source

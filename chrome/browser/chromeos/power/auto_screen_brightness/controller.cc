@@ -12,10 +12,10 @@
 #include "chrome/browser/chromeos/power/auto_screen_brightness/brightness_monitor_impl.h"
 #include "chrome/browser/chromeos/power/auto_screen_brightness/gaussian_trainer.h"
 #include "chrome/browser/chromeos/power/auto_screen_brightness/metrics_reporter.h"
+#include "chrome/browser/chromeos/power/auto_screen_brightness/model_config_loader_impl.h"
 #include "chrome/browser/chromeos/power/auto_screen_brightness/modeller_impl.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
 
 namespace chromeos {
 namespace power {
@@ -23,7 +23,7 @@ namespace auto_screen_brightness {
 
 Controller::Controller() {
   chromeos::PowerManagerClient* power_manager_client =
-      chromeos::DBusThreadManager::Get()->GetPowerManagerClient();
+      chromeos::PowerManagerClient::Get();
   DCHECK(power_manager_client);
 
   metrics_reporter_ = std::make_unique<MetricsReporter>(
@@ -32,8 +32,10 @@ Controller::Controller() {
   als_reader_ = std::make_unique<AlsReaderImpl>();
   als_reader_->Init();
 
-  brightness_monitor_ =
-      std::make_unique<BrightnessMonitorImpl>(power_manager_client);
+  brightness_monitor_ = std::make_unique<BrightnessMonitorImpl>();
+  brightness_monitor_->Init();
+
+  model_config_loader_ = std::make_unique<ModelConfigLoaderImpl>();
 
   ui::UserActivityDetector* user_activity_detector =
       ui::UserActivityDetector::Get();
@@ -43,11 +45,13 @@ Controller::Controller() {
   DCHECK(profile);
   modeller_ = std::make_unique<ModellerImpl>(
       profile, als_reader_.get(), brightness_monitor_.get(),
-      user_activity_detector, std::make_unique<GaussianTrainer>());
+      model_config_loader_.get(), user_activity_detector,
+      std::make_unique<GaussianTrainer>());
 
   adapter_ = std::make_unique<Adapter>(
       profile, als_reader_.get(), brightness_monitor_.get(), modeller_.get(),
-      metrics_reporter_.get(), power_manager_client);
+      model_config_loader_.get(), metrics_reporter_.get());
+  adapter_->Init();
 }
 
 Controller::~Controller() = default;

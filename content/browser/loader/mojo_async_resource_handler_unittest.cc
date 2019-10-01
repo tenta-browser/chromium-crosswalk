@@ -55,6 +55,7 @@
 #include "net/url_request/url_request_status.h"
 #include "net/url_request/url_request_test_job.h"
 #include "net/url_request/url_request_test_util.h"
+#include "services/network/public/cpp/constants.h"
 #include "services/network/public/cpp/resource_response.h"
 #include "services/network/public/cpp/url_loader_completion_status.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
@@ -178,7 +179,7 @@ class MojoAsyncResourceHandlerWithStubOperations
                                  rdh,
                                  std::move(mojo_request),
                                  std::move(url_loader_client),
-                                 RESOURCE_TYPE_MAIN_FRAME,
+                                 ResourceType::kMainFrame,
                                  options),
         task_runner_(new base::TestSimpleTaskRunner) {}
   ~MojoAsyncResourceHandlerWithStubOperations() override {}
@@ -308,13 +309,13 @@ class MojoAsyncResourceHandlerTestBase {
     request_->set_upload(std::move(upload_stream));
     ResourceRequestInfo::AllocateForTesting(
         request_.get(),                          // request
-        RESOURCE_TYPE_XHR,                       // resource_type
+        ResourceType::kXhr,                      // resource_type
         browser_context_->GetResourceContext(),  // context
         kChildId,                                // render_process_id
         kRouteId,                                // render_view_id
         0,                                       // render_frame_id
         true,                                    // is_main_frame
-        false,                                   // allow_download
+        ResourceInterceptPolicy::kAllowNone,     // resource_intercept_policy
         true,                                    // is_async
         PREVIEWS_OFF,                            // previews_state
         nullptr);                                // navigation_ui_data
@@ -344,7 +345,7 @@ class MojoAsyncResourceHandlerTestBase {
 
   virtual ~MojoAsyncResourceHandlerTestBase() {
     MojoAsyncResourceHandler::SetAllocationSizeForTesting(
-        MojoAsyncResourceHandler::kDefaultAllocationSize);
+        network::kDataPipeDefaultAllocationSize);
     base::RunLoop().RunUntilIdle();
   }
 
@@ -1368,9 +1369,9 @@ TEST_F(MojoAsyncResourceHandlerDeferOnResponseStartedTest,
     MockResourceLoader::Status result = mock_loader_->OnResponseStarted(
         base::MakeRefCounted<network::ResourceResponse>());
     EXPECT_EQ(MockResourceLoader::Status::CALLBACK_PENDING, result);
-    std::unique_ptr<base::Value> request_state = request_->GetStateAsValue();
+    base::Value request_state = request_->GetStateAsValue();
     base::Value* delegate_blocked_by =
-        request_state->FindKey("delegate_blocked_by");
+        request_state.FindKey("delegate_blocked_by");
     EXPECT_TRUE(delegate_blocked_by);
     EXPECT_EQ("MojoAsyncResourceHandler", delegate_blocked_by->GetString());
   }
@@ -1381,9 +1382,9 @@ TEST_F(MojoAsyncResourceHandlerDeferOnResponseStartedTest,
     handler_->ProceedWithResponse();
     mock_loader_->WaitUntilIdleOrCanceled();
     EXPECT_EQ(MockResourceLoader::Status::IDLE, mock_loader_->status());
-    std::unique_ptr<base::Value> request_state = request_->GetStateAsValue();
+    base::Value request_state = request_->GetStateAsValue();
     base::Value* delegate_blocked_by =
-        request_state->FindKey("delegate_blocked_by");
+        request_state.FindKey("delegate_blocked_by");
     EXPECT_FALSE(delegate_blocked_by);
   }
 }
@@ -1420,7 +1421,7 @@ TEST_F(MojoAsyncResourceHandlerTest, SSLInfoOnComplete) {
 
   url_loader_client_.RunUntilComplete();
   EXPECT_FALSE(url_loader_client_.completion_status().ssl_info);
-};
+}
 
 // Test that SSLInfo is attached to OnResponseComplete when there is the
 // kURLLoadOptionsSendSSLInfoForCertificateError option.
@@ -1438,7 +1439,7 @@ TEST_F(MojoAsyncResourceHandlerSendSSLInfoForCertificateError,
 
   url_loader_client_.RunUntilComplete();
   EXPECT_TRUE(url_loader_client_.completion_status().ssl_info);
-};
+}
 
 // Test that SSLInfo is not attached to OnResponseComplete when there is the
 // kURLLoadOptionsSendSSLInfoForCertificateError option and a minor SSL error.
@@ -1455,7 +1456,7 @@ TEST_F(MojoAsyncResourceHandlerSendSSLInfoForCertificateError,
             mock_loader_->OnResponseCompleted(net::URLRequestStatus()));
   url_loader_client_.RunUntilComplete();
   EXPECT_FALSE(url_loader_client_.completion_status().ssl_info);
-};
+}
 
 TEST_F(MojoAsyncResourceHandlerTest,
        TransferSizeUpdateCalledForNonBlockedResponse) {
@@ -1571,8 +1572,8 @@ TEST_F(MojoAsyncResourceHandlerTest,
             url_loader_client_.body_transfer_size());
 }
 
-INSTANTIATE_TEST_CASE_P(MojoAsyncResourceHandlerWithAllocationSizeTest,
-                        MojoAsyncResourceHandlerWithAllocationSizeTest,
-                        ::testing::Values(8, 32 * 2014));
+INSTANTIATE_TEST_SUITE_P(MojoAsyncResourceHandlerWithAllocationSizeTest,
+                         MojoAsyncResourceHandlerWithAllocationSizeTest,
+                         ::testing::Values(8, 32 * 2014));
 }  // namespace
 }  // namespace content

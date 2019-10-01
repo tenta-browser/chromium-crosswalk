@@ -13,8 +13,6 @@
 #include "base/strings/string_tokenizer.h"
 #include "base/strings/string_util.h"
 #include "base/system/sys_info.h"
-#include "content/renderer/media/stream/media_stream_audio_track.h"
-#include "content/renderer/media/webrtc/webrtc_uma_histograms.h"
 #include "content/renderer/media_recorder/audio_track_recorder.h"
 #include "media/base/audio_bus.h"
 #include "media/base/audio_codecs.h"
@@ -24,9 +22,11 @@
 #include "media/base/video_codecs.h"
 #include "media/base/video_frame.h"
 #include "media/muxers/webm_muxer.h"
+#include "third_party/blink/public/platform/modules/media_capabilities/web_media_capabilities_info.h"
 #include "third_party/blink/public/platform/modules/media_capabilities/web_media_configuration.h"
+#include "third_party/blink/public/platform/modules/mediastream/media_stream_audio_track.h"
 #include "third_party/blink/public/platform/modules/mediastream/web_platform_media_stream_track.h"
-#include "third_party/blink/public/platform/scoped_web_callbacks.h"
+#include "third_party/blink/public/platform/modules/mediastream/webrtc_uma_histograms.h"
 #include "third_party/blink/public/platform/web_media_recorder_handler_client.h"
 #include "third_party/blink/public/platform/web_media_stream_source.h"
 #include "third_party/blink/public/platform/web_string.h"
@@ -36,8 +36,6 @@ using base::TimeTicks;
 using base::ToLowerASCII;
 
 namespace content {
-
-using blink::WebMediaCapabilitiesEncodingInfoCallbacks;
 
 namespace {
 
@@ -110,11 +108,6 @@ AudioTrackRecorder::CodecId AudioStringToCodecId(
     return AudioTrackRecorder::CodecId::PCM;
 
   return AudioTrackRecorder::CodecId::LAST;
-}
-
-void OnEncodingInfoError(
-    std::unique_ptr<WebMediaCapabilitiesEncodingInfoCallbacks> callbacks) {
-  callbacks->OnError();
 }
 
 }  // anonymous namespace
@@ -249,18 +242,18 @@ bool MediaRecorderHandler::Start(int timeslice) {
   video_tracks_ = media_stream_.VideoTracks();
   audio_tracks_ = media_stream_.AudioTracks();
 
-  if (video_tracks_.IsEmpty() && audio_tracks_.IsEmpty()) {
+  if (video_tracks_.empty() && audio_tracks_.empty()) {
     LOG(WARNING) << __func__ << ": no media tracks.";
     return false;
   }
 
   const bool use_video_tracks =
-      !video_tracks_.IsEmpty() &&
+      !video_tracks_.empty() &&
       video_tracks_[0].Source().GetReadyState() !=
           blink::WebMediaStreamSource::kReadyStateEnded;
   const bool use_audio_tracks =
-      !audio_tracks_.IsEmpty() &&
-      MediaStreamAudioTrack::From(audio_tracks_[0]) &&
+      !audio_tracks_.empty() &&
+      blink::MediaStreamAudioTrack::From(audio_tracks_[0]) &&
       audio_tracks_[0].Source().GetReadyState() !=
           blink::WebMediaStreamSource::kReadyStateEnded;
 
@@ -338,7 +331,8 @@ void MediaRecorderHandler::Pause() {
     video_recorder->Pause();
   for (const auto& audio_recorder : audio_recorders_)
     audio_recorder->Pause();
-  webm_muxer_->Pause();
+  if (webm_muxer_)
+    webm_muxer_->Pause();
 }
 
 void MediaRecorderHandler::Resume() {
@@ -349,19 +343,16 @@ void MediaRecorderHandler::Resume() {
     video_recorder->Resume();
   for (const auto& audio_recorder : audio_recorders_)
     audio_recorder->Resume();
-  webm_muxer_->Resume();
+  if (webm_muxer_)
+    webm_muxer_->Resume();
 }
 
 void MediaRecorderHandler::EncodingInfo(
     const blink::WebMediaConfiguration& configuration,
-    std::unique_ptr<blink::WebMediaCapabilitiesEncodingInfoCallbacks>
-        callbacks) {
+    OnMediaCapabilitiesEncodingInfoCallback callback) {
   DCHECK(main_render_thread_checker_.CalledOnValidThread());
   DCHECK(configuration.video_configuration ||
          configuration.audio_configuration);
-
-  auto scoped_callbacks = blink::MakeScopedWebCallbacks(
-      std::move(callbacks), base::BindOnce(&OnEncodingInfoError));
 
   std::unique_ptr<blink::WebMediaCapabilitiesInfo> info(
       new blink::WebMediaCapabilitiesInfo());
@@ -385,7 +376,8 @@ void MediaRecorderHandler::EncodingInfo(
         VideoTrackRecorder::CanUseAcceleratedEncoder(
             VideoStringToCodecId(codec),
             configuration.video_configuration->width,
-            configuration.video_configuration->height);
+            configuration.video_configuration->height,
+            configuration.video_configuration->framerate);
 
     const float pixels_per_second =
         configuration.video_configuration->width *
@@ -406,7 +398,7 @@ void MediaRecorderHandler::EncodingInfo(
            << " is" << (info->supported ? " supported" : " NOT supported")
            << " and" << (info->smooth ? " smooth" : " NOT smooth");
 
-  scoped_callbacks.PassCallbacks()->OnSuccess(std::move(info));
+  std::move(callback).Run(std::move(info));
 }
 
 blink::WebString MediaRecorderHandler::ActualMimeType() {
@@ -570,7 +562,7 @@ bool MediaRecorderHandler::UpdateTracksAndCheckIfChanged() {
 }
 
 void MediaRecorderHandler::OnVideoFrameForTesting(
-    const scoped_refptr<media::VideoFrame>& frame,
+    scoped_refptr<media::VideoFrame> frame,
     const TimeTicks& timestamp) {
   for (const auto& recorder : video_recorders_)
     recorder->OnVideoFrameForTesting(frame, timestamp);

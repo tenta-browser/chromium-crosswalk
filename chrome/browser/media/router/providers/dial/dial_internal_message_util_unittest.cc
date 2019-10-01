@@ -30,10 +30,11 @@ class DialInternalMessageUtilTest : public ::testing::Test {
 
   void ExpectMessagesEqual(const std::string& expected_message,
                            const std::string& message) {
-    auto expected_message_value = base::JSONReader::Read(expected_message);
+    auto expected_message_value =
+        base::JSONReader::ReadDeprecated(expected_message);
     ASSERT_TRUE(expected_message_value);
 
-    auto message_value = base::JSONReader::Read(message);
+    auto message_value = base::JSONReader::ReadDeprecated(message);
     ASSERT_TRUE(message_value);
 
     EXPECT_EQ(*expected_message_value, *message_value);
@@ -106,7 +107,7 @@ TEST_F(DialInternalMessageUtilTest, ParseV2StopSessionMessage) {
   EXPECT_EQ("152127444812943594", message->client_id);
   EXPECT_EQ(-1, message->sequence_number);
 
-  EXPECT_TRUE(util_.IsStopSessionMessage(*message));
+  EXPECT_TRUE(DialInternalMessageUtil::IsStopSessionMessage(*message));
 }
 
 TEST_F(DialInternalMessageUtilTest, CreateReceiverActionCastMessage) {

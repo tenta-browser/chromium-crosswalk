@@ -7,7 +7,6 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/debug/stack_trace.h"
 #include "base/logging.h"
 #include "content/common/input/ime_text_span_conversions.h"
 #include "content/renderer/compositor/layer_tree_view.h"
@@ -189,7 +188,7 @@ void FrameInputHandlerImpl::CopyToFindPboard() {
 #if defined(OS_MACOSX)
   if (!main_thread_task_runner_->BelongsToCurrentThread()) {
     RunOnMainThread(
-        base::Bind(&FrameInputHandlerImpl::CopyToFindPboard, weak_this_));
+        base::BindOnce(&FrameInputHandlerImpl::CopyToFindPboard, weak_this_));
     return;
   }
   if (!render_frame_)
@@ -399,6 +398,11 @@ void FrameInputHandlerImpl::ScrollFocusedEditableNodeIntoRect(
   if (!render_frame_)
     return;
 
+  // OnSynchronizeVisualProperties does not call DidChangeVisibleViewport
+  // on OOPIFs. Since we are starting a new scroll operation now, call
+  // DidChangeVisibleViewport to ensure that we don't assume the element
+  // is already in view and ignore the scroll.
+  render_frame_->ResetHasScrolledFocusedEditableIntoView();
   render_frame_->ScrollFocusedEditableElementIntoRect(rect);
 }
 

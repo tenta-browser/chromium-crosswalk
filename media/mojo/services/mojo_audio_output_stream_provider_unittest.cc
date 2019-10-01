@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/test/mock_callback.h"
@@ -50,6 +51,7 @@ class FakeDelegate : public AudioOutputDelegate {
   int GetStreamId() override { return 0; }
   void OnPlayStream() override {}
   void OnPauseStream() override {}
+  void OnFlushStream() override {}
   void OnSetVolume(double) override {}
 
  private:

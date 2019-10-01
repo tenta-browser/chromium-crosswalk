@@ -23,6 +23,10 @@
 #include "services/network/public/mojom/url_loader.mojom.h"
 #include "third_party/blink/public/platform/web_navigation_body_loader.h"
 
+namespace blink {
+struct WebNavigationParams;
+}  // namespace blink
+
 namespace network {
 struct URLLoaderCompletionStatus;
 }  // namespace network
@@ -42,7 +46,9 @@ class CONTENT_EXPORT NavigationBodyLoader
     : public blink::WebNavigationBodyLoader,
       public network::mojom::URLLoaderClient {
  public:
-  NavigationBodyLoader(
+  // This method fills navigation params related to the navigation request,
+  // redirects and response, and also creates a body loader if needed.
+  static void FillNavigationParamsResponseAndBodyLoader(
       const CommonNavigationParams& common_params,
       const CommitNavigationParams& commit_params,
       int request_id,
@@ -50,7 +56,8 @@ class CONTENT_EXPORT NavigationBodyLoader
       network::mojom::URLLoaderClientEndpointsPtr url_loader_client_endpoints,
       scoped_refptr<base::SingleThreadTaskRunner> task_runner,
       int render_frame_id,
-      bool is_main_frame);
+      bool is_main_frame,
+      blink::WebNavigationParams* navigation_params);
   ~NavigationBodyLoader() override;
 
  private:
@@ -76,6 +83,20 @@ class CONTENT_EXPORT NavigationBodyLoader
   // NotifyCompletionIfAppropriate
   //   notify client about completion
 
+  // The maximal number of bytes consumed in a task. When there are more bytes
+  // in the data pipe, they will be consumed in following tasks. Setting a too
+  // small number will generate ton of tasks but setting a too large number will
+  // lead to thread janks. Also, some clients cannot handle too large chunks
+  // (512k for example).
+  static constexpr uint32_t kMaxNumConsumedBytesInTask = 64 * 1024;
+
+  NavigationBodyLoader(
+      const network::ResourceResponseHead& head,
+      network::mojom::URLLoaderClientEndpointsPtr url_loader_client_endpoints,
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+      int render_frame_id,
+      mojom::ResourceLoadInfoPtr resource_load_info);
+
   // blink::WebNavigationBodyLoader
   void SetDefersLoading(bool defers) override;
   void StartLoadingBody(WebNavigationBodyLoader::Client* client,
@@ -88,14 +109,14 @@ class CONTENT_EXPORT NavigationBodyLoader
   void OnUploadProgress(int64_t current_position,
                         int64_t total_size,
                         OnUploadProgressCallback callback) override;
-  void OnReceiveCachedMetadata(const std::vector<uint8_t>& data) override;
+  void OnReceiveCachedMetadata(mojo_base::BigBuffer data) override;
   void OnTransferSizeUpdated(int32_t transfer_size_diff) override;
   void OnStartLoadingResponseBody(
       mojo::ScopedDataPipeConsumerHandle handle) override;
   void OnComplete(const network::URLLoaderCompletionStatus& status) override;
 
-  void CodeCacheReceived(const base::Time& response_time,
-                         const std::vector<uint8_t>& data);
+  void CodeCacheReceived(base::Time response_time,
+                         base::span<const uint8_t> data);
   void BindURLLoaderAndContinue();
   void OnConnectionClosed();
   void OnReadable(MojoResult unused);

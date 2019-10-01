@@ -68,7 +68,7 @@ class WebViewPermissionHelper
                                   blink::MediaStreamType type);
   void CanDownload(const GURL& url,
                    const std::string& request_method,
-                   const base::Callback<void(bool)>& callback);
+                   base::OnceCallback<void(bool)> callback);
   void RequestPointerLockPermission(bool user_gesture,
                                     bool last_unlocked_by_target,
                                     const base::Callback<void(bool)>& callback);
@@ -77,7 +77,7 @@ class WebViewPermissionHelper
   void RequestGeolocationPermission(int bridge_id,
                                     const GURL& requesting_frame,
                                     bool user_gesture,
-                                    const base::Callback<void(bool)>& callback);
+                                    base::OnceCallback<void(bool)> callback);
   void CancelGeolocationPermissionRequest(int bridge_id);
 
   void RequestFileSystemPermission(const GURL& url,

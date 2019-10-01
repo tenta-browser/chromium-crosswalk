@@ -7,8 +7,9 @@
 
 #include <string>
 
-#include "content/renderer/media/stream/media_stream_audio_source.h"
+#include "content/common/content_export.h"
 #include "media/base/audio_capturer_source.h"
+#include "third_party/blink/public/platform/modules/mediastream/media_stream_audio_source.h"
 
 namespace content {
 
@@ -18,17 +19,20 @@ namespace content {
 // first track is connected. Audio data is transported directly to the tracks
 // (i.e., there is no audio processing).
 class CONTENT_EXPORT LocalMediaStreamAudioSource
-    : public MediaStreamAudioSource,
+    : public blink::MediaStreamAudioSource,
       public media::AudioCapturerSource::CaptureCallback {
  public:
   // |consumer_render_frame_id| references the RenderFrame that will consume the
   // audio data. Audio parameters and (optionally) a pre-existing audio session
-  // ID are read from |device_info|.
-  LocalMediaStreamAudioSource(int consumer_render_frame_id,
-                              const blink::MediaStreamDevice& device,
-                              bool hotword_enabled,
-                              bool disable_local_echo,
-                              const ConstraintsCallback& started_callback);
+  // ID are read from |device_info|. |requested_buffer_size| is the desired
+  // buffer size for the audio hardware, a nullptr means to use the default.
+  LocalMediaStreamAudioSource(
+      int consumer_render_frame_id,
+      const blink::MediaStreamDevice& device,
+      const int* requested_buffer_size,
+      bool disable_local_echo,
+      ConstraintsRepeatingCallback started_callback,
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner);
 
   ~LocalMediaStreamAudioSource() final;
 
@@ -57,7 +61,7 @@ class CONTENT_EXPORT LocalMediaStreamAudioSource
   scoped_refptr<media::AudioCapturerSource> source_;
 
   // Callback that's called when the audio source has been initialized.
-  ConstraintsCallback started_callback_;
+  ConstraintsRepeatingCallback started_callback_;
 
   // In debug builds, check that all methods that could cause object graph
   // or data flow changes are being called on the main thread.

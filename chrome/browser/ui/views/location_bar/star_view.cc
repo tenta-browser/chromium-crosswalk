@@ -9,7 +9,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
-#include "chrome/browser/bookmarks/bookmark_stats.h"
+#include "chrome/browser/ui/bookmarks/bookmark_stats.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/view_ids.h"
@@ -49,7 +49,7 @@ StarView::StarView(CommandUpdater* command_updater,
     : PageActionIconView(command_updater, IDC_BOOKMARK_PAGE, delegate),
       browser_(browser),
       bookmark_promo_observer_(this) {
-  set_id(VIEW_ID_STAR_BUTTON);
+  SetID(VIEW_ID_STAR_BUTTON);
   SetToggled(false);
 }
 
@@ -63,8 +63,8 @@ void StarView::ShowPromo() {
   FeaturePromoBubbleView* bookmark_promo_bubble =
       FeaturePromoBubbleView::CreateOwned(
           this, views::BubbleBorder::TOP_RIGHT,
-          GetBookmarkPromoStringSpecifier(),
-          FeaturePromoBubbleView::ActivationAction::ACTIVATE);
+          FeaturePromoBubbleView::ActivationAction::ACTIVATE,
+          GetBookmarkPromoStringSpecifier());
   if (!bookmark_promo_observer_.IsObserving(
           bookmark_promo_bubble->GetWidget())) {
     bookmark_promo_observer_.Add(bookmark_promo_bubble->GetWidget());

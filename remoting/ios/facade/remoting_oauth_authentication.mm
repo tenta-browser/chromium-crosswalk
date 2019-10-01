@@ -12,9 +12,8 @@
 #import <Security/Security.h>
 
 #import "base/bind.h"
+#import "base/bind_helpers.h"
 #import "ios/third_party/material_components_ios/src/components/Snackbar/src/MaterialSnackbar.h"
-#import "remoting/ios/facade/host_info.h"
-#import "remoting/ios/facade/host_list_fetcher.h"
 #import "remoting/ios/facade/ios_client_runtime_delegate.h"
 #import "remoting/ios/facade/remoting_service.h"
 #import "remoting/ios/persistence/remoting_keychain.h"
@@ -69,6 +68,7 @@ std::unique_ptr<remoting::OAuthTokenGetter> CreateOAuthTokenWithRefreshToken(
   std::unique_ptr<remoting::OAuthTokenGetter> oauth_tokenGetter(
       new remoting::OAuthTokenGetterImpl(
           std::move(oauth_credentials),
+          base::DoNothing(),
           RemotingService.instance.runtime->url_loader_factory(),
           /*auto_refresh=*/true));
   return oauth_tokenGetter;
@@ -170,7 +170,7 @@ RemotingAuthenticationStatus oauthStatusToRemotingAuthenticationStatus(
   // Be careful here since a failure to reset onAccessToken will end up with
   // retain cycle and memory leakage.
   if (_tokenGetter) {
-    _tokenGetter->CallWithToken(base::BindRepeating(
+    _tokenGetter->CallWithToken(base::BindOnce(
         ^(remoting::OAuthTokenGetter::Status status,
           const std::string& user_email, const std::string& access_token) {
           onAccessToken(oauthStatusToRemotingAuthenticationStatus(status),
@@ -183,6 +183,10 @@ RemotingAuthenticationStatus oauthStatusToRemotingAuthenticationStatus(
 - (void)logout {
   [self storeUserInfo:nil];
   [self setUser:nil];
+}
+
+- (void)invalidateCache {
+  _tokenGetter->InvalidateCache();
 }
 
 #pragma mark - Persistence

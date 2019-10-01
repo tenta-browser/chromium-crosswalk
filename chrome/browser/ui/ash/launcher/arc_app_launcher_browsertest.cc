@@ -30,10 +30,10 @@
 #include "chrome/browser/ui/ash/launcher/chrome_launcher_controller.h"
 #include "chrome/browser/ui/ash/launcher/chrome_launcher_controller_test_util.h"
 #include "chrome/browser/ui/ash/launcher/shelf_spinner_controller.h"
-#include "components/arc/arc_bridge_service.h"
 #include "components/arc/arc_service_manager.h"
 #include "components/arc/arc_util.h"
 #include "components/arc/metrics/arc_metrics_constants.h"
+#include "components/arc/session/arc_bridge_service.h"
 #include "components/arc/test/fake_app_instance.h"
 #include "content/public/test/browser_test_utils.h"
 #include "ui/display/types/display_constants.h"
@@ -229,6 +229,9 @@ class ArcAppLauncherBrowserTest : public extensions::ExtensionBrowserTest {
   void SendPackageUpdated(const std::string& package_name, bool multi_app) {
     app_host()->OnPackageAppListRefreshed(
         package_name, GetTestAppsList(package_name, multi_app));
+
+    // Ensure async callbacks from the resulting observer calls are run.
+    base::RunLoop().RunUntilIdle();
   }
 
   void SendPackageRemoved(const std::string& package_name) {
@@ -329,8 +332,6 @@ IN_PROC_BROWSER_TEST_F(ArcAppDeferredLauncherBrowserTest,
       controller->shelf_model()->ItemIndexByID(ash::ShelfID(app_id));
   ASSERT_GE(item_index, 0);
 
-  controller->FlushForTesting();
-
   ash::ShelfAppButton* const button = test_api.GetButton(item_index);
   ASSERT_TRUE(button);
 
@@ -343,12 +344,6 @@ IN_PROC_BROWSER_TEST_F(ArcAppDeferredLauncherBrowserTest,
   event_generator.MoveMouseTo(button->GetBoundsInScreen().CenterPoint());
   base::RunLoop().RunUntilIdle();
   event_generator.ClickLeftButton();
-
-  EXPECT_EQ(views::InkDropState::ACTION_PENDING,
-            ink_drop->GetTargetInkDropState());
-
-  // Flush RemoteShelfItemDelegate::ItemSelected and callback mojo messages.
-  base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(views::InkDropState::ACTION_TRIGGERED,
             ink_drop->GetTargetInkDropState());
@@ -444,9 +439,9 @@ IN_PROC_BROWSER_TEST_P(ArcAppDeferredLauncherWithParamsBrowserTest,
   }
 }
 
-INSTANTIATE_TEST_CASE_P(ArcAppDeferredLauncherWithParamsBrowserTestInstance,
-                        ArcAppDeferredLauncherWithParamsBrowserTest,
-                        ::testing::ValuesIn(build_test_parameter));
+INSTANTIATE_TEST_SUITE_P(ArcAppDeferredLauncherWithParamsBrowserTestInstance,
+                         ArcAppDeferredLauncherWithParamsBrowserTest,
+                         ::testing::ValuesIn(build_test_parameter));
 
 // This tests validates pin state on package update and remove.
 IN_PROC_BROWSER_TEST_F(ArcAppLauncherBrowserTest, PinOnPackageUpdateAndRemove) {

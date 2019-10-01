@@ -23,28 +23,20 @@
 
 namespace content {
 
+// Disable FocusDistance test which fails with Logitec cameras.
+// TODO(crbug.com/957020): renable these tests when we have a way to detect
+// which device is connected and hence avoid running it if the camera is
+// Logitech.
+#define MAYBE_ManipulateFocusDistance DISABLED_ManipulateFocusDistance
+
 #if defined(OS_ANDROID)
-// TODO(chfremer): Re-enable test on Android as soon as the cause for
-// https://crbug.com/793859 is understood and fixed.
-#define MAYBE_GetPhotoCapabilities GetPhotoCapabilities
-#define MAYBE_GetPhotoSettings GetPhotoSettings
-#define MAYBE_TakePhoto TakePhoto
-#define MAYBE_GrabFrame GrabFrame
-#define MAYBE_GetTrackCapabilities GetTrackCapabilities
-#define MAYBE_GetTrackSettings GetTrackSettings
+// TODO(crbug.com/793859): Re-enable test on Android as soon as the cause for
+// the bug is understood and fixed.
 #define MAYBE_ManipulateZoom DISABLED_ManipulateZoom
 #define MAYBE_ManipulateExposureTime DISABLED_ManipulateExposureTime
-#define MAYBE_ManipulateFocusDistance DISABLED_ManipulateFocusDistance
 #else
-#define MAYBE_GetPhotoCapabilities GetPhotoCapabilities
-#define MAYBE_GetPhotoSettings GetPhotoSettings
-#define MAYBE_TakePhoto TakePhoto
-#define MAYBE_GrabFrame GrabFrame
-#define MAYBE_GetTrackCapabilities GetTrackCapabilities
-#define MAYBE_GetTrackSettings GetTrackSettings
 #define MAYBE_ManipulateZoom ManipulateZoom
 #define MAYBE_ManipulateExposureTime ManipulateExposureTime
-#define MAYBE_ManipulateFocusDistance ManipulateFocusDistance
 #endif
 
 namespace {
@@ -171,18 +163,6 @@ class WebRtcImageCaptureSucceedsBrowserTest
     }
   }
 
-  bool RunImageCaptureTestCase(const std::string& command) override {
-    // TODO(chfremer): Enable test cases using the video capture service with
-    // real cameras as soon as root cause for https://crbug.com/733582 is
-    // understood and resolved.
-    if ((std::get<0>(GetParam()) == TargetCamera::REAL_WEBCAM) &&
-        (std::get<1>(GetParam()).use_video_capture_service)) {
-      LOG(INFO) << "Skipping this test case";
-      return true;
-    }
-    return WebRtcImageCaptureBrowserTestBase::RunImageCaptureTestCase(command);
-  }
-
  private:
   base::test::ScopedFeatureList scoped_feature_list_;
 
@@ -190,37 +170,37 @@ class WebRtcImageCaptureSucceedsBrowserTest
 };
 
 IN_PROC_BROWSER_TEST_P(WebRtcImageCaptureSucceedsBrowserTest,
-                       MAYBE_GetPhotoCapabilities) {
+                       GetPhotoCapabilities) {
   embedded_test_server()->StartAcceptingConnections();
   ASSERT_TRUE(
       RunImageCaptureTestCase("testCreateAndGetPhotoCapabilitiesSucceeds()"));
 }
 
 IN_PROC_BROWSER_TEST_P(WebRtcImageCaptureSucceedsBrowserTest,
-                       MAYBE_GetPhotoSettings) {
+                       GetPhotoSettings) {
   embedded_test_server()->StartAcceptingConnections();
   ASSERT_TRUE(
       RunImageCaptureTestCase("testCreateAndGetPhotoSettingsSucceeds()"));
 }
 
-IN_PROC_BROWSER_TEST_P(WebRtcImageCaptureSucceedsBrowserTest, MAYBE_TakePhoto) {
+IN_PROC_BROWSER_TEST_P(WebRtcImageCaptureSucceedsBrowserTest, TakePhoto) {
   embedded_test_server()->StartAcceptingConnections();
   ASSERT_TRUE(RunImageCaptureTestCase("testCreateAndTakePhotoSucceeds()"));
 }
 
-IN_PROC_BROWSER_TEST_P(WebRtcImageCaptureSucceedsBrowserTest, MAYBE_GrabFrame) {
+IN_PROC_BROWSER_TEST_P(WebRtcImageCaptureSucceedsBrowserTest, GrabFrame) {
   embedded_test_server()->StartAcceptingConnections();
   ASSERT_TRUE(RunImageCaptureTestCase("testCreateAndGrabFrameSucceeds()"));
 }
 
 IN_PROC_BROWSER_TEST_P(WebRtcImageCaptureSucceedsBrowserTest,
-                       MAYBE_GetTrackCapabilities) {
+                       GetTrackCapabilities) {
   embedded_test_server()->StartAcceptingConnections();
   ASSERT_TRUE(RunImageCaptureTestCase("testCreateAndGetTrackCapabilities()"));
 }
 
 IN_PROC_BROWSER_TEST_P(WebRtcImageCaptureSucceedsBrowserTest,
-                       MAYBE_GetTrackSettings) {
+                       GetTrackSettings) {
   embedded_test_server()->StartAcceptingConnections();
   ASSERT_TRUE(RunImageCaptureTestCase("testCreateAndGetTrackSettings()"));
 }
@@ -243,7 +223,7 @@ IN_PROC_BROWSER_TEST_P(WebRtcImageCaptureSucceedsBrowserTest,
   ASSERT_TRUE(RunImageCaptureTestCase("testManipulateFocusDistance()"));
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     ,  // Use no prefix, so that these get picked up when using
        // --gtest_filter=WebRtc*
     WebRtcImageCaptureSucceedsBrowserTest,
@@ -267,7 +247,7 @@ const TargetVideoCaptureImplementation
 #endif
 };
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     UsingRealWebcam,  // This prefix can be used with --gtest_filter to
                       // distinguish the tests using a real camera from the ones
                       // that don't.
@@ -340,9 +320,9 @@ IN_PROC_BROWSER_TEST_P(WebRtcImageCaptureGetPhotoStateFailsBrowserTest,
   ASSERT_TRUE(RunImageCaptureTestCase("testCreateAndGrabFrameSucceeds()"));
 }
 
-INSTANTIATE_TEST_CASE_P(,
-                        WebRtcImageCaptureGetPhotoStateFailsBrowserTest,
-                        testing::ValuesIn(kTargetVideoCaptureStacks));
+INSTANTIATE_TEST_SUITE_P(,
+                         WebRtcImageCaptureGetPhotoStateFailsBrowserTest,
+                         testing::ValuesIn(kTargetVideoCaptureStacks));
 
 struct SetPhotoOptionsFailsConfigTraits {
   static std::string config() {
@@ -367,9 +347,9 @@ IN_PROC_BROWSER_TEST_P(WebRtcImageCaptureSetPhotoOptionsFailsBrowserTest,
   ASSERT_TRUE(RunImageCaptureTestCase("testCreateAndGrabFrameSucceeds()"));
 }
 
-INSTANTIATE_TEST_CASE_P(,
-                        WebRtcImageCaptureSetPhotoOptionsFailsBrowserTest,
-                        testing::ValuesIn(kTargetVideoCaptureStacks));
+INSTANTIATE_TEST_SUITE_P(,
+                         WebRtcImageCaptureSetPhotoOptionsFailsBrowserTest,
+                         testing::ValuesIn(kTargetVideoCaptureStacks));
 
 struct TakePhotoFailsConfigTraits {
   static std::string config() {
@@ -391,8 +371,8 @@ IN_PROC_BROWSER_TEST_P(WebRtcImageCaptureTakePhotoFailsBrowserTest, GrabFrame) {
   ASSERT_TRUE(RunImageCaptureTestCase("testCreateAndGrabFrameSucceeds()"));
 }
 
-INSTANTIATE_TEST_CASE_P(,
-                        WebRtcImageCaptureTakePhotoFailsBrowserTest,
-                        testing::ValuesIn(kTargetVideoCaptureStacks));
+INSTANTIATE_TEST_SUITE_P(,
+                         WebRtcImageCaptureTakePhotoFailsBrowserTest,
+                         testing::ValuesIn(kTargetVideoCaptureStacks));
 
 }  // namespace content

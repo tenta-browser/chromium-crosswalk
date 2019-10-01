@@ -4,12 +4,21 @@
 
 #include "services/identity/public/cpp/identity_manager.h"
 
+#include <string>
+
 #include "build/build_config.h"
+#include "components/signin/core/browser/account_fetcher_service.h"
 #include "components/signin/core/browser/ubertoken_fetcher_impl.h"
 #include "google_apis/gaia/gaia_auth_util.h"
+#include "services/identity/public/cpp/accounts_cookie_mutator.h"
 #include "services/identity/public/cpp/accounts_mutator.h"
+#include "services/identity/public/cpp/diagnostics_provider.h"
 #include "services/identity/public/cpp/primary_account_mutator.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
+
+#if defined(OS_ANDROID)
+#include "components/signin/core/browser/oauth2_token_service_delegate_android.h"
+#endif
 
 namespace identity {
 
@@ -31,46 +40,99 @@ const char kSupervisedUserPseudoGaiaID[] = "managed_user_gaia_id";
 }  // namespace
 
 IdentityManager::IdentityManager(
-    SigninManagerBase* signin_manager,
-    ProfileOAuth2TokenService* token_service,
-    AccountTrackerService* account_tracker_service,
-    GaiaCookieManagerService* gaia_cookie_manager_service,
+    std::unique_ptr<AccountTrackerService> account_tracker_service,
+    std::unique_ptr<ProfileOAuth2TokenService> token_service,
+    std::unique_ptr<GaiaCookieManagerService> gaia_cookie_manager_service,
+    std::unique_ptr<SigninManagerBase> signin_manager,
+    std::unique_ptr<AccountFetcherService> account_fetcher_service,
     std::unique_ptr<PrimaryAccountMutator> primary_account_mutator,
-    std::unique_ptr<AccountsMutator> accounts_mutator)
-    : signin_manager_(signin_manager),
-      token_service_(token_service),
-      account_tracker_service_(account_tracker_service),
-      gaia_cookie_manager_service_(gaia_cookie_manager_service),
+    std::unique_ptr<AccountsMutator> accounts_mutator,
+    std::unique_ptr<AccountsCookieMutator> accounts_cookie_mutator,
+    std::unique_ptr<DiagnosticsProvider> diagnostics_provider)
+    : account_tracker_service_(std::move(account_tracker_service)),
+      token_service_(std::move(token_service)),
+      gaia_cookie_manager_service_(std::move(gaia_cookie_manager_service)),
+      signin_manager_(std::move(signin_manager)),
+      account_fetcher_service_(std::move(account_fetcher_service)),
       primary_account_mutator_(std::move(primary_account_mutator)),
-      accounts_mutator_(std::move(accounts_mutator)) {
-  signin_manager_->AddObserver(this);
+      accounts_mutator_(std::move(accounts_mutator)),
+      accounts_cookie_mutator_(std::move(accounts_cookie_mutator)),
+      diagnostics_provider_(std::move(diagnostics_provider)) {
+  DCHECK(account_fetcher_service_);
+  DCHECK(accounts_cookie_mutator_);
+  DCHECK(diagnostics_provider_);
+  signin_manager_->SetObserver(this);
   token_service_->AddDiagnosticsObserver(this);
   token_service_->AddObserver(this);
   account_tracker_service_->AddObserver(this);
   gaia_cookie_manager_service_->AddObserver(this);
+
+  // Seed the primary account with any state that |signin_manager_| loaded from
+  // prefs.
+  if (signin_manager_->IsAuthenticated()) {
+    CoreAccountInfo account = signin_manager_->GetAuthenticatedAccountInfo();
+    DCHECK(!account.account_id.empty());
+    primary_account_ = std::move(account);
+  }
 }
 
 IdentityManager::~IdentityManager() {
-  signin_manager_->RemoveObserver(this);
+  account_fetcher_service_->Shutdown();
+  gaia_cookie_manager_service_->Shutdown();
+  token_service_->Shutdown();
+  account_tracker_service_->Shutdown();
+
+  signin_manager_->ClearObserver();
   token_service_->RemoveObserver(this);
   token_service_->RemoveDiagnosticsObserver(this);
   account_tracker_service_->RemoveObserver(this);
   gaia_cookie_manager_service_->RemoveObserver(this);
 }
 
-AccountInfo IdentityManager::GetPrimaryAccountInfo() const {
-  return signin_manager_->GetAuthenticatedAccountInfo();
+// TODO(862619) change return type to base::Optional<CoreAccountInfo>
+CoreAccountInfo IdentityManager::GetPrimaryAccountInfo() const {
+  DCHECK_EQ(primary_account_.has_value(), signin_manager_->IsAuthenticated());
+  auto result = primary_account_.value_or(CoreAccountInfo());
+  DCHECK_EQ(result.account_id, signin_manager_->GetAuthenticatedAccountId());
+#if DCHECK_IS_ON()
+  CoreAccountInfo signin_manager_account =
+      signin_manager_->GetAuthenticatedAccountInfo();
+  if (!signin_manager_account.account_id.empty()) {
+    DCHECK_EQ(signin_manager_account, result)
+        << "If signin_manager_'s account is set (account has a refresh token), "
+           "primary_account_ must have the same value.";
+  }
+#endif
+  return result;
 }
 
-const std::string& IdentityManager::GetPrimaryAccountId() const {
-  return signin_manager_->GetAuthenticatedAccountId();
+CoreAccountId IdentityManager::GetPrimaryAccountId() const {
+  return GetPrimaryAccountInfo().account_id;
 }
 
 bool IdentityManager::HasPrimaryAccount() const {
-  return signin_manager_->IsAuthenticated();
+  DCHECK_EQ(primary_account_.has_value(), signin_manager_->IsAuthenticated());
+  return primary_account_.has_value();
 }
 
-std::vector<AccountInfo> IdentityManager::GetAccountsWithRefreshTokens() const {
+std::vector<CoreAccountInfo> IdentityManager::GetAccountsWithRefreshTokens()
+    const {
+  std::vector<std::string> account_ids_with_tokens =
+      token_service_->GetAccounts();
+
+  std::vector<CoreAccountInfo> accounts;
+  accounts.reserve(account_ids_with_tokens.size());
+
+  for (const std::string& account_id : account_ids_with_tokens) {
+    accounts.push_back(
+        GetAccountInfoForAccountWithRefreshToken(CoreAccountId(account_id)));
+  }
+
+  return accounts;
+}
+
+std::vector<AccountInfo>
+IdentityManager::GetExtendedAccountInfoForAccountsWithRefreshToken() const {
   std::vector<std::string> account_ids_with_tokens =
       token_service_->GetAccounts();
 
@@ -78,16 +140,14 @@ std::vector<AccountInfo> IdentityManager::GetAccountsWithRefreshTokens() const {
   accounts.reserve(account_ids_with_tokens.size());
 
   for (const std::string& account_id : account_ids_with_tokens) {
-    accounts.push_back(GetAccountInfoForAccountWithRefreshToken(account_id));
+    accounts.push_back(
+        GetAccountInfoForAccountWithRefreshToken(CoreAccountId(account_id)));
   }
 
   return accounts;
 }
 
 AccountsInCookieJarInfo IdentityManager::GetAccountsInCookieJar() const {
-  // TODO(859882): Change this implementation to interact asynchronously with
-  // GaiaCookieManagerService as detailed in
-  // https://docs.google.com/document/d/1hcrJ44facCSHtMGBmPusvcoP-fAR300Hi-UFez8ffYQ/edit?pli=1#heading=h.w97eil1cygs2.
   std::vector<gaia::ListedAccount> signed_in_accounts;
   std::vector<gaia::ListedAccount> signed_out_accounts;
   bool accounts_are_fresh = gaia_cookie_manager_service_->ListAccounts(
@@ -98,17 +158,17 @@ AccountsInCookieJarInfo IdentityManager::GetAccountsInCookieJar() const {
 }
 
 bool IdentityManager::HasAccountWithRefreshToken(
-    const std::string& account_id) const {
+    const CoreAccountId& account_id) const {
   return token_service_->RefreshTokenIsAvailable(account_id);
 }
 
 bool IdentityManager::HasAccountWithRefreshTokenInPersistentErrorState(
-    const std::string& account_id) const {
+    const CoreAccountId& account_id) const {
   return GetErrorStateOfRefreshTokenForAccount(account_id).IsPersistentError();
 }
 
 GoogleServiceAuthError IdentityManager::GetErrorStateOfRefreshTokenForAccount(
-    const std::string& account_id) const {
+    const CoreAccountId& account_id) const {
   return token_service_->GetAuthError(account_id);
 }
 
@@ -120,9 +180,23 @@ bool IdentityManager::AreRefreshTokensLoaded() const {
   return token_service_->AreAllCredentialsLoaded();
 }
 
+base::Optional<AccountInfo> IdentityManager::FindExtendedAccountInfoForAccount(
+    const CoreAccountInfo& account_info) const {
+  AccountInfo extended_account_info =
+      account_tracker_service_->GetAccountInfo(account_info.account_id);
+
+  // AccountTrackerService always returns an AccountInfo, even on failure. In
+  // case of failure, the AccountInfo will be unpopulated, thus we should not
+  // be able to find a valid refresh token.
+  if (!HasAccountWithRefreshToken(extended_account_info.account_id))
+    return base::nullopt;
+
+  return GetAccountInfoForAccountWithRefreshToken(account_info.account_id);
+}
+
 base::Optional<AccountInfo>
 IdentityManager::FindAccountInfoForAccountWithRefreshTokenByAccountId(
-    const std::string& account_id) const {
+    const CoreAccountId& account_id) const {
   AccountInfo account_info =
       account_tracker_service_->GetAccountInfo(account_id);
 
@@ -167,32 +241,32 @@ IdentityManager::FindAccountInfoForAccountWithRefreshTokenByGaiaId(
 
 std::unique_ptr<AccessTokenFetcher>
 IdentityManager::CreateAccessTokenFetcherForAccount(
-    const std::string& account_id,
+    const CoreAccountId& account_id,
     const std::string& oauth_consumer_name,
     const identity::ScopeSet& scopes,
     AccessTokenFetcher::TokenCallback callback,
     AccessTokenFetcher::Mode mode) {
   return std::make_unique<AccessTokenFetcher>(account_id, oauth_consumer_name,
-                                              token_service_, scopes,
+                                              token_service_.get(), scopes,
                                               std::move(callback), mode);
 }
 
 std::unique_ptr<AccessTokenFetcher>
 IdentityManager::CreateAccessTokenFetcherForAccount(
-    const std::string& account_id,
+    const CoreAccountId& account_id,
     const std::string& oauth_consumer_name,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     const identity::ScopeSet& scopes,
     AccessTokenFetcher::TokenCallback callback,
     AccessTokenFetcher::Mode mode) {
   return std::make_unique<AccessTokenFetcher>(
-      account_id, oauth_consumer_name, token_service_, url_loader_factory,
+      account_id, oauth_consumer_name, token_service_.get(), url_loader_factory,
       scopes, std::move(callback), mode);
 }
 
 std::unique_ptr<AccessTokenFetcher>
 IdentityManager::CreateAccessTokenFetcherForClient(
-    const std::string& account_id,
+    const CoreAccountId& account_id,
     const std::string& client_id,
     const std::string& client_secret,
     const std::string& oauth_consumer_name,
@@ -200,32 +274,26 @@ IdentityManager::CreateAccessTokenFetcherForClient(
     AccessTokenFetcher::TokenCallback callback,
     AccessTokenFetcher::Mode mode) {
   return std::make_unique<AccessTokenFetcher>(
-      account_id, client_id, client_secret, oauth_consumer_name, token_service_,
-      scopes, std::move(callback), mode);
+      account_id, client_id, client_secret, oauth_consumer_name,
+      token_service_.get(), scopes, std::move(callback), mode);
 }
 
 void IdentityManager::RemoveAccessTokenFromCache(
-    const std::string& account_id,
+    const CoreAccountId& account_id,
     const identity::ScopeSet& scopes,
     const std::string& access_token) {
-  // TODO(843510): Consider making the request to ProfileOAuth2TokenService
-  // asynchronously once there are no direct clients of PO2TS. This change would
-  // need to be made together with changing all callsites to
-  // ProfileOAuth2TokenService::RequestAccessToken() to be made asynchronously
-  // as well (to maintain ordering in the case where a client removes an access
-  // token from the cache and then immediately requests an access token).
   token_service_->InvalidateAccessToken(account_id, scopes, access_token);
 }
 
 std::unique_ptr<signin::UbertokenFetcher>
 IdentityManager::CreateUbertokenFetcherForAccount(
-    const std::string& account_id,
+    const CoreAccountId& account_id,
     signin::UbertokenFetcher::CompletionCallback callback,
     gaia::GaiaSource source,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     bool bount_to_channel_id) {
   return std::make_unique<signin::UbertokenFetcherImpl>(
-      account_id, token_service_, std::move(callback), source,
+      account_id, token_service_.get(), std::move(callback), source,
       url_loader_factory, bount_to_channel_id);
 }
 
@@ -234,8 +302,26 @@ bool IdentityManager::IsAccountIdMigrationSupported() {
   return AccountTrackerService::IsMigrationSupported();
 }
 
-void IdentityManager::LegacySetAccountIdMigrationDone() {
-  account_tracker_service_->SetMigrationDone();
+// static
+void IdentityManager::RegisterLocalStatePrefs(PrefRegistrySimple* registry) {
+  SigninManagerBase::RegisterPrefs(registry);
+}
+
+// static
+void IdentityManager::RegisterProfilePrefs(PrefRegistrySimple* registry) {
+  ProfileOAuth2TokenService::RegisterProfilePrefs(registry);
+  SigninManagerBase::RegisterProfilePrefs(registry);
+  AccountFetcherService::RegisterPrefs(registry);
+  AccountTrackerService::RegisterPrefs(registry);
+}
+
+CoreAccountId IdentityManager::PickAccountIdForAccount(
+    const std::string& gaia,
+    const std::string& email) const {
+  // TODO(triploblastic@): Remove explicit conversion once signin_manager
+  // has been fixed to use CoreAccountId.
+  return CoreAccountId(
+      account_tracker_service_->PickAccountIdForAccount(gaia, email));
 }
 
 IdentityManager::AccountIdMigrationState
@@ -248,24 +334,84 @@ PrimaryAccountMutator* IdentityManager::GetPrimaryAccountMutator() {
   return primary_account_mutator_.get();
 }
 
-std::string IdentityManager::LegacyPickAccountIdForAccount(
-    const std::string& gaia,
-    const std::string& email) const {
-  return account_tracker_service_->PickAccountIdForAccount(gaia, email);
-}
-
 AccountsMutator* IdentityManager::GetAccountsMutator() {
   return accounts_mutator_.get();
 }
 
-void IdentityManager::LegacyLoadCredentials(
+AccountsCookieMutator* IdentityManager::GetAccountsCookieMutator() {
+  return accounts_cookie_mutator_.get();
+}
+
+void IdentityManager::OnNetworkInitialized() {
+  gaia_cookie_manager_service_->InitCookieListener();
+  account_fetcher_service_->OnNetworkInitialized();
+}
+
+#if !defined(OS_IOS) && !defined(OS_ANDROID)
+void IdentityManager::DeprecatedLoadCredentialsForSupervisedUser(
     const std::string& primary_account_id) {
   token_service_->LoadCredentials(primary_account_id);
 }
+#endif
 
-std::string IdentityManager::LegacySeedAccountInfo(const AccountInfo& info) {
+DiagnosticsProvider* IdentityManager::GetDiagnosticsProvider() {
+  return diagnostics_provider_.get();
+}
+
+#if defined(OS_CHROMEOS)
+void IdentityManager::LegacySetPrimaryAccount(
+    const std::string& gaia_id,
+    const std::string& email_address) {
+  signin_manager_->SetAuthenticatedAccountInfo(gaia_id, email_address);
+
+  // TODO(https://crbug.com/944012): Unify the firing of this observer
+  // notification between ChromeOS and other platforms.
+  FireOnPrimaryAccountSetNotification(primary_account_.value());
+}
+#endif
+
+#if defined(OS_IOS)
+void IdentityManager::ForceTriggerOnCookieChange() {
+  gaia_cookie_manager_service_->ForceOnCookieChangeProcessing();
+}
+
+CoreAccountId IdentityManager::LegacySeedAccountInfo(const AccountInfo& info) {
   return account_tracker_service_->SeedAccountInfo(info);
 }
+
+void IdentityManager::LegacyAddAccountFromSystem(
+    const CoreAccountId& account_id) {
+  token_service_->GetDelegate()->AddAccountFromSystem(account_id);
+}
+#endif
+
+#if defined(OS_ANDROID) || defined(OS_IOS)
+void IdentityManager::LegacyReloadAccountsFromSystem() {
+  token_service_->GetDelegate()->ReloadAccountsFromSystem(
+      GetPrimaryAccountId());
+}
+#endif
+
+#if defined(OS_ANDROID)
+base::android::ScopedJavaLocalRef<jobject>
+IdentityManager::LegacyGetAccountTrackerServiceJavaObject() {
+  return account_tracker_service_->GetJavaObject();
+}
+
+base::android::ScopedJavaLocalRef<jobject>
+IdentityManager::LegacyGetOAuth2TokenServiceJavaObject() {
+  OAuth2TokenServiceDelegateAndroid* delegate =
+      static_cast<OAuth2TokenServiceDelegateAndroid*>(
+          token_service_->GetDelegate());
+  return delegate->GetJavaObject();
+}
+
+void IdentityManager::ForceRefreshOfExtendedAccountInfo(
+    const CoreAccountId& account_id) {
+  DCHECK(HasAccountWithRefreshToken(account_id));
+  account_fetcher_service_->ForceRefreshOfAccountInfo(account_id);
+}
+#endif
 
 void IdentityManager::AddObserver(Observer* observer) {
   observer_list_.AddObserver(observer);
@@ -284,42 +430,27 @@ void IdentityManager::RemoveDiagnosticsObserver(DiagnosticsObserver* observer) {
 }
 
 SigninManagerBase* IdentityManager::GetSigninManager() {
-  return signin_manager_;
+  return signin_manager_.get();
 }
 
 ProfileOAuth2TokenService* IdentityManager::GetTokenService() {
-  return token_service_;
+  return token_service_.get();
 }
 
 AccountTrackerService* IdentityManager::GetAccountTrackerService() {
-  return account_tracker_service_;
+  return account_tracker_service_.get();
 }
 
-void IdentityManager::SetPrimaryAccountSynchronouslyForTests(
-    const std::string& gaia_id,
-    const std::string& email_address,
-    const std::string& refresh_token) {
-  DCHECK(!refresh_token.empty());
-  SetPrimaryAccountSynchronously(gaia_id, email_address, refresh_token);
+AccountFetcherService* IdentityManager::GetAccountFetcherService() {
+  return account_fetcher_service_.get();
 }
 
-void IdentityManager::SetPrimaryAccountSynchronously(
-    const std::string& gaia_id,
-    const std::string& email_address,
-    const std::string& refresh_token) {
-  signin_manager_->SetAuthenticatedAccountInfo(gaia_id, email_address);
-
-  if (!refresh_token.empty()) {
-    // Note: Source for the operation is |Unknown| as the method
-    // |SetPrimaryAccountSynchronously| is only used for testing.
-    token_service_->UpdateCredentials(
-        GetPrimaryAccountId(), refresh_token,
-        signin_metrics::SourceForRefreshTokenOperation::kUnknown);
-  }
+GaiaCookieManagerService* IdentityManager::GetGaiaCookieManagerService() {
+  return gaia_cookie_manager_service_.get();
 }
 
 AccountInfo IdentityManager::GetAccountInfoForAccountWithRefreshToken(
-    const std::string& account_id) const {
+    const CoreAccountId& account_id) const {
   // TODO(https://crbug.com/919793): This invariant is not currently possible to
   // enforce on Android due to the underlying relationship between
   // O2TS::GetAccounts(), O2TS::RefreshTokenIsAvailable(), and
@@ -340,8 +471,9 @@ AccountInfo IdentityManager::GetAccountInfoForAccountWithRefreshToken(
   // always set.
   // TODO(860492): Remove this special case once supervised user support is
   // removed.
-  DCHECK(!account_info.IsEmpty() || account_id == kSupervisedUserPseudoEmail);
-  if (account_id == kSupervisedUserPseudoEmail && account_info.IsEmpty()) {
+  DCHECK(!account_info.IsEmpty() ||
+         account_id.id == kSupervisedUserPseudoEmail);
+  if (account_id.id == kSupervisedUserPseudoEmail && account_info.IsEmpty()) {
     account_info.account_id = account_id;
     account_info.email = kSupervisedUserPseudoEmail;
     account_info.gaia = kSupervisedUserPseudoGaiaID;
@@ -350,18 +482,15 @@ AccountInfo IdentityManager::GetAccountInfoForAccountWithRefreshToken(
   return account_info;
 }
 
-void IdentityManager::GoogleSigninSucceeded(const AccountInfo& account_info) {
+void IdentityManager::FireOnPrimaryAccountSetNotification(
+    const CoreAccountInfo& primary_account_info) {
   for (auto& observer : observer_list_) {
-    observer.OnPrimaryAccountSet(account_info);
+    observer.OnPrimaryAccountSet(primary_account_info);
   }
 }
 
-void IdentityManager::GoogleSigninSucceededWithPassword(
-    const AccountInfo& account_info,
-    const std::string& password) {
-  for (auto& observer : observer_list_) {
-    observer.OnPrimaryAccountSetWithPassword(account_info, password);
-  }
+void IdentityManager::GoogleSigninSucceeded(const AccountInfo& account_info) {
+  FireOnPrimaryAccountSetNotification(account_info);
 }
 
 void IdentityManager::GoogleSignedOut(const AccountInfo& account_info) {
@@ -370,15 +499,18 @@ void IdentityManager::GoogleSignedOut(const AccountInfo& account_info) {
     observer.OnPrimaryAccountCleared(account_info);
   }
 }
-
-void IdentityManager::GoogleSigninFailed(const GoogleServiceAuthError& error) {
-  for (auto& observer : observer_list_)
-    observer.OnPrimaryAccountSigninFailed(error);
+void IdentityManager::AuthenticatedAccountSet(const AccountInfo& account_info) {
+  DCHECK(signin_manager_->IsAuthenticated());
+  primary_account_ = account_info;
+}
+void IdentityManager::AuthenticatedAccountCleared() {
+  DCHECK(!signin_manager_->IsAuthenticated());
+  primary_account_.reset();
 }
 
 void IdentityManager::OnRefreshTokenAvailable(const std::string& account_id) {
-  AccountInfo account_info =
-      GetAccountInfoForAccountWithRefreshToken(account_id);
+  CoreAccountInfo account_info =
+      GetAccountInfoForAccountWithRefreshToken(CoreAccountId(account_id));
 
   for (auto& observer : observer_list_) {
     observer.OnRefreshTokenUpdatedForAccount(account_info);
@@ -396,11 +528,6 @@ void IdentityManager::OnRefreshTokensLoaded() {
     observer.OnRefreshTokensLoaded();
 }
 
-void IdentityManager::OnStartBatchChanges() {
-  for (auto& observer : observer_list_)
-    observer.OnStartBatchOfRefreshTokenStateChanges();
-}
-
 void IdentityManager::OnEndBatchChanges() {
   for (auto& observer : observer_list_)
     observer.OnEndBatchOfRefreshTokenStateChanges();
@@ -409,8 +536,8 @@ void IdentityManager::OnEndBatchChanges() {
 void IdentityManager::OnAuthErrorChanged(
     const std::string& account_id,
     const GoogleServiceAuthError& auth_error) {
-  AccountInfo account_info =
-      GetAccountInfoForAccountWithRefreshToken(account_id);
+  CoreAccountInfo account_info =
+      GetAccountInfoForAccountWithRefreshToken(CoreAccountId(account_id));
 
   for (auto& observer : observer_list_)
     observer.OnErrorStateOfRefreshTokenUpdatedForAccount(account_info,
@@ -430,34 +557,66 @@ void IdentityManager::OnGaiaAccountsInCookieUpdated(
   }
 }
 
-void IdentityManager::OnAddAccountToCookieCompleted(
-    const std::string& account_id,
-    const GoogleServiceAuthError& error) {
+void IdentityManager::OnGaiaCookieDeletedByUserAction() {
   for (auto& observer : observer_list_) {
-    observer.OnAddAccountToCookieCompleted(account_id, error);
+    observer.OnAccountsCookieDeletedByUserAction();
   }
 }
 
 void IdentityManager::OnAccessTokenRequested(
-    const std::string& account_id,
+    const CoreAccountId& account_id,
     const std::string& consumer_id,
     const OAuth2TokenService::ScopeSet& scopes) {
-  // TODO(843510): Consider notifying observers asynchronously once there
-  // are no direct clients of ProfileOAuth2TokenService.
   for (auto& observer : diagnostics_observer_list_) {
     observer.OnAccessTokenRequested(account_id, consumer_id, scopes);
   }
 }
 
+void IdentityManager::OnFetchAccessTokenComplete(
+    const CoreAccountId& account_id,
+    const std::string& consumer_id,
+    const ScopeSet& scopes,
+    GoogleServiceAuthError error,
+    base::Time expiration_time) {
+  for (auto& observer : diagnostics_observer_list_)
+    observer.OnAccessTokenRequestCompleted(account_id, consumer_id, scopes,
+                                           error, expiration_time);
+}
+
+void IdentityManager::OnAccessTokenRemoved(const CoreAccountId& account_id,
+                                           const ScopeSet& scopes) {
+  for (auto& observer : diagnostics_observer_list_)
+    observer.OnAccessTokenRemovedFromCache(account_id, scopes);
+}
+
+void IdentityManager::OnRefreshTokenAvailableFromSource(
+    const CoreAccountId& account_id,
+    bool is_refresh_token_valid,
+    const std::string& source) {
+  for (auto& observer : diagnostics_observer_list_)
+    observer.OnRefreshTokenUpdatedForAccountFromSource(
+        account_id, is_refresh_token_valid, source);
+}
+
+void IdentityManager::OnRefreshTokenRevokedFromSource(
+    const CoreAccountId& account_id,
+    const std::string& source) {
+  for (auto& observer : diagnostics_observer_list_)
+    observer.OnRefreshTokenRemovedForAccountFromSource(account_id, source);
+}
+
 void IdentityManager::OnAccountUpdated(const AccountInfo& info) {
+  if (primary_account_ && primary_account_->account_id == info.account_id) {
+    primary_account_ = info;
+  }
   for (auto& observer : observer_list_) {
-    observer.OnAccountUpdated(info);
+    observer.OnExtendedAccountInfoUpdated(info);
   }
 }
 
 void IdentityManager::OnAccountRemoved(const AccountInfo& info) {
   for (auto& observer : observer_list_)
-    observer.OnAccountRemovedWithInfo(info);
+    observer.OnExtendedAccountInfoRemoved(info);
 }
 
 }  // namespace identity

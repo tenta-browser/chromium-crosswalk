@@ -94,8 +94,8 @@ void PrepareAndSetFavicon(jbyte* icon_bytes,
                             base::WaitableEvent::InitialState::NOT_SIGNALED);
   base::PostTaskWithTraits(
       FROM_HERE, {BrowserThread::UI},
-      base::Bind(&SetFaviconCallback, profile, node->url(), fake_icon_url,
-                 image_data, icon_type, &event));
+      base::BindOnce(&SetFaviconCallback, profile, node->url(), fake_icon_url,
+                     image_data, icon_type, &event));
   // TODO(aruslan): http://b/6397072 If possible - avoid using favicon service
   event.Wait();
 }
@@ -319,7 +319,8 @@ void PartnerBookmarksReader::OnGetFaviconFromCacheFinished(
           favicon::FaviconServerFetcherParams::CreateForMobile(
               page_url, kPartnerBookmarksMinimumFaviconSizePx,
               desired_favicon_size_px),
-          false /* may_page_url_be_private */, traffic_annotation,
+          false /* may_page_url_be_private */,
+          false /* should_trim_page_url_path */, traffic_annotation,
           base::Bind(&PartnerBookmarksReader::OnGetFaviconFromServerFinished,
                      base::Unretained(this), page_url, desired_favicon_size_px,
                      base::Passed(std::move(callback))));

@@ -170,7 +170,7 @@ class BreakingContext {
   bool RewindToMidWordBreak(LineLayoutText,
                             const ComputedStyle&,
                             const Font&,
-                            bool break_all,
+                            LineBreakType line_break_type,
                             WordMeasurement&);
   bool Hyphenate(LineLayoutText,
                  const ComputedStyle&,
@@ -207,7 +207,7 @@ class BreakingContext {
   bool ignoring_spaces_;
   bool current_character_is_space_;
   bool previous_character_is_space_;
-  bool single_leading_space_;
+  bool has_former_opportunity_;
   unsigned current_start_offset_;  // initial offset for the current text
   bool applied_start_width_;
   bool include_end_width_;
@@ -383,7 +383,12 @@ inline void BreakingContext::InitializeForCurrentObject() {
   // initial offset of the current handle text so that we can then identify
   // a single leading white-space as potential breaking opportunities.
   current_start_offset_ = current_.Offset();
-  single_leading_space_ = false;
+  has_former_opportunity_ = false;
+
+  if (curr_ws_ == EWhiteSpace::kBreakSpaces) {
+    layout_text_info_.line_break_iterator_.SetBreakSpace(
+        BreakSpaceType::kAfterEverySpace);
+  }
 }
 
 inline void BreakingContext::Increment() {
@@ -842,7 +847,7 @@ ALWAYS_INLINE bool BreakingContext::RewindToFirstMidWordBreak(
   // If the first break opportunity doesn't fit, and if there's a break
   // opportunity in previous runs, break at the opportunity.
   if (!width_.FitsOnLine(width) &&
-      (width_.CommittedWidth() || single_leading_space_))
+      (width_.CommittedWidth() || has_former_opportunity_))
     return false;
   return RewindToMidWordBreak(word_measurement, end, width);
 }
@@ -851,7 +856,7 @@ ALWAYS_INLINE bool BreakingContext::RewindToMidWordBreak(
     LineLayoutText text,
     const ComputedStyle& style,
     const Font& font,
-    bool break_all,
+    LineBreakType line_break_type,
     WordMeasurement& word_measurement) {
   int start = word_measurement.start_offset;
   int len = word_measurement.end_offset - start;
@@ -859,8 +864,9 @@ ALWAYS_INLINE bool BreakingContext::RewindToMidWordBreak(
     return false;
 
   LazyLineBreakIterator break_iterator(
-      text.GetText(), style.LocaleForLineBreakIterator(),
-      break_all ? LineBreakType::kBreakAll : LineBreakType::kBreakCharacter);
+      text.GetText(), style.LocaleForLineBreakIterator(), line_break_type);
+  if (curr_ws_ == EWhiteSpace::kBreakSpaces)
+    break_iterator.SetBreakSpace(BreakSpaceType::kAfterEverySpace);
   float x_pos_to_break = width_.AvailableWidth() - width_.CurrentWidth();
   if (x_pos_to_break <= LayoutUnit::Epsilon()) {
     // There were no space left. Skip computing how many characters can fit.
@@ -985,10 +991,14 @@ inline bool BreakingContext::HandleText(WordMeasurements& word_measurements,
                      ((auto_wrap_ && !width_.CommittedWidth()) ||
                       curr_ws_ == EWhiteSpace::kPre);
   bool mid_word_break = false;
+  bool line_break_anywhere =
+      auto_wrap_ ? current_style_->GetLineBreak() == LineBreak::kAnywhere
+                 : false;
   bool break_all =
-      current_style_->WordBreak() == EWordBreak::kBreakAll && auto_wrap_;
+      auto_wrap_ && (current_style_->WordBreak() == EWordBreak::kBreakAll ||
+                     line_break_anywhere);
   bool keep_all =
-      current_style_->WordBreak() == EWordBreak::kKeepAll && auto_wrap_;
+      auto_wrap_ && current_style_->WordBreak() == EWordBreak::kKeepAll;
   bool prohibit_break_inside = current_style_->HasTextCombine() &&
                                layout_text.IsCombineText() &&
                                LineLayoutTextCombine(layout_text).IsCombined();
@@ -1014,6 +1024,9 @@ inline bool BreakingContext::HandleText(WordMeasurements& word_measurements,
   // rewindToMidWordBreak() finds the mid-word break point.
   LineBreakType line_break_type =
       keep_all ? LineBreakType::kKeepAll : LineBreakType::kNormal;
+  LineBreakType line_break_type_for_rewind =
+      break_all && !line_break_anywhere ? LineBreakType::kBreakAll
+                                        : LineBreakType::kBreakCharacter;
   bool can_break_mid_word = break_all || break_words;
   int next_breakable_position_for_break_all = -1;
 
@@ -1050,14 +1063,15 @@ inline bool BreakingContext::HandleText(WordMeasurements& word_measurements,
     UChar c = current_.Current();
     SetCurrentCharacterIsSpace(c);
 
-    // Auto-wrapping text should not wrap in the middle of a word if it has
-    // an opportunity to break at a leading white-space.
-    // TODO (jfernandez): This change is questionable, but it's required to
-    // achieve the expected behavior for 'break-word' (cases 2.1 and 2.2), while
-    // keeping current behavior for 'break-all' (cases 4.1 and 4.2)
-    // https://github.com/w3c/csswg-drafts/issues/2907
-    if (single_leading_space_)
+    // A single preserved leading white-space doesn't fulfill the 'betweenWords'
+    // condition, however it's indeed a soft-breaking opportunty so we may want
+    // to avoid breaking in the middle of the word.
+    if (at_start_ && current_character_is_space_ &&
+        !previous_character_is_space_) {
+      has_former_opportunity_ = !line_break_anywhere;
+      break_words = false;
       can_break_mid_word = break_all;
+    }
 
     if (!collapse_white_space_ || !current_character_is_space_) {
       line_info_.SetEmpty(false);
@@ -1184,7 +1198,8 @@ inline bool BreakingContext::HandleText(WordMeasurements& word_measurements,
       }
       if (can_break_mid_word) {
         width_.AddUncommittedWidth(-word_measurement.width);
-        if (RewindToMidWordBreak(layout_text, style, font, break_all,
+        if (RewindToMidWordBreak(layout_text, style, font,
+                                 line_break_type_for_rewind,
                                  word_measurement)) {
           last_width_measurement =
               word_measurement.width + last_space_word_spacing;
@@ -1236,6 +1251,7 @@ inline bool BreakingContext::HandleText(WordMeasurements& word_measurements,
       width_from_last_breaking_opportunity = 0;
       line_break_.MoveTo(current_.GetLineLayoutItem(), current_.Offset(),
                          current_.NextBreakablePosition());
+      has_former_opportunity_ = !line_break_anywhere;
       break_words = false;
       can_break_mid_word = break_all;
       width_measurement_at_last_break_opportunity = last_width_measurement;
@@ -1327,8 +1343,8 @@ inline bool BreakingContext::HandleText(WordMeasurements& word_measurements,
     }
     if (!hyphenated && can_break_mid_word) {
       width_.AddUncommittedWidth(-word_measurement.width);
-      if (RewindToMidWordBreak(layout_text, style, font, break_all,
-                               word_measurement)) {
+      if (RewindToMidWordBreak(layout_text, style, font,
+                               line_break_type_for_rewind, word_measurement)) {
         width_.AddUncommittedWidth(word_measurement.width);
         width_.Commit();
         at_end_ = true;
@@ -1365,8 +1381,6 @@ inline void BreakingContext::PrepareForNextCharacter(
     if (auto_wrap_ && current_style_->BreakOnlyAfterWhiteSpace()) {
       line_break_.MoveTo(current_.GetLineLayoutItem(), current_.Offset(),
                          current_.NextBreakablePosition());
-      if (current_.Offset() == current_start_offset_ + 1)
-        single_leading_space_ = true;
     }
   }
   if (collapse_white_space_ && current_character_is_space_ && !ignoring_spaces_)
@@ -1423,7 +1437,7 @@ inline void BreakingContext::TrailingSpacesHang(bool can_break_mid_word) {
   DCHECK(curr_ws_ == EWhiteSpace::kBreakSpaces);
   // Avoid breaking before the first white-space after a word if there is a
   // breaking opportunity before.
-  if (single_leading_space_ && !previous_character_is_space_)
+  if (has_former_opportunity_ && !previous_character_is_space_)
     return;
 
   line_break_.MoveTo(current_.GetLineLayoutItem(), current_.Offset(),

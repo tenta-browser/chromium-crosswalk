@@ -12,6 +12,7 @@
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/image/image_skia_operations.h"
 #include "ui/gfx/scoped_canvas.h"
+#include "ui/views/metadata/metadata_impl_macros.h"
 #include "ui/views/painter.h"
 #include "ui/views/widget/widget.h"
 
@@ -20,27 +21,22 @@ namespace views {
 // Default button size if no image is set. This is ignored if there is an image,
 // and exists for historical reasons (any number of clients could depend on this
 // behaviour).
-static const int kDefaultWidth = 16;
-static const int kDefaultHeight = 14;
+static constexpr int kDefaultWidth = 16;
+static constexpr int kDefaultHeight = 14;
 
 const char ImageButton::kViewClassName[] = "ImageButton";
 
 ////////////////////////////////////////////////////////////////////////////////
 // ImageButton, public:
 
-ImageButton::ImageButton(ButtonListener* listener)
-    : Button(listener),
-      h_alignment_(ALIGN_LEFT),
-      v_alignment_(ALIGN_TOP),
-      draw_image_mirrored_(false) {
+ImageButton::ImageButton(ButtonListener* listener) : Button(listener) {
   // By default, we request that the gfx::Canvas passed to our View::OnPaint()
   // implementation is flipped horizontally so that the button's images are
   // mirrored when the UI directionality is right-to-left.
   EnableCanvasFlippingForRTLUI(true);
 }
 
-ImageButton::~ImageButton() {
-}
+ImageButton::~ImageButton() = default;
 
 const gfx::ImageSkia& ImageButton::GetImage(ButtonState state) const {
   return images_[state];
@@ -66,7 +62,7 @@ void ImageButton::SetImage(ButtonState for_state, const gfx::ImageSkia& image) {
 void ImageButton::SetBackgroundImage(SkColor color,
                                      const gfx::ImageSkia* image,
                                      const gfx::ImageSkia* mask) {
-  if (image == NULL || mask == NULL) {
+  if (image == nullptr || mask == nullptr) {
     background_image_ = gfx::ImageSkia();
     return;
   }
@@ -75,11 +71,27 @@ void ImageButton::SetBackgroundImage(SkColor color,
      *image, *mask);
 }
 
-void ImageButton::SetImageAlignment(HorizontalAlignment h_align,
-                                    VerticalAlignment v_align) {
-  h_alignment_ = h_align;
-  v_alignment_ = v_align;
-  SchedulePaint();
+ImageButton::HorizontalAlignment ImageButton::GetImageHorizontalAlignment()
+    const {
+  return h_alignment_;
+}
+
+ImageButton::VerticalAlignment ImageButton::GetImageVerticalAlignment() const {
+  return v_alignment_;
+}
+
+void ImageButton::SetImageHorizontalAlignment(HorizontalAlignment h_alignment) {
+  if (GetImageHorizontalAlignment() == h_alignment)
+    return;
+  h_alignment_ = h_alignment;
+  OnPropertyChanged(&h_alignment_, kPropertyEffectsPaint);
+}
+
+void ImageButton::SetImageVerticalAlignment(VerticalAlignment v_alignment) {
+  if (GetImageVerticalAlignment() == v_alignment)
+    return;
+  v_alignment_ = v_alignment;
+  OnPropertyChanged(&v_alignment_, kPropertyEffectsPaint);
 }
 
 void ImageButton::SetBackgroundImageAlignment(HorizontalAlignment h_align,
@@ -89,12 +101,15 @@ void ImageButton::SetBackgroundImageAlignment(HorizontalAlignment h_align,
   SchedulePaint();
 }
 
-void ImageButton::SetMinimumImageSize(const gfx::Size& size) {
-  if (minimum_image_size_ == size)
-    return;
+gfx::Size ImageButton::GetMinimumImageSize() const {
+  return minimum_image_size_;
+}
 
+void ImageButton::SetMinimumImageSize(const gfx::Size& size) {
+  if (GetMinimumImageSize() == size)
+    return;
   minimum_image_size_ = size;
-  PreferredSizeChanged();
+  OnPropertyChanged(&minimum_image_size_, kPropertyEffectsPreferredSizeChanged);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -111,7 +126,7 @@ gfx::Size ImageButton::CalculatePreferredSize() const {
                      images_[STATE_NORMAL].height());
   }
 
-  size.SetToMax(minimum_image_size_);
+  size.SetToMax(GetMinimumImageSize());
 
   gfx::Insets insets = GetInsets();
   size.Enlarge(insets.width(), insets.height());
@@ -148,17 +163,17 @@ void ImageButton::PaintButtonContents(gfx::Canvas* canvas) {
       // If the background image alignment was not set, use the image
       // alignment.
       HorizontalAlignment h_alignment =
-          h_background_alignment_.value_or(h_alignment_);
+          h_background_alignment_.value_or(GetImageHorizontalAlignment());
       VerticalAlignment v_alignment =
-          v_background_alignment_.value_or(v_alignment_);
+          v_background_alignment_.value_or(GetImageVerticalAlignment());
       gfx::Point background_position = ComputeImagePaintPosition(
           background_image_, h_alignment, v_alignment);
       canvas->DrawImageInt(background_image_, background_position.x(),
                            background_position.y());
     }
 
-    gfx::Point position =
-        ComputeImagePaintPosition(img, h_alignment_, v_alignment_);
+    gfx::Point position = ComputeImagePaintPosition(
+        img, GetImageHorizontalAlignment(), GetImageVerticalAlignment());
     canvas->DrawImageInt(img, position.x(), position.y());
   }
 }
@@ -202,7 +217,7 @@ const gfx::Point ImageButton::ComputeImagePaintPosition(
   else if (h_alignment == ALIGN_RIGHT)
     x = rect.width() - image.width();
 
-  if (v_alignment_ == ALIGN_MIDDLE)
+  if (v_alignment == ALIGN_MIDDLE)
     y = (rect.height() - image.height()) / 2;
   else if (v_alignment == ALIGN_BOTTOM)
     y = rect.height() - image.height();
@@ -221,18 +236,14 @@ ToggleImageButton::ToggleImageButton(ButtonListener* listener)
       toggled_(false) {
 }
 
-ToggleImageButton::~ToggleImageButton() {
-}
+ToggleImageButton::~ToggleImageButton() = default;
 
 void ToggleImageButton::SetToggled(bool toggled) {
   if (toggled == toggled_)
     return;
 
-  for (int i = 0; i < STATE_COUNT; ++i) {
-    gfx::ImageSkia temp = images_[i];
-    images_[i] = alternate_images_[i];
-    alternate_images_[i] = temp;
-  }
+  for (int i = 0; i < STATE_COUNT; ++i)
+    std::swap(images_[i], alternate_images_[i]);
   toggled_ = toggled;
   SchedulePaint();
 
@@ -279,20 +290,15 @@ void ToggleImageButton::SetImage(ButtonState image_state,
 ////////////////////////////////////////////////////////////////////////////////
 // ToggleImageButton, View overrides:
 
-bool ToggleImageButton::GetTooltipText(const gfx::Point& p,
-                                       base::string16* tooltip) const {
-  if (!toggled_ || toggled_tooltip_text_.empty())
-    return Button::GetTooltipText(p, tooltip);
-
-  *tooltip = toggled_tooltip_text_;
-  return true;
+base::string16 ToggleImageButton::GetTooltipText(const gfx::Point& p) const {
+  return (!toggled_ || toggled_tooltip_text_.empty())
+             ? Button::GetTooltipText(p)
+             : toggled_tooltip_text_;
 }
 
 void ToggleImageButton::GetAccessibleNodeData(ui::AXNodeData* node_data) {
   ImageButton::GetAccessibleNodeData(node_data);
-  base::string16 name;
-  GetTooltipText(gfx::Point(), &name);
-  node_data->SetName(name);
+  node_data->SetName(GetTooltipText(gfx::Point()));
 
   // Use the visual pressed image as a cue for making this control into an
   // accessible toggle button.
@@ -307,5 +313,29 @@ void ToggleImageButton::GetAccessibleNodeData(ui::AXNodeData* node_data) {
 bool ToggleImageButton::toggled_for_testing() const {
   return toggled_;
 }
+
+DEFINE_ENUM_CONVERTERS(ImageButton::HorizontalAlignment,
+                       {ImageButton::HorizontalAlignment::ALIGN_LEFT,
+                        base::ASCIIToUTF16("ALIGN_LEFT")},
+                       {ImageButton::HorizontalAlignment::ALIGN_CENTER,
+                        base::ASCIIToUTF16("ALIGN_CENTER")},
+                       {ImageButton::HorizontalAlignment::ALIGN_RIGHT,
+                        base::ASCIIToUTF16("ALIGN_RIGHT")})
+DEFINE_ENUM_CONVERTERS(ImageButton::VerticalAlignment,
+                       {ImageButton::VerticalAlignment::ALIGN_TOP,
+                        base::ASCIIToUTF16("ALIGN_TOP")},
+                       {ImageButton::VerticalAlignment::ALIGN_MIDDLE,
+                        base::ASCIIToUTF16("ALIGN_MIDDLE")},
+                       {ImageButton::VerticalAlignment::ALIGN_BOTTOM,
+                        base::ASCIIToUTF16("ALIGN_BOTTOM")})
+
+BEGIN_METADATA(ImageButton)
+METADATA_PARENT_CLASS(Button)
+ADD_PROPERTY_METADATA(ImageButton,
+                      HorizontalAlignment,
+                      ImageHorizontalAlignment)
+ADD_PROPERTY_METADATA(ImageButton, VerticalAlignment, ImageVerticalAlignment)
+ADD_PROPERTY_METADATA(ImageButton, gfx::Size, MinimumImageSize)
+END_METADATA()
 
 }  // namespace views

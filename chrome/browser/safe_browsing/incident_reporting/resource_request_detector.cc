@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/task/post_task.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/incident_reporting/incident_receiver.h"
@@ -132,7 +133,7 @@ ResourceRequestInfo ResourceRequestDetector::GetRequestInfo(
     const net::URLRequest* request) {
   ResourceRequestInfo info;
   info.url = request->url();
-  const content::ResourceRequestInfo* request_info =
+  content::ResourceRequestInfo* request_info =
       content::ResourceRequestInfo::ForRequest(request);
   info.resource_type = request_info->GetResourceType();
   content::ResourceRequestInfo::GetRenderFrameForRequest(
@@ -157,9 +158,9 @@ void ResourceRequestDetector::ProcessResourceRequest(
   if (!request->url.SchemeIsHTTPOrHTTPS())
     return;
 
-  if (request->resource_type == content::RESOURCE_TYPE_SUB_FRAME ||
-      request->resource_type == content::RESOURCE_TYPE_SCRIPT ||
-      request->resource_type == content::RESOURCE_TYPE_OBJECT) {
+  if (request->resource_type == content::ResourceType::kSubFrame ||
+      request->resource_type == content::ResourceType::kScript ||
+      request->resource_type == content::ResourceType::kObject) {
     ResourceRequestDetectorClient::Start(
         request->url, database_manager_,
         base::BindOnce(&ResourceRequestDetector::ReportIncidentOnUIThread,

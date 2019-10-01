@@ -8,6 +8,7 @@
 
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/rand_util.h"
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
@@ -34,6 +35,10 @@ namespace safe_browsing {
 namespace {
 
 constexpr size_t kMaxNumberOfNavigationsToAppend = 5;
+
+// Logging the number of events cleaned up every 2 minutes is excessive, so we
+// sample by this rate.
+const double kNavigationCleanUpSamplingRate = 0.01;
 
 // Given when an event happened and its TTL, determine if it is already expired.
 // Note, if for some reason this event's timestamp is in the future, this
@@ -219,7 +224,7 @@ std::size_t NavigationEventList::CleanUpNavigationEvents() {
   // Remove any stale NavigationEnvent, if it is older than
   // kNavigationFootprintTTLInSecond.
   std::size_t removal_count = 0;
-  while (navigation_events_.size() > 0 &&
+  while (!navigation_events_.empty() &&
          IsEventExpired(navigation_events_[0]->last_updated,
                         kNavigationFootprintTTLInSecond)) {
     navigation_events_.pop_front();
@@ -453,7 +458,7 @@ void SafeBrowsingNavigationObserverManager::RecordNewWebContents(
     content::WebContents* source_web_contents,
     int source_render_process_id,
     int source_render_frame_id,
-    GURL target_url,
+    const GURL& target_url,
     ui::PageTransition page_transition,
     content::WebContents* target_web_contents,
     bool renderer_initiated) {
@@ -541,9 +546,11 @@ void SafeBrowsingNavigationObserverManager::AppendRecentNavigations(
 void SafeBrowsingNavigationObserverManager::CleanUpNavigationEvents() {
   std::size_t removal_count = navigation_event_list_.CleanUpNavigationEvents();
 
-  UMA_HISTOGRAM_COUNTS_10000(
-      "SafeBrowsing.NavigationObserver.NavigationEventCleanUpCount",
-      removal_count);
+  if (base::RandDouble() < kNavigationCleanUpSamplingRate) {
+    UMA_HISTOGRAM_COUNTS_10000(
+        "SafeBrowsing.NavigationObserver.NavigationEventCleanUpCount",
+        removal_count);
+  }
 }
 
 void SafeBrowsingNavigationObserverManager::CleanUpUserGestures() {
@@ -603,7 +610,7 @@ void SafeBrowsingNavigationObserverManager::AddToReferrerChain(
   referrer_chain_entry->set_type(type);
   auto ip_it = host_to_ip_map_.find(destination_url.host());
   if (ip_it != host_to_ip_map_.end()) {
-    for (ResolvedIPAddress entry : ip_it->second) {
+    for (const ResolvedIPAddress& entry : ip_it->second) {
       referrer_chain_entry->add_ip_addresses(entry.ip);
     }
   }

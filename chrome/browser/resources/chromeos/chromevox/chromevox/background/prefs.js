@@ -9,13 +9,13 @@
  */
 
 goog.provide('cvox.ChromeVoxPrefs');
+goog.provide('cvox.RichTextSpeechStyle');
 
 goog.require('ConsoleTts');
 goog.require('EventStreamLogger');
 goog.require('cvox.ChromeVox');
 goog.require('cvox.ExtensionBridge');
 goog.require('cvox.KeyMap');
-
 
 /**
  * This object has default values of preferences and contains the common
@@ -62,6 +62,8 @@ cvox.ChromeVoxPrefs = function() {
  */
 cvox.ChromeVoxPrefs.DEFAULT_PREFS = {
   'active': true,
+  'announceDownloadNotifications': true,
+  'announceRichTextAttributes': true,
   'audioStrategy': 'audioNormal',
   'autoRead': false,
   'brailleCaptions': false,

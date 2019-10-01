@@ -82,8 +82,10 @@ class PaymentMethodListItem : public PaymentRequestItemList::Item {
             BackNavigationType::kPaymentSheet,
             static_cast<int>(PaymentMethodViewControllerTags::MAX_TAG),
             /*on_edited=*/
-            base::BindOnce(&PaymentRequestState::SetSelectedInstrument,
-                           base::Unretained(state()), instrument_),
+            base::BindOnce(
+                &PaymentRequestState::SetSelectedInstrument,
+                base::Unretained(state()), instrument_,
+                PaymentRequestState::SectionSelectionStatus::kEditedSelected),
             /*on_added=*/
             base::OnceCallback<void(const autofill::CreditCard&)>(),
             static_cast<AutofillPaymentInstrument*>(instrument_)
@@ -116,7 +118,7 @@ class PaymentMethodListItem : public PaymentRequestItemList::Item {
         views::BoxLayout::kVertical,
         gfx::Insets(kPaymentRequestRowVerticalInsets, 0));
     box_layout->set_cross_axis_alignment(
-        views::BoxLayout::CROSS_AXIS_ALIGNMENT_START);
+        views::BoxLayout::CrossAxisAlignment::kStart);
     card_info_container->SetLayoutManager(std::move(box_layout));
 
     base::string16 label = instrument_->GetLabel();
@@ -145,7 +147,8 @@ class PaymentMethodListItem : public PaymentRequestItemList::Item {
 
   void SelectedStateChanged() override {
     if (selected()) {
-      state()->SetSelectedInstrument(instrument_);
+      state()->SetSelectedInstrument(
+          instrument_, PaymentRequestState::SectionSelectionStatus::kSelected);
       dialog_->GoBack();
     }
   }
@@ -207,9 +210,9 @@ base::string16 PaymentMethodViewController::GetSheetTitle() {
 
 void PaymentMethodViewController::FillContentView(views::View* content_view) {
   auto layout = std::make_unique<views::BoxLayout>(views::BoxLayout::kVertical);
-  layout->set_main_axis_alignment(views::BoxLayout::MAIN_AXIS_ALIGNMENT_START);
+  layout->set_main_axis_alignment(views::BoxLayout::MainAxisAlignment::kStart);
   layout->set_cross_axis_alignment(
-      views::BoxLayout::CROSS_AXIS_ALIGNMENT_STRETCH);
+      views::BoxLayout::CrossAxisAlignment::kStretch);
   content_view->SetLayoutManager(std::move(layout));
 
   base::string16 sub_header =
@@ -219,53 +222,39 @@ void PaymentMethodViewController::FillContentView(views::View* content_view) {
 
   std::unique_ptr<views::View> list_view =
       payment_method_list_.CreateListView();
-  list_view->set_id(
+  list_view->SetID(
       static_cast<int>(DialogViewID::PAYMENT_METHOD_SHEET_LIST_VIEW));
   content_view->AddChildView(list_view.release());
 }
 
-std::unique_ptr<views::View>
-PaymentMethodViewController::CreateExtraFooterView() {
-  if (!spec()->supports_basic_card())
-    return nullptr;
-
-  auto extra_view = std::make_unique<views::View>();
-
-  extra_view->SetLayoutManager(std::make_unique<views::BoxLayout>(
-      views::BoxLayout::kHorizontal, gfx::Insets(),
-      kPaymentRequestButtonSpacing));
-
-  views::LabelButton* button = views::MdTextButton::CreateSecondaryUiButton(
-      this, l10n_util::GetStringUTF16(IDS_PAYMENTS_ADD_CARD));
-  button->set_tag(static_cast<int>(
-      PaymentMethodViewControllerTags::ADD_CREDIT_CARD_BUTTON));
-  button->set_id(
-      static_cast<int>(DialogViewID::PAYMENT_METHOD_ADD_CARD_BUTTON));
-  button->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);
-  extra_view->AddChildView(button);
-
-  return extra_view;
-}
-
 void PaymentMethodViewController::ButtonPressed(views::Button* sender,
                                                 const ui::Event& event) {
-  switch (sender->tag()) {
-    case static_cast<int>(
-        PaymentMethodViewControllerTags::ADD_CREDIT_CARD_BUTTON):
-      // Only provide the |on_added| callback, in response to this button.
-      dialog()->ShowCreditCardEditor(
-          BackNavigationType::kPaymentSheet,
-          static_cast<int>(PaymentMethodViewControllerTags::MAX_TAG),
-          /*on_edited=*/base::OnceClosure(),
-          /*on_added=*/
-          base::BindOnce(&PaymentRequestState::AddAutofillPaymentInstrument,
-                         base::Unretained(state()), /*selected=*/true),
-          /*credit_card=*/nullptr);
-      break;
-    default:
-      PaymentRequestSheetController::ButtonPressed(sender, event);
-      break;
+  if (sender->tag() == GetSecondaryButtonTag()) {
+    // Only provide the |on_added| callback, in response to this button.
+    dialog()->ShowCreditCardEditor(
+        BackNavigationType::kPaymentSheet,
+        static_cast<int>(PaymentMethodViewControllerTags::MAX_TAG),
+        /*on_edited=*/base::OnceClosure(),
+        /*on_added=*/
+        base::BindOnce(&PaymentRequestState::AddAutofillPaymentInstrument,
+                       base::Unretained(state()), /*selected=*/true),
+        /*credit_card=*/nullptr);
+  } else {
+    PaymentRequestSheetController::ButtonPressed(sender, event);
   }
+}
+
+base::string16 PaymentMethodViewController::GetSecondaryButtonLabel() {
+  return l10n_util::GetStringUTF16(IDS_PAYMENTS_ADD_CARD);
+}
+
+int PaymentMethodViewController::GetSecondaryButtonTag() {
+  return static_cast<int>(
+      PaymentMethodViewControllerTags::ADD_CREDIT_CARD_BUTTON);
+}
+
+int PaymentMethodViewController::GetSecondaryButtonId() {
+  return static_cast<int>(DialogViewID::PAYMENT_METHOD_ADD_CARD_BUTTON);
 }
 
 }  // namespace payments

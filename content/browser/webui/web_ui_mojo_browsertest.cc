@@ -5,6 +5,7 @@
 #include <limits>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/containers/flat_map.h"
 #include "base/files/file_path.h"
@@ -33,6 +34,7 @@
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
+#include "content/public/test/test_utils.h"
 #include "content/shell/browser/shell.h"
 #include "content/test/data/web_ui_test_mojo_bindings.mojom.h"
 #include "mojo/public/cpp/bindings/binding.h"
@@ -58,12 +60,12 @@ base::FilePath GetFilePathForJSResource(const std::string& path) {
 
 // The bindings for the page are generated from a .mojom file. This code looks
 // up the generated file from disk and returns it.
-bool GetResource(const std::string& id,
+void GetResource(const std::string& id,
                  const WebUIDataSource::GotDataCallback& callback) {
   base::ScopedAllowBlockingForTesting allow_blocking;
 
   std::string contents;
-  if (base::EndsWith(id, ".mojom.js", base::CompareCase::SENSITIVE)) {
+  if (base::EndsWith(id, ".mojom-lite.js", base::CompareCase::SENSITIVE)) {
     CHECK(base::ReadFileToString(GetFilePathForJSResource(id), &contents))
         << id;
   } else {
@@ -76,7 +78,6 @@ bool GetResource(const std::string& id,
   base::RefCountedString* ref_contents = new base::RefCountedString;
   ref_contents->data() = contents;
   callback.Run(ref_contents);
-  return true;
 }
 
 class BrowserTargetImpl : public mojom::BrowserTarget {
@@ -112,18 +113,21 @@ class TestWebUIController : public WebUIController {
     web_ui->SetBindings(bindings);
     {
       WebUIDataSource* data_source = WebUIDataSource::Create("mojo-web-ui");
-      data_source->SetRequestFilter(base::BindRepeating(&GetResource));
+      data_source->SetRequestFilter(
+          base::BindRepeating([](const std::string& path) { return true; }),
+          base::BindRepeating(&GetResource));
       WebUIDataSource::Add(web_ui->GetWebContents()->GetBrowserContext(),
                            data_source);
     }
     {
       WebUIDataSource* data_source = WebUIDataSource::Create("dummy-web-ui");
-      data_source->SetRequestFilter(base::BindRepeating(
-          [](const std::string& id,
-             const WebUIDataSource::GotDataCallback& callback) {
-            callback.Run(new base::RefCountedString);
-            return true;
-          }));
+      data_source->SetRequestFilter(
+          base::BindRepeating([](const std::string& path) { return true; }),
+          base::BindRepeating(
+              [](const std::string& id,
+                 const WebUIDataSource::GotDataCallback& callback) {
+                callback.Run(new base::RefCountedString);
+              }));
       WebUIDataSource::Add(web_ui->GetWebContents()->GetBrowserContext(),
                            data_source);
     }
@@ -261,10 +265,8 @@ class WebUIMojoTest : public ContentBrowserTest {
   void NavigateWithNewWebUI(const std::string& path) {
     // Load a dummy WebUI URL first so that a new WebUI is set up when we load
     // the URL we're actually interested in.
-    EXPECT_TRUE(NavigateToURL(shell(), GURL("chrome://dummy-web-ui")));
-
-    constexpr char kChromeUIMojoWebUIOrigin[] = "chrome://mojo-web-ui/";
-    EXPECT_TRUE(NavigateToURL(shell(), GURL(kChromeUIMojoWebUIOrigin + path)));
+    EXPECT_TRUE(NavigateToURL(shell(), GetWebUIURL("dummy-web-ui")));
+    EXPECT_TRUE(NavigateToURL(shell(), GetWebUIURL("mojo-web-ui/" + path)));
   }
 
   // Run |script| and return a boolean result.
@@ -299,13 +301,13 @@ bool IsGeneratedResourceAvailable(const std::string& resource_path) {
 // it from the browser to the page and back.
 IN_PROC_BROWSER_TEST_F(WebUIMojoTest, EndToEndPing) {
   if (!IsGeneratedResourceAvailable(
-          "content/test/data/web_ui_test_mojo_bindings.mojom.js"))
+          "content/test/data/web_ui_test_mojo_bindings.mojom-lite.js"))
     return;
 
   g_got_message = false;
   base::RunLoop run_loop;
   factory()->set_run_loop(&run_loop);
-  GURL test_url("chrome://mojo-web-ui/web_ui_mojo.html?ping");
+  GURL test_url(GetWebUIURL("mojo-web-ui/web_ui_mojo.html?ping"));
   NavigateToURL(shell(), test_url);
   // RunLoop is quit when message received from page.
   run_loop.Run();

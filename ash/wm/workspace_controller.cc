@@ -10,6 +10,7 @@
 #include "ash/root_window_controller.h"
 #include "ash/shelf/shelf.h"
 #include "ash/shell.h"
+#include "ash/wm/desks/desks_util.h"
 #include "ash/wm/fullscreen_window_finder.h"
 #include "ash/wm/mru_window_tracker.h"
 #include "ash/wm/overview/overview_controller.h"
@@ -23,6 +24,17 @@
 #include "ui/compositor/layer.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/wm/core/window_animations.h"
+
+// Defines a window property to store a WorkspaceController in the properties of
+// virtual desks container windows.
+ASH_EXPORT extern const aura::WindowProperty<ash::WorkspaceController*>* const
+    kWorkspaceController;
+
+DEFINE_UI_CLASS_PROPERTY_TYPE(ash::WorkspaceController*)
+
+DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(ash::WorkspaceController,
+                                   kWorkspaceController,
+                                   nullptr)
 
 namespace ash {
 namespace {
@@ -61,16 +73,18 @@ wm::WorkspaceWindowState WorkspaceController::GetWindowState() const {
   // the same regardles of the window we have.
   // The |overview_controller| can be null during shutdown.
   if (Shell::Get()->overview_controller() &&
-      Shell::Get()->overview_controller()->IsSelecting()) {
+      Shell::Get()->overview_controller()->InOverviewSession()) {
     return wm::WORKSPACE_WINDOW_STATE_DEFAULT;
   }
 
-  const aura::Window* fullscreen = wm::GetWindowForFullscreenMode(viewport_);
+  const aura::Window* fullscreen =
+      wm::GetWindowForFullscreenModeForContext(viewport_);
   if (fullscreen)
     return wm::WORKSPACE_WINDOW_STATE_FULL_SCREEN;
 
   auto mru_list =
-      Shell::Get()->mru_window_tracker()->BuildWindowListIgnoreModal();
+      Shell::Get()->mru_window_tracker()->BuildWindowListIgnoreModal(
+          kActiveDesk);
 
   for (aura::Window* window : mru_list) {
     if (window->GetRootWindow() != viewport_->GetRootWindow())
@@ -124,6 +138,44 @@ void WorkspaceController::OnWindowDestroying(aura::Window* window) {
   // Destroy |event_handler_| too as it depends upon |window|.
   event_handler_.reset();
   layout_manager_ = nullptr;
+}
+
+void SetWorkspaceController(aura::Window* desk_container,
+                            WorkspaceController* workspace_controller) {
+  DCHECK(desk_container);
+  DCHECK(desks_util::IsDeskContainer(desk_container));
+
+  if (workspace_controller)
+    desk_container->SetProperty(kWorkspaceController, workspace_controller);
+  else
+    desk_container->ClearProperty(kWorkspaceController);
+}
+
+WorkspaceController* GetWorkspaceController(aura::Window* desk_container) {
+  DCHECK(desk_container);
+  DCHECK(desks_util::IsDeskContainer(desk_container));
+
+  return desk_container->GetProperty(kWorkspaceController);
+}
+
+WorkspaceController* GetWorkspaceControllerForContext(aura::Window* context) {
+  DCHECK(!context->IsRootWindow());
+
+  // Find the desk container to which |context| belongs.
+  while (context && !desks_util::IsDeskContainer(context))
+    context = context->parent();
+
+  if (!context)
+    return nullptr;
+
+  return GetWorkspaceController(context);
+}
+
+WorkspaceController* GetActiveWorkspaceController(aura::Window* root) {
+  DCHECK(root->IsRootWindow());
+
+  return GetWorkspaceController(
+      desks_util::GetActiveDeskContainerForRoot(root));
 }
 
 }  // namespace ash

@@ -31,12 +31,10 @@
 #ifndef THIRD_PARTY_BLINK_PUBLIC_PLATFORM_PLATFORM_H_
 #define THIRD_PARTY_BLINK_PUBLIC_PLATFORM_PLATFORM_H_
 
-#ifdef WIN32
-#include <windows.h>
-#endif
-
 #include <memory>
 
+#include "base/containers/span.h"
+#include "base/files/file.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/metrics/user_metrics_action.h"
 #include "base/strings/string_piece.h"
@@ -47,6 +45,7 @@
 #include "mojo/public/cpp/system/message_pipe.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "third_party/blink/public/common/feature_policy/feature_policy.h"
+#include "third_party/blink/public/common/user_agent/user_agent_metadata.h"
 #include "third_party/blink/public/mojom/loader/code_cache.mojom-shared.h"
 #include "third_party/blink/public/platform/blame_context.h"
 #include "third_party/blink/public/platform/code_cache_loader.h"
@@ -54,7 +53,7 @@
 #include "third_party/blink/public/platform/web_audio_device.h"
 #include "third_party/blink/public/platform/web_common.h"
 #include "third_party/blink/public/platform/web_data.h"
-#include "third_party/blink/public/platform/web_data_consumer_handle.h"
+#include "third_party/blink/public/platform/web_dedicated_worker_host_factory_client.h"
 #include "third_party/blink/public/platform/web_gesture_device.h"
 #include "third_party/blink/public/platform/web_localized_string.h"
 #include "third_party/blink/public/platform/web_rtc_api_name.h"
@@ -105,22 +104,18 @@ struct ThreadCreationParams;
 class WebAudioBus;
 class WebAudioLatencyHint;
 class WebBlobRegistry;
-class WebCanvasCaptureHandler;
-class WebCookieJar;
 class WebCrypto;
 class WebDatabaseObserver;
+class WebDedicatedWorker;
 class WebGraphicsContext3DProvider;
-class WebImageCaptureFrameGrabber;
 class WebLocalFrame;
 class WebMediaCapabilitiesClient;
 class WebMediaPlayer;
 class WebMediaRecorderHandler;
 class WebMediaStream;
 class WebMediaStreamCenter;
-class WebMediaStreamTrack;
 class WebPrescientNetworking;
 class WebPublicSuffixList;
-class WebPushProvider;
 class WebRTCCertificateGenerator;
 class WebRTCPeerConnectionHandler;
 class WebRTCPeerConnectionHandlerClient;
@@ -130,10 +125,10 @@ class WebSpeechSynthesizer;
 class WebSpeechSynthesizerClient;
 class WebStorageNamespace;
 class WebThemeEngine;
+class WebTransmissionEncodingInfoHandler;
 class WebURLLoaderMockFactory;
 class WebURLResponse;
 class WebURLResponse;
-struct WebSize;
 
 namespace scheduler {
 class WebThreadScheduler;
@@ -141,14 +136,6 @@ class WebThreadScheduler;
 
 class BLINK_PLATFORM_EXPORT Platform {
  public:
-// HTML5 Database ------------------------------------------------------
-
-#ifdef WIN32
-  typedef HANDLE FileHandle;
-#else
-  typedef int FileHandle;
-#endif
-
   // Initialize platform and wtf. If you need to initialize the entire Blink,
   // you should use blink::Initialize. WebThreadScheduler must be owned by
   // the embedder.
@@ -188,9 +175,6 @@ class BLINK_PLATFORM_EXPORT Platform {
   Platform();
   virtual ~Platform();
 
-  // May return null.
-  virtual WebCookieJar* CookieJar() { return nullptr; }
-
   // May return null if sandbox support is not necessary
   virtual WebSandboxSupport* GetSandboxSupport() { return nullptr; }
 
@@ -202,6 +186,10 @@ class BLINK_PLATFORM_EXPORT Platform {
       WebSpeechSynthesizerClient*) {
     return nullptr;
   }
+
+  // AppCache  ----------------------------------------------------------
+
+  virtual bool IsURLSupportedForAppCache(const WebURL& url) { return false; }
 
   // Audio --------------------------------------------------------------
 
@@ -226,12 +214,12 @@ class BLINK_PLATFORM_EXPORT Platform {
   // Must return non-null.
   virtual WebBlobRegistry* GetBlobRegistry() { return nullptr; }
 
-  // Database ------------------------------------------------------------
+  // Database (WebSQL) ---------------------------------------------------
 
   // Opens a database file.
-  virtual FileHandle DatabaseOpenFile(const WebString& vfs_file_name,
+  virtual base::File DatabaseOpenFile(const WebString& vfs_file_name,
                                       int desired_flags) {
-    return FileHandle();
+    return base::File();
   }
 
   // Deletes a database file and returns the error code.
@@ -241,24 +229,24 @@ class BLINK_PLATFORM_EXPORT Platform {
   }
 
   // Returns the attributes of the given database file.
-  virtual long DatabaseGetFileAttributes(const WebString& vfs_file_name) {
+  virtual int32_t DatabaseGetFileAttributes(const WebString& vfs_file_name) {
     return 0;
   }
 
   // Returns the size of the given database file.
-  virtual long long DatabaseGetFileSize(const WebString& vfs_file_name) {
+  virtual int64_t DatabaseGetFileSize(const WebString& vfs_file_name) {
     return 0;
   }
 
   // Returns the space available for the given origin.
-  virtual long long DatabaseGetSpaceAvailableForOrigin(
+  virtual int64_t DatabaseGetSpaceAvailableForOrigin(
       const WebSecurityOrigin& origin) {
     return 0;
   }
 
   // Set the size of the given database file.
   virtual bool DatabaseSetFileSize(const WebString& vfs_file_name,
-                                   long long size) {
+                                   int64_t size) {
     return false;
   }
 
@@ -293,14 +281,13 @@ class BLINK_PLATFORM_EXPORT Platform {
 
   // Returns the hash for the given canonicalized URL for use in visited
   // link coloring.
-  virtual unsigned long long VisitedLinkHash(const char* canonical_url,
-                                             size_t length) {
+  virtual uint64_t VisitedLinkHash(const char* canonical_url, size_t length) {
     return 0;
   }
 
   // Returns whether the given link hash is in the user's history. The
   // hash must have been generated by calling VisitedLinkHash().
-  virtual bool IsLinkVisited(unsigned long long link_hash) { return false; }
+  virtual bool IsLinkVisited(uint64_t link_hash) { return false; }
 
   static const size_t kNoDecodedImageByteLimit = static_cast<size_t>(-1);
 
@@ -363,17 +350,17 @@ class BLINK_PLATFORM_EXPORT Platform {
     return nullptr;
   }
 
-  // Returns a WebDataConsumerHandle for a given mojo data pipe endpoint.
-  virtual std::unique_ptr<WebDataConsumerHandle> CreateDataConsumerHandle(
-      mojo::ScopedDataPipeConsumerHandle handle) {
-    return nullptr;
-  }
-
   // May return null.
   virtual WebPrescientNetworking* PrescientNetworking() { return nullptr; }
 
   // Returns the User-Agent string.
   virtual WebString UserAgent() { return WebString(); }
+
+  // Returns the User Agent metadata. This will replace `UserAgent()` if we
+  // end up shipping https://github.com/WICG/ua-client-hints.
+  virtual blink::UserAgentMetadata UserAgentMetadata() {
+    return blink::UserAgentMetadata();
+  }
 
   // A suggestion to cache this metadata in association with this URL.
   virtual void CacheMetadata(blink::mojom::CodeCacheType cache_type,
@@ -383,10 +370,11 @@ class BLINK_PLATFORM_EXPORT Platform {
                              size_t data_size) {}
 
   // A request to fetch contents associated with this URL from metadata cache.
-  virtual void FetchCachedCode(
-      blink::mojom::CodeCacheType cache_type,
-      const GURL&,
-      base::OnceCallback<void(base::Time, const std::vector<uint8_t>&)>) {}
+  using FetchCachedCodeCallback =
+      base::OnceCallback<void(base::Time, base::span<const uint8_t>)>;
+  virtual void FetchCachedCode(blink::mojom::CodeCacheType cache_type,
+                               const GURL&,
+                               FetchCachedCodeCallback) {}
   virtual void ClearCodeCacheEntry(blink::mojom::CodeCacheType cache_type,
                                    const GURL&) {}
 
@@ -429,18 +417,6 @@ class BLINK_PLATFORM_EXPORT Platform {
 
   // DEPRECATED: Use Thread::CreateThread() instead.
   std::unique_ptr<Thread> CreateThread(const ThreadCreationParams&);
-
-  // DEPRECATED: Use Thread::CreateWebAudioThread() instead.
-  std::unique_ptr<Thread> CreateWebAudioThread();
-
-  // DEPRECATED: Use Thread::Current() instead.
-  Thread* CurrentThread();
-
-  // DEPRECATED: Use Thread::MainThread() instead.
-  Thread* MainThread();
-
-  // DEPRECATED: Use Thread::CompositorThread() instead.
-  Thread* CompositorThread();
 
   // The two compositor-related functions below are called by the embedder.
   // TODO(yutak): Perhaps we should move these to somewhere else?
@@ -541,6 +517,7 @@ class BLINK_PLATFORM_EXPORT Platform {
     kWebGPUContextType,  // WebGPU context
   };
   struct ContextAttributes {
+    bool prefer_low_power_gpu = false;
     bool fail_if_major_performance_caveat = false;
     ContextType context_type = kGLES2ContextType;
     // Offscreen contexts usually share a surface for the default frame buffer
@@ -652,23 +629,12 @@ class BLINK_PLATFORM_EXPORT Platform {
   virtual std::unique_ptr<webrtc::AsyncResolverFactory>
   CreateWebRtcAsyncResolverFactory();
 
-  // Creates a WebCanvasCaptureHandler to capture Canvas output.
-  virtual std::unique_ptr<WebCanvasCaptureHandler>
-  CreateCanvasCaptureHandler(const WebSize&, double, WebMediaStreamTrack*);
-
   // Fills in the WebMediaStream to capture from the WebMediaPlayer identified
   // by the second parameter.
-  virtual void CreateHTMLVideoElementCapturer(
+  virtual void CreateHTMLAudioElementCapturer(
       WebMediaStream*,
       WebMediaPlayer*,
       scoped_refptr<base::SingleThreadTaskRunner>) {}
-  virtual void CreateHTMLAudioElementCapturer(WebMediaStream*,
-                                              WebMediaPlayer*) {}
-
-  // Creates a WebImageCaptureFrameGrabber to take a snapshot of a Video Tracks.
-  // May return null if the functionality is not available.
-  virtual std::unique_ptr<WebImageCaptureFrameGrabber>
-  CreateImageCaptureFrameGrabber();
 
   // Returns the most optimistic view of the capabilities of the system for
   // sending or receiving media of the given kind ("audio" or "video").
@@ -679,12 +645,26 @@ class BLINK_PLATFORM_EXPORT Platform {
 
   virtual void UpdateWebRTCAPICount(WebRTCAPIName api_name) {}
 
+  virtual base::Optional<double> GetWebRtcMaxCaptureFrameRate() {
+    return base::nullopt;
+  }
+
   // WebWorker ----------------------------------------------------------
 
+  virtual std::unique_ptr<WebDedicatedWorkerHostFactoryClient>
+  CreateDedicatedWorkerHostFactoryClient(WebDedicatedWorker*,
+                                         service_manager::InterfaceProvider*) {
+    return nullptr;
+  }
   virtual void DidStartWorkerThread() {}
   virtual void WillStopWorkerThread() {}
   virtual void WorkerContextCreated(const v8::Local<v8::Context>& worker) {}
-  virtual bool AllowScriptExtensionForServiceWorker(const WebURL& script_url) {
+  virtual bool AllowScriptExtensionForServiceWorker(
+      const WebSecurityOrigin& script_origin) {
+    return false;
+  }
+  virtual bool IsExcludedHeaderForServiceWorkerFetchEvent(
+      const WebString& header_name) {
     return false;
   }
 
@@ -700,43 +680,9 @@ class BLINK_PLATFORM_EXPORT Platform {
 
   virtual const char* GetBrowserServiceName() const { return ""; }
 
-  // This method converts from the supplied DOM code enum to the
-  // embedder's DOM code value for the key pressed. |dom_code| values are
-  // based on the value defined in
-  // ui/events/keycodes/dom4/keycode_converter_data.h.
-  // Returns null string, if DOM code value is not found.
-  virtual WebString DomCodeStringFromEnum(int dom_code) { return WebString(); }
-
-  // This method converts from the suppled DOM code value to the
-  // embedder's DOM code enum for the key pressed. |code_string| is defined in
-  // ui/events/keycodes/dom4/keycode_converter_data.h.
-  // Returns 0, if DOM code enum is not found.
-  virtual int DomEnumFromCodeString(const WebString& code_string) { return 0; }
-
-  // This method converts from the supplied DOM |key| enum to the
-  // corresponding DOM |key| string value for the key pressed. |dom_key| values
-  // are based on the value defined in ui/events/keycodes/dom3/dom_key_data.h.
-  // Returns empty string, if DOM key value is not found.
-  virtual WebString DomKeyStringFromEnum(int dom_key) { return WebString(); }
-
-  // This method converts from the suppled DOM |key| value to the
-  // embedder's DOM |key| enum for the key pressed. |key_string| is defined in
-  // ui/events/keycodes/dom3/dom_key_data.h.
-  // Returns 0 if DOM key enum is not found.
-  virtual int DomKeyEnumFromString(const WebString& key_string) { return 0; }
-
-  // This method returns whether the specified |dom_key| is a modifier key.
-  // |dom_key| values are based on the value defined in
-  // ui/events/keycodes/dom3/dom_key_data.h.
-  virtual bool IsDomKeyForModifier(int dom_key) { return false; }
-
   // WebDatabase --------------------------------------------------------
 
   virtual WebDatabaseObserver* DatabaseObserver() { return nullptr; }
-
-  // Push API------------------------------------------------------------
-
-  virtual WebPushProvider* PushProvider() { return nullptr; }
 
   // Media Capabilities --------------------------------------------------
 
@@ -744,13 +690,14 @@ class BLINK_PLATFORM_EXPORT Platform {
     return nullptr;
   }
 
-  // Memory ------------------------------------------------------------
+  virtual WebTransmissionEncodingInfoHandler*
+  TransmissionEncodingInfoHandler() {
+    return nullptr;
+  }
 
-  // Requests purging memory. The platform may or may not purge memory,
-  // depending on memory pressure.
-  virtual void RequestPurgeMemory() {}
+  // Renderer Memory Metrics ----------------------------------------------
 
-  virtual void SetMemoryPressureNotificationsSuppressed(bool suppressed) {}
+  virtual void RecordMetricsForBackgroundedRendererPurge() {}
 
   // V8 Context Snapshot --------------------------------------------------
 

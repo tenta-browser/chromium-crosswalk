@@ -6,13 +6,13 @@ package org.chromium.chrome.browser.suggestions;
 
 import android.content.Context;
 import android.content.res.Resources;
+import android.content.res.TypedArray;
 import android.support.annotation.Nullable;
 import android.util.AttributeSet;
 import android.util.Pair;
 import android.view.View;
 import android.widget.FrameLayout;
 
-import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.util.MathUtils;
@@ -40,8 +40,11 @@ public class TileGridLayout extends FrameLayout {
 
         Resources res = getResources();
         mVerticalSpacing = res.getDimensionPixelOffset(R.dimen.tile_grid_layout_vertical_spacing);
-        mMinHorizontalSpacing =
-                res.getDimensionPixelOffset(R.dimen.tile_grid_layout_min_horizontal_spacing);
+        TypedArray styledAttrs = context.obtainStyledAttributes(attrs, R.styleable.TileGridLayout);
+        mMinHorizontalSpacing = styledAttrs.getDimensionPixelOffset(
+                R.styleable.TileGridLayout_minHorizontalSpacing,
+                res.getDimensionPixelOffset(R.dimen.tile_grid_layout_min_horizontal_spacing));
+        styledAttrs.recycle();
         mMaxHorizontalSpacing = Integer.MAX_VALUE;
         mMaxWidth = Integer.MAX_VALUE;
     }
@@ -97,7 +100,7 @@ public class TileGridLayout extends FrameLayout {
         // Arrange the visible children in a grid.
         int numRows = (visibleChildCount + numColumns - 1) / numColumns;
         int paddingTop = getPaddingTop();
-        boolean isRtl = ApiCompatibilityUtils.isLayoutRtl(this);
+        boolean isRtl = getLayoutDirection() == LAYOUT_DIRECTION_RTL;
 
         for (int i = 0; i < visibleChildCount; i++) {
             View child = getChildAt(i);
@@ -144,10 +147,10 @@ public class TileGridLayout extends FrameLayout {
             }
         } else {
             // Ensure column spacing isn't greater than mMaxHorizontalSpacing.
-            int gridSidePadding = availableWidth - mMaxHorizontalSpacing * (numColumns - 1);
+            long gridSidePadding = availableWidth - (long) mMaxHorizontalSpacing * (numColumns - 1);
             if (gridSidePadding > 0) {
                 horizontalSpacing = mMaxHorizontalSpacing;
-                gridStart = gridSidePadding / 2;
+                gridStart = (int) (gridSidePadding / 2);
             } else {
                 horizontalSpacing = (float) availableWidth / Math.max(1, numColumns - 1);
                 gridStart = 0;

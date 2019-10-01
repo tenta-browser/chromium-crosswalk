@@ -5,6 +5,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_PAINT_TEXT_PAINTER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_PAINT_TEXT_PAINTER_H_
 
+#include "third_party/blink/renderer/core/content_capture/content_holder.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/paint/text_painter_base.h"
 
@@ -25,7 +26,11 @@ class CORE_EXPORT TextPainter : public TextPainterBase {
               const LayoutPoint& text_origin,
               const LayoutRect& text_bounds,
               bool horizontal)
-      : TextPainterBase(context, font, text_origin, text_bounds, horizontal),
+      : TextPainterBase(context,
+                        font,
+                        PhysicalOffset(text_origin),
+                        PhysicalRect(text_bounds),
+                        horizontal),
         run_(run),
         combined_text_(nullptr) {}
   ~TextPainter() = default;
@@ -41,16 +46,21 @@ class CORE_EXPORT TextPainter : public TextPainterBase {
   void Paint(unsigned start_offset,
              unsigned end_offset,
              unsigned length,
-             const TextPaintStyle&);
+             const TextPaintStyle&,
+             const NodeHolder& node_holder);
 
  private:
   template <PaintInternalStep step>
-  void PaintInternalRun(TextRunPaintInfo&, unsigned from, unsigned to);
+  void PaintInternalRun(TextRunPaintInfo&,
+                        unsigned from,
+                        unsigned to,
+                        const NodeHolder& node_holder);
 
   template <PaintInternalStep step>
   void PaintInternal(unsigned start_offset,
                      unsigned end_offset,
-                     unsigned truncation_point);
+                     unsigned truncation_point,
+                     const NodeHolder& node_holder);
 
   void PaintEmphasisMarkForCombinedText();
 

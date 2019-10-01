@@ -16,7 +16,7 @@
 #include "base/task_runner_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
-#include "components/crash/core/common/crash_key.h"
+#include "components/viz/common/gpu/metal_context_provider.h"
 #include "components/viz/common/gpu/vulkan_context_provider.h"
 #include "components/viz/common/gpu/vulkan_in_process_context_provider.h"
 #include "gpu/command_buffer/client/gpu_memory_buffer_manager.h"
@@ -44,8 +44,6 @@
 #include "media/gpu/gpu_video_encode_accelerator_factory.h"
 #include "media/gpu/ipc/service/gpu_video_decode_accelerator.h"
 #include "media/gpu/ipc/service/media_gpu_channel_manager.h"
-#include "media/mojo/services/mojo_jpeg_decode_accelerator_service.h"
-#include "media/mojo/services/mojo_jpeg_encode_accelerator_service.h"
 #include "media/mojo/services/mojo_video_encode_accelerator_provider.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "third_party/skia/include/gpu/GrContext.h"
@@ -70,10 +68,13 @@
 #include "components/arc/video_accelerator/gpu_arc_video_protected_buffer_allocator.h"
 #include "components/arc/video_accelerator/protected_buffer_manager.h"
 #include "components/arc/video_accelerator/protected_buffer_manager_proxy.h"
+#include "components/chromeos_camera/gpu_mjpeg_decode_accelerator_factory.h"
+#include "components/chromeos_camera/mojo_jpeg_encode_accelerator_service.h"
+#include "components/chromeos_camera/mojo_mjpeg_decode_accelerator_service.h"
 #endif  // defined(OS_CHROMEOS)
 
 #if defined(OS_WIN)
-#include "gpu/ipc/service/direct_composition_surface_win.h"
+#include "ui/gl/direct_composition_surface_win.h"
 #endif
 
 #if defined(OS_MACOSX)
@@ -87,6 +88,15 @@ namespace {
 static base::LazyInstance<base::RepeatingCallback<
     void(int severity, size_t message_start, const std::string& message)>>::
     Leaky g_log_callback = LAZY_INSTANCE_INITIALIZER;
+
+bool IsAcceleratedJpegDecodeSupported() {
+#if defined(OS_CHROMEOS)
+  return chromeos_camera::GpuMjpegDecodeAcceleratorFactory::
+      IsAcceleratedJpegDecodeSupported();
+#else
+  return false;
+#endif  // defined(OS_CHROMEOS)
+}
 
 bool GpuLogMessageHandler(int severity,
                           const char* file,
@@ -135,8 +145,6 @@ GpuServiceImpl::GpuServiceImpl(
     : main_runner_(base::ThreadTaskRunnerHandle::Get()),
       io_runner_(std::move(io_runner)),
       watchdog_thread_(std::move(watchdog_thread)),
-      gpu_memory_buffer_factory_(
-          gpu::GpuMemoryBufferFactory::CreateNativeType()),
       gpu_preferences_(gpu_preferences),
       gpu_info_(gpu_info),
       gpu_feature_info_(gpu_feature_info),
@@ -159,10 +167,26 @@ GpuServiceImpl::GpuServiceImpl(
   if (vulkan_implementation_) {
     vulkan_context_provider_ =
         VulkanInProcessContextProvider::Create(vulkan_implementation_);
-    if (!vulkan_context_provider_)
+    if (vulkan_context_provider_) {
+      // If Vulkan is supported, then OOP-R is supported.
+      gpu_info_.oop_rasterization_supported = true;
+      gpu_feature_info_.status_values[gpu::GPU_FEATURE_TYPE_OOP_RASTERIZATION] =
+          gpu::kGpuFeatureStatusEnabled;
+    } else {
       DLOG(WARNING) << "Failed to create Vulkan context provider.";
+    }
   }
 #endif
+
+#if defined(OS_MACOSX)
+  if (gpu_feature_info_.status_values[gpu::GPU_FEATURE_TYPE_METAL] ==
+      gpu::kGpuFeatureStatusEnabled) {
+    metal_context_provider_ = MetalContextProvider::Create();
+  }
+#endif
+
+  gpu_memory_buffer_factory_ =
+      gpu::GpuMemoryBufferFactory::CreateNativeType(vulkan_context_provider());
 
   weak_ptr_ = weak_ptr_factory_.GetWeakPtr();
 }
@@ -190,6 +214,7 @@ GpuServiceImpl::~GpuServiceImpl() {
   // Scheduler must be destroyed before sync point manager is destroyed.
   scheduler_.reset();
   owned_sync_point_manager_.reset();
+  owned_shared_image_manager_.reset();
 
   // Signal this event before destroying the child process. That way all
   // background threads can cleanup. For example, in the renderer the
@@ -211,8 +236,8 @@ void GpuServiceImpl::UpdateGPUInfo() {
       media::GpuVideoAcceleratorUtil::ConvertMediaToGpuEncodeProfiles(
           media::GpuVideoEncodeAcceleratorFactory::GetSupportedProfiles(
               gpu_preferences_));
-  gpu_info_.jpeg_decode_accelerator_supported = media::
-      GpuJpegDecodeAcceleratorFactory::IsAcceleratedJpegDecodeSupported();
+  gpu_info_.jpeg_decode_accelerator_supported =
+      IsAcceleratedJpegDecodeSupported();
   // Record initialization only after collecting the GPU info because that can
   // take a significant amount of time.
   gpu_info_.initialization_time = base::Time::Now() - start_time_;
@@ -223,6 +248,7 @@ void GpuServiceImpl::InitializeWithHost(
     gpu::GpuProcessActivityFlags activity_flags,
     scoped_refptr<gl::GLSurface> default_offscreen_surface,
     gpu::SyncPointManager* sync_point_manager,
+    gpu::SharedImageManager* shared_image_manager,
     base::WaitableEvent* shutdown_event) {
   DCHECK(main_runner_->BelongsToCurrentThread());
   gpu_host->DidInitialize(gpu_info_, gpu_feature_info_,
@@ -239,10 +265,17 @@ void GpuServiceImpl::InitializeWithHost(
     logging::SetLogMessageHandler(GpuLogMessageHandler);
   }
 
-  sync_point_manager_ = sync_point_manager;
-  if (!sync_point_manager_) {
+  if (!sync_point_manager) {
     owned_sync_point_manager_ = std::make_unique<gpu::SyncPointManager>();
-    sync_point_manager_ = owned_sync_point_manager_.get();
+    sync_point_manager = owned_sync_point_manager_.get();
+  }
+
+  if (!shared_image_manager) {
+    // The shared image will be only used on GPU main thread, so it doesn't need
+    // to be thread safe.
+    owned_shared_image_manager_ =
+        std::make_unique<gpu::SharedImageManager>(false /* thread_safe */);
+    shared_image_manager = owned_shared_image_manager_.get();
   }
 
   shutdown_event_ = shutdown_event;
@@ -254,7 +287,7 @@ void GpuServiceImpl::InitializeWithHost(
   }
 
   scheduler_ =
-      std::make_unique<gpu::Scheduler>(main_runner_, sync_point_manager_);
+      std::make_unique<gpu::Scheduler>(main_runner_, sync_point_manager);
 
   skia_output_surface_sequence_id_ =
       scheduler_->CreateSequence(gpu::SchedulingPriority::kHigh);
@@ -264,10 +297,11 @@ void GpuServiceImpl::InitializeWithHost(
   // initialization has succeeded.
   gpu_channel_manager_ = std::make_unique<gpu::GpuChannelManager>(
       gpu_preferences_, this, watchdog_thread_.get(), main_runner_, io_runner_,
-      scheduler_.get(), sync_point_manager_, gpu_memory_buffer_factory_.get(),
-      gpu_feature_info_, std::move(activity_flags),
-      std::move(default_offscreen_surface),
-      nullptr /* image_decode_accelerator_worker */, vulkan_context_provider());
+      scheduler_.get(), sync_point_manager, shared_image_manager,
+      gpu_memory_buffer_factory_.get(), gpu_feature_info_,
+      std::move(activity_flags), std::move(default_offscreen_surface),
+      nullptr /* image_decode_accelerator_worker */, vulkan_context_provider(),
+      metal_context_provider_.get());
 
   media_gpu_channel_manager_.reset(
       new media::MediaGpuChannelManager(gpu_channel_manager_.get()));
@@ -291,23 +325,8 @@ void GpuServiceImpl::DisableGpuCompositing() {
   (*gpu_host_)->DisableGpuCompositing();
 }
 
-scoped_refptr<gpu::SharedContextState>
-GpuServiceImpl::GetContextStateForGLSurface(gl::GLSurface* surface) {
+scoped_refptr<gpu::SharedContextState> GpuServiceImpl::GetContextState() {
   DCHECK(main_runner_->BelongsToCurrentThread());
-  DCHECK(!is_using_vulkan());
-  gpu::ContextResult result;
-  auto context_state = gpu_channel_manager_->GetSharedContextState(&result);
-  // TODO(penghuang): https://crbug.com/899740 Support GLSurface which is not
-  // compatible.
-  DCHECK_EQ(surface->GetCompatibilityKey(),
-            context_state->surface()->GetCompatibilityKey());
-  return context_state;
-}
-
-scoped_refptr<gpu::SharedContextState>
-GpuServiceImpl::GetContextStateForVulkan() {
-  DCHECK(main_runner_->BelongsToCurrentThread());
-  DCHECK(is_using_vulkan());
   gpu::ContextResult result;
   return gpu_channel_manager_->GetSharedContextState(&result);
 }
@@ -404,19 +423,21 @@ void GpuServiceImpl::CreateArcProtectedBufferManagerOnMainThread(
           protected_buffer_manager_),
       std::move(pbm_request));
 }
-#endif  // defined(OS_CHROMEOS)
 
 void GpuServiceImpl::CreateJpegDecodeAccelerator(
-    media::mojom::JpegDecodeAcceleratorRequest jda_request) {
+    chromeos_camera::mojom::MjpegDecodeAcceleratorRequest jda_request) {
   DCHECK(io_runner_->BelongsToCurrentThread());
-  media::MojoJpegDecodeAcceleratorService::Create(std::move(jda_request));
+  chromeos_camera::MojoMjpegDecodeAcceleratorService::Create(
+      std::move(jda_request));
 }
 
 void GpuServiceImpl::CreateJpegEncodeAccelerator(
-    media::mojom::JpegEncodeAcceleratorRequest jea_request) {
+    chromeos_camera::mojom::JpegEncodeAcceleratorRequest jea_request) {
   DCHECK(io_runner_->BelongsToCurrentThread());
-  media::MojoJpegEncodeAcceleratorService::Create(std::move(jea_request));
+  chromeos_camera::MojoJpegEncodeAcceleratorService::Create(
+      std::move(jea_request));
 }
+#endif  // defined(OS_CHROMEOS)
 
 void GpuServiceImpl::CreateVideoEncodeAcceleratorProvider(
     media::mojom::VideoEncodeAcceleratorProviderRequest vea_provider_request) {
@@ -529,7 +550,7 @@ void GpuServiceImpl::RequestHDRStatusOnMainThread(
   DCHECK(main_runner_->BelongsToCurrentThread());
   bool hdr_enabled = false;
 #if defined(OS_WIN)
-  hdr_enabled = gpu::DirectCompositionSurfaceWin::IsHDRSupported();
+  hdr_enabled = gl::DirectCompositionSurfaceWin::IsHDRSupported();
 #endif
   io_runner_->PostTask(FROM_HERE,
                        base::BindOnce(std::move(callback), hdr_enabled));
@@ -622,18 +643,14 @@ void GpuServiceImpl::SendCreatedChildWindow(gpu::SurfaceHandle parent_window,
 }
 #endif
 
-void GpuServiceImpl::SetActiveURL(const GURL& url) {
-  DCHECK(main_runner_->BelongsToCurrentThread());
-  static crash_reporter::CrashKeyString<1024> crash_key("url-chunk");
-  crash_key.Set(url.possibly_invalid_spec());
-}
-
 void GpuServiceImpl::EstablishGpuChannel(int32_t client_id,
                                          uint64_t client_tracing_id,
                                          bool is_gpu_host,
                                          bool cache_shaders_on_disk,
                                          EstablishGpuChannelCallback callback) {
   if (gpu::IsReservedClientId(client_id)) {
+    // This returns a null handle, which is treated by the client as a failure
+    // case.
     std::move(callback).Run(mojo::ScopedMessagePipeHandle());
     return;
   }
@@ -657,6 +674,12 @@ void GpuServiceImpl::EstablishGpuChannel(int32_t client_id,
   gpu::GpuChannel* gpu_channel = gpu_channel_manager_->EstablishChannel(
       client_id, client_tracing_id, is_gpu_host, cache_shaders_on_disk);
 
+  if (!gpu_channel) {
+    // This returns a null handle, which is treated by the client as a failure
+    // case.
+    std::move(callback).Run(mojo::ScopedMessagePipeHandle());
+    return;
+  }
   mojo::MessagePipe pipe;
   gpu_channel->Init(pipe.handle0.release(), shutdown_event_);
 

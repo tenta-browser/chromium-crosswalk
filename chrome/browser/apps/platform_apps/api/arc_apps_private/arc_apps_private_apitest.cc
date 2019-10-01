@@ -6,15 +6,16 @@
 
 #include "base/macros.h"
 #include "base/path_service.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
+#include "chrome/browser/chromeos/login/demo_mode/demo_session.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_list_prefs.h"
 #include "chrome/common/chrome_paths.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/fake_session_manager_client.h"
-#include "components/arc/arc_bridge_service.h"
+#include "chromeos/dbus/session_manager/fake_session_manager_client.h"
 #include "components/arc/arc_service_manager.h"
 #include "components/arc/arc_util.h"
+#include "components/arc/session/arc_bridge_service.h"
 #include "components/arc/test/connection_holder_util.h"
 #include "components/arc/test/fake_app_instance.h"
 #include "extensions/common/switches.h"
@@ -55,11 +56,9 @@ class ArcAppsPrivateApiTest : public extensions::ExtensionApiTest {
   void SetUpInProcessBrowserTestFixture() override {
     extensions::ExtensionApiTest::SetUpInProcessBrowserTestFixture();
     arc::ArcSessionManager::SetUiEnabledForTesting(false);
-    std::unique_ptr<chromeos::FakeSessionManagerClient> session_manager_client =
-        std::make_unique<chromeos::FakeSessionManagerClient>();
-    session_manager_client->set_arc_available(true);
-    chromeos::DBusThreadManager::GetSetterForTesting()->SetSessionManagerClient(
-        std::move(session_manager_client));
+    // SessionManagerClient will be destroyed in ChromeBrowserMain.
+    chromeos::SessionManagerClient::InitializeFakeInMemory();
+    chromeos::FakeSessionManagerClient::Get()->set_arc_available(true);
   }
 
   void SetUpOnMainThread() override {
@@ -131,4 +130,55 @@ IN_PROC_BROWSER_TEST_F(ArcAppsPrivateApiTest, OnInstalled) {
   EXPECT_TRUE(catcher.GetNextResult()) << catcher.message();
   ASSERT_EQ(1u, app_instance->launch_requests().size());
   EXPECT_TRUE(app_instance->launch_requests()[0]->IsForApp(launchable_app));
+}
+
+IN_PROC_BROWSER_TEST_F(ArcAppsPrivateApiTest,
+                       NoDemoModeAppLaunchSourceReported) {
+  // Not in Demo mode
+  EXPECT_FALSE(chromeos::DemoSession::IsDeviceInDemoMode());
+
+  base::HistogramTester histogram_tester;
+
+  // Should see 0 apps launched from the Launcher in the histogram at first.
+  histogram_tester.ExpectTotalCount("DemoMode.AppLaunchSource", 0);
+
+  // Launch an arc app as done in the tests above.
+  ArcAppListPrefs* prefs = ArcAppListPrefs::Get(browser()->profile());
+  ASSERT_TRUE(prefs);
+  std::unique_ptr<arc::FakeAppInstance> app_instance = CreateAppInstance(prefs);
+  arc::mojom::AppInfo launchable_app("App_0", "Package_0", "Dummy_activity_0");
+  app_instance->SendRefreshAppList({launchable_app});
+  EXPECT_TRUE(
+      RunPlatformAppTestWithArg("arc_app_launcher/launch_app", "Package_0"))
+      << message_;
+
+  // Should still see no apps launched in the histogram.
+  histogram_tester.ExpectTotalCount("DemoMode.AppLaunchSource", 0);
+}
+
+IN_PROC_BROWSER_TEST_F(ArcAppsPrivateApiTest, DemoModeAppLaunchSourceReported) {
+  // Set Demo mode
+  chromeos::DemoSession::SetDemoConfigForTesting(
+      chromeos::DemoSession::DemoModeConfig::kOnline);
+  EXPECT_TRUE(chromeos::DemoSession::IsDeviceInDemoMode());
+
+  base::HistogramTester histogram_tester;
+
+  // Should see 0 apps launched from the Launcher in the histogram at first.
+  histogram_tester.ExpectTotalCount("DemoMode.AppLaunchSource", 0);
+
+  // Launch an arc app as done in the tests above.
+  ArcAppListPrefs* prefs = ArcAppListPrefs::Get(browser()->profile());
+  ASSERT_TRUE(prefs);
+  std::unique_ptr<arc::FakeAppInstance> app_instance = CreateAppInstance(prefs);
+  arc::mojom::AppInfo launchable_app("App_0", "Package_0", "Dummy_activity_0");
+  app_instance->SendRefreshAppList({launchable_app});
+  EXPECT_TRUE(
+      RunPlatformAppTestWithArg("arc_app_launcher/launch_app", "Package_0"))
+      << message_;
+
+  // Should see 1 app launched from the highlights app in the histogram.
+  histogram_tester.ExpectUniqueSample(
+      "DemoMode.AppLaunchSource",
+      chromeos::DemoSession::AppLaunchSource::kExtensionApi, 1);
 }

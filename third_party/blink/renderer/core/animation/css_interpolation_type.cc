@@ -29,15 +29,6 @@ namespace blink {
 class ResolvedVariableChecker
     : public CSSInterpolationType::CSSConversionChecker {
  public:
-  static std::unique_ptr<ResolvedVariableChecker> Create(
-      CSSPropertyID property,
-      const CSSValue* variable_reference,
-      const CSSValue* resolved_value) {
-    return base::WrapUnique(new ResolvedVariableChecker(
-        property, variable_reference, resolved_value));
-  }
-
- private:
   ResolvedVariableChecker(CSSPropertyID property,
                           const CSSValue* variable_reference,
                           const CSSValue* resolved_value)
@@ -45,6 +36,7 @@ class ResolvedVariableChecker
         variable_reference_(variable_reference),
         resolved_value_(resolved_value) {}
 
+ private:
   bool IsValid(const StyleResolverState& state,
                const InterpolationValue& underlying) const final {
     // TODO(alancutter): Just check the variables referenced instead of doing a
@@ -64,16 +56,6 @@ class ResolvedVariableChecker
 class InheritedCustomPropertyChecker
     : public CSSInterpolationType::CSSConversionChecker {
  public:
-  static std::unique_ptr<InheritedCustomPropertyChecker> Create(
-      const AtomicString& property,
-      bool is_inherited_property,
-      const CSSValue* inherited_value,
-      const CSSValue* initial_value) {
-    return base::WrapUnique(new InheritedCustomPropertyChecker(
-        property, is_inherited_property, inherited_value, initial_value));
-  }
-
- private:
   InheritedCustomPropertyChecker(const AtomicString& name,
                                  bool is_inherited_property,
                                  const CSSValue* inherited_value,
@@ -83,11 +65,11 @@ class InheritedCustomPropertyChecker
         inherited_value_(inherited_value),
         initial_value_(initial_value) {}
 
+ private:
   bool IsValid(const StyleResolverState& state,
                const InterpolationValue&) const final {
     const CSSValue* inherited_value =
-        state.ParentStyle()->GetRegisteredVariable(name_,
-                                                   is_inherited_property_);
+        state.ParentStyle()->GetVariableValue(name_, is_inherited_property_);
     if (!inherited_value) {
       inherited_value = initial_value_.Get();
     }
@@ -103,20 +85,13 @@ class InheritedCustomPropertyChecker
 class ResolvedRegisteredCustomPropertyChecker
     : public InterpolationType::ConversionChecker {
  public:
-  static std::unique_ptr<ResolvedRegisteredCustomPropertyChecker> Create(
-      const CSSCustomPropertyDeclaration& declaration,
-      scoped_refptr<CSSVariableData> resolved_tokens) {
-    return base::WrapUnique(new ResolvedRegisteredCustomPropertyChecker(
-        declaration, std::move(resolved_tokens)));
-  }
-
- private:
   ResolvedRegisteredCustomPropertyChecker(
       const CSSCustomPropertyDeclaration& declaration,
       scoped_refptr<CSSVariableData> resolved_tokens)
       : declaration_(declaration),
         resolved_tokens_(std::move(resolved_tokens)) {}
 
+ private:
   bool IsValid(const InterpolationEnvironment& environment,
                const InterpolationValue&) const final {
     DCHECK(ToCSSInterpolationEnvironment(environment).HasVariableResolver());
@@ -172,7 +147,7 @@ InterpolationValue CSSInterpolationType::MaybeConvertSingleInternal(
   if (GetProperty().IsCSSCustomProperty()) {
     DCHECK(css_environment.HasVariableResolver());
     return MaybeConvertCustomPropertyDeclaration(
-        ToCSSCustomPropertyDeclaration(*value), state,
+        To<CSSCustomPropertyDeclaration>(*value), state,
         css_environment.VariableResolver(), conversion_checkers);
   }
 
@@ -182,7 +157,7 @@ InterpolationValue CSSInterpolationType::MaybeConvertSingleInternal(
     const CSSValue* resolved_value =
         CSSVariableResolver(state).ResolveVariableReferences(
             CssProperty().PropertyID(), *value, omit_animation_tainted);
-    conversion_checkers.push_back(ResolvedVariableChecker::Create(
+    conversion_checkers.push_back(std::make_unique<ResolvedVariableChecker>(
         CssProperty().PropertyID(), value, resolved_value));
     value = resolved_value;
   }
@@ -216,13 +191,14 @@ InterpolationValue CSSInterpolationType::MaybeConvertCustomPropertyDeclaration(
     if (declaration.IsInitial(is_inherited_property)) {
       value = Registration().Initial();
     } else {
-      value = state.ParentStyle()->GetRegisteredVariable(name,
-                                                         is_inherited_property);
+      value =
+          state.ParentStyle()->GetVariableValue(name, is_inherited_property);
       if (!value) {
         value = Registration().Initial();
       }
-      conversion_checkers.push_back(InheritedCustomPropertyChecker::Create(
-          name, is_inherited_property, value, Registration().Initial()));
+      conversion_checkers.push_back(
+          std::make_unique<InheritedCustomPropertyChecker>(
+              name, is_inherited_property, value, Registration().Initial()));
     }
     if (!value) {
       return nullptr;
@@ -238,8 +214,8 @@ InterpolationValue CSSInterpolationType::MaybeConvertCustomPropertyDeclaration(
         declaration, cycle_detected);
     DCHECK(!cycle_detected);
     conversion_checkers.push_back(
-        ResolvedRegisteredCustomPropertyChecker::Create(declaration,
-                                                        resolved_tokens));
+        std::make_unique<ResolvedRegisteredCustomPropertyChecker>(
+            declaration, resolved_tokens));
   } else {
     resolved_tokens = declaration.Value();
   }
@@ -265,7 +241,7 @@ InterpolationValue CSSInterpolationType::MaybeConvertUnderlyingValue(
   const PropertyHandle property = GetProperty();
   const AtomicString& name = property.CustomPropertyName();
   const CSSValue* underlying_value =
-      style.GetRegisteredVariable(name, Registration().Inherits());
+      style.GetVariableValue(name, Registration().Inherits());
   if (!underlying_value)
     return nullptr;
   // TODO(alancutter): Remove the need for passing in conversion checkers.
@@ -311,8 +287,8 @@ void CSSInterpolationType::ApplyCustomPropertyValue(
   const PropertyHandle property = GetProperty();
   const AtomicString& property_name = property.CustomPropertyName();
   bool inherits = Registration().Inherits();
-  style.SetVariable(property_name, std::move(variable_data), inherits);
-  style.SetRegisteredVariable(property_name, css_value, inherits);
+  style.SetVariableData(property_name, std::move(variable_data), inherits);
+  style.SetVariableValue(property_name, css_value, inherits);
 }
 
 }  // namespace blink

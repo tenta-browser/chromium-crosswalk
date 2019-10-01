@@ -9,6 +9,7 @@
 
 #include "ash/public/cpp/notification_utils.h"
 #include "ash/public/cpp/vector_icons/vector_icons.h"
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/metrics/user_metrics.h"
 #include "base/strings/utf_string_conversions.h"
@@ -22,6 +23,7 @@
 #include "chrome/browser/notifications/notification_display_service.h"
 #include "chrome/browser/notifications/notification_display_service_factory.h"
 #include "chrome/browser/notifications/notification_handler.h"
+#include "chrome/browser/safe_browsing/advanced_protection_status_manager.h"
 #include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/chromium_strings.h"
@@ -205,6 +207,8 @@ DownloadItemNotification::DownloadItemNotification(
       base::MakeRefCounted<message_center::ThunkNotificationDelegate>(
           weak_factory_.GetWeakPtr()));
   notification_->set_progress(0);
+  notification_->set_fullscreen_visibility(
+      message_center::FullscreenVisibility::OVER_USER);
   Update();
 }
 
@@ -249,7 +253,8 @@ void DownloadItemNotification::DisablePopup() {
   notification_->set_priority(message_center::LOW_PRIORITY);
   closed_ = false;
   NotificationDisplayServiceFactory::GetForProfile(profile())->Display(
-      NotificationHandler::Type::TRANSIENT, *notification_);
+      NotificationHandler::Type::TRANSIENT, *notification_,
+      /*metadata=*/nullptr);
 }
 
 void DownloadItemNotification::Close(bool by_user) {
@@ -271,6 +276,9 @@ void DownloadItemNotification::Close(bool by_user) {
 void DownloadItemNotification::Click(
     const base::Optional<int>& button_index,
     const base::Optional<base::string16>& reply) {
+  if (!item_)
+    return;
+
   if (button_index) {
     if (*button_index < 0 ||
         static_cast<size_t>(*button_index) >= button_actions_->size()) {
@@ -352,6 +360,9 @@ void DownloadItemNotification::CloseNotification() {
 }
 
 void DownloadItemNotification::Update() {
+  if (!item_)
+    return;
+
   auto download_state = item_->GetState();
 
   // When the download is just completed, interrupted or transitions to
@@ -449,7 +460,8 @@ void DownloadItemNotification::UpdateNotificationData(bool display,
   if (display) {
     closed_ = false;
     NotificationDisplayServiceFactory::GetForProfile(profile())->Display(
-        NotificationHandler::Type::TRANSIENT, *notification_);
+        NotificationHandler::Type::TRANSIENT, *notification_,
+        /*metadata=*/nullptr);
   }
 
   if (item_->IsDone() && image_decode_status_ == NOT_STARTED) {
@@ -696,8 +708,14 @@ base::string16 DownloadItemNotification::GetWarningStatusString() const {
                                         elided_filename);
     }
     case download::DOWNLOAD_DANGER_TYPE_UNCOMMON_CONTENT: {
-      return l10n_util::GetStringFUTF16(IDS_PROMPT_UNCOMMON_DOWNLOAD_CONTENT,
-                                        elided_filename);
+      bool requests_ap_verdicts =
+          safe_browsing::AdvancedProtectionStatusManager::
+              RequestsAdvancedProtectionVerdicts(profile());
+      return l10n_util::GetStringFUTF16(
+          requests_ap_verdicts
+              ? IDS_PROMPT_UNCOMMON_DOWNLOAD_CONTENT_IN_ADVANCED_PROTECTION
+              : IDS_PROMPT_UNCOMMON_DOWNLOAD_CONTENT,
+          elided_filename);
     }
     case download::DOWNLOAD_DANGER_TYPE_POTENTIALLY_UNWANTED: {
       return l10n_util::GetStringFUTF16(IDS_PROMPT_DOWNLOAD_CHANGES_SETTINGS,

@@ -22,12 +22,11 @@
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_view_controller_audience.h"
 #import "ios/chrome/browser/ui/content_suggestions/ntp_home_constant.h"
 #import "ios/chrome/browser/ui/ntp/new_tab_page_header_constants.h"
+#import "ios/chrome/browser/ui/ntp_tile_views/ntp_tile_layout_util.h"
 #import "ios/chrome/browser/ui/overscroll_actions/overscroll_actions_controller.h"
 #import "ios/chrome/browser/ui/toolbar/public/toolbar_utils.h"
-#include "ios/chrome/browser/ui/ui_feature_flags.h"
 #import "ios/chrome/browser/ui/util/uikit_ui_util.h"
 #import "ios/chrome/common/ui_util/constraints_ui_util.h"
-#include "ios/web/public/features.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -180,8 +179,6 @@ NSString* const kContentSuggestionsMostVisitedAccessibilityIdentifierPrefix =
 }
 
 - (void)updateConstraints {
-  [self.collectionUpdater
-      updateMostVisitedForSize:self.collectionView.bounds.size];
   [self.headerSynchronizer
       updateFakeOmniboxOnNewWidth:self.collectionView.bounds.size.width];
   [self.headerSynchronizer updateConstraints];
@@ -268,20 +265,11 @@ NSString* const kContentSuggestionsMostVisitedAccessibilityIdentifierPrefix =
   [super viewDidAppear:animated];
   // Resize the collection as it might have been rotated while not being
   // presented (e.g. rotation on stack view).
-  [self correctMissingSafeArea];
   [self updateConstraints];
 }
 
 - (void)viewDidLayoutSubviews {
   [super viewDidLayoutSubviews];
-  if (!base::FeatureList::IsEnabled(kBrowserContainerContainsNTP) &&
-      CGSizeEqualToSize(self.collectionView.bounds.size, CGSizeZero) &&
-      !CGSizeEqualToSize(self.view.bounds.size, CGSizeZero)) {
-    // When started after a cold start, the frame of the collection view isn't
-    // set to the bounds of the view. In that case, the constraints for the
-    // cells are broken.
-    self.collectionView.frame = self.view.bounds;
-  }
   [self applyContentOffset];
 }
 
@@ -294,8 +282,6 @@ NSString* const kContentSuggestionsMostVisitedAccessibilityIdentifierPrefix =
        withTransitionCoordinator:
            (id<UIViewControllerTransitionCoordinator>)coordinator {
   [super viewWillTransitionToSize:size withTransitionCoordinator:coordinator];
-  [self.collectionUpdater updateMostVisitedForSize:size];
-  [self.collectionView reloadData];
 
   void (^alongsideBlock)(id<UIViewControllerTransitionCoordinatorContext>) =
       ^(id<UIViewControllerTransitionCoordinatorContext> context) {
@@ -324,13 +310,11 @@ NSString* const kContentSuggestionsMostVisitedAccessibilityIdentifierPrefix =
     [self.headerSynchronizer updateFakeOmniboxOnCollectionScroll];
     [self.headerSynchronizer updateConstraints];
   }
-  [self correctMissingSafeArea];
   [self updateOverscrollActionsState];
 }
 
 - (void)viewSafeAreaInsetsDidChange {
   [super viewSafeAreaInsetsDidChange];
-  [self correctMissingSafeArea];
   [self.headerSynchronizer
       updateFakeOmniboxOnNewWidth:self.collectionView.bounds.size.width];
   [self.headerSynchronizer updateConstraints];
@@ -396,6 +380,8 @@ NSString* const kContentSuggestionsMostVisitedAccessibilityIdentifierPrefix =
             @"%@%li",
             kContentSuggestionsMostVisitedAccessibilityIdentifierPrefix,
             indexPath.row];
+    [self.collectionViewModel itemAtIndexPath:indexPath]
+        .accessibilityIdentifier = cell.accessibilityIdentifier;
   }
 
   return cell;
@@ -433,8 +419,8 @@ NSString* const kContentSuggestionsMostVisitedAccessibilityIdentifierPrefix =
     parentInset.right = 0;
   } else if ([self.collectionUpdater isMostVisitedSection:section] ||
              [self.collectionUpdater isPromoSection:section]) {
-    CGFloat margin = content_suggestions::centeredTilesMarginForWidth(
-        collectionView.frame.size.width);
+    CGFloat margin = CenteredTilesMarginForWidth(
+        self.traitCollection, collectionView.frame.size.width);
     parentInset.left = margin;
     parentInset.right = margin;
     if ([self.collectionUpdater isMostVisitedSection:section]) {
@@ -457,7 +443,7 @@ NSString* const kContentSuggestionsMostVisitedAccessibilityIdentifierPrefix =
                                             collectionViewLayout
     minimumLineSpacingForSectionAtIndex:(NSInteger)section {
   if ([self.collectionUpdater isMostVisitedSection:section]) {
-    return content_suggestions::verticalSpacingBetweenTiles();
+    return kNtpTilesVerticalSpacing;
   }
   return [super collectionView:collectionView
                                    layout:collectionViewLayout
@@ -640,24 +626,6 @@ NSString* const kContentSuggestionsMostVisitedAccessibilityIdentifierPrefix =
 }
 
 #pragma mark - Private
-
-// TODO(crbug.com/826369) Remove this when the NTP is conatined by the BVC
-// and removed from native content.  As a part of native content, the NTP is
-// contained by a view controller that is inset from safeArea.top.  Even
-// though content suggestions appear under the top safe area, they are blocked
-// by the browser container view controller.
-- (void)correctMissingSafeArea {
-  if (base::FeatureList::IsEnabled(web::features::kBrowserContainerFullscreen))
-    return;
-
-  UIEdgeInsets missingTop = UIEdgeInsetsZero;
-  // During the new tab animation the browser container view controller
-  // actually matches the browser view controller frame, so safe area does
-  // work, so be sure to check the parent view controller offset.
-  if (self.parentViewController.view.frame.origin.y == StatusBarHeight())
-    missingTop = UIEdgeInsetsMake(StatusBarHeight(), 0, 0, 0);
-  self.additionalSafeAreaInsets = missingTop;
-}
 
 - (void)handleLongPress:(UILongPressGestureRecognizer*)gestureRecognizer {
   if (self.editor.editing ||

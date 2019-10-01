@@ -39,8 +39,6 @@ class SVGUseElement final : public SVGGraphicsElement,
   USING_PRE_FINALIZER(SVGUseElement, Dispose);
 
  public:
-  static SVGUseElement* Create(Document&);
-
   explicit SVGUseElement(Document&);
   ~SVGUseElement() override;
 
@@ -80,7 +78,7 @@ class SVGUseElement final : public SVGGraphicsElement,
 
   void SvgAttributeChanged(const QualifiedName&) override;
 
-  LayoutObject* CreateLayoutObject(const ComputedStyle&) override;
+  LayoutObject* CreateLayoutObject(const ComputedStyle&, LegacyLayout) override;
 
   void ScheduleShadowTreeRecreation();
   void CancelShadowTreeRecreation();

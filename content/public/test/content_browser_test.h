@@ -18,7 +18,6 @@
 
 namespace content {
 class Shell;
-class ShellMainDelegate;
 
 // Base class for browser tests which use content_shell.
 class ContentBrowserTest : public BrowserTestBase {
@@ -48,7 +47,7 @@ class ContentBrowserTest : public BrowserTestBase {
   base::FilePath GetTestDataFilePath();
 
  private:
-  Shell* shell_;
+  Shell* shell_ = nullptr;
 
 #if defined(OS_MACOSX)
   // On Mac, without the following autorelease pool, code which is directly
@@ -61,11 +60,9 @@ class ContentBrowserTest : public BrowserTestBase {
   base::mac::ScopedNSAutoreleasePool* pool_ = nullptr;
 #endif
 
-#if defined(OS_ANDROID)
-  // For all other platforms, this is done automatically when calling into
-  // ContentMain. For Android we set things up manually.
-  std::unique_ptr<ShellMainDelegate> shell_main_delegate_;
-#endif
+  // Used to detect incorrect overriding of PreRunTestOnMainThread() with
+  // missung call to base implementation.
+  bool pre_run_test_executed_ = false;
 };
 
 }  // namespace content

@@ -4,6 +4,7 @@
 
 #include "base/macros.h"
 
+#include "ash/public/cpp/ash_switches.h"
 #include "build/build_config.h"
 #include "chrome/browser/chromeos/arc/arc_session_manager.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
@@ -12,9 +13,10 @@
 #include "chrome/browser/ui/app_list/arc/arc_app_list_prefs.h"
 #include "components/arc/arc_prefs.h"
 #include "components/arc/arc_util.h"
-#include "components/arc/connection_holder.h"
+#include "components/arc/session/connection_holder.h"
 #include "components/arc/test/connection_holder_util.h"
 #include "components/arc/test/fake_app_instance.h"
+#include "components/prefs/pref_service.h"
 
 namespace extensions {
 
@@ -27,6 +29,8 @@ class AutotestPrivateApiTest : public ExtensionApiTest {
     ExtensionApiTest::SetUpCommandLine(command_line);
     // Make ARC enabled for tests.
     arc::SetArcAvailableCommandLineForTesting(command_line);
+    // Enable certain Mojo services like ShelfIntegrationTestApi.
+    command_line->AppendSwitch(ash::switches::kAshEnableTestInterfaces);
   }
 
   void SetUpInProcessBrowserTestFixture() override {
@@ -60,6 +64,8 @@ IN_PROC_BROWSER_TEST_F(AutotestPrivateApiTest, AutotestPrivateArcEnabled) {
   arc::SetArcPlayStoreEnabledForProfile(profile(), true);
   // Provisioning is completed.
   browser()->profile()->GetPrefs()->SetBoolean(arc::prefs::kArcSignedIn, true);
+  browser()->profile()->GetPrefs()->SetBoolean(arc::prefs::kArcTermsAccepted,
+                                               true);
 
   std::unique_ptr<arc::FakeAppInstance> app_instance;
   app_instance.reset(new arc::FakeAppInstance(prefs));

@@ -9,7 +9,7 @@
 #include "ash/app_list/app_list_util.h"
 #include "ash/app_list/model/app_list_folder_item.h"
 #include "ash/app_list/views/app_list_folder_view.h"
-#include "ash/public/cpp/app_list/app_list_constants.h"
+#include "ash/public/cpp/app_list/app_list_config.h"
 #include "ash/public/cpp/app_list/app_list_features.h"
 #include "ash/public/cpp/app_list/app_list_switches.h"
 #include "base/macros.h"
@@ -30,6 +30,7 @@ namespace {
 
 constexpr int kMaxFolderNameWidth = 204;
 constexpr SkColor kFolderNameColor = SkColorSetARGB(138, 0, 0, 0);
+constexpr SkColor kFolderTitleHintTextColor = SkColorSetRGB(0xA0, 0xA0, 0xA0);
 
 }  // namespace
 
@@ -179,12 +180,16 @@ void FolderHeaderView::SetFolderNameForTest(const base::string16& name) {
 }
 
 bool FolderHeaderView::IsFolderNameEnabledForTest() const {
-  return folder_name_view_->enabled();
+  return folder_name_view_->GetEnabled();
 }
 
 gfx::Size FolderHeaderView::CalculatePreferredSize() const {
   return gfx::Size(kMaxFolderNameWidth,
                    folder_name_view_->GetPreferredSize().height());
+}
+
+const char* FolderHeaderView::GetClassName() const {
+  return "FolderHeaderView";
 }
 
 views::View* FolderHeaderView::GetFolderNameViewForTest() const {
@@ -198,7 +203,8 @@ int FolderHeaderView::GetMaxFolderNameWidth() const {
 base::string16 FolderHeaderView::GetElidedFolderName(
     const base::string16& folder_name) const {
   // Enforce the maximum folder name length.
-  base::string16 name = folder_name.substr(0, kMaxFolderNameChars);
+  base::string16 name =
+      folder_name.substr(0, AppListConfig::instance().max_folder_name_chars());
 
   // Get maximum text width for fitting into |folder_name_view_|.
   int text_width = GetMaxFolderNameWidth() -
@@ -241,7 +247,8 @@ void FolderHeaderView::ContentsChanged(views::Textfield* sender,
 
   folder_item_->RemoveObserver(this);
   // Enforce the maximum folder name length in UI.
-  if (new_contents.length() > kMaxFolderNameChars) {
+  if (new_contents.length() >
+      AppListConfig::instance().max_folder_name_chars()) {
     folder_name_view_->SetText(previous_folder_name_.value());
     sender->SelectRange(gfx::Range(previous_cursor_position_.value(),
                                    previous_cursor_position_.value()));
@@ -265,7 +272,7 @@ bool FolderHeaderView::HandleKeyEvent(views::Textfield* sender,
     delegate_->NavigateBack(folder_item_, key_event);
     return true;
   }
-  if (!CanProcessLeftRightKeyTraversal(key_event))
+  if (!IsUnhandledLeftRightKeyEvent(key_event))
     return false;
   return ProcessLeftRightKeyTraversalForTextfield(folder_name_view_, key_event);
 }

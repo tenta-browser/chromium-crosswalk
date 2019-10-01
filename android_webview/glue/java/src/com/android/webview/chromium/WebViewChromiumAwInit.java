@@ -24,7 +24,7 @@ import org.chromium.android_webview.AwBrowserProcess;
 import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.AwContentsStatics;
 import org.chromium.android_webview.AwCookieManager;
-import org.chromium.android_webview.AwDrawFnImpl;
+import org.chromium.android_webview.AwFirebaseConfig;
 import org.chromium.android_webview.AwNetworkChangeNotifierRegistrationPolicy;
 import org.chromium.android_webview.AwProxyController;
 import org.chromium.android_webview.AwQuotaManagerBridge;
@@ -35,10 +35,12 @@ import org.chromium.android_webview.HttpAuthDatabase;
 import org.chromium.android_webview.ScopedSysTraceEvent;
 import org.chromium.android_webview.VariationsSeedLoader;
 import org.chromium.android_webview.WebViewChromiumRunQueue;
+import org.chromium.android_webview.gfx.AwDrawFnImpl;
 import org.chromium.base.BuildConfig;
 import org.chromium.base.BuildInfo;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.FieldTrialList;
+import org.chromium.base.JNIUtils;
 import org.chromium.base.PathService;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.TraceEvent;
@@ -47,7 +49,9 @@ import org.chromium.base.library_loader.LibraryProcessType;
 import org.chromium.base.library_loader.ProcessInitException;
 import org.chromium.base.metrics.CachedMetrics;
 import org.chromium.base.metrics.RecordHistogram;
-import org.chromium.base.task.AsyncTask;
+import org.chromium.base.task.PostTask;
+import org.chromium.base.task.TaskTraits;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 import org.chromium.net.NetworkChangeNotifier;
 
 /**
@@ -131,6 +135,10 @@ public class WebViewChromiumAwInit {
             }
 
             final Context context = ContextUtils.getApplicationContext();
+
+            BuildInfo.setFirebaseAppId(AwFirebaseConfig.getFirebaseAppId());
+
+            JNIUtils.setClassLoader(WebViewChromiumAwInit.class.getClassLoader());
 
             // We are rewriting Java resources in the background.
             // NOTE: Any reference to Java resources will cause a crash.
@@ -280,7 +288,7 @@ public class WebViewChromiumAwInit {
 
         // We must post to the UI thread to cover the case that the user has invoked Chromium
         // startup by using the (thread-safe) CookieManager rather than creating a WebView.
-        ThreadUtils.postOnUiThread(new Runnable() {
+        PostTask.postTask(UiThreadTaskTraits.DEFAULT, new Runnable() {
             @Override
             public void run() {
                 synchronized (mLock) {
@@ -447,7 +455,7 @@ public class WebViewChromiumAwInit {
     // If a certain app is installed, log field trials as they become active, for debugging
     // purposes. Check for the app asyncronously because PackageManager is slow.
     private static void maybeLogActiveTrials(final Context ctx) {
-        AsyncTask.THREAD_POOL_EXECUTOR.execute(() -> {
+        PostTask.postTask(TaskTraits.BEST_EFFORT_MAY_BLOCK, () -> {
             try {
                 // This must match the package name in:
                 // android_webview/tools/webview_log_verbosifier/AndroidManifest.xml
@@ -457,7 +465,14 @@ public class WebViewChromiumAwInit {
                 return;
             }
 
-            ThreadUtils.postOnUiThread(() -> FieldTrialList.logActiveTrials());
+            PostTask.postTask(UiThreadTaskTraits.BEST_EFFORT, () -> {
+                // TODO(ntfschr): CommandLine can change at any time. For simplicity, only log it
+                // once during startup.
+                AwContentsStatics.logCommandLineForDebugging();
+                // Field trials can be activated at any time. We'll continue logging them as they're
+                // activated.
+                FieldTrialList.logActiveTrials();
+            });
         });
     }
 

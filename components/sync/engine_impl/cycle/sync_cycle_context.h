@@ -48,10 +48,10 @@ class SyncCycleContext {
                    DebugInfoGetter* debug_info_getter,
                    ModelTypeRegistry* model_type_registry,
                    bool keystore_encryption_enabled,
-                   bool client_enabled_pre_commit_update_avoidance,
                    const std::string& invalidator_client_id,
-                   base::TimeDelta short_poll_interval,
-                   base::TimeDelta long_poll_interval);
+                   const std::string& birthday,
+                   const std::string& bag_of_chips,
+                   base::TimeDelta poll_interval);
 
   ~SyncCycleContext();
 
@@ -72,7 +72,12 @@ class SyncCycleContext {
   }
   bool notifications_enabled() { return notifications_enabled_; }
 
-  // Account name, set once a directory has been opened.
+  void set_birthday(const std::string& birthday);
+  const std::string& birthday() const { return birthday_; }
+
+  void set_bag_of_chips(const std::string& bag_of_chips);
+  const std::string& bag_of_chips() const { return bag_of_chips_; }
+
   void set_account_name(const std::string& name) { account_name_ = name; }
   const std::string& account_name() const { return account_name_; }
 
@@ -107,15 +112,6 @@ class SyncCycleContext {
     invalidator_client_id_ = id;
   }
 
-  bool ShouldFetchUpdatesBeforeCommit() const {
-    return !(server_enabled_pre_commit_update_avoidance_ ||
-             client_enabled_pre_commit_update_avoidance_);
-  }
-
-  void set_server_enabled_pre_commit_update_avoidance(bool value) {
-    server_enabled_pre_commit_update_avoidance_ = value;
-  }
-
   ModelTypeRegistry* model_type_registry() { return model_type_registry_; }
 
   bool cookie_jar_mismatch() const { return cookie_jar_mismatch_; }
@@ -128,16 +124,10 @@ class SyncCycleContext {
 
   void set_cookie_jar_empty(bool empty_jar) { cookie_jar_empty_ = empty_jar; }
 
-  base::TimeDelta short_poll_interval() const { return short_poll_interval_; }
-  void set_short_poll_interval(base::TimeDelta interval) {
+  base::TimeDelta poll_interval() const { return poll_interval_; }
+  void set_poll_interval(base::TimeDelta interval) {
     DCHECK(!interval.is_zero());
-    short_poll_interval_ = interval;
-  }
-
-  base::TimeDelta long_poll_interval() const { return long_poll_interval_; }
-  void set_long_poll_interval(base::TimeDelta interval) {
-    DCHECK(!interval.is_zero());
-    long_poll_interval_ = interval;
+    poll_interval_ = interval;
   }
 
  private:
@@ -153,6 +143,10 @@ class SyncCycleContext {
   // Kept up to date with talk events to determine whether notifications are
   // enabled. True only if the notification channel is authorized and open.
   bool notifications_enabled_;
+
+  std::string birthday_;
+
+  std::string bag_of_chips_;
 
   // The name of the account being synced.
   std::string account_name_;
@@ -180,15 +174,6 @@ class SyncCycleContext {
   // prevent us from receiving notifications of changes we make ourselves.
   std::string invalidator_client_id_;
 
-  // Flag to enable or disable the no pre-commit GetUpdates experiment.  When
-  // this flag is set to false, the syncer has the option of not performing at
-  // GetUpdates request when there is nothing to fetch.
-  bool server_enabled_pre_commit_update_avoidance_;
-
-  // If true, indicates that we've been passed a command-line flag to force
-  // enable the pre-commit update avoidance experiment described above.
-  const bool client_enabled_pre_commit_update_avoidance_;
-
   // Whether the account(s) present in the content area's cookie jar match the
   // chrome account. If multiple accounts are present in the cookie jar, a
   // mismatch implies all of them are different from the chrome account.
@@ -197,8 +182,7 @@ class SyncCycleContext {
   // If there's a cookie jar mismatch, whether the cookie jar was empty or not.
   bool cookie_jar_empty_;
 
-  base::TimeDelta short_poll_interval_;
-  base::TimeDelta long_poll_interval_;
+  base::TimeDelta poll_interval_;
 
   DISALLOW_COPY_AND_ASSIGN(SyncCycleContext);
 };

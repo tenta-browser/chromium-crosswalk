@@ -173,13 +173,13 @@ TEST_P(ButtonLayoutTest, Layout) {
   host()->SetBounds(0, 0, GetExpectedWidth(), GetExpectedHeight());
   layout()->Layout(host());
 
-  ExpectViewBoundsEquals(host()->child_at(0), GetExpectedButtonBounds(1));
+  ExpectViewBoundsEquals(host()->children()[0], GetExpectedButtonBounds(1));
   if (has_two_buttons())
-    ExpectViewBoundsEquals(host()->child_at(1), GetExpectedButtonBounds(2));
+    ExpectViewBoundsEquals(host()->children()[1], GetExpectedButtonBounds(2));
 }
 
 // Test all combinations of one or two buttons at many sizes.
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     ,
     ButtonLayoutTest,
     ::testing::Combine(::testing::Values(ButtonLayoutTest::kNarrowButtonMin,

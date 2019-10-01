@@ -7,14 +7,13 @@
 
 #include <stdint.h>
 
-#include <map>
 #include <memory>
 #include <string>
-#include <vector>
 
 #include "ash/public/cpp/shell_window_ids.h"
+#include "ash/session/test_session_controller_client.h"
+#include "ash/wm/desks/desks_util.h"
 #include "base/macros.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/threading/thread.h"
 #include "components/user_manager/user_type.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -33,6 +32,10 @@ namespace test {
 class ScopedTaskEnvironment;
 }
 }  // namespace base
+
+namespace chromeos {
+class FakePowerManagerClient;
+}
 
 namespace display {
 class Display;
@@ -58,20 +61,14 @@ class Widget;
 class WidgetDelegate;
 }
 
-namespace ws {
-class TestWindowTreeClient;
-class WindowTree;
-class WindowTreeTestHelper;
-}  // namespace ws
-
 namespace ash {
 
 class AppListTestHelper;
 class AshTestHelper;
 class Shelf;
 class TestScreenshotDelegate;
-class TestSessionControllerClient;
 class UnifiedSystemTray;
+class WorkAreaInsets;
 
 class AshTestBase : public testing::Test {
  public:
@@ -88,15 +85,12 @@ class AshTestBase : public testing::Test {
   // Returns the unified system tray on the primary display.
   static UnifiedSystemTray* GetPrimaryUnifiedSystemTray();
 
+  // Returns WorkAreaInsets for the primary display.
+  static WorkAreaInsets* GetPrimaryWorkAreaInsets();
+
   // AshTestBase creates a ScopedTaskEnvironment. This may not be appropriate in
   // some environments. Use this to destroy it.
   void DestroyScopedTaskEnvironment();
-
-  // Call this only if this code is being run outside of ash, for example, in
-  // browser tests that use AshTestBase. This disables CHECKs that are
-  // applicable only when used inside ash.
-  // TODO: remove this and ban usage of AshTestBase outside of ash.
-  void SetRunningOutsideAsh();
 
   // Update the display configuration as given in |display_specs|.
   // See ash::DisplayManagerTestApi::UpdateDisplay for more details.
@@ -111,24 +105,17 @@ class AshTestBase : public testing::Test {
   // values for |container_id|.
   static std::unique_ptr<views::Widget> CreateTestWidget(
       views::WidgetDelegate* delegate = nullptr,
-      int container_id = kShellWindowId_DefaultContainer,
-      const gfx::Rect& bounds = gfx::Rect());
-
-  // Returns the set of properties for creating a proxy window.
-  std::map<std::string, std::vector<uint8_t>> CreatePropertiesForProxyWindow(
-      const gfx::Rect& bounds_in_screen = gfx::Rect(),
-      aura::client::WindowType type = aura::client::WINDOW_TYPE_NORMAL);
+      int container_id = desks_util::GetActiveDeskContainerId(),
+      const gfx::Rect& bounds = gfx::Rect(),
+      bool show = true);
 
   // Creates a visible window in the appropriate container. If
   // |bounds_in_screen| is empty the window is added to the primary root
   // window, otherwise the window is added to the display matching
   // |bounds_in_screen|. |shell_window_id| is the shell window id to give to
   // the new window.
-  //
-  // This function simulates creating a window as a client of Ash would. That
-  // is, it goes through the WindowService.
-  //
-  // TODO(sky): convert existing CreateTestWindow() functions into this one.
+  // If |type| is WINDOW_TYPE_NORMAL this creates a views::Widget, otherwise
+  // this creates an aura::Window.
   std::unique_ptr<aura::Window> CreateTestWindow(
       const gfx::Rect& bounds_in_screen = gfx::Rect(),
       aura::client::WindowType type = aura::client::WINDOW_TYPE_NORMAL,
@@ -174,6 +161,9 @@ class AshTestBase : public testing::Test {
 
   // Convenience method to return the DisplayManager.
   display::DisplayManager* display_manager();
+
+  // Convenience method to return the FakePowerManagerClient.
+  chromeos::FakePowerManagerClient* power_manager_client() const;
 
   // Test if moving a mouse to |point_in_screen| warps it to another
   // display.
@@ -223,6 +213,10 @@ class AshTestBase : public testing::Test {
   // Simulates kiosk mode. |user_type| must correlate to a kiosk type user.
   void SimulateKioskMode(user_manager::UserType user_type);
 
+  // Simulates setting height of the accessibility panel.
+  // Note: Accessibility panel widget needs to be setup first.
+  void SetAccessibilityPanelHeight(int panel_height);
+
   // Clears all user sessions and resets to the primary login screen state.
   void ClearLogin();
 
@@ -252,11 +246,6 @@ class AshTestBase : public testing::Test {
   display::Display GetPrimaryDisplay();
   display::Display GetSecondaryDisplay();
 
-  // Returns the WindowTreeTestHelper, creating if necessary.
-  ws::WindowTreeTestHelper* GetWindowTreeTestHelper();
-  ws::TestWindowTreeClient* GetTestWindowTreeClient();
-  ws::WindowTree* GetWindowTree();
-
  private:
   void CreateWindowTreeIfNecessary();
 
@@ -271,10 +260,6 @@ class AshTestBase : public testing::Test {
   std::unique_ptr<AshTestHelper> ash_test_helper_;
   std::unique_ptr<ui::test::EventGenerator> event_generator_;
 
-  std::unique_ptr<ws::TestWindowTreeClient> window_tree_client_;
-  std::unique_ptr<ws::WindowTree> window_tree_;
-  std::unique_ptr<ws::WindowTreeTestHelper> window_tree_test_helper_;
-
   DISALLOW_COPY_AND_ASSIGN(AshTestBase);
 };
 
@@ -285,25 +270,6 @@ class NoSessionAshTestBase : public AshTestBase {
 
  private:
   DISALLOW_COPY_AND_ASSIGN(NoSessionAshTestBase);
-};
-
-// Base test class that forces single-process mash to be enabled *and* creates
-// a views::MusClient. This base class is useful for testing WindowService
-// related functionality exposed by Ash.
-class SingleProcessMashTestBase : public AshTestBase {
- public:
-  SingleProcessMashTestBase();
-  ~SingleProcessMashTestBase() override;
-
-  // AshTestBase:
-  void SetUp() override;
-  void TearDown() override;
-
- private:
-  aura::Env::Mode original_aura_env_mode_ = aura::Env::Mode::LOCAL;
-  base::test::ScopedFeatureList feature_list_;
-
-  DISALLOW_COPY_AND_ASSIGN(SingleProcessMashTestBase);
 };
 
 }  // namespace ash

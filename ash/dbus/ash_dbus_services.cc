@@ -7,29 +7,13 @@
 #include "ash/dbus/display_service_provider.h"
 #include "ash/dbus/liveness_service_provider.h"
 #include "ash/dbus/url_handler_service_provider.h"
-#include "ash/shell.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/services/cros_dbus_service.h"
-#include "chromeos/dbus/session_manager_client.h"
 #include "dbus/object_path.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
 namespace ash {
 
-AshDBusServices::AshDBusServices() {
-  // TODO(stevenjb): Figure out where else the D-Bus thread is getting
-  // initialized and then always init it here when we have the MASH
-  // config after the contention is sorted out.
-  if (!chromeos::DBusThreadManager::IsInitialized()) {
-    chromeos::DBusThreadManager::Initialize(
-        chromeos::DBusThreadManager::kShared);
-    initialized_dbus_thread_ = true;
-  }
-
-  dbus::Bus* system_bus =
-      chromeos::DBusThreadManager::Get()->IsUsingFakes()
-          ? nullptr
-          : chromeos::DBusThreadManager::Get()->GetSystemBus();
+AshDBusServices::AshDBusServices(dbus::Bus* system_bus) {
   display_service_ = chromeos::CrosDBusService::Create(
       system_bus, chromeos::kDisplayServiceName,
       dbus::ObjectPath(chromeos::kDisplayServicePath),
@@ -47,19 +31,10 @@ AshDBusServices::AshDBusServices() {
           std::make_unique<UrlHandlerServiceProvider>()));
 }
 
-void AshDBusServices::EmitAshInitialized() {
-  chromeos::DBusThreadManager::Get()
-      ->GetSessionManagerClient()
-      ->EmitAshInitialized();
-}
-
 AshDBusServices::~AshDBusServices() {
   display_service_.reset();
   liveness_service_.reset();
   url_handler_service_.reset();
-  if (initialized_dbus_thread_) {
-    chromeos::DBusThreadManager::Shutdown();
-  }
 }
 
 }  // namespace ash

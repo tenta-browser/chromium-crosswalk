@@ -143,6 +143,10 @@ class PluginInfoHostImplTest : public ::testing::Test {
 
   PluginInfoHostImpl::Context* context() { return &context_; }
 
+  HostContentSettingsMap* host_content_settings_map() {
+    return host_content_settings_map_;
+  }
+
   void VerifyPluginContentSetting(const GURL& url,
                                   const std::string& plugin,
                                   ContentSetting expected_setting,
@@ -250,20 +254,20 @@ TEST_F(PluginInfoHostImplTest, PreferHtmlOverPlugins) {
 
   PluginMetadata::SecurityStatus security_status =
       PluginMetadata::SECURITY_STATUS_UP_TO_DATE;
-  context()->DecidePluginStatus(GURL(), main_frame_origin, plugin,
-                                security_status, content::kFlashPluginName,
-                                &status);
-  EXPECT_EQ(chrome::mojom::PluginStatus::kFlashHiddenPreferHtml, status);
-
-  // Now block plugins.
-  HostContentSettingsMapFactory::GetForProfile(profile())
-      ->SetDefaultContentSetting(CONTENT_SETTINGS_TYPE_PLUGINS,
-                                 CONTENT_SETTING_BLOCK);
 
   context()->DecidePluginStatus(GURL(), main_frame_origin, plugin,
                                 security_status, content::kFlashPluginName,
                                 &status);
   EXPECT_EQ(chrome::mojom::PluginStatus::kBlockedNoLoading, status);
+
+  // Now enable plugins.
+  host_content_settings_map()->SetDefaultContentSetting(
+      CONTENT_SETTINGS_TYPE_PLUGINS, CONTENT_SETTING_DETECT_IMPORTANT_CONTENT);
+
+  context()->DecidePluginStatus(GURL(), main_frame_origin, plugin,
+                                security_status, content::kFlashPluginName,
+                                &status);
+  EXPECT_EQ(chrome::mojom::PluginStatus::kPlayImportantContent, status);
 }
 
 TEST_F(PluginInfoHostImplTest, RunAllFlashInAllowMode) {
@@ -282,10 +286,9 @@ TEST_F(PluginInfoHostImplTest, RunAllFlashInAllowMode) {
       &plugin, &actual_mime_type, nullptr));
   ASSERT_THAT(status, Eq(chrome::mojom::PluginStatus::kAllowed));
 
-  HostContentSettingsMapFactory::GetForProfile(profile())
-      ->SetContentSettingDefaultScope(main_frame_origin.GetURL(), GURL(),
-                                      CONTENT_SETTINGS_TYPE_PLUGINS,
-                                      std::string(), CONTENT_SETTING_ALLOW);
+  host_content_settings_map()->SetContentSettingDefaultScope(
+      main_frame_origin.GetURL(), GURL(), CONTENT_SETTINGS_TYPE_PLUGINS,
+      std::string(), CONTENT_SETTING_ALLOW);
 
   ASSERT_FALSE(
       profile()->GetPrefs()->GetBoolean(prefs::kRunAllFlashInAllowMode));
@@ -308,7 +311,10 @@ TEST_F(PluginInfoHostImplTest, RunAllFlashInAllowMode) {
   EXPECT_THAT(status, Eq(chrome::mojom::PluginStatus::kAllowed));
 }
 
-TEST_F(PluginInfoHostImplTest, PluginsAllowedInWhitelistedSchemes) {
+TEST_F(PluginInfoHostImplTest, PluginsOnlyAllowedInWhitelistedSchemes) {
+  host_content_settings_map()->SetDefaultContentSetting(
+      CONTENT_SETTINGS_TYPE_PLUGINS, CONTENT_SETTING_DETECT_IMPORTANT_CONTENT);
+
   VerifyPluginContentSetting(GURL("http://example.com"), "foo",
                              CONTENT_SETTING_DETECT_IMPORTANT_CONTENT, true,
                              false);
@@ -326,12 +332,14 @@ TEST_F(PluginInfoHostImplTest, PluginsAllowedInWhitelistedSchemes) {
 }
 
 TEST_F(PluginInfoHostImplTest, GetPluginContentSetting) {
-  HostContentSettingsMap* map =
-      HostContentSettingsMapFactory::GetForProfile(profile());
-
-  // Block plugins by default.
-  map->SetDefaultContentSetting(CONTENT_SETTINGS_TYPE_PLUGINS,
-                                CONTENT_SETTING_BLOCK);
+  HostContentSettingsMap* map = host_content_settings_map();
+  {
+    bool is_managed = false;
+    EXPECT_EQ(
+        CONTENT_SETTING_BLOCK,
+        PluginUtils::UnsafeGetRawDefaultFlashContentSetting(map, &is_managed));
+    EXPECT_FALSE(is_managed);
+  }
 
   // Set plugins to Plugin Power Saver on example.com and subdomains.
   GURL host("http://example.com/");
@@ -339,37 +347,20 @@ TEST_F(PluginInfoHostImplTest, GetPluginContentSetting) {
       host, GURL(), CONTENT_SETTINGS_TYPE_PLUGINS, std::string(),
       CONTENT_SETTING_DETECT_IMPORTANT_CONTENT);
 
-  // Allow plugin "foo" on all sites.
-  map->SetContentSettingCustomScope(
-      ContentSettingsPattern::Wildcard(), ContentSettingsPattern::Wildcard(),
-      CONTENT_SETTINGS_TYPE_PLUGINS, "foo", CONTENT_SETTING_ALLOW);
-
   GURL unmatched_host("https://www.google.com");
-  ASSERT_EQ(
+  EXPECT_EQ(
       CONTENT_SETTING_BLOCK,
       map->GetContentSetting(unmatched_host, unmatched_host,
                              CONTENT_SETTINGS_TYPE_PLUGINS, std::string()));
-  ASSERT_EQ(CONTENT_SETTING_DETECT_IMPORTANT_CONTENT,
+  EXPECT_EQ(CONTENT_SETTING_DETECT_IMPORTANT_CONTENT,
             map->GetContentSetting(host, host, CONTENT_SETTINGS_TYPE_PLUGINS,
                                    std::string()));
-  ASSERT_EQ(
-      CONTENT_SETTING_ALLOW,
-      map->GetContentSetting(host, host, CONTENT_SETTINGS_TYPE_PLUGINS, "foo"));
-  ASSERT_EQ(
-      CONTENT_SETTING_DEFAULT,
-      map->GetContentSetting(host, host, CONTENT_SETTINGS_TYPE_PLUGINS, "bar"));
 
-  // "foo" is allowed everywhere.
-  VerifyPluginContentSetting(host, "foo", CONTENT_SETTING_ALLOW, false, false);
-
-  // There is no specific content setting for "bar", so the general setting
-  // for example.com applies.
-  VerifyPluginContentSetting(
-      host, "bar", CONTENT_SETTING_DETECT_IMPORTANT_CONTENT, false, false);
-
-  // Otherwise, use the default.
-  VerifyPluginContentSetting(unmatched_host, "bar", CONTENT_SETTING_BLOCK, true,
+  VerifyPluginContentSetting(host, std::string(),
+                             CONTENT_SETTING_DETECT_IMPORTANT_CONTENT, false,
                              false);
+  VerifyPluginContentSetting(unmatched_host, std::string(),
+                             CONTENT_SETTING_BLOCK, false, false);
 
   // Block plugins via policy.
   sync_preferences::TestingPrefServiceSyncable* prefs =
@@ -378,8 +369,15 @@ TEST_F(PluginInfoHostImplTest, GetPluginContentSetting) {
                         std::make_unique<base::Value>(CONTENT_SETTING_BLOCK));
 
   // All plugins should be blocked now.
-  VerifyPluginContentSetting(host, "foo", CONTENT_SETTING_BLOCK, true, true);
-  VerifyPluginContentSetting(host, "bar", CONTENT_SETTING_BLOCK, true, true);
-  VerifyPluginContentSetting(unmatched_host, "bar", CONTENT_SETTING_BLOCK, true,
+  VerifyPluginContentSetting(host, std::string(), CONTENT_SETTING_BLOCK, true,
                              true);
+  VerifyPluginContentSetting(unmatched_host, std::string(),
+                             CONTENT_SETTING_BLOCK, true, true);
+  {
+    bool is_managed = false;
+    EXPECT_EQ(
+        CONTENT_SETTING_BLOCK,
+        PluginUtils::UnsafeGetRawDefaultFlashContentSetting(map, &is_managed));
+    EXPECT_TRUE(is_managed);
+  }
 }

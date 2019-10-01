@@ -1,6 +1,7 @@
-# Copyright 2014 T/e Chromium Authors. All rights reserved.
+# Copyright 2014 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
+import("//gpu/vulkan/features.gni")
 
 import("//cc/cc.gni")
 
@@ -48,6 +49,8 @@ cc_component("cc") {
     "input/scroll_state_data.h",
     "input/scrollbar_animation_controller.cc",
     "input/scrollbar_animation_controller.h",
+    "input/scrollbar_controller.cc",
+    "input/scrollbar_controller.h",
     "input/single_scrollbar_animation_controller_thinning.cc",
     "input/single_scrollbar_animation_controller_thinning.h",
     "input/snap_fling_controller.cc",
@@ -199,6 +202,10 @@ cc_component("cc") {
     "scheduler/begin_frame_tracker.cc",
     "scheduler/begin_frame_tracker.h",
     "scheduler/commit_earlyout_reason.h",
+    "scheduler/compositor_frame_reporter.cc",
+    "scheduler/compositor_frame_reporter.h",
+    "scheduler/compositor_frame_reporting_controller.cc",
+    "scheduler/compositor_frame_reporting_controller.h",
     "scheduler/compositor_timing_history.cc",
     "scheduler/compositor_timing_history.h",
     "scheduler/draw_result.h",
@@ -262,6 +269,7 @@ cc_component("cc") {
     "tiles/tiling_set_raster_queue_all.h",
     "tiles/tiling_set_raster_queue_required.cc",
     "tiles/tiling_set_raster_queue_required.h",
+    "trees/animation_effect_timings.h",
     "trees/animation_options.h",
     "trees/clip_expander.cc",
     "trees/clip_expander.h",
@@ -311,6 +319,9 @@ cc_component("cc") {
     "trees/occlusion.h",
     "trees/occlusion_tracker.cc",
     "trees/occlusion_tracker.h",
+    "trees/paint_holding_commit_trigger.h",
+    "trees/presentation_time_callback_buffer.cc",
+    "trees/presentation_time_callback_buffer.h",
     "trees/property_animation_state.cc",
     "trees/property_animation_state.h",
     "trees/property_tree.cc",
@@ -347,6 +358,8 @@ cc_component("cc") {
     "trees/tree_synchronizer.h",
     "trees/ukm_manager.cc",
     "trees/ukm_manager.h",
+    "trees/viewport_layers.cc",
+    "trees/viewport_layers.h",
   ]
 
   public_deps = [
@@ -385,6 +398,8 @@ cc_test_static_library("test_support") {
     "test/animation_test_common.h",
     "test/animation_timelines_test_common.cc",
     "test/animation_timelines_test_common.h",
+    "test/fake_compositor_frame_reporting_controller.cc",
+    "test/fake_compositor_frame_reporting_controller.h",
     "test/fake_content_layer_client.cc",
     "test/fake_content_layer_client.h",
     "test/fake_impl_task_runner_provider.h",
@@ -548,6 +563,9 @@ cc_test_static_library("test_support") {
     "//ui/gl:test_support",
     "//ui/latency",
   ]
+  if (enable_vulkan) {
+    deps += [ "//gpu/vulkan/init" ]
+  }
   if (!is_android) {
     data_deps = [
       "//third_party/mesa_headers",
@@ -636,6 +654,7 @@ cc_test("cc_unittests") {
     "raster/synchronous_task_graph_runner_unittest.cc",
     "raster/task_graph_work_queue_unittest.cc",
     "resources/resource_pool_unittest.cc",
+    "scheduler/compositor_frame_reporting_controller_unittest.cc",
     "scheduler/compositor_timing_history_unittest.cc",
     "scheduler/scheduler_state_machine_unittest.cc",
     "scheduler/scheduler_unittest.cc",
@@ -666,6 +685,7 @@ cc_test("cc_unittests") {
     "trees/layer_tree_host_pixeltest_tiles.cc",
     "trees/layer_tree_host_unittest.cc",
     "trees/layer_tree_host_unittest_animation.cc",
+    "trees/layer_tree_host_unittest_capture_content.cc",
     "trees/layer_tree_host_unittest_checkerimaging.cc",
     "trees/layer_tree_host_unittest_context.cc",
     "trees/layer_tree_host_unittest_copyrequest.cc",
@@ -680,6 +700,7 @@ cc_test("cc_unittests") {
     "trees/layer_tree_impl_unittest.cc",
     "trees/occlusion_tracker_unittest.cc",
     "trees/occlusion_unittest.cc",
+    "trees/presentation_time_callback_buffer_unittest.cc",
     "trees/property_tree_unittest.cc",
     "trees/swap_promise_manager_unittest.cc",
     "trees/tree_synchronizer_unittest.cc",

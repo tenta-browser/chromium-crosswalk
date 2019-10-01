@@ -7,16 +7,18 @@
 #ifndef CHROME_BROWSER_PROFILES_PROFILE_H_
 #define CHROME_BROWSER_PROFILES_PROFILE_H_
 
+#include <memory>
 #include <string>
 
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "build/build_config.h"
+#include "chrome/browser/profiles/profile_key.h"
 #include "components/domain_reliability/clear_mode.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/content_browser_client.h"
-#include "services/network/public/mojom/network_service.mojom.h"
+#include "services/network/public/mojom/network_service.mojom-forward.h"
 
 #if !defined(OS_ANDROID)
 class ChromeZoomLevelPrefs;
@@ -35,6 +37,17 @@ namespace content {
 class WebUI;
 }
 
+namespace policy {
+class SchemaRegistryService;
+class ProfilePolicyConnector;
+class UserCloudPolicyManager;
+
+#if defined(OS_CHROMEOS)
+class ActiveDirectoryPolicyManager;
+class UserCloudPolicyManagerChromeOS;
+#endif
+}  // namespace policy
+
 namespace network {
 class SharedURLLoaderFactory;
 }
@@ -42,6 +55,8 @@ class SharedURLLoaderFactory;
 namespace user_prefs {
 class PrefRegistrySyncable;
 }
+
+class OffTheRecordProfileIOData;
 
 // Instead of adding more members to Profile, consider creating a
 // KeyedService. See
@@ -110,9 +125,9 @@ class Profile : public content::BrowserContext {
   // CREATE_MODE_ASYNCHRONOUS then the profile is initialized asynchronously.
   // Can return null if |create_mode| is CREATE_MODE_SYNCHRONOUS and the
   // creation of the profile directory fails.
-  static Profile* CreateProfile(const base::FilePath& path,
-                                Delegate* delegate,
-                                CreateMode create_mode);
+  static std::unique_ptr<Profile> CreateProfile(const base::FilePath& path,
+                                                Delegate* delegate,
+                                                CreateMode create_mode);
 
   // Returns the profile corresponding to the given browser context.
   static Profile* FromBrowserContext(content::BrowserContext* browser_context);
@@ -132,9 +147,6 @@ class Profile : public content::BrowserContext {
   // Returns the username associated with this profile, if any. In non-test
   // implementations, this is usually the Google-services email address.
   virtual std::string GetProfileUserName() const = 0;
-
-  // Returns the profile type.
-  virtual ProfileType GetProfileType() const = 0;
 
   // Return the incognito version of this profile. The returned pointer
   // is owned by the receiving profile. If the receiving profile is off the
@@ -166,6 +178,10 @@ class Profile : public content::BrowserContext {
   virtual bool IsChild() const = 0;
   // Returns whether the profile is a legacy supervised user profile.
   virtual bool IsLegacySupervised() const = 0;
+
+  // Returns whether opening browser windows is allowed in this profile. For
+  // example, browser windows are not allowed in Sign-in profile on Chrome OS.
+  virtual bool AllowsBrowserWindows() const = 0;
 
   // Accessor. The instance is created upon first access.
   virtual ExtensionSpecialStoragePolicy*
@@ -211,11 +227,41 @@ class Profile : public content::BrowserContext {
   // versa).
   virtual bool IsSameProfile(Profile* profile) = 0;
 
+  // Returns whether two profiles are the same and of the same type.
+  bool IsSameProfileAndType(Profile* profile) {
+    return IsSameProfile(profile) &&
+           GetProfileType() == profile->GetProfileType();
+  }
+
   // Returns the time the profile was started. This is not the time the profile
   // was created, rather it is the time the user started chrome and logged into
   // this profile. For the single profile case, this corresponds to the time
   // the user started chrome.
   virtual base::Time GetStartTime() const = 0;
+
+  // Returns the key used to index KeyedService instances created by a
+  // SimpleKeyedServiceFactory, more strictly typed as a ProfileKey.
+  virtual ProfileKey* GetProfileKey() const = 0;
+
+  // Returns the SchemaRegistryService.
+  virtual policy::SchemaRegistryService* GetPolicySchemaRegistryService() = 0;
+
+#if defined(OS_CHROMEOS)
+  // Returns the UserCloudPolicyManagerChromeOS.
+  virtual policy::UserCloudPolicyManagerChromeOS*
+  GetUserCloudPolicyManagerChromeOS() = 0;
+
+  // Returns the ActiveDirectoryPolicyManager.
+  virtual policy::ActiveDirectoryPolicyManager*
+  GetActiveDirectoryPolicyManager() = 0;
+#else
+  // Returns the UserCloudPolicyManager.
+  virtual policy::UserCloudPolicyManager* GetUserCloudPolicyManager() = 0;
+#endif
+
+  virtual policy::ProfilePolicyConnector* GetProfilePolicyConnector() = 0;
+  virtual const policy::ProfilePolicyConnector* GetProfilePolicyConnector()
+      const = 0;
 
   // Returns the last directory that was chosen for uploading or opening a file.
   virtual base::FilePath last_selected_directory() = 0;
@@ -261,7 +307,20 @@ class Profile : public content::BrowserContext {
 
   std::string GetDebugName();
 
-  // Returns whether it is a guest session.
+  // IsRegularProfile() and IsIncognitoProfile() are mutually exclusive.
+  // IsSystemProfile() implies that IsRegularProfile() is true.
+  // IsOffTheRecord() is true for the off the record profile of incognito mode
+  // and guest sessions.
+
+  // Returns whether it's a regular profile.
+  bool IsRegularProfile() const;
+
+  // Returns whether it is an Incognito profile. An Incognito profile is an
+  // off-the-record profile that is not a guest profile.
+  bool IsIncognitoProfile() const;
+
+  // Returns whether it is a guest session. This covers both the guest profile
+  // and its parent.
   virtual bool IsGuestSession() const;
 
   // Returns whether it is a system profile.
@@ -338,7 +397,15 @@ class Profile : public content::BrowserContext {
   double GetDefaultZoomLevelForProfile();
 #endif
 
+  // Wipes all data for this profile.
+  void Wipe();
+
  protected:
+  friend class OffTheRecordProfileIOData;
+
+  // Returns the profile type.
+  virtual ProfileType GetProfileType() const = 0;
+
   void set_is_guest_profile(bool is_guest_profile) {
     is_guest_profile_ = is_guest_profile;
   }

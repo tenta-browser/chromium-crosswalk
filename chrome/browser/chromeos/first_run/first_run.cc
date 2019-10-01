@@ -16,7 +16,6 @@
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
-#include "chrome/browser/policy/profile_policy_connector_factory.h"
 #include "chrome/browser/prefs/pref_service_syncable_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
@@ -67,7 +66,7 @@ void LaunchDialogForProfile(Profile* profile) {
 void TryLaunchFirstRunDialog(Profile* profile) {
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
 
-  if (command_line->HasSwitch(switches::kOobeSkipPostLogin))
+  if (chromeos::switches::ShouldSkipOobePostLogin())
     return;
 
   if (command_line->HasSwitch(switches::kForceFirstRunUI)) {
@@ -79,8 +78,7 @@ void TryLaunchFirstRunDialog(Profile* profile) {
   if (TabletModeClient::Get() && TabletModeClient::Get()->tablet_mode_enabled())
     return;
 
-  if (policy::ProfilePolicyConnectorFactory::GetForBrowserContext(profile)
-          ->IsManaged())
+  if (profile->GetProfilePolicyConnector()->IsManaged())
     return;
 
   if (command_line->HasSwitch(::switches::kTestType))
@@ -124,20 +122,7 @@ class DialogLauncher : public content::NotificationObserver {
     DCHECK(content::Details<const user_manager::User>(details).ptr() ==
            ProfileHelper::Get()->GetUserByProfile(profile_));
 
-    // Whether the account is supported for voice interaction.
-    bool account_supported = false;
-    auto* identity_manager =
-        IdentityManagerFactory::GetForProfileIfExists(profile_);
-    if (identity_manager) {
-      std::string hosted_domain =
-          identity_manager->GetPrimaryAccountInfo().hosted_domain;
-      if (hosted_domain == kNoHostedDomainFound ||
-          hosted_domain == "google.com") {
-        account_supported = true;
-      }
-    }
-
-      TryLaunchFirstRunDialog(profile_);
+    TryLaunchFirstRunDialog(profile_);
 
     delete this;
   }

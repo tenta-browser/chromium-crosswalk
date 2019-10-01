@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "ash/keyboard/ui/keyboard_controller.h"
 #include "base/logging.h"
 #include "base/memory/singleton.h"
 #include "base/strings/string_util.h"
@@ -13,7 +14,6 @@
 #include "components/arc/arc_browser_context_keyed_service_factory_base.h"
 #include "components/arc/arc_util.h"
 #include "components/arc/ime/arc_ime_bridge_impl.h"
-#include "components/exo/shell_surface_util.h"
 #include "components/exo/wm_helper.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window.h"
@@ -25,16 +25,13 @@
 #include "ui/events/event.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/range/range.h"
-#include "ui/keyboard/keyboard_controller.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/window/non_client_view.h"
+#include "ui/wm/core/ime_util_chromeos.h"
 
 namespace arc {
 
 namespace {
-
-// TODO(yhanada): Remove this once IsArcAppWindow is fixed for ARC++ Kiosk app.
-constexpr char kArcAppIdPrefix[] = "org.chromium.arc";
 
 base::Optional<double> g_override_default_device_scale_factor;
 
@@ -66,13 +63,9 @@ class ArcWindowDelegateImpl : public ArcImeService::ArcWindowDelegate {
       // TODO(yhanada): Make IsArcAppWindow support a window of ARC++ Kiosk.
       // Specifically, a window of ARC++ Kiosk should have ash::AppType::ARC_APP
       // property. Please see implementation of IsArcAppWindow().
-      if (window == active) {
-        const std::string* app_id = exo::GetShellApplicationId(window);
-        if (IsArcKioskMode() && app_id &&
-            base::StartsWith(*app_id, kArcAppIdPrefix,
-                             base::CompareCase::SENSITIVE)) {
-          return true;
-        }
+      if (window == active && IsArcKioskMode() &&
+          GetWindowTaskId(window) != kNoTaskId) {
+        return true;
       }
     }
     return false;
@@ -354,9 +347,7 @@ void ArcImeService::RequestHideIme() {
 // Overridden from keyboard::KeyboardControllerObserver
 void ArcImeService::OnKeyboardAppearanceChanged(
     const keyboard::KeyboardStateDescriptor& state) {
-  if (!focused_arc_window_)
-    return;
-  gfx::Rect new_bounds = state.occluded_bounds;
+  gfx::Rect new_bounds = state.occluded_bounds_in_screen;
   // Multiply by the scale factor. To convert from DIP to physical pixels.
   // The default scale factor is always used in Android side regardless of
   // dynamic scale factor in Chrome side because Chrome sends only the default
@@ -475,6 +466,13 @@ bool ArcImeService::GetTextFromRange(const gfx::Range& range,
   return true;
 }
 
+void ArcImeService::EnsureCaretNotInRect(const gfx::Rect& rect_in_screen) {
+  if (focused_arc_window_ == nullptr)
+    return;
+  aura::Window* top_level_window = focused_arc_window_->GetToplevelWindow();
+  wm::EnsureWindowNotInRect(top_level_window, rect_in_screen);
+}
+
 ui::TextInputMode ArcImeService::GetTextInputMode() const {
   return ui::TEXT_INPUT_MODE_DEFAULT;
 }
@@ -542,6 +540,14 @@ ukm::SourceId ArcImeService::GetClientSourceForMetrics() const {
 
 bool ArcImeService::ShouldDoLearning() {
   return is_personalized_learning_allowed_;
+}
+
+bool ArcImeService::SetCompositionFromExistingText(
+    const gfx::Range& range,
+    const std::vector<ui::ImeTextSpan>& ui_ime_text_spans) {
+  // TODO(https://crbug.com/952757): Implement this method.
+  NOTIMPLEMENTED_LOG_ONCE();
+  return false;
 }
 
 // static

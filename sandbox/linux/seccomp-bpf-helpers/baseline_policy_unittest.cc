@@ -10,7 +10,9 @@
 #include <sched.h>
 #include <signal.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/prctl.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
@@ -130,6 +132,33 @@ BPF_TEST_C(BaselinePolicy, ForkArmEperm, BaselinePolicy) {
   BPF_ASSERT_EQ(EPERM, fork_errno);
 }
 
+BPF_TEST_C(BaselinePolicy, SystemEperm, BaselinePolicy) {
+  errno = 0;
+  int ret_val = system("echo SHOULD NEVER RUN");
+  BPF_ASSERT_EQ(-1, ret_val);
+  BPF_ASSERT_EQ(EPERM, errno);
+}
+
+BPF_TEST_C(BaselinePolicy, CloneVforkEperm, BaselinePolicy) {
+  errno = 0;
+  // Allocate a couple pages for the child's stack even though the child should
+  // never start.
+  constexpr size_t kStackSize = 4096 * 4;
+  void* child_stack = mmap(nullptr, kStackSize, PROT_READ | PROT_WRITE,
+                           MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK, -1, 0);
+  BPF_ASSERT_NE(child_stack, nullptr);
+  pid_t pid = syscall(__NR_clone, CLONE_VM | CLONE_VFORK | SIGCHLD,
+                      static_cast<char*>(child_stack) + kStackSize, nullptr,
+                      nullptr, nullptr);
+  const int clone_errno = errno;
+  TestUtils::HandlePostForkReturn(pid);
+
+  munmap(child_stack, kStackSize);
+
+  BPF_ASSERT_EQ(-1, pid);
+  BPF_ASSERT_EQ(EPERM, clone_errno);
+}
+
 BPF_TEST_C(BaselinePolicy, CreateThread, BaselinePolicy) {
   base::Thread thread("sandbox_tests");
   BPF_ASSERT(thread.Start());
@@ -239,28 +268,28 @@ BPF_DEATH_TEST_C(BaselinePolicy,
     _exit(1);                                                            \
   }
 
-TEST_BASELINE_SIGSYS(__NR_acct);
-TEST_BASELINE_SIGSYS(__NR_chroot);
-TEST_BASELINE_SIGSYS(__NR_fanotify_init);
-TEST_BASELINE_SIGSYS(__NR_fgetxattr);
-TEST_BASELINE_SIGSYS(__NR_getcpu);
-TEST_BASELINE_SIGSYS(__NR_getitimer);
-TEST_BASELINE_SIGSYS(__NR_init_module);
-TEST_BASELINE_SIGSYS(__NR_io_cancel);
-TEST_BASELINE_SIGSYS(__NR_keyctl);
-TEST_BASELINE_SIGSYS(__NR_mq_open);
-TEST_BASELINE_SIGSYS(__NR_ptrace);
-TEST_BASELINE_SIGSYS(__NR_sched_setaffinity);
-TEST_BASELINE_SIGSYS(__NR_setpgid);
-TEST_BASELINE_SIGSYS(__NR_swapon);
-TEST_BASELINE_SIGSYS(__NR_sysinfo);
-TEST_BASELINE_SIGSYS(__NR_syslog);
-TEST_BASELINE_SIGSYS(__NR_timer_create);
+TEST_BASELINE_SIGSYS(__NR_acct)
+TEST_BASELINE_SIGSYS(__NR_chroot)
+TEST_BASELINE_SIGSYS(__NR_fanotify_init)
+TEST_BASELINE_SIGSYS(__NR_fgetxattr)
+TEST_BASELINE_SIGSYS(__NR_getcpu)
+TEST_BASELINE_SIGSYS(__NR_getitimer)
+TEST_BASELINE_SIGSYS(__NR_init_module)
+TEST_BASELINE_SIGSYS(__NR_io_cancel)
+TEST_BASELINE_SIGSYS(__NR_keyctl)
+TEST_BASELINE_SIGSYS(__NR_mq_open)
+TEST_BASELINE_SIGSYS(__NR_ptrace)
+TEST_BASELINE_SIGSYS(__NR_sched_setaffinity)
+TEST_BASELINE_SIGSYS(__NR_setpgid)
+TEST_BASELINE_SIGSYS(__NR_swapon)
+TEST_BASELINE_SIGSYS(__NR_sysinfo)
+TEST_BASELINE_SIGSYS(__NR_syslog)
+TEST_BASELINE_SIGSYS(__NR_timer_create)
 
 #if !defined(__aarch64__)
-TEST_BASELINE_SIGSYS(__NR_eventfd);
-TEST_BASELINE_SIGSYS(__NR_inotify_init);
-TEST_BASELINE_SIGSYS(__NR_vserver);
+TEST_BASELINE_SIGSYS(__NR_eventfd)
+TEST_BASELINE_SIGSYS(__NR_inotify_init)
+TEST_BASELINE_SIGSYS(__NR_vserver)
 #endif
 
 #if defined(LIBC_GLIBC) && !defined(OS_CHROMEOS)

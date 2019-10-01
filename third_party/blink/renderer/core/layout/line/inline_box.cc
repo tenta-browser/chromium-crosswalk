@@ -30,10 +30,6 @@
 #include "third_party/blink/renderer/platform/fonts/font_metrics.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/partitions.h"
 
-#ifndef NDEBUG
-#include <stdio.h>
-#endif
-
 namespace blink {
 
 class LayoutObject;
@@ -95,15 +91,15 @@ String InlineBox::DebugName() const {
   return BoxName();
 }
 
-LayoutRect InlineBox::VisualRect() const {
+IntRect InlineBox::VisualRect() const {
   return GetLineLayoutItem().VisualRectForInlineBox();
 }
 
-LayoutRect InlineBox::PartialInvalidationVisualRect() const {
+IntRect InlineBox::PartialInvalidationVisualRect() const {
   return GetLineLayoutItem().PartialInvalidationVisualRectForInlineBox();
 }
 
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
 void InlineBox::ShowTreeForThis() const {
   GetLineLayoutItem().ShowTreeForThis();
 }
@@ -131,9 +127,9 @@ void InlineBox::DumpLineTreeAndMark(StringBuilder& string_builder,
   if (this == marked_box2)
     string_inlinebox.Append(marked_label2);
   if (GetLineLayoutItem().IsEqual(obj))
-    string_inlinebox.Append("*");
+    string_inlinebox.Append('*');
   while ((int)string_inlinebox.length() < (depth * 2))
-    string_inlinebox.Append(" ");
+    string_inlinebox.Append(' ');
 
   DumpBox(string_inlinebox);
   string_builder.Append('\n');
@@ -141,18 +137,18 @@ void InlineBox::DumpLineTreeAndMark(StringBuilder& string_builder,
 }
 
 void InlineBox::DumpBox(StringBuilder& string_inlinebox) const {
-  string_inlinebox.Append(String::Format("%s %p", BoxName(), this));
+  string_inlinebox.AppendFormat("%s %p", BoxName(), this);
   while (string_inlinebox.length() < kShowTreeCharacterOffset)
-    string_inlinebox.Append(" ");
-  string_inlinebox.Append(
-      String::Format("\t%s %p {pos=%g,%g size=%g,%g} baseline=%i/%i",
-                     GetLineLayoutItem().DecoratedName().Ascii().data(),
-                     GetLineLayoutItem().DebugPointer(), X().ToFloat(),
-                     Y().ToFloat(), Width().ToFloat(), Height().ToFloat(),
-                     BaselinePosition(kAlphabeticBaseline).ToInt(),
-                     BaselinePosition(kIdeographicBaseline).ToInt()));
+    string_inlinebox.Append(' ');
+  string_inlinebox.AppendFormat(
+      "\t%s %p {pos=%g,%g size=%g,%g} baseline=%i/%i",
+      GetLineLayoutItem().DecoratedName().Ascii().data(),
+      GetLineLayoutItem().DebugPointer(), X().ToFloat(), Y().ToFloat(),
+      Width().ToFloat(), Height().ToFloat(),
+      BaselinePosition(kAlphabeticBaseline).ToInt(),
+      BaselinePosition(kIdeographicBaseline).ToInt());
 }
-#endif
+#endif  // DCHECK_IS_ON()
 
 LayoutUnit InlineBox::LogicalHeight() const {
   if (HasVirtualLogicalHeight())
@@ -346,18 +342,6 @@ LayoutPoint InlineBox::PhysicalLocation() const {
   return rect.Location();
 }
 
-void InlineBox::FlipForWritingMode(FloatRect& rect) const {
-  if (!UNLIKELY(GetLineLayoutItem().HasFlippedBlocksWritingMode()))
-    return;
-  Root().Block().FlipForWritingMode(rect);
-}
-
-FloatPoint InlineBox::FlipForWritingMode(const FloatPoint& point) const {
-  if (!UNLIKELY(GetLineLayoutItem().HasFlippedBlocksWritingMode()))
-    return point;
-  return Root().Block().FlipForWritingMode(point);
-}
-
 void InlineBox::FlipForWritingMode(LayoutRect& rect) const {
   if (!UNLIKELY(GetLineLayoutItem().HasFlippedBlocksWritingMode()))
     return;
@@ -394,7 +378,7 @@ bool CanUseInlineBox(const LayoutObject& node) {
 
 }  // namespace blink
 
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
 
 void showTree(const blink::InlineBox* b) {
   if (b)

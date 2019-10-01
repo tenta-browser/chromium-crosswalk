@@ -6,11 +6,13 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/memory/unsafe_shared_memory_region.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/sync_socket.h"
 #include "media/audio/audio_output_controller.h"
+#include "media/mojo/interfaces/audio_data_pipe.mojom.h"
 #include "mojo/public/cpp/system/message_pipe.h"
 #include "mojo/public/cpp/system/platform_handle.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -64,6 +66,7 @@ class MockDelegate : public AudioOutputDelegate {
   MOCK_METHOD0(OnPlayStream, void());
   MOCK_METHOD0(OnPauseStream, void());
   MOCK_METHOD1(OnSetVolume, void(double));
+  MOCK_METHOD0(OnFlushStream, void());
 };
 
 class MockDelegateFactory {
@@ -223,6 +226,17 @@ TEST_F(MojoAudioOutputStreamTest, SetVolume_SetsVolume) {
   delegate_event_handler_->OnStreamCreated(kStreamId, std::move(mem_),
                                            std::move(foreign_socket_));
   audio_output_ptr->SetVolume(kNewVolume);
+  base::RunLoop().RunUntilIdle();
+}
+
+TEST_F(MojoAudioOutputStreamTest, Flush_FlushesStream) {
+  AudioOutputStreamPtr audio_output_ptr = CreateAudioOutput();
+
+  EXPECT_CALL(client_, GotNotification());
+  EXPECT_CALL(*delegate_, OnFlushStream());
+  delegate_event_handler_->OnStreamCreated(kStreamId, std::move(mem_),
+                                           std::move(foreign_socket_));
+  audio_output_ptr->Flush();
   base::RunLoop().RunUntilIdle();
 }
 

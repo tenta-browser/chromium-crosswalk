@@ -30,6 +30,7 @@ import org.chromium.chrome.browser.consent_auditor.ConsentAuditorFeature;
 import org.chromium.chrome.browser.externalauth.UserRecoverableErrorHandler;
 import org.chromium.chrome.browser.preferences.PrefServiceBridge;
 import org.chromium.chrome.browser.signin.ConfirmImportSyncDataDialog.ImportSyncType;
+import org.chromium.chrome.browser.sync.SyncUserDataWiper;
 import org.chromium.components.signin.AccountIdProvider;
 import org.chromium.components.signin.AccountManagerDelegateException;
 import org.chromium.components.signin.AccountManagerFacade;
@@ -49,7 +50,6 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 
 /**
  * This view allows the user to select an account to log in to, add an account, cancel account
@@ -342,15 +342,17 @@ public class AccountSigninView extends FrameLayout {
         mConsentTextTracker.setText(mMoreButton, R.string.more);
 
         // The clickable "Settings" link.
-        NoUnderlineClickableSpan settingsSpan = new NoUnderlineClickableSpan((widget) -> {
-            if (mSelectedAccountName == null) return;
-            mListener.onAccountSelected(mSelectedAccountName, mIsDefaultAccountSelected, true);
-            RecordUserAction.record("Signin_Signin_WithAdvancedSyncSettings");
+        NoUnderlineClickableSpan settingsSpan =
+                new NoUnderlineClickableSpan(getResources(), (widget) -> {
+                    if (mSelectedAccountName == null) return;
+                    mListener.onAccountSelected(
+                            mSelectedAccountName, mIsDefaultAccountSelected, true);
+                    RecordUserAction.record("Signin_Signin_WithAdvancedSyncSettings");
 
-            // Record the fact that the user consented to the consent text by clicking
-            // on |mSigninSettingsControl|.
-            recordConsent((TextView) widget, mSelectedAccountName);
-        });
+                    // Record the fact that the user consented to the consent text by clicking
+                    // on |mSigninSettingsControl|.
+                    recordConsent((TextView) widget, mSelectedAccountName);
+                });
         mConsentTextTracker.setText(mSigninSettingsControl,
                 getSettingsControlDescription(mChildAccountStatus), input -> {
                     return SpanApplier.applySpans(input.toString(),
@@ -537,8 +539,7 @@ public class AccountSigninView extends FrameLayout {
         mGmsIsUpdatingDialog.dismiss();
         mGmsIsUpdatingDialog = null;
         RecordHistogram.recordTimesHistogram("Signin.AndroidGmsUpdatingDialogShownTime",
-                SystemClock.elapsedRealtime() - mGmsIsUpdatingDialogShowTime,
-                TimeUnit.MILLISECONDS);
+                SystemClock.elapsedRealtime() - mGmsIsUpdatingDialogShowTime);
     }
 
     private static class AccountSelectionResult {
@@ -669,9 +670,6 @@ public class AccountSigninView extends FrameLayout {
                                 mShouldShowConfirmationPageWhenAttachedToWindow = true;
                             }
                         }
-
-                        @Override
-                        public void onSystemAccountsChanged() {}
                     });
         }
     }
@@ -684,7 +682,7 @@ public class AccountSigninView extends FrameLayout {
                     @Override
                     public void onConfirm(boolean wipeData) {
                         mConfirmSyncDataStateMachine = null;
-                        SigninManager.wipeSyncUserDataIfRequired(wipeData).then(
+                        SyncUserDataWiper.wipeSyncUserDataIfRequired(wipeData).then(
                                 (Void v) -> showConfirmationPage());
                     }
 
@@ -699,7 +697,7 @@ public class AccountSigninView extends FrameLayout {
 
     private static void recordAccountTrackerServiceSeedingTime(long seedingStartTime) {
         RecordHistogram.recordTimesHistogram("Signin.AndroidAccountSigninViewSeedingTime",
-                SystemClock.elapsedRealtime() - seedingStartTime, TimeUnit.MILLISECONDS);
+                SystemClock.elapsedRealtime() - seedingStartTime);
     }
 
     private void setUpCancelButton() {

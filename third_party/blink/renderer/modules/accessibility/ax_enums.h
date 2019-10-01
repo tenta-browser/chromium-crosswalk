@@ -17,15 +17,21 @@ enum AccessibilityOrientation {
 
 // The input restriction on an object.
 enum AXRestriction {
-  kNone = 0,  // An object that is not disabled.
-  kReadOnly,
-  kDisabled,
+  kRestrictionNone = 0,  // An object that is not disabled.
+  kRestrictionReadOnly,
+  kRestrictionDisabled,
 };
 
 enum AccessibilityExpanded {
   kExpandedUndefined = 0,
   kExpandedCollapsed,
   kExpandedExpanded,
+};
+
+enum AccessibilityGrabbedState {
+  kGrabbedStateUndefined = 0,
+  kGrabbedStateFalse,
+  kGrabbedStateTrue,
 };
 
 enum AccessibilitySelectedState {

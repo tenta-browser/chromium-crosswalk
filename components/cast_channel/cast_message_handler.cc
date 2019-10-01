@@ -6,7 +6,9 @@
 
 #include <tuple>
 #include <utility>
+#include <vector>
 
+#include "base/bind.h"
 #include "base/rand_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/default_tick_clock.h"
@@ -190,9 +192,11 @@ void CastMessageHandler::LaunchSession(int channel_id,
   }
 }
 
-void CastMessageHandler::StopSession(int channel_id,
-                                     const std::string& session_id,
-                                     ResultCallback callback) {
+void CastMessageHandler::StopSession(
+    int channel_id,
+    const std::string& session_id,
+    const base::Optional<std::string>& client_id,
+    ResultCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   CastSocket* socket = socket_service_->GetSocket(channel_id);
   if (!socket) {
@@ -206,8 +210,8 @@ void CastMessageHandler::StopSession(int channel_id,
            << ", request_id: " << request_id;
   if (requests->AddStopRequest(std::make_unique<StopSessionRequest>(
           request_id, std::move(callback), clock_))) {
-    SendCastMessage(socket,
-                    CreateStopRequest(sender_id_, request_id, session_id));
+    SendCastMessage(socket, CreateStopRequest(client_id.value_or(sender_id_),
+                                              request_id, session_id));
   }
 }
 
@@ -246,16 +250,16 @@ base::Optional<int> CastMessageHandler::SendMediaRequest(
   return request_id;
 }
 
-Result CastMessageHandler::SendSetVolumeRequest(int channel_id,
-                                                const base::Value& body,
-                                                const std::string& source_id,
-                                                ResultCallback callback) {
+void CastMessageHandler::SendSetVolumeRequest(int channel_id,
+                                              const base::Value& body,
+                                              const std::string& source_id,
+                                              ResultCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   CastSocket* socket = socket_service_->GetSocket(channel_id);
   if (!socket) {
     DVLOG(2) << __func__ << ": socket not found: " << channel_id;
-    return Result::kFailed;
+    std::move(callback).Run(Result::kFailed);
   }
 
   auto* requests = GetOrCreatePendingRequests(channel_id);
@@ -264,7 +268,6 @@ Result CastMessageHandler::SendSetVolumeRequest(int channel_id,
   requests->AddVolumeRequest(std::make_unique<SetVolumeRequest>(
       request_id, std::move(callback), clock_));
   SendCastMessage(socket, CreateSetVolumeRequest(body, request_id, source_id));
-  return Result::kOk;
 }
 
 void CastMessageHandler::AddObserver(Observer* observer) {
@@ -298,10 +301,10 @@ void CastMessageHandler::OnMessage(const CastSocket& socket,
         cast_channel::CastMessage_PayloadType_STRING) {
       data_decoder::SafeJsonParser::ParseBatch(
           connector_.get(), message.payload_utf8(),
-          base::BindRepeating(&CastMessageHandler::HandleCastInternalMessage,
-                              weak_ptr_factory_.GetWeakPtr(), socket.id(),
-                              message.source_id(), message.destination_id()),
-          base::BindRepeating(&ReportParseError), data_decoder_batch_id_);
+          base::BindOnce(&CastMessageHandler::HandleCastInternalMessage,
+                         weak_ptr_factory_.GetWeakPtr(), socket.id(),
+                         message.source_id(), message.destination_id()),
+          base::BindOnce(&ReportParseError), data_decoder_batch_id_);
     } else {
       DLOG(ERROR) << "Dropping internal message with binary payload: "
                   << message.namespace_();
@@ -323,8 +326,8 @@ void CastMessageHandler::HandleCastInternalMessage(
     int channel_id,
     const std::string& source_id,
     const std::string& destination_id,
-    std::unique_ptr<base::Value> payload) {
-  if (!payload->is_dict()) {
+    base::Value payload) {
+  if (!payload.is_dict()) {
     ReportParseError("Parsed message not a dictionary");
     return;
   }
@@ -336,16 +339,16 @@ void CastMessageHandler::HandleCastInternalMessage(
     return;
   }
 
-  base::Optional<int> request_id = GetRequestIdFromResponse(*payload);
+  base::Optional<int> request_id = GetRequestIdFromResponse(payload);
   if (request_id) {
     auto requests_it = pending_requests_.find(channel_id);
     if (requests_it != pending_requests_.end())
-      requests_it->second->HandlePendingRequest(*request_id, *payload);
+      requests_it->second->HandlePendingRequest(*request_id, payload);
   }
 
-  CastMessageType type = ParseMessageTypeFromPayload(*payload);
+  CastMessageType type = ParseMessageTypeFromPayload(payload);
   if (type == CastMessageType::kOther) {
-    DVLOG(2) << "Unknown message type: " << *payload;
+    DVLOG(2) << "Unknown message type: " << payload;
     return;
   }
 
@@ -356,7 +359,7 @@ void CastMessageHandler::HandleCastInternalMessage(
     return;
   }
 
-  InternalMessage internal_message(type, std::move(*payload));
+  InternalMessage internal_message(type, std::move(payload));
   for (auto& observer : observers_)
     observer.OnInternalMessage(channel_id, internal_message);
 }
@@ -367,8 +370,8 @@ void CastMessageHandler::SendCastMessage(CastSocket* socket,
   // can be sent.
   DoEnsureConnection(socket, message.source_id(), message.destination_id());
   socket->transport()->SendMessage(
-      message, base::BindRepeating(&CastMessageHandler::OnMessageSent,
-                                   weak_ptr_factory_.GetWeakPtr()));
+      message, base::BindOnce(&CastMessageHandler::OnMessageSent,
+                              weak_ptr_factory_.GetWeakPtr()));
 }
 
 void CastMessageHandler::DoEnsureConnection(CastSocket* socket,
@@ -389,8 +392,8 @@ void CastMessageHandler::DoEnsureConnection(CastSocket* socket,
       user_agent_, browser_version_);
   socket->transport()->SendMessage(
       virtual_connection_request,
-      base::BindRepeating(&CastMessageHandler::OnMessageSent,
-                          weak_ptr_factory_.GetWeakPtr()));
+      base::BindOnce(&CastMessageHandler::OnMessageSent,
+                     weak_ptr_factory_.GetWeakPtr()));
 
   // We assume the virtual connection request will succeed; otherwise this
   // will eventually self-correct.

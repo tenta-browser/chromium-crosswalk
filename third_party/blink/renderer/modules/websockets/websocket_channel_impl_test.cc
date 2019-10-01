@@ -10,7 +10,6 @@
 #include "base/memory/ptr_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/platform/web_callbacks.h"
 #include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/public/platform/websocket_handshake_throttle.h"
 #include "third_party/blink/renderer/core/dom/document.h"
@@ -34,8 +33,6 @@ using testing::AnyNumber;
 using testing::SaveArg;
 
 namespace blink {
-
-namespace {
 
 typedef testing::StrictMock<testing::MockFunction<void(int)>> Checkpoint;
 
@@ -64,9 +61,7 @@ class MockWebSocketChannelClient
   MOCK_METHOD1(DidConsumeBufferedAmount, void(uint64_t));
   MOCK_METHOD0(DidStartClosingHandshake, void());
   MOCK_METHOD3(DidClose,
-               void(ClosingHandshakeCompletionStatus,
-                    unsigned short,
-                    const String&));
+               void(ClosingHandshakeCompletionStatus, uint16_t, const String&));
 
   void Trace(blink::Visitor* visitor) override {
     WebSocketChannelClient::Trace(visitor);
@@ -101,8 +96,8 @@ class MockWebSocketHandle : public WebSocketHandle {
   MOCK_METHOD4(
       Send,
       void(bool, WebSocketHandle::MessageType, const char*, wtf_size_t));
-  MOCK_METHOD1(FlowControl, void(int64_t));
-  MOCK_METHOD2(Close, void(unsigned short, const String&));
+  MOCK_METHOD1(AddReceiveFlowControlQuota, void(int64_t));
+  MOCK_METHOD2(Close, void(uint16_t, const String&));
 };
 
 class MockWebSocketHandshakeThrottle : public WebSocketHandshakeThrottle {
@@ -114,7 +109,7 @@ class MockWebSocketHandshakeThrottle : public WebSocketHandshakeThrottle {
   ~MockWebSocketHandshakeThrottle() override { Destructor(); }
 
   MOCK_METHOD2(ThrottleHandshake,
-               void(const WebURL&, WebCallbacks<void, const WebString&>*));
+               void(const WebURL&, WebSocketHandshakeThrottle::OnCompletion));
 
   // This method is used to allow us to require that the destructor is called at
   // a particular time.
@@ -152,9 +147,7 @@ class WebSocketChannelImplTest : public PageTestBase {
     return static_cast<WebSocketHandleClient*>(channel_.Get());
   }
 
-  WebCallbacks<void, const WebString&>* GetWebCallbacks() {
-    return channel_.Get();
-  }
+  WebSocketChannelImpl* ChannelImpl() { return channel_.Get(); }
 
   MockWebSocketHandle* Handle() { return handle_; }
 
@@ -167,7 +160,7 @@ class WebSocketChannelImplTest : public PageTestBase {
       InSequence s;
       EXPECT_CALL(*Handle(),
                   Connect(KURL("ws://localhost/"), _, _, _, HandleClient()));
-      EXPECT_CALL(*Handle(), FlowControl(65536));
+      EXPECT_CALL(*Handle(), AddReceiveFlowControlQuota(65536));
       EXPECT_CALL(*ChannelClient(), DidConnect(String("a"), String("b")));
     }
     EXPECT_TRUE(Channel()->Connect(KURL("ws://localhost/"), "x"));
@@ -180,7 +173,7 @@ class WebSocketChannelImplTest : public PageTestBase {
   // |handshake_throttle_| is owned by |channel_| once SetUp() has been called.
   MockWebSocketHandshakeThrottle* handshake_throttle_;
   Persistent<WebSocketChannelImpl> channel_;
-  unsigned long sum_of_consumed_buffered_amount_;
+  uint64_t sum_of_consumed_buffered_amount_;
 };
 
 MATCHER_P2(MemEq,
@@ -213,7 +206,7 @@ TEST_F(WebSocketChannelImplTest, connectSuccess) {
                         KURLEq("http://example.com/"), _, HandleClient()))
         .WillOnce(SaveArg<1>(&protocols));
     EXPECT_CALL(checkpoint, Call(1));
-    EXPECT_CALL(*Handle(), FlowControl(65536));
+    EXPECT_CALL(*Handle(), AddReceiveFlowControlQuota(65536));
     EXPECT_CALL(*ChannelClient(), DidConnect(String("a"), String("b")));
   }
 
@@ -223,13 +216,12 @@ TEST_F(WebSocketChannelImplTest, connectSuccess) {
   Document& document = GetDocument();
   document.SetURL(page_url);
   // Make sure that firstPartyForCookies() is set to the given value.
-  EXPECT_STREQ("http://example.com/",
-               document.SiteForCookies().GetString().Utf8().data());
+  EXPECT_EQ("http://example.com/", document.SiteForCookies().GetString());
 
   EXPECT_TRUE(Channel()->Connect(KURL("ws://localhost/"), "x"));
 
   EXPECT_EQ(1U, protocols.size());
-  EXPECT_STREQ("x", protocols[0].Utf8().data());
+  EXPECT_EQ("x", protocols[0]);
 
   checkpoint.Call(1);
   HandleClient()->DidConnect(Handle(), String("a"), String("b"));
@@ -801,8 +793,9 @@ TEST_F(WebSocketChannelImplTest, failFromWebSocket) {
                  WebSocketChannel::kCloseEventCodeAbnormalClosure, String()));
   }
 
-  Channel()->Fail("fail message from WebSocket", kErrorMessageLevel,
-                  SourceLocation::Create(String(), 0, 0, nullptr));
+  Channel()->Fail("fail message from WebSocket",
+                  mojom::ConsoleMessageLevel::kError,
+                  std::make_unique<SourceLocation>(String(), 0, 0, nullptr));
 }
 
 class WebSocketChannelImplHandshakeThrottleTest
@@ -824,8 +817,7 @@ class WebSocketChannelImplHandshakeThrottleTest
 
 TEST_F(WebSocketChannelImplHandshakeThrottleTest, ThrottleArguments) {
   EXPECT_CALL(*Handle(), Connect(_, _, _, _, _));
-  EXPECT_CALL(*handshake_throttle_,
-              ThrottleHandshake(WebURL(url()), GetWebCallbacks()));
+  EXPECT_CALL(*handshake_throttle_, ThrottleHandshake(WebURL(url()), _));
   EXPECT_CALL(*handshake_throttle_, Destructor());
   Channel()->Connect(url(), "");
 }
@@ -838,12 +830,12 @@ TEST_F(WebSocketChannelImplHandshakeThrottleTest, ThrottleSucceedsFirst) {
     EXPECT_CALL(checkpoint, Call(1));
     EXPECT_CALL(*handshake_throttle_, Destructor());
     EXPECT_CALL(checkpoint, Call(2));
-    EXPECT_CALL(*Handle(), FlowControl(_));
+    EXPECT_CALL(*Handle(), AddReceiveFlowControlQuota(_));
     EXPECT_CALL(*ChannelClient(), DidConnect(String("a"), String("b")));
   }
   Channel()->Connect(url(), "");
   checkpoint.Call(1);
-  GetWebCallbacks()->OnSuccess();
+  ChannelImpl()->OnCompletion(base::nullopt);
   checkpoint.Call(2);
   HandleClient()->DidConnect(Handle(), String("a"), String("b"));
 }
@@ -856,14 +848,14 @@ TEST_F(WebSocketChannelImplHandshakeThrottleTest, HandshakeSucceedsFirst) {
     EXPECT_CALL(checkpoint, Call(1));
     EXPECT_CALL(checkpoint, Call(2));
     EXPECT_CALL(*handshake_throttle_, Destructor());
-    EXPECT_CALL(*Handle(), FlowControl(_));
+    EXPECT_CALL(*Handle(), AddReceiveFlowControlQuota(_));
     EXPECT_CALL(*ChannelClient(), DidConnect(String("a"), String("b")));
   }
   Channel()->Connect(url(), "");
   checkpoint.Call(1);
   HandleClient()->DidConnect(Handle(), String("a"), String("b"));
   checkpoint.Call(2);
-  GetWebCallbacks()->OnSuccess();
+  ChannelImpl()->OnCompletion(base::nullopt);
 }
 
 // This happens if JS code calls close() during the handshake.
@@ -878,8 +870,9 @@ TEST_F(WebSocketChannelImplHandshakeThrottleTest, FailDuringThrottle) {
     EXPECT_CALL(checkpoint, Call(1));
   }
   Channel()->Connect(url(), "");
-  Channel()->Fail("close during handshake", kWarningMessageLevel,
-                  SourceLocation::Create(String(), 0, 0, nullptr));
+  Channel()->Fail("close during handshake",
+                  mojom::ConsoleMessageLevel::kWarning,
+                  std::make_unique<SourceLocation>(String(), 0, 0, nullptr));
   checkpoint.Call(1);
 }
 
@@ -898,8 +891,9 @@ TEST_F(WebSocketChannelImplHandshakeThrottleTest,
   }
   Channel()->Connect(url(), "");
   HandleClient()->DidConnect(Handle(), String("a"), String("b"));
-  Channel()->Fail("close during handshake", kWarningMessageLevel,
-                  SourceLocation::Create(String(), 0, 0, nullptr));
+  Channel()->Fail("close during handshake",
+                  mojom::ConsoleMessageLevel::kWarning,
+                  std::make_unique<SourceLocation>(String(), 0, 0, nullptr));
   checkpoint.Call(1);
 }
 
@@ -972,7 +966,7 @@ TEST_F(WebSocketChannelImplHandshakeThrottleTest,
     EXPECT_CALL(*ChannelClient(), DidClose(_, _, _));
   }
   Channel()->Connect(url(), "");
-  GetWebCallbacks()->OnError("Connection blocked by throttle");
+  ChannelImpl()->OnCompletion("Connection blocked by throttle");
 }
 
 TEST_F(WebSocketChannelImplHandshakeThrottleTest,
@@ -986,7 +980,7 @@ TEST_F(WebSocketChannelImplHandshakeThrottleTest,
   }
   Channel()->Connect(url(), "");
   HandleClient()->DidConnect(Handle(), String("a"), String("b"));
-  GetWebCallbacks()->OnError("Connection blocked by throttle");
+  ChannelImpl()->OnCompletion("Connection blocked by throttle");
 }
 
 TEST_F(WebSocketChannelImplHandshakeThrottleTest, ConnectFailBeforeThrottle) {
@@ -1014,7 +1008,5 @@ TEST_F(WebSocketChannelImplHandshakeThrottleTest, ConnectCloseBeforeThrottle) {
                            WebSocketChannel::kCloseEventCodeProtocolError,
                            "connect error");
 }
-
-}  // namespace
 
 }  // namespace blink

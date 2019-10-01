@@ -91,10 +91,11 @@ TestResultsTracker::TestResultsTracker() : iteration_(-1), out_(nullptr) {}
 
 TestResultsTracker::~TestResultsTracker() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  DCHECK_GE(iteration_, 0);
 
   if (!out_)
     return;
+
+  DCHECK_GE(iteration_, 0);
 
   // Maps test case names to test results.
   typedef std::map<std::string, std::vector<TestResult> > TestCaseMap;
@@ -233,15 +234,28 @@ void TestResultsTracker::AddTestLocation(const std::string& test_name,
   test_locations_.insert(std::make_pair(test_name, CodeLocation(file, line)));
 }
 
+void TestResultsTracker::AddTestPlaceholder(const std::string& test_name) {
+  test_placeholders_.insert(test_name);
+}
+
 void TestResultsTracker::AddTestResult(const TestResult& result) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK_GE(iteration_, 0);
 
+  PerIterationData::ResultsMap& results_map =
+      per_iteration_data_[iteration_].results;
+  std::string test_name_without_disabled_prefix =
+      TestNameWithoutDisabledPrefix(result.full_name);
+  auto it = results_map.find(test_name_without_disabled_prefix);
+  // If the test name is not present in the results map, then we did not
+  // generate a placeholder for the test. We shouldn't record its result either.
+  // It's a test that the delegate ran, e.g. a PRE_XYZ test.
+  if (it == results_map.end())
+    return;
+
   // Record disabled test names without DISABLED_ prefix so that they are easy
   // to compare with regular test names, e.g. before or after disabling.
-  AggregateTestResult& aggregate_test_result =
-      per_iteration_data_[iteration_]
-          .results[TestNameWithoutDisabledPrefix(result.full_name)];
+  AggregateTestResult& aggregate_test_result = it->second;
 
   // If the last test result is a placeholder, then get rid of it now that we
   // have real results. It's possible for no placeholder to exist if the test is
@@ -259,10 +273,8 @@ void TestResultsTracker::AddTestResult(const TestResult& result) {
 void TestResultsTracker::GeneratePlaceholderIteration() {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  // We use test_locations_ since that only includes tests that will be run in
-  // this shard.
-  for (auto& it : test_locations_) {
-    std::string test_name = TestNameWithoutDisabledPrefix(it.first);
+  for (auto& full_test_name : test_placeholders_) {
+    std::string test_name = TestNameWithoutDisabledPrefix(full_test_name);
 
     // Ignore disabled tests.
     if (disabled_tests_.find(test_name) != disabled_tests_.end())
@@ -274,9 +286,9 @@ void TestResultsTracker::GeneratePlaceholderIteration() {
 
     // There shouldn't be any existing results when we generate placeholder
     // results.
-    DCHECK(per_iteration_data_[iteration_]
-               .results[test_name]
-               .test_results.empty());
+    DCHECK(
+        per_iteration_data_[iteration_].results[test_name].test_results.empty())
+        << test_name;
     per_iteration_data_[iteration_].results[test_name].test_results.push_back(
         test_result);
   }
@@ -393,7 +405,7 @@ bool TestResultsTracker::SaveSummaryAsJSON(
 
         std::unique_ptr<DictionaryValue> test_result_value(new DictionaryValue);
 
-        test_result_value->SetString("status", test_result.StatusAsString());
+        test_result_value->SetStringKey("status", test_result.StatusAsString());
         test_result_value->SetInteger(
             "elapsed_time_ms",
             static_cast<int>(test_result.elapsed_time.InMilliseconds()));
@@ -411,7 +423,7 @@ bool TestResultsTracker::SaveSummaryAsJSON(
 
         // TODO(phajdan.jr): Fix typo in JSON key (losless -> lossless)
         // making sure not to break any consumers of this data.
-        test_result_value->SetBoolean("losless_snippet", lossless_snippet);
+        test_result_value->SetBoolKey("losless_snippet", lossless_snippet);
 
         // Also include the raw version (base64-encoded so that it can be safely
         // JSON-serialized - there are no guarantees about character encoding
@@ -419,43 +431,43 @@ bool TestResultsTracker::SaveSummaryAsJSON(
         // debugging a test failure related to character encoding.
         std::string base64_output_snippet;
         Base64Encode(test_result.output_snippet, &base64_output_snippet);
-        test_result_value->SetString("output_snippet_base64",
-                                     base64_output_snippet);
+        test_result_value->SetStringKey("output_snippet_base64",
+                                        base64_output_snippet);
 
         std::unique_ptr<ListValue> test_result_parts(new ListValue);
         for (const TestResultPart& result_part :
              test_result.test_result_parts) {
           std::unique_ptr<DictionaryValue> result_part_value(
               new DictionaryValue);
-          result_part_value->SetString("type", result_part.TypeAsString());
-          result_part_value->SetString("file", result_part.file_name);
-          result_part_value->SetInteger("line", result_part.line_number);
+          result_part_value->SetStringKey("type", result_part.TypeAsString());
+          result_part_value->SetStringKey("file", result_part.file_name);
+          result_part_value->SetIntKey("line", result_part.line_number);
 
           bool lossless_summary = IsStringUTF8(result_part.summary);
           if (lossless_summary) {
-            result_part_value->SetString("summary", result_part.summary);
+            result_part_value->SetStringKey("summary", result_part.summary);
           } else {
             result_part_value->SetString(
                 "summary", "<non-UTF-8 snippet, see summary_base64>");
           }
-          result_part_value->SetBoolean("lossless_summary", lossless_summary);
+          result_part_value->SetBoolKey("lossless_summary", lossless_summary);
 
           std::string encoded_summary;
           Base64Encode(result_part.summary, &encoded_summary);
-          result_part_value->SetString("summary_base64", encoded_summary);
+          result_part_value->SetStringKey("summary_base64", encoded_summary);
 
           bool lossless_message = IsStringUTF8(result_part.message);
           if (lossless_message) {
-            result_part_value->SetString("message", result_part.message);
+            result_part_value->SetStringKey("message", result_part.message);
           } else {
             result_part_value->SetString(
                 "message", "<non-UTF-8 snippet, see message_base64>");
           }
-          result_part_value->SetBoolean("lossless_message", lossless_message);
+          result_part_value->SetBoolKey("lossless_message", lossless_message);
 
           std::string encoded_message;
           Base64Encode(result_part.message, &encoded_message);
-          result_part_value->SetString("message_base64", encoded_message);
+          result_part_value->SetStringKey("message_base64", encoded_message);
 
           test_result_parts->Append(std::move(result_part_value));
         }
@@ -476,8 +488,8 @@ bool TestResultsTracker::SaveSummaryAsJSON(
     std::string test_name = item.first;
     CodeLocation location = item.second;
     std::unique_ptr<DictionaryValue> location_value(new DictionaryValue);
-    location_value->SetString("file", location.file);
-    location_value->SetInteger("line", location.line);
+    location_value->SetStringKey("file", location.file);
+    location_value->SetIntKey("line", location.line);
     test_locations->SetWithoutPathExpansion(test_name,
                                             std::move(location_value));
   }

@@ -42,9 +42,7 @@ static int GetVpxVideoDecoderThreadCount(const VideoDecoderConfig& config) {
   // maximum number of tiles possible for higher resolution streams.
   if (config.codec() == kCodecVP9) {
     const int width = config.coded_size().width();
-    if (width >= 8192)
-      desired_threads = 32;
-    else if (width >= 4096)
+    if (width >= 4096)
       desired_threads = 16;
     else if (width >= 2048)
       desired_threads = 8;
@@ -115,7 +113,7 @@ std::string VpxVideoDecoder::GetDisplayName() const {
 void VpxVideoDecoder::Initialize(const VideoDecoderConfig& config,
                                  bool /* low_delay */,
                                  CdmContext* /* cdm_context */,
-                                 const InitCB& init_cb,
+                                 InitCB init_cb,
                                  const OutputCB& output_cb,
                                  const WaitingCB& /* waiting_cb */) {
   DVLOG(1) << __func__ << ": " << config.AsHumanReadableString();
@@ -124,9 +122,10 @@ void VpxVideoDecoder::Initialize(const VideoDecoderConfig& config,
 
   CloseDecoder();
 
-  InitCB bound_init_cb = bind_callbacks_ ? BindToCurrentLoop(init_cb) : init_cb;
+  InitCB bound_init_cb = bind_callbacks_ ? BindToCurrentLoop(std::move(init_cb))
+                                         : std::move(init_cb);
   if (config.is_encrypted() || !ConfigureDecoder(config)) {
-    bound_init_cb.Run(false);
+    std::move(bound_init_cb).Run(false);
     return;
   }
 
@@ -134,11 +133,11 @@ void VpxVideoDecoder::Initialize(const VideoDecoderConfig& config,
   config_ = config;
   state_ = kNormal;
   output_cb_ = output_cb;
-  bound_init_cb.Run(true);
+  std::move(bound_init_cb).Run(true);
 }
 
 void VpxVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
-                             const DecodeCB& decode_cb) {
+                             DecodeCB decode_cb) {
   DVLOG(3) << __func__ << ": " << buffer->AsHumanReadableString();
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(buffer);
@@ -146,29 +145,30 @@ void VpxVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
   DCHECK_NE(state_, kUninitialized)
       << "Called Decode() before successful Initialize()";
 
-  DecodeCB bound_decode_cb =
-      bind_callbacks_ ? BindToCurrentLoop(decode_cb) : decode_cb;
+  DecodeCB bound_decode_cb = bind_callbacks_
+                                 ? BindToCurrentLoop(std::move(decode_cb))
+                                 : std::move(decode_cb);
 
   if (state_ == kError) {
-    bound_decode_cb.Run(DecodeStatus::DECODE_ERROR);
+    std::move(bound_decode_cb).Run(DecodeStatus::DECODE_ERROR);
     return;
   }
 
   if (state_ == kDecodeFinished) {
-    bound_decode_cb.Run(DecodeStatus::OK);
+    std::move(bound_decode_cb).Run(DecodeStatus::OK);
     return;
   }
 
   if (state_ == kNormal && buffer->end_of_stream()) {
     state_ = kDecodeFinished;
-    bound_decode_cb.Run(DecodeStatus::OK);
+    std::move(bound_decode_cb).Run(DecodeStatus::OK);
     return;
   }
 
   scoped_refptr<VideoFrame> video_frame;
   if (!VpxDecode(buffer.get(), &video_frame)) {
     state_ = kError;
-    bound_decode_cb.Run(DecodeStatus::DECODE_ERROR);
+    std::move(bound_decode_cb).Run(DecodeStatus::DECODE_ERROR);
     return;
   }
 
@@ -177,23 +177,21 @@ void VpxVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
   if (video_frame) {
     video_frame->metadata()->SetBoolean(VideoFrameMetadata::POWER_EFFICIENT,
                                         false);
-    // Safe to call |output_cb_| here even if we're on the offload thread since
-    // it is only set once during Initialize() and never changed.
     output_cb_.Run(video_frame);
   }
 
   // VideoDecoderShim expects |decode_cb| call after |output_cb_|.
-  bound_decode_cb.Run(DecodeStatus::OK);
+  std::move(bound_decode_cb).Run(DecodeStatus::OK);
 }
 
-void VpxVideoDecoder::Reset(const base::Closure& reset_cb) {
+void VpxVideoDecoder::Reset(base::OnceClosure reset_cb) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   state_ = kNormal;
 
   if (bind_callbacks_)
-    BindToCurrentLoop(reset_cb).Run();
+    BindToCurrentLoop(std::move(reset_cb)).Run();
   else
-    reset_cb.Run();
+    std::move(reset_cb).Run();
 
   // Allow Initialize() to be called on another thread now.
   DETACH_FROM_SEQUENCE(sequence_checker_);

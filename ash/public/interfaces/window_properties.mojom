@@ -23,6 +23,9 @@ const string kCanAttachToAnotherWindow_Property =
 const string kCanConsumeSystemKeys_Property =
   "ash:can-consume-system-keys";
 
+// True if the window should be hidden in ash overview mode. Type: bool.
+const string kHideInOverview_Property = "ash:hide_in_overview";
+
 // True if the shelf should be hidden when this window is put into fullscreen.
 // Exposed because some windows want to explicitly opt-out of this.
 const string kHideShelfWhenFullscreen_Property =
@@ -57,10 +60,6 @@ const string kIsShowingInOverview_Property = "ash:is-showing-in-overview";
 // originated from if the window is currently in tab-dragging process.
 const string kTabDraggingSourceWindow_Property =
     "ash:tab-dragging-source-window";
-
-// A property key to store the window state type when the tab-dragging finishes.
-const string kTabDroppedWindowStateType_Property =
-    "ash:tab-dropped-window-state-type";
 
 // This is put on windows to indicate that ash should perform auto management of
 // window positions; when you open a second browser, ash will move the two to

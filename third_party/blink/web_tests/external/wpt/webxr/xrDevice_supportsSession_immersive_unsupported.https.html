@@ -12,7 +12,7 @@
           return promise_rejects(
             t,
             "NotSupportedError",
-            navigator.xr.supportsSessionMode('immersive-vr')
+            navigator.xr.supportsSession('immersive-vr')
           );
         });
     });

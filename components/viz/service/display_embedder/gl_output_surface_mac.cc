@@ -11,24 +11,19 @@ namespace viz {
 GLOutputSurfaceMac::GLOutputSurfaceMac(
     scoped_refptr<VizProcessContextProvider> context_provider,
     gpu::SurfaceHandle surface_handle,
-    SyntheticBeginFrameSource* synthetic_begin_frame_source,
     gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager,
     bool allow_overlays)
     : GLOutputSurfaceBufferQueue(context_provider,
                                  surface_handle,
-                                 synthetic_begin_frame_source,
                                  gpu_memory_buffer_manager,
-                                 GL_TEXTURE_RECTANGLE_ARB,
-                                 GL_RGBA,
                                  gfx::BufferFormat::RGBA_8888),
-      overlay_validator_(
-          new CompositorOverlayCandidateValidatorMac(!allow_overlays)) {}
+      overlay_validator_(new OverlayCandidateValidatorMac(!allow_overlays)) {}
 
 GLOutputSurfaceMac::~GLOutputSurfaceMac() {}
 
-OverlayCandidateValidator* GLOutputSurfaceMac::GetOverlayCandidateValidator()
-    const {
-  return overlay_validator_.get();
+std::unique_ptr<OverlayCandidateValidator>
+GLOutputSurfaceMac::TakeOverlayCandidateValidator() {
+  return std::move(overlay_validator_);
 }
 
 }  // namespace viz

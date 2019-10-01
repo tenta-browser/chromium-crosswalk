@@ -21,14 +21,13 @@ import com.google.android.gms.common.GoogleApiAvailability;
 import org.chromium.base.CommandLine;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.metrics.CachedMetrics.SparseHistogramSample;
 import org.chromium.base.metrics.CachedMetrics.TimesHistogramSample;
+import org.chromium.base.task.PostTask;
 import org.chromium.chrome.browser.AppHooks;
 import org.chromium.chrome.browser.ChromeSwitches;
-
-import java.util.concurrent.TimeUnit;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 
 /**
  * Utility class for external authentication tools.
@@ -44,8 +43,8 @@ public class ExternalAuthUtils {
 
     private final SparseHistogramSample mConnectionResultHistogramSample =
             new SparseHistogramSample("GooglePlayServices.ConnectionResult");
-    private final TimesHistogramSample mRegistrationTimeHistogramSample = new TimesHistogramSample(
-            "Android.StrictMode.CheckGooglePlayServicesTime", TimeUnit.MILLISECONDS);
+    private final TimesHistogramSample mRegistrationTimeHistogramSample =
+            new TimesHistogramSample("Android.StrictMode.CheckGooglePlayServicesTime");
 
     /**
      * Returns the singleton instance of ExternalAuthUtils, creating it if needed.
@@ -201,7 +200,7 @@ public class ExternalAuthUtils {
                     errorHandler.handleError(context, resultCode);
                 }
             };
-            ThreadUtils.runOnUiThread(errorHandlerTask);
+            PostTask.runOrPostTask(UiThreadTaskTraits.DEFAULT, errorHandlerTask);
         }
         return false;
     }

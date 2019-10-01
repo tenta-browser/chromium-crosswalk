@@ -4,12 +4,13 @@
 
 #include "components/ukm/ukm_recorder_impl.h"
 
-#include <limits>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 #include "base/feature_list.h"
+#include "base/metrics/crc32.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_macros.h"
@@ -21,6 +22,7 @@
 #include "services/metrics/public/cpp/ukm_decode.h"
 #include "services/metrics/public/cpp/ukm_source.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
+#include "services/metrics/public/mojom/ukm_interface.mojom.h"
 #include "third_party/metrics_proto/ukm/entry.pb.h"
 #include "third_party/metrics_proto/ukm/report.pb.h"
 #include "third_party/metrics_proto/ukm/source.pb.h"
@@ -50,7 +52,8 @@ std::string GetWhitelistEntries() {
 
 bool IsWhitelistedSourceId(SourceId source_id) {
   return GetSourceIdType(source_id) == SourceIdType::NAVIGATION_ID ||
-         GetSourceIdType(source_id) == SourceIdType::APP_ID;
+         GetSourceIdType(source_id) == SourceIdType::APP_ID ||
+         GetSourceIdType(source_id) == SourceIdType::HISTORY_ID;
 }
 
 // Gets the maximum number of Sources we'll keep in memory before discarding any
@@ -83,12 +86,6 @@ bool HasSupportedScheme(const GURL& url) {
   return url.SchemeIsHTTPOrHTTPS() || url.SchemeIs(url::kFtpScheme) ||
          url.SchemeIs(url::kAboutScheme) || url.SchemeIs(kChromeUIScheme) ||
          url.SchemeIs(kExtensionScheme) || url.SchemeIs(kAppScheme);
-}
-
-// True if we should record the initial_url field of the UKM Source proto.
-bool ShouldRecordInitialUrl() {
-  return base::GetFieldTrialParamByFeatureAsBool(kUkmFeature,
-                                                 "RecordInitialUrl", false);
 }
 
 enum class DroppedDataReason {
@@ -175,7 +172,9 @@ bool HasUnknownMetrics(const ukm::builders::DecodeMap& decode_map,
 
 }  // namespace
 
-UkmRecorderImpl::UkmRecorderImpl() : recording_enabled_(false) {}
+UkmRecorderImpl::UkmRecorderImpl()
+    : recording_enabled_(false),
+      sampling_seed_(static_cast<uint32_t>(base::RandUint64())) {}
 UkmRecorderImpl::~UkmRecorderImpl() = default;
 
 // static
@@ -199,12 +198,11 @@ void UkmRecorderImpl::CreateFallbackSamplingTrial(
   scoped_refptr<base::FieldTrial> trial(
       base::FieldTrialList::FactoryGetFieldTrial(
           kUkmSamplingRateFeature.name, 100, sampled_group,
-          base::FieldTrialList::kNoExpirationYear, 1, 1,
           base::FieldTrial::ONE_TIME_RANDOMIZED, nullptr));
 
   // Everybody (100%) should have a sampling configuration.
   std::map<std::string, std::string> params = {
-      {"_default_sampling", base::IntToString(default_sampling)}};
+      {"_default_sampling", base::NumberToString(default_sampling)}};
   variations::AssociateVariationParams(trial->trial_name(), sampled_group,
                                        params);
   trial->AppendGroup(sampled_group, 100);
@@ -217,23 +215,6 @@ void UkmRecorderImpl::CreateFallbackSamplingTrial(
 
 UkmRecorderImpl::EventAggregate::EventAggregate() = default;
 UkmRecorderImpl::EventAggregate::~EventAggregate() = default;
-
-UkmRecorderImpl::PageSampling::PageSampling() = default;
-UkmRecorderImpl::PageSampling::~PageSampling() = default;
-
-void UkmRecorderImpl::PageSampling::Set(uint64_t event_id, bool sampled_in) {
-  event_sampling_[event_id] = sampled_in;
-  modified_ = true;
-}
-
-bool UkmRecorderImpl::PageSampling::Find(uint64_t event_id,
-                                         bool* out_sampled_in) const {
-  auto found = event_sampling_.find(event_id);
-  if (found == event_sampling_.end())
-    return false;
-  *out_sampled_in = found->second;
-  return true;
-}
 
 UkmRecorderImpl::Recordings::Recordings() = default;
 UkmRecorderImpl::Recordings& UkmRecorderImpl::Recordings::operator=(
@@ -266,9 +247,13 @@ void UkmRecorderImpl::DisableSamplingForTesting() {
   sampling_enabled_ = false;
 }
 
+bool UkmRecorderImpl::IsSamplingEnabled() const {
+  return sampling_enabled_ &&
+         base::FeatureList::IsEnabled(kUkmSamplingRateFeature);
+}
+
 void UkmRecorderImpl::Purge() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  source_event_sampling_.clear();
   recordings_.Reset();
   recording_is_continuous_ = false;
 }
@@ -316,14 +301,11 @@ void UkmRecorderImpl::StoreRecordingsInReport(Report* report) {
     }
     Source* proto_source = report->add_sources();
     kv.second->PopulateProto(proto_source);
-    if (!ShouldRecordInitialUrl())
-      proto_source->clear_initial_url();
 
     serialized_source_type_counts[GetSourceIdType(kv.first)]++;
   }
+
   for (const auto& event_and_aggregate : recordings_.event_aggregations) {
-    if (event_and_aggregate.second.metrics.empty())
-      continue;
     const EventAggregate& event_aggregate = event_and_aggregate.second;
     Aggregate* proto_aggregate = report->add_aggregates();
     proto_aggregate->set_source_id(0);  // Across all sources.
@@ -425,30 +407,6 @@ void UkmRecorderImpl::StoreRecordingsInReport(Report* report) {
   UMA_HISTOGRAM_COUNTS_1000("UKM.Sources.KeptSourcesCount",
                             recordings_.sources.size());
   recordings_.source_counts.carryover_sources = recordings_.sources.size();
-
-  // Check all the event-sampling values and clear those for any sources
-  // not seen since the last data upload. This ensure that pages never
-  // visited again don't continue to use memory remembering what events
-  // were sampled-in the last time it was accessed. They can't simply be
-  // cleared here because this call could come in the middle of a page
-  // load.
-  auto iter = source_event_sampling_.begin();
-  auto next = iter;
-  while (iter != source_event_sampling_.end()) {
-    // Increment here (and copy later) because otherwise erasing |iter| would
-    // break iteration.
-    ++next;
-
-    // If the PageSampling has been modified since the last upload of data,
-    // clear that flag and continue. If it hasn't been modified, remove the
-    // entire object.
-    if (iter->second.modified())
-      iter->second.clear_modified();
-    else
-      source_event_sampling_.erase(iter);
-
-    iter = next;
-  }
 }
 
 bool UkmRecorderImpl::ShouldRestrictToWhitelistedSourceIds() const {
@@ -592,30 +550,25 @@ void UkmRecorderImpl::AddEntry(mojom::UkmEntryPtr entry) {
     return;
   }
 
-  if (default_sampling_rate_ == 0)
-    LoadExperimentSamplingInfo();
+  if (IsSamplingEnabled()) {
+    if (default_sampling_rate_ == 0) {
+      LoadExperimentSamplingInfo();
+    }
 
-  bool sampled_in = true;  // Overwritten by Find(...) if it returns True.
-  PageSampling* page_sampling = &source_event_sampling_[entry->source_id];
-  if (!page_sampling->Find(entry->event_hash, &sampled_in)) {
     auto found = event_sampling_rates_.find(entry->event_hash);
     int sampling_rate = (found != event_sampling_rates_.end())
                             ? found->second
                             : default_sampling_rate_;
-    sampled_in = IsSampledIn(sampling_rate);
+    bool sampled_in =
+        IsSampledIn(entry->source_id, entry->event_hash, sampling_rate);
 
-    // Remember the decision for this event for this page so all such events
-    // on this page are sampled-in or sampled-out together making it possible
-    // to correlate between events and within a page.
-    page_sampling->Set(entry->event_hash, sampled_in);
-  }
-
-  if (!sampled_in && sampling_enabled_) {
-    RecordDroppedEntry(DroppedDataReason::SAMPLED_OUT);
-    event_aggregate.dropped_due_to_sampling++;
-    for (auto& metric : entry->metrics)
-      event_aggregate.metrics[metric.first].dropped_due_to_sampling++;
-    return;
+    if (!sampled_in) {
+      RecordDroppedEntry(DroppedDataReason::SAMPLED_OUT);
+      event_aggregate.dropped_due_to_sampling++;
+      for (auto& metric : entry->metrics)
+        event_aggregate.metrics[metric.first].dropped_due_to_sampling++;
+      return;
+    }
   }
 
   if (recordings_.entries.size() >= GetMaxEntries()) {
@@ -631,44 +584,65 @@ void UkmRecorderImpl::AddEntry(mojom::UkmEntryPtr entry) {
 
 void UkmRecorderImpl::LoadExperimentSamplingInfo() {
   DCHECK_EQ(0, default_sampling_rate_);
-  std::map<std::string, std::string> params;
 
-  if (base::FeatureList::IsEnabled(kUkmSamplingRateFeature)) {
-    // Enabled may have various parameters to control sampling.
-    if (base::GetFieldTrialParamsByFeature(kUkmSamplingRateFeature, &params)) {
-      for (const auto& kv : params) {
-        const std::string& key = kv.first;
-        if (key.length() == 0)
-          continue;
+  // Default rate must be > 0 to indicate that load is complete.
+  default_sampling_rate_ = 1;
 
-        // Keys starting with an underscore are global configuration.
-        if (key.at(0) == '_') {
-          if (key == "_default_sampling") {
-            int sampling;
-            if (base::StringToInt(kv.second, &sampling) && sampling >= 0)
-              default_sampling_rate_ = sampling;
-          }
-          continue;
-        }
-
-        // Anything else is an event name.
-        int sampling;
-        if (base::StringToInt(kv.second, &sampling) && sampling >= 0)
-          event_sampling_rates_[base::HashMetricName(key)] = sampling;
-      }
-    }
+  // If we don't have the feature, no parameters to load.
+  if (!base::FeatureList::IsEnabled(kUkmSamplingRateFeature)) {
+    return;
   }
 
-  // Default rate must be >0 to indicate that load is complete.
-  if (default_sampling_rate_ == 0)
-    default_sampling_rate_ = 1;
+  // Check the parameters for sampling controls.
+  std::map<std::string, std::string> params;
+  if (base::GetFieldTrialParamsByFeature(kUkmSamplingRateFeature, &params)) {
+    for (const auto& kv : params) {
+      const std::string& key = kv.first;
+      if (key.length() == 0)
+        continue;
+
+      // Keys starting with an underscore are global configuration.
+      if (key.at(0) == '_') {
+        if (key == "_default_sampling") {
+          int sampling;
+          // We only load positive global sampling rates. If the global sampling
+          // is 0, then we stick to the default rate of '1' (unsampled).
+          if (base::StringToInt(kv.second, &sampling) && sampling > 0)
+            default_sampling_rate_ = sampling;
+        }
+        continue;
+      }
+
+      // Anything else is an event name.
+      int sampling;
+      if (base::StringToInt(kv.second, &sampling) && sampling >= 0)
+        event_sampling_rates_[base::HashMetricName(key)] = sampling;
+    }
+  }
 }
 
-bool UkmRecorderImpl::IsSampledIn(int sampling_rate) {
-  // A sampling rate of 0 is "never"; everything else is 1-in-N but skip
-  // the RandInt() call if N==1.
-  return sampling_rate > 0 &&
-         (sampling_rate == 1 || base::RandInt(1, sampling_rate) == 1);
+bool UkmRecorderImpl::IsSampledIn(int64_t source_id,
+                                  uint64_t event_id,
+                                  int sampling_rate) {
+  // A sampling rate of 0 is "never"; everything else is 1-in-N but calculated
+  // deterministically based on a seed, the source-id, and the event-id. Skip
+  // the calculation, though, if N==1 because it will always be true.
+  if (sampling_rate == 0)
+    return false;
+  if (sampling_rate == 1)
+    return true;
+
+  // Mutate the "sampling seed" number in a predictable manner based on the
+  // source and event IDs. This makes the result of this function be always
+  // the same for the same input parameters (since the seed is fixed during
+  // construction of this object) which is important for proper sampling
+  // behavior. CRC32 is fast and statistically random enough for these
+  // purposes.
+  uint32_t sampled_num = sampling_seed_;
+  sampled_num = base::Crc32(sampled_num, &source_id, sizeof(source_id));
+  sampled_num = base::Crc32(sampled_num, &event_id, sizeof(event_id));
+
+  return sampled_num % sampling_rate == 0;
 }
 
 void UkmRecorderImpl::StoreWhitelistedEntries() {

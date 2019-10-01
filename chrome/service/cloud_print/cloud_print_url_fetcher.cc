@@ -15,7 +15,6 @@
 #include "chrome/service/cloud_print/cloud_print_token_store.h"
 #include "chrome/service/net/service_url_request_context_getter.h"
 #include "chrome/service/service_process.h"
-#include "components/data_use_measurement/core/data_use_user_data.h"
 #include "net/base/load_flags.h"
 #include "net/http/http_status_code.h"
 #include "net/url_request/url_fetcher.h"
@@ -121,11 +120,10 @@ CloudPrintURLFetcher::Delegate::HandleRawData(
 }
 
 CloudPrintURLFetcher::ResponseAction
-CloudPrintURLFetcher::Delegate::HandleJSONData(
-    const net::URLFetcher* source,
-    const GURL& url,
-    const base::DictionaryValue* json_data,
-    bool succeeded) {
+CloudPrintURLFetcher::Delegate::HandleJSONData(const net::URLFetcher* source,
+                                               const GURL& url,
+                                               const base::Value& json_data,
+                                               bool succeeded) {
   return CONTINUE_PROCESSING;
 }
 
@@ -198,14 +196,11 @@ void CloudPrintURLFetcher::OnURLFetchComplete(
       // response, we will retry (to handle the case where we got redirected
       // to a non-cloudprint-server URL eg. for authentication).
       bool succeeded = false;
-      std::unique_ptr<base::DictionaryValue> response_dict =
-          ParseResponseJSON(data, &succeeded);
+      base::Value response_dict = ParseResponseJSON(data, &succeeded);
 
-      if (response_dict) {
-        action = delegate_->HandleJSONData(source,
-                                           source->GetURL(),
-                                           response_dict.get(),
-                                           succeeded);
+      if (response_dict.is_dict()) {
+        action = delegate_->HandleJSONData(source, source->GetURL(),
+                                           response_dict, succeeded);
       } else {
         action = RETRY_REQUEST;
       }
@@ -282,8 +277,6 @@ void CloudPrintURLFetcher::StartRequestHelper(
           })");
   request_ =
       net::URLFetcher::Create(0, url, request_type, this, traffic_annotation);
-  data_use_measurement::DataUseUserData::AttachToFetcher(
-      request_.get(), data_use_measurement::DataUseUserData::CLOUD_PRINT);
   request_->SetRequestContext(GetRequestContextGetter());
   // Since we implement our own retry logic, disable the retry in URLFetcher.
   request_->SetAutomaticallyRetryOn5xx(false);

@@ -6,11 +6,10 @@ package org.chromium.chrome.browser;
 
 import android.content.Context;
 import android.content.res.ColorStateList;
-import android.support.v7.content.res.AppCompatResources;
+import android.support.annotation.ColorInt;
+import android.support.annotation.Nullable;
 
-import org.chromium.base.ContextUtils;
 import org.chromium.base.ObserverList;
-import org.chromium.chrome.R;
 import org.chromium.chrome.browser.util.ColorUtils;
 
 /**
@@ -48,8 +47,11 @@ public abstract class ThemeColorProvider {
     /** Current primary color. */
     private int mPrimaryColor;
 
-    /** Whether should use light tint (corresponds to dark color). */
-    private boolean mUseLight;
+    /**
+     * Whether should use light tint (corresponds to dark color). If null, the state is not
+     * initialized.
+     */
+    private @Nullable Boolean mUseLightTint;
 
     /** List of {@link ThemeColorObserver}s. These are used to broadcast events to listeners. */
     private final ObserverList<ThemeColorObserver> mThemeColorObservers;
@@ -57,30 +59,71 @@ public abstract class ThemeColorProvider {
     /** List of {@link TintObserver}s. These are used to broadcast events to listeners. */
     private final ObserverList<TintObserver> mTintObservers;
 
-    public ThemeColorProvider() {
+    /**
+     * @param context The {@link Context} that is used to retrieve color related resources.
+     */
+    public ThemeColorProvider(Context context) {
         mThemeColorObservers = new ObserverList<ThemeColorObserver>();
         mTintObservers = new ObserverList<TintObserver>();
-        final Context context = ContextUtils.getApplicationContext();
-        mLightModeTint = AppCompatResources.getColorStateList(context, R.color.light_mode_tint);
-        mDarkModeTint = AppCompatResources.getColorStateList(context, R.color.dark_mode_tint);
+        mLightModeTint = ColorUtils.getThemedToolbarIconTint(context, true);
+        mDarkModeTint = ColorUtils.getThemedToolbarIconTint(context, false);
     }
 
+    /**
+     * @param observer Adds a {@link ThemeColorObserver} that will be notified when the theme color
+     *                 changes. This method does not trigger the observer.
+     */
     public void addThemeColorObserver(ThemeColorObserver observer) {
         mThemeColorObservers.addObserver(observer);
     }
 
+    /**
+     * @param observer Removes the observer so it no longer receives theme color changes.
+     */
     public void removeThemeColorObserver(ThemeColorObserver observer) {
         mThemeColorObservers.removeObserver(observer);
     }
 
+    /**
+     * @param observer Adds a {@link TintObserver} that will be notified when the tint changes. This
+     *                 method does not trigger the observer.
+     */
     public void addTintObserver(TintObserver observer) {
         mTintObservers.addObserver(observer);
     }
 
+    /**
+     * @param observer Removes the observer so it no longer receives tint changes.
+     */
     public void removeTintObserver(TintObserver observer) {
         mTintObservers.removeObserver(observer);
     }
 
+    /**
+     * @return The current theme color of this provider.
+     */
+    @ColorInt
+    public int getThemeColor() {
+        return mPrimaryColor;
+    }
+
+    /**
+     * @return The current tint of this provider.
+     */
+    public ColorStateList getTint() {
+        return useLight() ? mLightModeTint : mDarkModeTint;
+    }
+
+    /**
+     * @return Whether or not this provider is using light tints.
+     */
+    public boolean useLight() {
+        return mUseLightTint != null ? mUseLightTint : false;
+    }
+
+    /**
+     * Clears out the observer lists.
+     */
     public void destroy() {
         mThemeColorObservers.clear();
         mTintObservers.clear();
@@ -92,10 +135,13 @@ public abstract class ThemeColorProvider {
         for (ThemeColorObserver observer : mThemeColorObservers) {
             observer.onThemeColorChanged(color, shouldAnimate);
         }
+        updateTint();
+    }
 
-        final boolean useLight = ColorUtils.shouldUseLightForegroundOnBackground(color);
-        if (useLight == mUseLight) return;
-        mUseLight = useLight;
+    private void updateTint() {
+        final boolean useLight = ColorUtils.shouldUseLightForegroundOnBackground(mPrimaryColor);
+        if (mUseLightTint != null && useLight == mUseLightTint) return;
+        mUseLightTint = useLight;
         final ColorStateList tint = useLight ? mLightModeTint : mDarkModeTint;
         for (TintObserver observer : mTintObservers) {
             observer.onTintChanged(tint, useLight);

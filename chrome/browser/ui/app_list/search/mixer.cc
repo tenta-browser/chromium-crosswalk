@@ -11,10 +11,14 @@
 #include <utility>
 #include <vector>
 
+#include "ash/public/cpp/app_list/app_list_features.h"
 #include "base/macros.h"
+#include "base/metrics/field_trial_params.h"
 #include "chrome/browser/ui/app_list/app_list_model_updater.h"
 #include "chrome/browser/ui/app_list/search/chrome_search_result.h"
 #include "chrome/browser/ui/app_list/search/search_provider.h"
+#include "chrome/browser/ui/app_list/search/search_result_ranker/ranking_item_util.h"
+#include "chrome/browser/ui/app_list/search/search_result_ranker/search_result_ranker.h"
 
 namespace app_list {
 
@@ -39,7 +43,7 @@ class Mixer::Group {
     providers_.emplace_back(provider);
   }
 
-  void FetchResults() {
+  void FetchResults(SearchResultRanker* ranker) {
     results_.clear();
 
     for (const SearchProvider* provider : providers_) {
@@ -55,6 +59,8 @@ class Mixer::Group {
       }
     }
 
+    if (ranker)
+      ranker->Rank(&results_);
     std::sort(results_.begin(), results_.end());
   }
 
@@ -76,7 +82,6 @@ class Mixer::Group {
 
 Mixer::Mixer(AppListModelUpdater* model_updater)
     : model_updater_(model_updater) {}
-
 Mixer::~Mixer() = default;
 
 size_t Mixer::AddGroup(size_t max_results, double multiplier, double boost) {
@@ -88,8 +93,8 @@ void Mixer::AddProviderToGroup(size_t group_id, SearchProvider* provider) {
   groups_[group_id]->AddProvider(provider);
 }
 
-void Mixer::MixAndPublish(size_t num_max_results) {
-  FetchResults();
+void Mixer::MixAndPublish(size_t num_max_results, const base::string16& query) {
+  FetchResults(query);
 
   SortedResults results;
   results.reserve(num_max_results);
@@ -150,9 +155,25 @@ void Mixer::RemoveDuplicates(SortedResults* results) {
   results->swap(final);
 }
 
-void Mixer::FetchResults() {
+void Mixer::FetchResults(const base::string16& query) {
+  if (non_app_ranker_)
+    non_app_ranker_->FetchRankings(query);
   for (const auto& group : groups_)
-    group->FetchResults();
+    group->FetchResults(non_app_ranker_.get());
+}
+
+void Mixer::SetNonAppSearchResultRanker(
+    std::unique_ptr<SearchResultRanker> ranker) {
+  non_app_ranker_ = std::move(ranker);
+}
+
+SearchResultRanker* Mixer::GetNonAppSearchResultRanker() {
+  return non_app_ranker_.get();
+}
+
+void Mixer::Train(const std::string& id, RankingItemType type) {
+  if (non_app_ranker_)
+    non_app_ranker_->Train(id, type);
 }
 
 }  // namespace app_list

@@ -21,12 +21,15 @@ import android.os.IBinder;
 import android.os.Process;
 import android.util.SparseArray;
 import android.util.TypedValue;
+import android.view.Display;
 import android.view.View;
 import android.view.Window;
+import android.view.WindowManager;
 import android.view.accessibility.AccessibilityManager;
 
 import org.chromium.base.ActivityState;
 import org.chromium.base.ApiCompatibilityUtils;
+import org.chromium.base.BuildInfo;
 import org.chromium.base.Callback;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
@@ -36,21 +39,32 @@ import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
 import org.chromium.base.compat.ApiHelperForO;
+import org.chromium.base.compat.ApiHelperForOMR1;
 import org.chromium.ui.KeyboardVisibilityDelegate;
 import org.chromium.ui.VSyncMonitor;
 import org.chromium.ui.display.DisplayAndroid;
+import org.chromium.ui.display.DisplayAndroid.DisplayAndroidObserver;
+import org.chromium.ui.touchless.CursorObserver;
+import org.chromium.ui.touchless.TouchlessEventHandler;
 import org.chromium.ui.widget.Toast;
 
 import java.lang.ref.WeakReference;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 
 /**
  * The window base class that has the minimum functionality.
  */
 @JNINamespace("ui")
-public class WindowAndroid implements AndroidPermissionDelegate {
+public class WindowAndroid implements AndroidPermissionDelegate, DisplayAndroidObserver {
     private static final String TAG = "WindowAndroid";
+
+    // Arbitrary error margin to account for cases where the display's refresh rate might not
+    // exactly match the target rate.
+    private static final float MAX_REFRESH_RATE_DELTA = 2.f;
+
     private KeyboardVisibilityDelegate mKeyboardVisibilityDelegate =
             KeyboardVisibilityDelegate.getInstance();
 
@@ -89,6 +103,8 @@ public class WindowAndroid implements AndroidPermissionDelegate {
     // Error code returned when an Intent fails to start an Activity.
     public static final int START_INTENT_FAILURE = -1;
 
+    private boolean mWindowisWideColorGamut;
+
     protected SparseArray<IntentCallback> mOutstandingIntents;
     // We use a weak reference here to prevent this from leaking in WebView.
     private WeakReference<Context> mContextRef;
@@ -118,6 +134,9 @@ public class WindowAndroid implements AndroidPermissionDelegate {
     private boolean mPendingVSyncRequest;
     private boolean mVSyncPaused;
 
+    // List of display modes with the same dimensions as the current mode but varying refresh rate.
+    private List<Display.Mode> mSupportedRefreshRateModes;
+
     /**
      * An interface to notify listeners that a context menu is closed.
      */
@@ -146,6 +165,20 @@ public class WindowAndroid implements AndroidPermissionDelegate {
     private ObserverList<ActivityStateObserver> mActivityStateObservers = new ObserverList<>();
 
     /**
+     * An interface to notify listeners of the changes in selection handles state.
+     */
+    public interface SelectionHandlesObserver {
+        /**
+         * Called when the selection handles state changes.
+         */
+        void onSelectionHandlesStateChanged(boolean active);
+    }
+
+    private boolean mSelectionHandlesActive;
+    private ObserverList<SelectionHandlesObserver> mSelectionHandlesObservers =
+            new ObserverList<>();
+
+    /**
      * Gets the view for readback.
      */
     public View getReadbackView() {
@@ -169,6 +202,23 @@ public class WindowAndroid implements AndroidPermissionDelegate {
             }
         }
     };
+
+    private final CursorObserver mCursorObserver =
+            new CursorObserver() {
+                @Override
+                public void onCursorVisibilityChanged(boolean visible) {
+                    if (mNativeWindowAndroid != 0) {
+                        nativeOnCursorVisibilityChanged(mNativeWindowAndroid, visible);
+                    }
+                }
+
+                @Override
+                public void onFallbackCursorModeToggled(boolean isOn) {
+                    if (mNativeWindowAndroid != 0) {
+                        nativeOnFallbackCursorModeToggled(mNativeWindowAndroid, isOn);
+                    }
+                }
+            };
 
     /**
      * Extract the activity if the given Context either is or wraps one.
@@ -222,14 +272,20 @@ public class WindowAndroid implements AndroidPermissionDelegate {
         mContextRef = new WeakReference<>(context);
         mOutstandingIntents = new SparseArray<>();
         mIntentErrors = new HashMap<>();
+        mDisplayAndroid = display;
+        mDisplayAndroid.addObserver(this);
+
+        // Multiple refresh rate support is only available on M+.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) recomputeSupportedRefreshRates();
+
         // Temporary solution for flaky tests, see https://crbug.com/767624 for context
         try (StrictModeContext unused = StrictModeContext.allowDiskReads()) {
-            mVSyncMonitor = new VSyncMonitor(context, mVSyncListener);
+            mVSyncMonitor =
+                    new VSyncMonitor(context, mVSyncListener, mDisplayAndroid.getRefreshRate());
             mAccessibilityManager =
                     (AccessibilityManager) ContextUtils.getApplicationContext().getSystemService(
                             Context.ACCESSIBILITY_SERVICE);
         }
-        mDisplayAndroid = display;
         // Configuration.isDisplayServerWideColorGamut must be queried from the window's context.
         // Because of crbug.com/756180, many devices report true for isScreenWideColorGamut in
         // 8.0.0, even when they don't actually support wide color gamut.
@@ -240,6 +296,8 @@ public class WindowAndroid implements AndroidPermissionDelegate {
             boolean isScreenWideColorGamut = ApiHelperForO.isScreenWideColorGamut(configuration);
             display.updateIsDisplayServerWideColorGamut(isScreenWideColorGamut);
         }
+
+        TouchlessEventHandler.addCursorObserver(mCursorObserver);
     }
 
     @CalledByNative
@@ -574,6 +632,27 @@ public class WindowAndroid implements AndroidPermissionDelegate {
         mActivityStateObservers.removeObserver(observer);
     }
 
+    public void addSelectionHandlesObserver(SelectionHandlesObserver observer) {
+        assert !mSelectionHandlesObservers.hasObserver(observer);
+        mSelectionHandlesObservers.addObserver(observer);
+        observer.onSelectionHandlesStateChanged(mSelectionHandlesActive);
+    }
+
+    public void removeSelectionHandlesObserver(SelectionHandlesObserver observer) {
+        assert mSelectionHandlesObservers.hasObserver(observer);
+        mSelectionHandlesObservers.removeObserver(observer);
+    }
+
+    /**
+     * Removes a new {@link ActivityStateObserver} instance.
+     */
+    @CalledByNative
+    private void onSelectionHandlesStateChanged(boolean active) {
+        mSelectionHandlesActive = active;
+        for (SelectionHandlesObserver observer : mSelectionHandlesObservers)
+            observer.onSelectionHandlesStateChanged(active);
+    }
+
     /**
      * @return Current state of the associated {@link Activity}. Can be overriden
      *         to return the correct state. {@code ActivityState.DESTROYED} by default.
@@ -631,6 +710,8 @@ public class WindowAndroid implements AndroidPermissionDelegate {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
             if (mTouchExplorationMonitor != null) mTouchExplorationMonitor.destroy();
         }
+
+        TouchlessEventHandler.removeCursorObserver(mCursorObserver);
     }
 
     /**
@@ -641,8 +722,8 @@ public class WindowAndroid implements AndroidPermissionDelegate {
     @CalledByNative
     private long getNativePointer() {
         if (mNativeWindowAndroid == 0) {
-            mNativeWindowAndroid =
-                    nativeInit(mDisplayAndroid.getDisplayId(), getMouseWheelScrollFactor());
+            mNativeWindowAndroid = nativeInit(mDisplayAndroid.getDisplayId(),
+                    getMouseWheelScrollFactor(), getWindowIsWideColorGamut());
             nativeSetVSyncPaused(mNativeWindowAndroid, mVSyncPaused);
         }
         return mNativeWindowAndroid;
@@ -663,6 +744,25 @@ public class WindowAndroid implements AndroidPermissionDelegate {
             return outValue.getDimension(context.getResources().getDisplayMetrics());
         }
         return 0;
+    }
+
+    // Helper to get the android Window. Always null for application context. Need to null check
+    // result returning value.
+    private Window getWindow() {
+        Activity activity = activityFromContext(mContextRef.get());
+        if (activity == null) return null;
+        return activity.getWindow();
+    }
+
+    // This is android.view.Window.isWideColorGamut, which is only set if the passed in Context is
+    // an Activity. This is normally not needed for apps which can decide whether to enable wide
+    // gamut (on supported hardware and os). However it is important for embedders like WebView
+    // which do not make the wide gamut decision to check this at run time.
+    private boolean getWindowIsWideColorGamut() {
+        if (!BuildInfo.isAtLeastQ()) return false;
+        Window window = getWindow();
+        if (window == null) return false;
+        return ApiHelperForOMR1.isWideColorGamut(window);
     }
 
     /**
@@ -774,9 +874,7 @@ public class WindowAndroid implements AndroidPermissionDelegate {
      */
     @CalledByNative
     protected IBinder getWindowToken() {
-        Activity activity = activityFromContext(mContextRef.get());
-        if (activity == null) return null;
-        Window window = activity.getWindow();
+        Window window = getWindow();
         if (window == null) return null;
         View decorView = window.peekDecorView();
         if (decorView == null) return null;
@@ -816,7 +914,110 @@ public class WindowAndroid implements AndroidPermissionDelegate {
         if (mNativeWindowAndroid != 0) nativeSetVSyncPaused(mNativeWindowAndroid, paused);
     }
 
-    private native long nativeInit(int displayId, float scrollFactor);
+    @Override
+    public void onRefreshRateChanged(float refreshRate) {
+        mVSyncMonitor.updateRefreshRate(refreshRate);
+        if (mNativeWindowAndroid != 0) nativeOnUpdateRefreshRate(mNativeWindowAndroid, refreshRate);
+    }
+
+    @Override
+    @TargetApi(Build.VERSION_CODES.M)
+    public void onCurrentModeChanged(Display.Mode currentMode) {
+        recomputeSupportedRefreshRates();
+    }
+
+    @Override
+    @TargetApi(Build.VERSION_CODES.M)
+    public void onDisplayModesChanged(List<Display.Mode> supportedModes) {
+        recomputeSupportedRefreshRates();
+    }
+
+    @SuppressLint("NewApi") // This should only be called if Display.Mode is available.
+    @TargetApi(Build.VERSION_CODES.M)
+    private void recomputeSupportedRefreshRates() {
+        Display.Mode currentMode = mDisplayAndroid.getCurrentMode();
+        assert currentMode != null;
+
+        List<Display.Mode> supportedModes = mDisplayAndroid.getSupportedModes();
+        assert supportedModes != null;
+        assert supportedModes.size() > 0;
+
+        List<Display.Mode> supportedRefreshRateModes = new ArrayList<Display.Mode>();
+        for (int i = 0; i < supportedModes.size(); ++i) {
+            if (currentMode.equals(supportedModes.get(i))) {
+                supportedRefreshRateModes.add(supportedModes.get(i));
+                continue;
+            }
+
+            // Only advertise refresh rates which wouldn't change other configurations on the
+            // Display.
+            if (currentMode.getPhysicalWidth() == supportedModes.get(i).getPhysicalWidth()
+                    && currentMode.getPhysicalHeight() == supportedModes.get(i).getPhysicalHeight()
+                    && currentMode.getRefreshRate() != supportedModes.get(i).getRefreshRate()) {
+                supportedRefreshRateModes.add(supportedModes.get(i));
+                continue;
+            }
+        }
+
+        boolean changed = !supportedRefreshRateModes.equals(mSupportedRefreshRateModes);
+        if (changed) {
+            mSupportedRefreshRateModes = supportedRefreshRateModes;
+            if (mNativeWindowAndroid != 0) {
+                nativeOnSupportedRefreshRatesUpdated(
+                        mNativeWindowAndroid, getSupportedRefreshRates());
+            }
+        }
+    }
+
+    @CalledByNative
+    private float getRefreshRate() {
+        return mDisplayAndroid.getRefreshRate();
+    }
+
+    @SuppressLint("NewApi")
+    // mSupportedRefreshRateModes should only be set if Display.Mode is available.
+    @TargetApi(Build.VERSION_CODES.M)
+    @CalledByNative
+    private float[] getSupportedRefreshRates() {
+        if (mSupportedRefreshRateModes == null) return null;
+
+        float[] supportedRefreshRates = new float[mSupportedRefreshRateModes.size()];
+        for (int i = 0; i < mSupportedRefreshRateModes.size(); ++i)
+            supportedRefreshRates[i] = mSupportedRefreshRateModes.get(i).getRefreshRate();
+        return supportedRefreshRates;
+    }
+
+    @SuppressLint("NewApi")
+    @CalledByNative
+    private void setPreferredRefreshRate(float preferredRefreshRate) {
+        if (mSupportedRefreshRateModes == null) return;
+
+        Display.Mode preferredMode = null;
+        float preferredModeDelta = Float.MAX_VALUE;
+        for (int i = 0; i < mSupportedRefreshRateModes.size(); ++i) {
+            Display.Mode mode = mSupportedRefreshRateModes.get(i);
+            float delta = Math.abs(preferredRefreshRate - mode.getRefreshRate());
+            if (delta < preferredModeDelta) {
+                preferredModeDelta = delta;
+                preferredMode = mode;
+            }
+        }
+
+        if (preferredModeDelta > MAX_REFRESH_RATE_DELTA) {
+            Log.e(TAG, "Refresh rate not supported : " + preferredRefreshRate);
+            return;
+        }
+
+        Window window = getWindow();
+        WindowManager.LayoutParams params = window.getAttributes();
+        if (params.preferredDisplayModeId == preferredMode.getModeId()) return;
+
+        params.preferredDisplayModeId = preferredMode.getModeId();
+        window.setAttributes(params);
+    }
+
+    private native long nativeInit(
+            int displayId, float scrollFactor, boolean windowIsWideColorGamut);
     private native void nativeOnVSync(long nativeWindowAndroid,
                                       long vsyncTimeMicros,
                                       long vsyncPeriodMicros);
@@ -824,6 +1025,10 @@ public class WindowAndroid implements AndroidPermissionDelegate {
     private native void nativeOnActivityStopped(long nativeWindowAndroid);
     private native void nativeOnActivityStarted(long nativeWindowAndroid);
     private native void nativeSetVSyncPaused(long nativeWindowAndroid, boolean paused);
+    private native void nativeOnUpdateRefreshRate(long nativeWindowAndroid, float refreshRate);
     private native void nativeDestroy(long nativeWindowAndroid);
-
+    private native void nativeOnCursorVisibilityChanged(long nativeWindowAndroid, boolean visible);
+    private native void nativeOnFallbackCursorModeToggled(long nativeWindowAndroid, boolean isOn);
+    private native void nativeOnSupportedRefreshRatesUpdated(
+            long nativeWindowAndroid, float[] supportedRefreshRates);
 }

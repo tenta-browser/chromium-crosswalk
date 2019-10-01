@@ -36,8 +36,11 @@ class BackgroundTaskSchedulerUma {
     static final int BACKGROUND_TASK_DEPRECATED_EXPLORE_SITES_REFRESH = 16;
     static final int BACKGROUND_TASK_EXPLORE_SITES_REFRESH = 17;
     static final int BACKGROUND_TASK_DOWNLOAD_AUTO_RESUMPTION = 18;
+    static final int BACKGROUND_TASK_ONE_SHOT_SYNC_WAKE_UP = 19;
+    static final int BACKGROUND_TASK_NOTIFICATION_SCHEDULER = 20;
+    static final int BACKGROUND_TASK_NOTIFICATION_TRIGGER = 21;
     // Keep this one at the end and increment appropriately when adding new tasks.
-    static final int BACKGROUND_TASK_COUNT = 19;
+    static final int BACKGROUND_TASK_COUNT = 22;
 
     static final String KEY_CACHED_UMA = "bts_cached_uma";
 
@@ -151,10 +154,57 @@ class BackgroundTaskSchedulerUma {
         cacheEvent("Android.BackgroundTaskScheduler.TaskStopped", toUmaEnumValueFromTaskId(taskId));
     }
 
-    /** Reports metrics for when a NativeBackgroundTask loads the native library. */
-    public void reportTaskStartedNative(int taskId) {
-        cacheEvent("Android.BackgroundTaskScheduler.TaskLoadedNative",
-                toUmaEnumValueFromTaskId(taskId));
+    /**
+     * Reports metrics for when a NativeBackgroundTask loads the native library.
+     * @param taskId An id from {@link TaskIds}.
+     * @param serviceManagerOnlyMode Whether the task will start native in Service Manager Only Mode
+     *                              (Reduced Mode) instead of Full Browser Mode.
+     */
+    public void reportTaskStartedNative(int taskId, boolean serviceManagerOnlyMode) {
+        int umaEnumValue = toUmaEnumValueFromTaskId(taskId);
+        cacheEvent("Android.BackgroundTaskScheduler.TaskLoadedNative", umaEnumValue);
+        if (serviceManagerOnlyMode) {
+            cacheEvent(
+                    "Android.BackgroundTaskScheduler.TaskLoadedNative.ReducedMode", umaEnumValue);
+        } else {
+            cacheEvent(
+                    "Android.BackgroundTaskScheduler.TaskLoadedNative.FullBrowser", umaEnumValue);
+        }
+    }
+
+    /**
+     * Report metrics for starting a NativeBackgroundTask. This does not consider tasks that are
+     * short-circuited before any work is done.
+     * @param taskId An id from {@link TaskIds}.
+     * @param serviceManagerOnlyMode Whether the task will run in Service Manager Only Mode (Reduced
+     *                               Mode) instead of Full Browser Mode.
+     */
+    public void reportNativeTaskStarted(int taskId, boolean serviceManagerOnlyMode) {
+        int umaEnumValue = toUmaEnumValueFromTaskId(taskId);
+        cacheEvent("Android.NativeBackgroundTask.TaskStarted", umaEnumValue);
+        if (serviceManagerOnlyMode) {
+            cacheEvent("Android.NativeBackgroundTask.TaskStarted.ReducedMode", umaEnumValue);
+        } else {
+            cacheEvent("Android.NativeBackgroundTask.TaskStarted.FullBrowser", umaEnumValue);
+        }
+    }
+
+    /**
+     * Reports metrics that a NativeBackgroundTask has been finished cleanly (i.e., no unexpected
+     * exits because of chrome crash or OOM). This includes tasks that have been stopped due to
+     * timeout.
+     * @param taskId An id from {@link TaskIds}.
+     * @param serviceManagerOnlyMode Whether the task will run in Service Manager Only Mode (Reduced
+     *                               Mode) instead of Full Browser Mode.
+     */
+    public void reportNativeTaskFinished(int taskId, boolean serviceManagerOnlyMode) {
+        int umaEnumValue = toUmaEnumValueFromTaskId(taskId);
+        cacheEvent("Android.NativeBackgroundTask.TaskFinished", umaEnumValue);
+        if (serviceManagerOnlyMode) {
+            cacheEvent("Android.NativeBackgroundTask.TaskFinished.ReducedMode", umaEnumValue);
+        } else {
+            cacheEvent("Android.NativeBackgroundTask.TaskFinished.FullBrowser", umaEnumValue);
+        }
     }
 
     /** Method that actually invokes histogram recording. Extracted for testing. */
@@ -262,6 +312,12 @@ class BackgroundTaskSchedulerUma {
                 return BACKGROUND_TASK_DEPRECATED_EXPLORE_SITES_REFRESH;
             case TaskIds.EXPLORE_SITES_REFRESH_JOB_ID:
                 return BACKGROUND_TASK_EXPLORE_SITES_REFRESH;
+            case TaskIds.BACKGROUND_SYNC_ONE_SHOT_JOB_ID:
+                return BACKGROUND_TASK_ONE_SHOT_SYNC_WAKE_UP;
+            case TaskIds.NOTIFICATION_SCHEDULER_JOB_ID:
+                return BACKGROUND_TASK_NOTIFICATION_SCHEDULER;
+            case TaskIds.NOTIFICATION_TRIGGER_JOB_ID:
+                return BACKGROUND_TASK_NOTIFICATION_TRIGGER;
             default:
                 assert false;
         }

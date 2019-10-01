@@ -7,9 +7,11 @@
 </head>
 <body>
 <script>
-promise_test(function() {
+promise_test(async t => {
   let pc1 = new RTCPeerConnection();
+  t.add_cleanup(() => pc1.close());
   let pc2 = new RTCPeerConnection();
+  t.add_cleanup(() => pc2.close());
   let video_sender, audio_sender;
 
   return createStreams({audio:true, video:true}, 1)
@@ -83,13 +85,13 @@ function verifySenderParameters(parameters, kind) {
   for(let encoding of parameters.encodings) {
     assert_false(encoding.hasOwnProperty("codecPayloadType"), "unset codecPayloadType");
     assert_false(encoding.hasOwnProperty("dtx"), "unset dtx");
+    assert_equals(encoding.rid, '');
     assert_true(encoding.active);
     assert_equals(encoding.priority, "low");
     assert_false(encoding.hasOwnProperty("ptime"), "unset ptime");
     assert_false(encoding.hasOwnProperty("maxBitrate"), "unset maxBitrate");
     assert_false(encoding.hasOwnProperty("maxFramerate"), "unset maxFramerate");
     assert_false(encoding.hasOwnProperty("scaleResolutionDownBy"), "unset scaleResolutionDownBy");
-    assert_false(encoding.hasOwnProperty("rid"), "unset rid");
   }
 
   assert_false(parameters.hasOwnProperty("degradationPreference"), "unimplemented degradationPreference");

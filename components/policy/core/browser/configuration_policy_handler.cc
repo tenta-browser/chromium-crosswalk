@@ -178,9 +178,8 @@ bool IntRangePolicyHandlerBase::EnsureInRange(const base::Value* input,
 
   if (value < min_ || value > max_) {
     if (errors) {
-      errors->AddError(policy_name(),
-                       IDS_POLICY_OUT_OF_RANGE_ERROR,
-                       base::IntToString(value));
+      errors->AddError(policy_name(), IDS_POLICY_OUT_OF_RANGE_ERROR,
+                       base::NumberToString(value));
     }
 
     if (!clamp_)
@@ -193,7 +192,6 @@ bool IntRangePolicyHandlerBase::EnsureInRange(const base::Value* input,
     *output = value;
   return true;
 }
-
 
 // StringMappingListPolicyHandler implementation -----------------------------
 
@@ -228,8 +226,8 @@ void StringMappingListPolicyHandler::ApplyPolicySettings(
   if (!pref_path_)
     return;
   const base::Value* value = policies.GetValue(policy_name());
-  std::unique_ptr<base::ListValue> list(new base::ListValue());
-  if (value && Convert(value, list.get(), nullptr))
+  base::ListValue list;
+  if (value && Convert(value, &list, nullptr))
     prefs->SetValue(pref_path_, std::move(list));
 }
 
@@ -262,8 +260,7 @@ bool StringMappingListPolicyHandler::Convert(const base::Value* input,
         output->Append(std::move(mapped_value));
     } else {
       if (errors) {
-        errors->AddError(policy_name(),
-                         entry - list_value->begin(),
+        errors->AddError(policy_name(), entry - list_value->begin(),
                          IDS_POLICY_OUT_OF_RANGE_ERROR);
       }
     }
@@ -308,7 +305,6 @@ void IntRangePolicyHandler::ApplyPolicySettings(const PolicyMap& policies,
     prefs->SetInteger(pref_path_, value_in_range);
 }
 
-
 // IntPercentageToDoublePolicyHandler implementation ---------------------------
 
 IntPercentageToDoublePolicyHandler::IntPercentageToDoublePolicyHandler(
@@ -333,7 +329,6 @@ void IntPercentageToDoublePolicyHandler::ApplyPolicySettings(
     prefs->SetDouble(pref_path_, static_cast<double>(percentage) / 100.);
 }
 
-
 // SimplePolicyHandler implementation ------------------------------------------
 
 SimplePolicyHandler::SimplePolicyHandler(const char* policy_name,
@@ -350,9 +345,8 @@ void SimplePolicyHandler::ApplyPolicySettings(const PolicyMap& policies,
     return;
   const base::Value* value = policies.GetValue(policy_name());
   if (value)
-    prefs->SetValue(pref_path_, value->CreateDeepCopy());
+    prefs->SetValue(pref_path_, value->Clone());
 }
-
 
 // SchemaValidatingPolicyHandler implementation --------------------------------
 
@@ -456,7 +450,7 @@ void SimpleSchemaValidatingPolicyHandler::ApplyPolicySettings(
     return;
   const base::Value* value = policies.GetValue(policy_name());
   if (value)
-    prefs->SetValue(pref_path_, value->CreateDeepCopy());
+    prefs->SetValue(pref_path_, value->Clone());
 }
 
 // SimpleJsonStringSchemaValidatingPolicyHandler implementation ----------------
@@ -572,7 +566,7 @@ bool SimpleJsonStringSchemaValidatingPolicyHandler::ValidateJsonString(
     int index) {
   std::string parse_error;
   std::unique_ptr<base::Value> parsed_value =
-      base::JSONReader::ReadAndReturnError(
+      base::JSONReader::ReadAndReturnErrorDeprecated(
           json_string, base::JSON_ALLOW_TRAILING_COMMAS, nullptr, &parse_error);
   if (errors && !parse_error.empty()) {
     errors->AddError(policy_name_, ErrorPath(index, ""),
@@ -585,6 +579,8 @@ bool SimpleJsonStringSchemaValidatingPolicyHandler::ValidateJsonString(
   std::string error_path;
   const Schema json_string_schema =
       IsListSchema() ? schema_.GetItems() : schema_;
+  // TODO(https://crbug.com/953615): Consider switching from SCHEMA_STRICT to
+  // SCHEMA_ALLOW_UNKNOWN for all schema validating policy handlers.
   bool validated = json_string_schema.Validate(*parsed_value, SCHEMA_STRICT,
                                                &error_path, &schema_error);
   if (errors && !schema_error.empty())
@@ -614,7 +610,7 @@ void SimpleJsonStringSchemaValidatingPolicyHandler::ApplyPolicySettings(
     return;
   const base::Value* value = policies.GetValue(policy_name_);
   if (value)
-    prefs->SetValue(pref_path_, value->CreateDeepCopy());
+    prefs->SetValue(pref_path_, value->Clone());
 }
 
 void SimpleJsonStringSchemaValidatingPolicyHandler::RecordJsonError() {

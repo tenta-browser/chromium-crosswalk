@@ -32,9 +32,8 @@ class MetricsEventServiceProvider
  private:
   // resource_coordinator::TabLifecycleObserver:
   void OnDiscardedStateChange(content::WebContents* contents,
+                              mojom::LifecycleUnitDiscardReason reason,
                               bool is_discarded) override;
-  void OnAutoDiscardableStateChange(content::WebContents* contents,
-                                    bool is_auto_discardable) override {}
 
   // Emits the D-Bus signal for this event.
   void EmitSignal(metrics_event::Event_Type type);

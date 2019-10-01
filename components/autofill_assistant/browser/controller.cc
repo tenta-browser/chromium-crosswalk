@@ -6,11 +6,15 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/json/json_writer.h"
+#include "base/no_destructor.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/post_task.h"
+#include "base/time/tick_clock.h"
 #include "base/values.h"
+#include "components/autofill_assistant/browser/features.h"
 #include "components/autofill_assistant/browser/metrics.h"
 #include "components/autofill_assistant/browser/protocol_utils.h"
 #include "components/autofill_assistant/browser/ui_controller.h"
@@ -27,20 +31,9 @@ namespace autofill_assistant {
 
 namespace {
 
-// Time between two periodic script checks.
-static constexpr base::TimeDelta kPeriodicScriptCheckInterval =
-    base::TimeDelta::FromSeconds(2);
-
-// Number of script checks to run after a call to StartPeriodicScriptChecks.
-static constexpr int kPeriodicScriptCheckCount = 10;
-
-// Maximum number of script checks we should do before failing when trying to
-// autostart.
-static constexpr int kAutostartCheckCountLimit = 5;
-
 // The initial progress to set when autostarting and showing the "Loading..."
 // message.
-static constexpr int kAutostartInitialProgress = 10;
+static constexpr int kAutostartInitialProgress = 5;
 
 // Cookie experiment name.
 // TODO(crbug.com/806868): Introduce a dedicated experiment extra parameter to
@@ -51,30 +44,37 @@ static const char* const kCookieExperimentName = "EXP_COOKIE";
 // set when the cookie experiment is active.
 static const char* const kWebsiteVisitedBeforeParameterName =
     "WEBSITE_VISITED_BEFORE";
+// Parameter that allows setting the color of the overlay.
+static const char* const kOverlayColorParameterName = "OVERLAY_COLORS";
 
 static const char* const kTrueValue = "true";
-
 }  // namespace
 
-Controller::Controller(content::WebContents* web_contents, Client* client)
+Controller::Controller(content::WebContents* web_contents,
+                       Client* client,
+                       const base::TickClock* tick_clock)
     : content::WebContentsObserver(web_contents),
       client_(client),
-      weak_ptr_factory_(this) {
-  // Only set the controller as the delegate if web_contents does not yet have
-  // one.
-  // TODO(crbug.com/806868): Find a better way to get a loading progress instead
-  // of using the controller as a web_contents delegate. It may interfere with
-  // an already existing delegate.
-  if (web_contents->GetDelegate() == nullptr) {
-    clear_web_contents_delegate_ = true;
-    web_contents->SetDelegate(this);
-  }
+      tick_clock_(tick_clock),
+      navigating_to_new_document_(web_contents->IsWaitingForResponse()),
+      weak_ptr_factory_(this) {}
+
+Controller::~Controller() = default;
+
+const ClientSettings& Controller::GetSettings() {
+  return settings_;
 }
 
-Controller::~Controller() {
-  if (clear_web_contents_delegate_) {
-    web_contents()->SetDelegate(nullptr);
-  }
+const GURL& Controller::GetCurrentURL() {
+  const GURL& last_committed = web_contents()->GetLastCommittedURL();
+  if (!last_committed.is_empty())
+    return last_committed;
+
+  return deeplink_url_;
+}
+
+const GURL& Controller::GetDeeplinkURL() {
+  return deeplink_url_;
 }
 
 Service* Controller::GetService() {
@@ -85,12 +85,24 @@ Service* Controller::GetService() {
 }
 
 UiController* Controller::GetUiController() {
+  if (will_shutdown_) {
+    // Never call the UI controller after having announced a shutdown, no matter
+    // what happens; this is part of the contract of UIDelegate.
+    //
+    // TODO(crbug/925947): Once UIController has become observer, clear list of
+    // observers instead.
+    if (!noop_ui_controller_) {
+      noop_ui_controller_ = std::make_unique<UiController>();
+    }
+    return noop_ui_controller_.get();
+  }
   return client_->GetUiController();
 }
 
 WebController* Controller::GetWebController() {
   if (!web_controller_) {
-    web_controller_ = WebController::CreateForWebContents(web_contents());
+    web_controller_ =
+        WebController::CreateForWebContents(web_contents(), &settings_);
   }
   return web_controller_.get();
 }
@@ -102,8 +114,9 @@ ClientMemory* Controller::GetClientMemory() {
   return memory_.get();
 }
 
-const std::map<std::string, std::string>& Controller::GetParameters() {
-  return parameters_;
+const TriggerContext* Controller::GetTriggerContext() {
+  DCHECK(trigger_context_);
+  return trigger_context_.get();
 }
 
 autofill::PersonalDataManager* Controller::GetPersonalDataManager() {
@@ -127,28 +140,309 @@ std::string Controller::GetStatusMessage() const {
   return status_message_;
 }
 
-void Controller::SetDetails(const Details& details) {
-  if (!details_) {
-    details_ = std::make_unique<Details>();
-  }
-  *details_ = details;
+void Controller::SetDetails(std::unique_ptr<Details> details) {
+  details_ = std::move(details);
   GetUiController()->OnDetailsChanged(details_.get());
-}
-
-void Controller::ClearDetails() {
-  details_.reset();
-  GetUiController()->OnDetailsChanged(nullptr);
 }
 
 const Details* Controller::GetDetails() const {
   return details_.get();
 }
 
-void Controller::EnterState(AutofillAssistantState state) {
-  if (state_ == state)
+int Controller::GetProgress() const {
+  return progress_;
+}
+
+void Controller::SetInfoBox(const InfoBox& info_box) {
+  if (!info_box_) {
+    info_box_ = std::make_unique<InfoBox>();
+  }
+  *info_box_ = info_box;
+  GetUiController()->OnInfoBoxChanged(info_box_.get());
+}
+
+void Controller::ClearInfoBox() {
+  info_box_.reset();
+  GetUiController()->OnInfoBoxChanged(nullptr);
+}
+
+const InfoBox* Controller::GetInfoBox() const {
+  return info_box_.get();
+}
+
+void Controller::SetProgress(int progress) {
+  // Progress can only increase.
+  if (progress_ >= progress)
     return;
-  DCHECK_NE(state_, AutofillAssistantState::STOPPED)
-      << "Unexpected transition from STOPPED to " << static_cast<int>(state);
+
+  progress_ = progress;
+  GetUiController()->OnProgressChanged(progress);
+}
+
+void Controller::SetProgressVisible(bool visible) {
+  if (progress_visible_ == visible)
+    return;
+
+  progress_visible_ = visible;
+  GetUiController()->OnProgressVisibilityChanged(visible);
+}
+
+bool Controller::GetProgressVisible() const {
+  return progress_visible_;
+}
+
+const std::vector<Chip>& Controller::GetSuggestions() const {
+  static const base::NoDestructor<std::vector<Chip>> no_suggestions_;
+  return suggestions_ ? *suggestions_ : *no_suggestions_;
+}
+
+const std::vector<Chip>& Controller::GetActions() const {
+  static const base::NoDestructor<std::vector<Chip>> no_actions_;
+  return actions_ ? *actions_ : *no_actions_;
+}
+
+void Controller::SetChips(std::unique_ptr<std::vector<Chip>> chips) {
+  // We split the chips into suggestions and actions, that are displayed in
+  // different carousels.
+  actions_.reset();
+  suggestions_.reset();
+
+  if (chips && !chips->empty()) {
+    for (auto iter = chips->begin(); iter != chips->end(); iter++) {
+      if (iter->type == SUGGESTION) {
+        if (!suggestions_) {
+          suggestions_ = std::make_unique<std::vector<Chip>>();
+        }
+
+        suggestions_->emplace_back(std::move(*iter));
+      } else {
+        if (!actions_) {
+          actions_ = std::make_unique<std::vector<Chip>>();
+        }
+
+        actions_->emplace_back(std::move(*iter));
+      }
+    }
+  }
+
+  GetUiController()->OnSuggestionsChanged(GetSuggestions());
+  GetUiController()->OnActionsChanged(GetActions());
+}
+
+bool Controller::IsNavigatingToNewDocument() {
+  return navigating_to_new_document_;
+}
+
+bool Controller::HasNavigationError() {
+  return navigation_error_;
+}
+
+void Controller::AddListener(ScriptExecutorDelegate::Listener* listener) {
+  auto found = std::find(listeners_.begin(), listeners_.end(), listener);
+  if (found == listeners_.end())
+    listeners_.emplace_back(listener);
+}
+
+void Controller::RemoveListener(ScriptExecutorDelegate::Listener* listener) {
+  auto found = std::find(listeners_.begin(), listeners_.end(), listener);
+  if (found != listeners_.end())
+    listeners_.erase(found);
+}
+
+void Controller::SelectSuggestion(int index) {
+  SelectChip(suggestions_.get(), index);
+}
+
+void Controller::SelectAction(int index) {
+  SelectChip(actions_.get(), index);
+}
+
+void Controller::SelectChip(std::vector<Chip>* chips, int chip_index) {
+  if (!chips || chip_index < 0 ||
+      static_cast<size_t>(chip_index) >= chips->size()) {
+    NOTREACHED() << "Invalid chip index: " << chip_index;
+    return;
+  }
+
+  if (!(*chips)[chip_index].callback) {
+    return;
+  }
+
+  auto callback = std::move((*chips)[chip_index].callback);
+  SetChips(nullptr);
+  std::move(callback).Run();
+}
+
+void Controller::SetResizeViewport(bool resize_viewport) {
+  if (resize_viewport == resize_viewport_)
+    return;
+
+  resize_viewport_ = resize_viewport;
+  GetUiController()->OnResizeViewportChanged(resize_viewport);
+}
+
+void Controller::SetPeekMode(ConfigureBottomSheetProto::PeekMode peek_mode) {
+  if (peek_mode == peek_mode_)
+    return;
+
+  peek_mode_ = peek_mode;
+  GetUiController()->OnPeekModeChanged(peek_mode);
+}
+
+const FormProto* Controller::GetForm() const {
+  return form_.get();
+}
+
+bool Controller::SetForm(
+    std::unique_ptr<FormProto> form,
+    base::RepeatingCallback<void(const FormProto::Result*)> callback) {
+  form_.reset();
+  form_result_.reset();
+  form_callback_ = base::DoNothing();
+
+  if (!form) {
+    GetUiController()->OnFormChanged(nullptr);
+    return true;
+  }
+
+  // Initialize form result. This will return false if the form is invalid or
+  // contains unsupported inputs.
+  auto form_result = std::make_unique<FormProto::Result>();
+  for (FormInputProto& input : *form->mutable_inputs()) {
+    FormInputProto::Result* result = form_result->add_input_results();
+    switch (input.input_type_case()) {
+      case FormInputProto::InputTypeCase::kCounter:
+        // Add the initial value of each counter into the form result.
+        for (const CounterInputProto::Counter& counter :
+             input.counter().counters()) {
+          result->mutable_counter()->add_values(counter.initial_value());
+        }
+        break;
+      case FormInputProto::InputTypeCase::kSelection: {
+        // Add the initial selected state of each choice into the form result.
+        bool has_selected = false;
+        for (const SelectionInputProto::Choice& choice :
+             input.selection().choices()) {
+          if (choice.selected()) {
+            if (has_selected && !input.selection().allow_multiple()) {
+              // Multiple choices are initially selected even though it is not
+              // allowed by the input.
+              return false;
+            }
+            has_selected = true;
+          }
+          result->mutable_selection()->add_selected(choice.selected());
+        }
+        break;
+      }
+      case FormInputProto::InputTypeCase::INPUT_TYPE_NOT_SET:
+        DVLOG(1) << "Encountered input with INPUT_TYPE_NOT_SET";
+        return false;
+        // Intentionally no default case to make compilation fail if a new value
+        // was added to the enum but not to this list.
+    }
+  }
+
+  // Form is valid.
+  form_ = std::move(form);
+  form_result_ = std::move(form_result);
+  form_callback_ = callback;
+
+  // Call the callback with initial result.
+  form_callback_.Run(form_result_.get());
+
+  GetUiController()->OnFormChanged(form_.get());
+  return true;
+}
+
+void Controller::SetCounterValue(int input_index,
+                                 int counter_index,
+                                 int value) {
+  if (!form_result_ || input_index < 0 ||
+      input_index >= form_result_->input_results_size()) {
+    NOTREACHED() << "Invalid input index: " << input_index;
+    return;
+  }
+
+  FormInputProto::Result* input_result =
+      form_result_->mutable_input_results(input_index);
+  if (!input_result->has_counter() || counter_index < 0 ||
+      counter_index >= input_result->counter().values_size()) {
+    NOTREACHED() << "Invalid counter index: " << counter_index;
+    return;
+  }
+
+  input_result->mutable_counter()->set_values(counter_index, value);
+  form_callback_.Run(form_result_.get());
+}
+
+void Controller::SetChoiceSelected(int input_index,
+                                   int choice_index,
+                                   bool selected) {
+  if (!form_result_ || input_index < 0 ||
+      input_index >= form_result_->input_results_size()) {
+    NOTREACHED() << "Invalid input index: " << input_index;
+    return;
+  }
+
+  FormInputProto::Result* input_result =
+      form_result_->mutable_input_results(input_index);
+  if (!input_result->has_selection() || choice_index < 0 ||
+      choice_index >= input_result->selection().selected_size()) {
+    NOTREACHED() << "Invalid choice index: " << choice_index;
+    return;
+  }
+
+  input_result->mutable_selection()->set_selected(choice_index, selected);
+  form_callback_.Run(form_result_.get());
+}
+
+bool Controller::GetResizeViewport() {
+  return resize_viewport_;
+}
+
+ConfigureBottomSheetProto::PeekMode Controller::GetPeekMode() {
+  return peek_mode_;
+}
+
+void Controller::SetOverlayColors(std::unique_ptr<OverlayColors> colors) {
+  overlay_colors_ = std::move(colors);
+  if (overlay_colors_) {
+    GetUiController()->OnOverlayColorsChanged(*overlay_colors_);
+  } else {
+    OverlayColors default_colors;
+    GetUiController()->OnOverlayColorsChanged(default_colors);
+  }
+}
+
+void Controller::GetOverlayColors(OverlayColors* colors) const {
+  if (!overlay_colors_)
+    return;
+  *colors = *overlay_colors_;
+}
+
+void Controller::ReportNavigationStateChanged() {
+  // Listeners are called in the same order they were added.
+  for (auto* listener : listeners_) {
+    listener->OnNavigationStateChanged();
+  }
+}
+
+void Controller::EnterStoppedState() {
+  ClearInfoBox();
+  SetDetails(nullptr);
+  SetChips(nullptr);
+  SetPaymentRequestOptions(nullptr);
+  EnterState(AutofillAssistantState::STOPPED);
+}
+
+void Controller::EnterState(AutofillAssistantState state) {
+  if (state_ == state || state_ == AutofillAssistantState::STOPPED)
+    return;
+  // TODO(b/128300038): Forbid transition out of stopped again instead of
+  // ignoring it once shutdown sequence is less complex.
+
+  DVLOG(2) << __func__ << ": " << state_ << " -> " << state;
 
   state_ = state;
   GetUiController()->OnStateChanged(state);
@@ -161,25 +455,27 @@ void Controller::SetWebControllerAndServiceForTest(
   service_ = std::move(service);
 }
 
-void Controller::GetOrCheckScripts(const GURL& url) {
+void Controller::GetOrCheckScripts() {
   if (!started_ || script_tracker()->running()) {
     return;
   }
 
+  const GURL& url = GetCurrentURL();
   if (script_domain_ != url.host()) {
     StopPeriodicScriptChecks();
     script_domain_ = url.host();
+    DVLOG(2) << "GetScripts for " << script_domain_;
     GetService()->GetScriptsForUrl(
-        url, parameters_,
+        url, trigger_context_.get(),
         base::BindOnce(&Controller::OnGetScripts, base::Unretained(this), url));
   } else {
-    script_tracker()->CheckScripts(kPeriodicScriptCheckInterval);
+    script_tracker()->CheckScripts();
     StartPeriodicScriptChecks();
   }
 }
 
 void Controller::StartPeriodicScriptChecks() {
-  periodic_script_check_count_ = kPeriodicScriptCheckCount;
+  periodic_script_check_count_ = settings_.periodic_script_check_count;
   // If periodic checks are running, setting periodic_script_check_count_ keeps
   // them running longer.
   if (periodic_script_check_scheduled_)
@@ -189,7 +485,7 @@ void Controller::StartPeriodicScriptChecks() {
       FROM_HERE, {content::BrowserThread::UI},
       base::BindOnce(&Controller::OnPeriodicScriptCheck,
                      weak_ptr_factory_.GetWeakPtr()),
-      kPeriodicScriptCheckInterval);
+      settings_.periodic_script_check_interval);
 }
 
 void Controller::StopPeriodicScriptChecks() {
@@ -197,27 +493,32 @@ void Controller::StopPeriodicScriptChecks() {
 }
 
 void Controller::OnPeriodicScriptCheck() {
-  if (periodic_script_check_count_ <= 0) {
+  if (periodic_script_check_count_ > 0) {
+    periodic_script_check_count_--;
+  }
+
+  if (periodic_script_check_count_ <= 0 && !allow_autostart_) {
     DCHECK_EQ(0, periodic_script_check_count_);
     periodic_script_check_scheduled_ = false;
     return;
   }
 
-  if (should_fail_after_checking_scripts_ &&
-      ++total_script_check_count_ >= kAutostartCheckCountLimit) {
-    should_fail_after_checking_scripts_ = false;
-    OnFatalError(l10n_util::GetStringUTF8(IDS_AUTOFILL_ASSISTANT_DEFAULT_ERROR),
-                 Metrics::AUTOSTART_TIMEOUT);
+  if (allow_autostart_ && !autostart_timeout_script_path_.empty() &&
+      tick_clock_->NowTicks() >= absolute_autostart_timeout_) {
+    DVLOG(1) << __func__ << " giving up waiting on autostart.";
+    std::string script_path = autostart_timeout_script_path_;
+    autostart_timeout_script_path_.clear();
+    periodic_script_check_scheduled_ = false;
+    ExecuteScript(script_path, state_);
     return;
   }
 
-  periodic_script_check_count_--;
-  script_tracker()->CheckScripts(kPeriodicScriptCheckInterval);
+  script_tracker()->CheckScripts();
   base::PostDelayedTaskWithTraits(
       FROM_HERE, {content::BrowserThread::UI},
       base::BindOnce(&Controller::OnPeriodicScriptCheck,
                      weak_ptr_factory_.GetWeakPtr()),
-      kPeriodicScriptCheckInterval);
+      settings_.periodic_script_check_interval);
 }
 
 void Controller::OnGetScripts(const GURL& url,
@@ -232,20 +533,49 @@ void Controller::OnGetScripts(const GURL& url,
     return;
 
   if (!result) {
-    LOG(ERROR) << "Failed to get assistant scripts for URL " << url.spec();
-    // TODO(crbug.com/806868): Terminate Autofill Assistant.
+    DVLOG(1) << "Failed to get assistant scripts for " << script_domain_;
+    OnFatalError(l10n_util::GetStringUTF8(IDS_AUTOFILL_ASSISTANT_DEFAULT_ERROR),
+                 Metrics::GET_SCRIPTS_FAILED);
     return;
   }
 
+  SupportsScriptResponseProto response_proto;
+  if (!response_proto.ParseFromString(response)) {
+    DVLOG(2) << __func__ << " from " << script_domain_ << " returned "
+             << "unparseable response";
+    OnFatalError(l10n_util::GetStringUTF8(IDS_AUTOFILL_ASSISTANT_DEFAULT_ERROR),
+                 Metrics::GET_SCRIPTS_UNPARSABLE);
+    return;
+  }
+  if (response_proto.has_client_settings())
+    settings_.UpdateFromProto(response_proto.client_settings());
+
   std::vector<std::unique_ptr<Script>> scripts;
-  bool parse_result = ProtocolUtils::ParseScripts(response, &scripts);
-  DCHECK(parse_result);
+  for (const auto& script_proto : response_proto.scripts()) {
+    ProtocolUtils::AddScript(script_proto, &scripts);
+  }
+  if (scripts.empty()) {
+    OnNoRunnableScripts();
+    return;
+  }
+
+  if (allow_autostart_) {
+    autostart_timeout_script_path_ =
+        response_proto.script_timeout_error().script_path();
+    autostart_timeout_ = base::TimeDelta::FromMilliseconds(
+        response_proto.script_timeout_error().timeout_ms());
+    absolute_autostart_timeout_ = tick_clock_->NowTicks() + autostart_timeout_;
+  }
+
+  DVLOG(2) << __func__ << " from " << script_domain_ << " returned "
+           << scripts.size() << " scripts";
   script_tracker()->SetScripts(std::move(scripts));
-  script_tracker()->CheckScripts(kPeriodicScriptCheckInterval);
+  script_tracker()->CheckScripts();
   StartPeriodicScriptChecks();
 }
 
-void Controller::ExecuteScript(const std::string& script_path) {
+void Controller::ExecuteScript(const std::string& script_path,
+                               AutofillAssistantState end_state) {
   DCHECK(!script_tracker()->running());
   EnterState(AutofillAssistantState::RUNNING);
 
@@ -254,20 +584,22 @@ void Controller::ExecuteScript(const std::string& script_path) {
   StopPeriodicScriptChecks();
   // Runnable scripts will be checked and reported if necessary after executing
   // the script.
-  script_tracker()->ClearRunnableScripts();
-  GetUiController()->ClearChips();
+  script_tracker_->ClearRunnableScripts();
+  SetChips(nullptr);
   // TODO(crbug.com/806868): Consider making ClearRunnableScripts part of
   // ExecuteScripts to simplify the controller.
   script_tracker()->ExecuteScript(
-      script_path, base::BindOnce(&Controller::OnScriptExecuted,
-                                  // script_tracker_ is owned by Controller.
-                                  base::Unretained(this), script_path));
+      script_path,
+      base::BindOnce(&Controller::OnScriptExecuted,
+                     // script_tracker_ is owned by Controller.
+                     base::Unretained(this), script_path, end_state));
 }
 
 void Controller::OnScriptExecuted(const std::string& script_path,
+                                  AutofillAssistantState end_state,
                                   const ScriptExecutor::Result& result) {
   if (!result.success) {
-    LOG(ERROR) << "Failed to execute script " << script_path;
+    DVLOG(1) << "Failed to execute script " << script_path;
     OnFatalError(l10n_util::GetStringUTF8(IDS_AUTOFILL_ASSISTANT_DEFAULT_ERROR),
                  Metrics::SCRIPT_FAILED);
     return;
@@ -279,26 +611,17 @@ void Controller::OnScriptExecuted(const std::string& script_path,
 
   switch (result.at_end) {
     case ScriptExecutor::SHUTDOWN:
-      GetUiController()->Shutdown(Metrics::SCRIPT_SHUTDOWN);
-      return;
-    case ScriptExecutor::TERMINATE:
-      // TODO(crbug.com/806868): Distinguish shutdown from terminate: Users
-      // should be allowed to undo shutdown, but not terminate.
-      //
-      // This is coming from a client Stop() to clean up and we already counted
-      // it as a stop event. The code here is only executed if no script was
-      // running, so there may be some double counting.
-      GetUiController()->Shutdown(Metrics::SAFETY_NET_TERMINATE);
+      client_->Shutdown(Metrics::SCRIPT_SHUTDOWN);
       return;
 
     case ScriptExecutor::SHUTDOWN_GRACEFULLY:
       GetWebController()->ClearCookie();
-      stop_reason_ = Metrics::SCRIPT_SHUTDOWN;
-      EnterState(AutofillAssistantState::STOPPED);
+      EnterStoppedState();
+      client_->Shutdown(Metrics::SCRIPT_SHUTDOWN);
       return;
 
     case ScriptExecutor::CLOSE_CUSTOM_TAB:
-      GetUiController()->Close();
+      client_->Shutdown(Metrics::CUSTOM_TAB_CLOSED);
       return;
 
     case ScriptExecutor::RESTART:
@@ -311,33 +634,22 @@ void Controller::OnScriptExecuted(const std::string& script_path,
       break;
 
     default:
-      DLOG(ERROR) << "Unexpected value for at_end: " << result.at_end;
+      DVLOG(1) << "Unexpected value for at_end: " << result.at_end;
       break;
   }
-  EnterState(AutofillAssistantState::PROMPT);
-  GetOrCheckScripts(web_contents()->GetLastCommittedURL());
-}
-
-void Controller::OnFatalError(const std::string& error_message,
-                              Metrics::DropOutReason reason) {
-  if (state_ == AutofillAssistantState::STOPPED)
-    return;
-
-  StopPeriodicScriptChecks();
-  SetStatusMessage(error_message);
-  stop_reason_ = reason;
-  EnterState(AutofillAssistantState::STOPPED);
+  EnterState(end_state);
+  GetOrCheckScripts();
 }
 
 bool Controller::MaybeAutostartScript(
     const std::vector<ScriptHandle>& runnable_scripts) {
-  // We want to g through all runnable autostart interrupts first, one at a
+  // We want to go through all runnable autostart interrupts first, one at a
   // time. To do that, always run highest priority autostartable interrupt from
   // runnable_script, which is ordered by priority.
   for (const auto& script : runnable_scripts) {
     if (script.autostart && script.interrupt) {
       std::string script_path = script.path;
-      ExecuteScript(script_path);
+      ExecuteScript(script_path, state_);
       // making a copy of script.path is necessary, as ExecuteScript clears
       // runnable_scripts, so script.path will not survive until the end of
       // ExecuteScript.
@@ -359,67 +671,98 @@ bool Controller::MaybeAutostartScript(
       }
     }
     if (autostart_count == 1) {
-      allow_autostart_ = false;
-      ExecuteScript(autostart_path);
+      DisableAutostart();
+      ExecuteScript(autostart_path, AutofillAssistantState::PROMPT);
       return true;
     }
   }
   return false;
 }
 
-void Controller::OnGetCookie(const GURL& initial_url, bool has_cookie) {
+void Controller::DisableAutostart() {
+  allow_autostart_ = false;
+  autostart_timeout_script_path_.clear();
+}
+
+void Controller::OnGetCookie(bool has_cookie) {
   if (has_cookie) {
     // This code is only active with the experiment parameter.
-    parameters_.insert(
+    // TODO(crbug.com/806868): Remove the cookie experiment.
+    trigger_context_->script_parameters.insert(
         std::make_pair(kWebsiteVisitedBeforeParameterName, kTrueValue));
-    OnSetCookie(initial_url, has_cookie);
+    OnSetCookie(has_cookie);
     return;
   }
   GetWebController()->SetCookie(
-      initial_url.host(),
+      deeplink_url_.host(),
       base::BindOnce(&Controller::OnSetCookie,
                      // WebController is owned by Controller.
-                     base::Unretained(this), initial_url));
+                     base::Unretained(this)));
 }
 
-void Controller::OnSetCookie(const GURL& initial_url, bool result) {
+void Controller::OnSetCookie(bool result) {
   DCHECK(result) << "Setting cookie failed";
-  FinishStart(initial_url);
+  FinishStart();
 }
 
-void Controller::FinishStart(const GURL& initial_url) {
+void Controller::FinishStart() {
   started_ = true;
-  GetOrCheckScripts(initial_url);
   if (allow_autostart_) {
-    should_fail_after_checking_scripts_ = true;
-    MaybeSetInitialDetails();
-    SetStatusMessage(l10n_util::GetStringFUTF8(
-        IDS_AUTOFILL_ASSISTANT_LOADING, base::UTF8ToUTF16(initial_url.host())));
-    GetUiController()->ShowProgressBar(kAutostartInitialProgress);
+    SetStatusMessage(
+        l10n_util::GetStringFUTF8(IDS_AUTOFILL_ASSISTANT_LOADING,
+                                  base::UTF8ToUTF16(deeplink_url_.host())));
+    SetProgress(kAutostartInitialProgress);
+  }
+  GetOrCheckScripts();
+}
+
+void Controller::InitFromParameters() {
+  auto details = std::make_unique<Details>();
+  if (details->UpdateFromParameters(trigger_context_->script_parameters))
+    SetDetails(std::move(details));
+
+  const auto iter =
+      trigger_context_->script_parameters.find(kOverlayColorParameterName);
+  if (iter != trigger_context_->script_parameters.end()) {
+    std::unique_ptr<OverlayColors> colors = std::make_unique<OverlayColors>();
+    std::vector<std::string> color_strings = base::SplitString(
+        iter->second, ":", base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL);
+    if (color_strings.size() > 0) {
+      colors->background = color_strings[0];
+    }
+    if (color_strings.size() > 1) {
+      colors->highlight_border = color_strings[1];
+    }
+    // Ignore other colors, to allow future versions of the client to support
+    // setting more colors.
+
+    SetOverlayColors(std::move(colors));
   }
 }
 
-void Controller::MaybeSetInitialDetails() {
-  Details details;
-  if (details.UpdateFromParameters(parameters_))
-    SetDetails(details);
+bool Controller::NeedsUI() const {
+  return state_ != AutofillAssistantState::INACTIVE &&
+         state_ != AutofillAssistantState::STOPPED;
 }
 
-void Controller::Start(const GURL& initialUrl,
-                       const std::map<std::string, std::string>& parameters) {
+void Controller::Start(const GURL& deeplink_url,
+                       std::unique_ptr<TriggerContext> trigger_context) {
   if (state_ != AutofillAssistantState::INACTIVE) {
     NOTREACHED();
     return;
   }
+  trigger_context_ = std::move(trigger_context);
+  InitFromParameters();
+  deeplink_url_ = deeplink_url;
   EnterState(AutofillAssistantState::STARTING);
-  parameters_ = parameters;
+  client_->ShowUI();
   if (IsCookieExperimentEnabled()) {
     GetWebController()->HasCookie(
         base::BindOnce(&Controller::OnGetCookie,
                        // WebController is owned by Controller.
-                       base::Unretained(this), initialUrl));
+                       base::Unretained(this)));
   } else {
-    FinishStart(initialUrl);
+    FinishStart();
   }
 }
 
@@ -427,28 +770,26 @@ AutofillAssistantState Controller::GetState() {
   return state_;
 }
 
-bool Controller::Terminate() {
+void Controller::WillShutdown(Metrics::DropOutReason reason) {
   StopPeriodicScriptChecks();
-  if (script_tracker_)
-    return script_tracker_->Terminate();
-  return true;
+  if (!will_shutdown_) {
+    UiController* ui_controller = GetUiController();
+    will_shutdown_ = true;
+    ui_controller->WillShutdown(reason);
+  }
 }
 
 void Controller::OnScriptSelected(const std::string& script_path) {
   DCHECK(!script_path.empty());
-
-  // This is a script selected from the UI, so it should disable autostart.
-  allow_autostart_ = false;
-
-  ExecuteScript(script_path);
+  ExecuteScript(script_path, AutofillAssistantState::PROMPT);
 }
 
 void Controller::UpdateTouchableArea() {
-  touchable_element_area()->UpdatePositions();
+  touchable_element_area()->Update();
 }
 
 void Controller::OnUserInteractionInsideTouchableArea() {
-  script_tracker()->CheckScripts(kPeriodicScriptCheckInterval);
+  script_tracker()->CheckScripts();
   StartPeriodicScriptChecks();
 }
 
@@ -456,13 +797,15 @@ std::string Controller::GetDebugContext() {
   base::Value dict(base::Value::Type::DICTIONARY);
 
   dict.SetKey("status", base::Value(status_message_));
-  std::vector<base::Value> parameters_js;
-  for (const auto& entry : parameters_) {
-    base::Value parameter_js = base::Value(base::Value::Type::DICTIONARY);
-    parameter_js.SetKey(entry.first, base::Value(entry.second));
-    parameters_js.push_back(std::move(parameter_js));
+  if (trigger_context_) {
+    std::vector<base::Value> parameters_js;
+    for (const auto& entry : trigger_context_->script_parameters) {
+      base::Value parameter_js = base::Value(base::Value::Type::DICTIONARY);
+      parameter_js.SetKey(entry.first, base::Value(entry.second));
+      parameters_js.push_back(std::move(parameter_js));
+    }
+    dict.SetKey("parameters", base::Value(parameters_js));
   }
-  dict.SetKey("parameters", base::Value(parameters_js));
   dict.SetKey("scripts", script_tracker()->GetDebugContext());
 
   if (details_)
@@ -473,19 +816,174 @@ std::string Controller::GetDebugContext() {
   return output_js;
 }
 
-Metrics::DropOutReason Controller::GetDropOutReason() const {
-  return stop_reason_;
+const PaymentRequestOptions* Controller::GetPaymentRequestOptions() const {
+  return payment_request_options_.get();
 }
 
-void Controller::OnNoRunnableScriptsAnymore() {
+const PaymentInformation* Controller::GetPaymentRequestInformation() const {
+  return payment_request_info_.get();
+}
+
+void Controller::OnPaymentRequestContinueButtonClicked() {
+  if (!payment_request_options_ || !payment_request_info_)
+    return;
+
+  auto callback = std::move(payment_request_options_->callback);
+  auto payment_request_info = std::move(payment_request_info_);
+
+  // TODO(crbug.com/806868): succeed is currently always true, but we might want
+  // to set it to false and propagate the result to GetPaymentInformationAction
+  // when the user clicks "Cancel" during that action.
+  payment_request_info->succeed = true;
+
+  SetPaymentRequestOptions(nullptr);
+  std::move(callback).Run(std::move(payment_request_info));
+}
+
+void Controller::SetShippingAddress(
+    std::unique_ptr<autofill::AutofillProfile> address) {
+  if (!payment_request_info_)
+    return;
+
+  payment_request_info_->shipping_address = std::move(address);
+  GetUiController()->OnPaymentRequestInformationChanged(
+      payment_request_info_.get());
+  UpdatePaymentRequestActions();
+}
+
+void Controller::SetBillingAddress(
+    std::unique_ptr<autofill::AutofillProfile> address) {
+  if (!payment_request_info_)
+    return;
+
+  payment_request_info_->billing_address = std::move(address);
+  GetUiController()->OnPaymentRequestInformationChanged(
+      payment_request_info_.get());
+  UpdatePaymentRequestActions();
+}
+
+void Controller::SetContactInfo(std::string name,
+                                std::string phone,
+                                std::string email) {
+  if (!payment_request_info_)
+    return;
+
+  payment_request_info_->payer_name = name;
+  payment_request_info_->payer_phone = phone;
+  payment_request_info_->payer_email = email;
+  GetUiController()->OnPaymentRequestInformationChanged(
+      payment_request_info_.get());
+  UpdatePaymentRequestActions();
+}
+
+void Controller::SetCreditCard(std::unique_ptr<autofill::CreditCard> card) {
+  if (!payment_request_info_)
+    return;
+
+  payment_request_info_->card = std::move(card);
+  GetUiController()->OnPaymentRequestInformationChanged(
+      payment_request_info_.get());
+  UpdatePaymentRequestActions();
+}
+
+void Controller::SetTermsAndConditions(
+    TermsAndConditionsState terms_and_conditions) {
+  if (!payment_request_info_)
+    return;
+
+  payment_request_info_->terms_and_conditions = terms_and_conditions;
+  UpdatePaymentRequestActions();
+  GetUiController()->OnPaymentRequestInformationChanged(
+      payment_request_info_.get());
+}
+
+void Controller::UpdatePaymentRequestActions() {
+  // TODO(crbug.com/806868): This method uses #SetChips(), which means that
+  // updating the PR actions will also clear the suggestions. We should update
+  // the actions only if there are use cases of PR + suggestions.
+  if (!payment_request_options_ || !payment_request_info_) {
+    return;
+  }
+
+  bool contact_info_ok = (!payment_request_options_->request_payer_name ||
+                          !payment_request_info_->payer_name.empty()) &&
+                         (!payment_request_options_->request_payer_email ||
+                          !payment_request_info_->payer_email.empty()) &&
+                         (!payment_request_options_->request_payer_phone ||
+                          !payment_request_info_->payer_phone.empty());
+
+  bool shipping_address_ok = !payment_request_options_->request_shipping ||
+                             payment_request_info_->shipping_address;
+
+  bool payment_method_ok = !payment_request_options_->request_payment_method ||
+                           payment_request_info_->card;
+
+  bool terms_ok = payment_request_info_->terms_and_conditions != NOT_SELECTED ||
+                  !payment_request_options_->request_terms_and_conditions;
+
+  bool continue_button_enabled =
+      contact_info_ok && shipping_address_ok && payment_method_ok && terms_ok;
+
+  auto chips = std::make_unique<std::vector<Chip>>();
+  chips->emplace_back();
+  if (!payment_request_options_->confirm_button_text.empty()) {
+    chips->back().text = payment_request_options_->confirm_button_text;
+  } else {
+    chips->back().text =
+        l10n_util::GetStringUTF8(IDS_AUTOFILL_ASSISTANT_PAYMENT_INFO_CONFIRM);
+  }
+  chips->back().type = HIGHLIGHTED_ACTION;
+  chips->back().disabled = !continue_button_enabled;
+  if (continue_button_enabled) {
+    chips->back().callback =
+        base::BindOnce(&Controller::OnPaymentRequestContinueButtonClicked,
+                       weak_ptr_factory_.GetWeakPtr());
+  }
+
+  SetChips(std::move(chips));
+}
+
+void Controller::GetTouchableArea(std::vector<RectF>* area) const {
+  if (touchable_element_area_)
+    touchable_element_area_->GetRectangles(area);
+}
+
+void Controller::GetVisualViewport(RectF* visual_viewport) const {
+  if (touchable_element_area_)
+    touchable_element_area_->GetVisualViewport(visual_viewport);
+}
+
+void Controller::OnFatalError(const std::string& error_message,
+                              Metrics::DropOutReason reason) {
+  LOG(ERROR) << "Autofill Assistant has encountered an error and is shutting "
+                "down, reason="
+             << reason;
+  if (state_ == AutofillAssistantState::STOPPED)
+    return;
+
+  StopPeriodicScriptChecks();
+  SetStatusMessage(error_message);
+  EnterStoppedState();
+  client_->Shutdown(reason);
+}
+
+void Controller::OnNoRunnableScripts() {
   if (script_tracker()->running())
     return;
+
+  if (state_ == AutofillAssistantState::STARTING) {
+    // We're still waiting for the set of initial scripts, but either didn't get
+    // any scripts or didn't get scripts that could possibly become runnable
+    // with a DOM change.
+    OnFatalError(l10n_util::GetStringUTF8(IDS_AUTOFILL_ASSISTANT_DEFAULT_ERROR),
+                 Metrics::NO_INITIAL_SCRIPTS);
+    return;
+  }
 
   // We're navigated to a page that has no scripts or the scripts have reached a
   // state from which they cannot recover through a DOM change.
   OnFatalError(l10n_util::GetStringUTF8(IDS_AUTOFILL_ASSISTANT_GIVE_UP),
                Metrics::NO_SCRIPTS);
-  return;
 }
 
 void Controller::OnRunnableScriptsChanged(
@@ -494,10 +992,6 @@ void Controller::OnRunnableScriptsChanged(
   // check again and maybe update when the current script has finished.
   if (script_tracker()->running() || state_ == AutofillAssistantState::STOPPED)
     return;
-
-  if (!runnable_scripts.empty()) {
-    should_fail_after_checking_scripts_ = false;
-  }
 
   if (MaybeAutostartScript(runnable_scripts)) {
     return;
@@ -513,56 +1007,56 @@ void Controller::OnRunnableScriptsChanged(
   }
 
   // Update the set of scripts in the UI.
-  // TODO(crbug.com/806868): Surface type in proto instead of guessing it from
-  // highlight flag.
-  Chip::Type non_highlight_type = Chip::Type::CHIP_ASSISTIVE;
-  for (const auto& script : runnable_scripts) {
-    if (!script.autostart && !script.name.empty() && script.highlight) {
-      non_highlight_type = Chip::Type::BUTTON_TEXT;
-      break;
-    }
-  }
-
   auto chips = std::make_unique<std::vector<Chip>>();
   for (const auto& script : runnable_scripts) {
-    if (!script.autostart && !script.name.empty()) {
-      chips->emplace_back();
-      chips->back().type = script.highlight ? Chip::Type::BUTTON_FILLED_BLUE
-                                            : non_highlight_type;
-      chips->back().text = script.name;
+    if (!script.autostart && (!script.chip.text().empty() ||
+                              script.chip.icon() != ChipIcon::NO_ICON)) {
+      chips->emplace_back(script.chip);
       chips->back().callback =
           base::BindOnce(&Controller::OnScriptSelected,
                          weak_ptr_factory_.GetWeakPtr(), script.path);
     }
   }
+  SetDefaultChipType(chips.get());
 
-  if (allow_autostart_) {
+  if (chips->empty() && state_ == AutofillAssistantState::STARTING) {
+    // Continue waiting
+    return;
+  }
+
+  if (allow_autostart_ ||
+      state_ == AutofillAssistantState::AUTOSTART_FALLBACK_PROMPT) {
     // Autostart was expected, but only non-autostartable scripts were found.
-    //
-    // TODO(crbug.com/806868): Consider the case where no non-autostartable
-    // scripts were found.
+    DisableAutostart();
     EnterState(AutofillAssistantState::AUTOSTART_FALLBACK_PROMPT);
   } else {
     EnterState(AutofillAssistantState::PROMPT);
   }
-  GetUiController()->SetChips(std::move(chips));
+  SetChips(std::move(chips));
 }
 
 void Controller::DidAttachInterstitialPage() {
-  GetUiController()->Shutdown(Metrics::INTERSTITIAL_PAGE);
+  client_->Shutdown(Metrics::INTERSTITIAL_PAGE);
 }
 
 void Controller::DidFinishLoad(content::RenderFrameHost* render_frame_host,
                                const GURL& validated_url) {
   // validated_url might not be the page URL. Ignore it and always check the
   // last committed url.
-  // Note that we also check for scripts in LoadProgressChanged below. This is
-  // the last attempt and occurs later than a load progress of 1.0.
-  GetOrCheckScripts(web_contents()->GetLastCommittedURL());
+  GetOrCheckScripts();
 }
 
 void Controller::DidStartNavigation(
     content::NavigationHandle* navigation_handle) {
+  if (!navigation_handle->IsInMainFrame() ||
+      navigation_handle->IsSameDocument())
+    return;
+
+  if (!navigating_to_new_document_) {
+    navigating_to_new_document_ = true;
+    ReportNavigationStateChanged();
+  }
+
   // The following types of navigations are allowed for the main frame, when
   // in PROMPT state:
   //  - first-time URL load
@@ -579,44 +1073,102 @@ void Controller::DidStartNavigation(
   // Everything else, such as going back to a previous page, or refreshing the
   // page is considered an end condition.
   if (state_ == AutofillAssistantState::PROMPT &&
-      navigation_handle->IsInMainFrame() &&
       web_contents()->GetLastCommittedURL().is_valid() &&
       !navigation_handle->WasServerRedirect() &&
-      !navigation_handle->IsSameDocument() &&
       !navigation_handle->IsRendererInitiated()) {
     OnFatalError(l10n_util::GetStringUTF8(IDS_AUTOFILL_ASSISTANT_GIVE_UP),
                  Metrics::NAVIGATION);
   }
 }
 
+void Controller::DidFinishNavigation(
+    content::NavigationHandle* navigation_handle) {
+  if (!navigation_handle->IsInMainFrame() ||
+      navigation_handle->IsSameDocument() ||
+      !navigation_handle->HasCommitted() || !IsNavigatingToNewDocument()) {
+    return;
+  }
+
+  bool is_successful =
+      !navigation_handle->IsErrorPage() &&
+      navigation_handle->GetNetErrorCode() == net::OK &&
+      navigation_handle->GetResponseHeaders() &&
+      (navigation_handle->GetResponseHeaders()->response_code() / 100) == 2;
+  navigation_error_ = !is_successful;
+  navigating_to_new_document_ = false;
+  ReportNavigationStateChanged();
+
+  if (is_successful)
+    GetOrCheckScripts();
+}
+
 void Controller::DocumentAvailableInMainFrame() {
-  GetOrCheckScripts(web_contents()->GetLastCommittedURL());
+  GetOrCheckScripts();
 }
 
 void Controller::RenderProcessGone(base::TerminationStatus status) {
-  GetUiController()->Shutdown(Metrics::RENDER_PROCESS_GONE);
+  client_->Shutdown(Metrics::RENDER_PROCESS_GONE);
 }
 
-void Controller::LoadProgressChanged(content::WebContents* source,
-                                     double progress) {
-  int percent = 100 * progress;
-  // We wait for a page to be at least 40 percent loaded. Then a new
-  // precondition check is started every additional 20 percent.
-  if (percent >= 40 && percent % 20 == 0) {
-    DCHECK(web_contents()->GetLastCommittedURL().is_valid());
-    // In order to show available scripts as early as possible we start checking
-    // preconditions when the page has not yet fully loaded. This can lead to
-    // the behavior where scripts are being added sequentially instead of all
-    // at the same time. Also, depending on the progress values, we may never
-    // actually get here. In that case the only check will happen in
-    // DidFinishLoad.
-    GetOrCheckScripts(web_contents()->GetLastCommittedURL());
+void Controller::OnWebContentsFocused(
+    content::RenderWidgetHost* render_widget_host) {
+  if (NeedsUI() &&
+      base::FeatureList::IsEnabled(features::kAutofillAssistantChromeEntry)) {
+    // Show UI again when re-focused in case the web contents moved activity.
+    // This is only enabled when tab-switching is enabled.
+    client_->ShowUI();
   }
 }
 
 bool Controller::IsCookieExperimentEnabled() const {
-  auto iter = parameters_.find(kCookieExperimentName);
-  return iter != parameters_.end() && iter->second == "1";
+  auto iter = trigger_context_->script_parameters.find(kCookieExperimentName);
+  return iter != trigger_context_->script_parameters.end() &&
+         iter->second == "1";
+}
+
+void Controller::OnTouchableAreaChanged(const RectF& visual_viewport,
+                                        const std::vector<RectF>& areas) {
+  GetUiController()->OnTouchableAreaChanged(visual_viewport, areas);
+}
+
+void Controller::SetPaymentRequestOptions(
+    std::unique_ptr<PaymentRequestOptions> options) {
+  DCHECK(!options || options->callback);
+
+  if (payment_request_options_ == nullptr && options == nullptr)
+    return;
+
+  if (options) {
+    payment_request_info_ = std::make_unique<PaymentInformation>();
+
+    // TODO(crbug.com/806868): set initial state according to proto.
+    payment_request_info_->terms_and_conditions =
+        options->initial_terms_and_conditions;
+  }
+
+  payment_request_options_ = std::move(options);
+  UpdatePaymentRequestActions();
+  GetUiController()->OnPaymentRequestOptionsChanged(
+      payment_request_options_.get());
+  GetUiController()->OnPaymentRequestInformationChanged(
+      payment_request_info_.get());
+}
+
+ElementArea* Controller::touchable_element_area() {
+  if (!touchable_element_area_) {
+    touchable_element_area_ = std::make_unique<ElementArea>(this);
+    touchable_element_area_->SetOnUpdate(base::BindRepeating(
+        &Controller::OnTouchableAreaChanged, weak_ptr_factory_.GetWeakPtr()));
+  }
+  return touchable_element_area_.get();
+}
+
+ScriptTracker* Controller::script_tracker() {
+  if (!script_tracker_) {
+    script_tracker_ = std::make_unique<ScriptTracker>(/* delegate= */ this,
+                                                      /* listener= */ this);
+  }
+  return script_tracker_.get();
 }
 
 ElementArea* Controller::touchable_element_area() {

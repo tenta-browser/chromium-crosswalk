@@ -13,7 +13,7 @@
 
 namespace {
 static constexpr int kMaxScrollbarDimension = 8192;
-};
+}
 
 namespace cc {
 
@@ -70,14 +70,14 @@ void PaintedScrollbarLayer::PushPropertiesTo(LayerImpl* layer) {
       internal_contents_scale_, internal_content_bounds_);
 
   scrollbar_layer->SetThumbThickness(thumb_thickness_);
+  scrollbar_layer->SetBackButtonRect(back_button_rect_);
+  scrollbar_layer->SetForwardButtonRect(forward_button_rect_);
   scrollbar_layer->SetThumbLength(thumb_length_);
   if (scrollbar_->Orientation() == HORIZONTAL) {
-    scrollbar_layer->SetTrackStart(
-        track_rect_.x() - location_.x());
+    scrollbar_layer->SetTrackStart(track_rect_.x());
     scrollbar_layer->SetTrackLength(track_rect_.width());
   } else {
-    scrollbar_layer->SetTrackStart(
-        track_rect_.y() - location_.y());
+    scrollbar_layer->SetTrackStart(track_rect_.y());
     scrollbar_layer->SetTrackLength(track_rect_.height());
   }
 
@@ -133,6 +133,8 @@ gfx::Rect PaintedScrollbarLayer::OriginThumbRect() const {
 
 void PaintedScrollbarLayer::UpdateThumbAndTrackGeometry() {
   UpdateProperty(scrollbar_->TrackRect(), &track_rect_);
+  UpdateProperty(scrollbar_->BackButtonRect(), &back_button_rect_);
+  UpdateProperty(scrollbar_->ForwardButtonRect(), &forward_button_rect_);
   UpdateProperty(scrollbar_->Location(), &location_);
   UpdateProperty(scrollbar_->IsOverlay(), &is_overlay_);
   UpdateProperty(scrollbar_->HasThumb(), &has_thumb_);

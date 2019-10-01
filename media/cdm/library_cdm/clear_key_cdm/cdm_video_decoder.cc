@@ -25,15 +25,19 @@
 #include "media/cdm/cdm_type_conversion.h"
 #include "media/cdm/library_cdm/cdm_host_proxy.h"
 #include "media/media_buildflags.h"
-#include "third_party/libaom/av1_buildflags.h"
+#include "third_party/libaom/libaom_buildflags.h"
 #include "third_party/libyuv/include/libyuv/planar_functions.h"
 
 #if BUILDFLAG(ENABLE_LIBVPX)
 #include "media/filters/vpx_video_decoder.h"
 #endif
 
-#if BUILDFLAG(ENABLE_AV1_DECODER)
+#if BUILDFLAG(ENABLE_LIBAOM_DECODER)
 #include "media/filters/aom_video_decoder.h"
+#endif
+
+#if BUILDFLAG(ENABLE_DAV1D_DECODER)
+#include "media/filters/dav1d_video_decoder.h"
 #endif
 
 #if BUILDFLAG(ENABLE_FFMPEG)
@@ -51,8 +55,7 @@ media::VideoDecoderConfig ToClearMediaVideoDecoderConfig(
   VideoDecoderConfig media_config(
       ToMediaVideoCodec(config.codec), ToMediaVideoCodecProfile(config.profile),
       ToMediaVideoFormat(config.format), ToMediaColorSpace(config.color_space),
-      VideoRotation::VIDEO_ROTATION_0, coded_size, gfx::Rect(coded_size),
-      coded_size,
+      kNoTransformation, coded_size, gfx::Rect(coded_size), coded_size,
       std::vector<uint8_t>(config.extra_data,
                            config.extra_data + config.extra_data_size),
       Unencrypted());
@@ -248,12 +251,12 @@ class VideoDecoderAdapter : public CdmVideoDecoder {
     std::move(quit_closure).Run();
   }
 
-  void OnVideoFrameReady(const scoped_refptr<VideoFrame>& video_frame) {
+  void OnVideoFrameReady(scoped_refptr<VideoFrame> video_frame) {
     // Do not queue EOS frames, which is not needed.
     if (video_frame->metadata()->IsTrue(VideoFrameMetadata::END_OF_STREAM))
       return;
 
-    decoded_video_frames_.push(video_frame);
+    decoded_video_frames_.push(std::move(video_frame));
   }
 
   void OnReset(base::OnceClosure quit_closure) {
@@ -300,7 +303,10 @@ std::unique_ptr<CdmVideoDecoder> CreateVideoDecoder(
     video_decoder.reset(new VpxVideoDecoder());
 #endif
 
-#if BUILDFLAG(ENABLE_AV1_DECODER)
+#if BUILDFLAG(ENABLE_DAV1D_DECODER)
+  if (config.codec == cdm::kCodecAv1)
+    video_decoder.reset(new Dav1dVideoDecoder(null_media_log.get()));
+#elif BUILDFLAG(ENABLE_LIBAOM_DECODER)
   if (config.codec == cdm::kCodecAv1)
     video_decoder.reset(new AomVideoDecoder(null_media_log.get()));
 #endif

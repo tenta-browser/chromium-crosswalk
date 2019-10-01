@@ -34,8 +34,6 @@
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_features.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_type_info.h"
-#include "components/data_use_measurement/core/data_use_user_data.h"
-#include "components/previews/core/previews_decider.h"
 #include "components/variations/variations_associated_data.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/load_flags.h"
@@ -172,7 +170,7 @@ std::string DoGetCurrentNetworkID(
         // connection type.
         return "cell," + ssid_mccmnc;
       }
-      return base::IntToString(static_cast<int>(connection_type)) + "," +
+      return base::NumberToString(static_cast<int>(connection_type)) + "," +
              ssid_mccmnc;
     }
   }
@@ -215,7 +213,8 @@ void DataReductionProxyConfig::InitializeOnIOThread(
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     WarmupURLFetcher::CreateCustomProxyConfigCallback
         create_custom_proxy_config_callback,
-    NetworkPropertiesManager* manager) {
+    NetworkPropertiesManager* manager,
+    const std::string& user_agent) {
   DCHECK(thread_checker_.CalledOnValidThread());
   network_properties_manager_ = manager;
   network_properties_manager_->ResetWarmupURLFetchMetrics();
@@ -228,7 +227,7 @@ void DataReductionProxyConfig::InitializeOnIOThread(
           base::Unretained(this)),
       base::BindRepeating(&DataReductionProxyConfig::GetHttpRttEstimate,
                           base::Unretained(this)),
-      ui_task_runner_));
+      ui_task_runner_, user_agent));
 
   AddDefaultProxyBypassRules();
 
@@ -424,13 +423,7 @@ void DataReductionProxyConfig::UpdateConfigForTesting(
       !secure_proxies_allowed);
   if (!insecure_proxies_allowed !=
           network_properties_manager_->HasWarmupURLProbeFailed(
-              false /* secure_proxy */, false /* is_core_proxy */) ||
-      !insecure_proxies_allowed !=
-          network_properties_manager_->HasWarmupURLProbeFailed(
               false /* secure_proxy */, true /* is_core_proxy */)) {
-    network_properties_manager_->SetHasWarmupURLProbeFailed(
-        false /* secure_proxy */, false /* is_core_proxy */,
-        !insecure_proxies_allowed);
     network_properties_manager_->SetHasWarmupURLProbeFailed(
         false /* secure_proxy */, true /* is_core_proxy */,
         !insecure_proxies_allowed);
@@ -664,6 +657,10 @@ void DataReductionProxyConfig::AddDefaultProxyBypassRules() {
   configurator_->SetBypassRules(
       // Hostnames with no dot in them.
       "<local>,"
+
+      // WebSockets
+      "ws://*,"
+      "wss://*,"
 
       // RFC6890 current network (only valid as source address).
       "0.0.0.0/8,"

@@ -14,30 +14,42 @@ source_set("ui") {
     "//base",
     "//ios/net",
     "//ios/web:core",
-    "//ios/web/interstitials",
+    "//ios/web/browsing_data",
+    "//ios/web/common",
+    "//ios/web/find_in_page",
+    "//ios/web/js_messaging",
     "//ios/web/navigation",
     "//ios/web/navigation:core",
+    "//ios/web/navigation:navigation_manager_util",
+    "//ios/web/navigation:wk_navigation_util",
     "//ios/web/net:net",
     "//ios/web/public",
+    "//ios/web/public/deprecated",
     "//ios/web/public/download",
+    "//ios/web/public/js_messaging",
+    "//ios/web/public/security",
+    "//ios/web/public/webui",
+    "//ios/web/security",
+    "//ios/web/session",
     "//ios/web/web_state:context_menu",
-    "//ios/web/web_state:error_translation_util",
-    "//ios/web/web_state:navigation_context",
     "//ios/web/web_state:page_viewport_state",
-    "//ios/web/web_state:web_frame",
+    "//ios/web/web_state:user_interaction",
     "//ios/web/web_state:web_state_impl_header",
     "//ios/web/web_state:web_view_internal_creation_util",
-    "//ios/web/web_state:wk_web_view_security_util",
     "//ios/web/web_state/js",
     "//ios/web/web_state/ui:wk_web_view_configuration_provider",
+    "//ios/web/web_state/ui/controller",
+    "//ios/web/web_view:util",
     "//ios/web/webui:webui",
+    "//net",
     "//services/metrics/public/cpp:ukm_builders",
     "//ui/base",
     "//url",
   ]
 
   sources = [
-    "crw_generic_content_view.mm",
+    "crw_js_injector.h",
+    "crw_js_injector.mm",
     "crw_swipe_recognizer_provider.h",
     "crw_touch_tracking_recognizer.h",
     "crw_touch_tracking_recognizer.mm",
@@ -45,16 +57,14 @@ source_set("ui") {
     "crw_web_controller.mm",
     "crw_web_controller_container_view.h",
     "crw_web_controller_container_view.mm",
-    "crw_web_view_content_view.mm",
     "crw_web_view_proxy_impl.h",
     "crw_web_view_proxy_impl.mm",
     "crw_web_view_scroll_view_proxy.mm",
-    "crw_wk_navigation_states.h",
-    "crw_wk_navigation_states.mm",
-    "wk_back_forward_list_item_holder.h",
-    "wk_back_forward_list_item_holder.mm",
-    "wk_navigation_action_util.h",
-    "wk_navigation_action_util.mm",
+    "crw_wk_ui_handler.h",
+    "crw_wk_ui_handler.mm",
+    "crw_wk_ui_handler_delegate.h",
+    "wk_security_origin_util.h",
+    "wk_security_origin_util.mm",
   ]
 
   libs = [ "WebKit.framework" ]
@@ -66,6 +76,7 @@ source_set("crw_wk_script_message_router") {
   deps = [
     "//base",
     "//ios/web/navigation:core",
+    "//ios/web/navigation:wk_navigation_util",
     "//net",
   ]
 
@@ -93,6 +104,7 @@ source_set("crw_context_menu_controller") {
   deps = [
     "//base",
     "//ios/web/public",
+    "//ios/web/public/deprecated",
     "//ios/web/web_state:context_menu",
     "//ios/web/web_state/ui:crw_wk_script_message_router",
     "//ios/web/web_state/ui:wk_web_view_configuration_provider",
@@ -112,14 +124,17 @@ source_set("wk_web_view_configuration_provider") {
   deps = [
     ":crw_wk_script_message_router",
     "//base",
+    "//ios/web/common",
     "//ios/web/public",
     "//ios/web/web_state/js",
     "//ios/web/web_state/js:script_util",
+    "//ios/web/webui",
   ]
 
   sources = [
     "wk_web_view_configuration_provider.h",
     "wk_web_view_configuration_provider.mm",
+    "wk_web_view_configuration_provider_observer.h",
   ]
 
   libs = [ "WebKit.framework" ]

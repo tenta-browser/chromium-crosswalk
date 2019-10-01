@@ -21,9 +21,9 @@
 #include "base/test/scoped_task_environment.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "components/data_reduction_proxy/content/browser/data_reduction_proxy_page_load_timing.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_data.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_util.h"
-#include "components/data_reduction_proxy/core/common/data_reduction_proxy_page_load_timing.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_switches.h"
 #include "components/data_reduction_proxy/proto/client_config.pb.h"
@@ -111,7 +111,8 @@ class DataReductionProxyPingbackClientImplTest : public testing::Test {
   DataReductionProxyPingbackClientImplTest()
       : scoped_task_environment_(
             base::test::ScopedTaskEnvironment::MainThreadType::MOCK_TIME,
-            base::test::ScopedTaskEnvironment::ExecutionMode::ASYNC) {}
+            base::test::ScopedTaskEnvironment::ThreadPoolExecutionMode::ASYNC) {
+  }
 
   TestDataReductionProxyPingbackClientImpl* pingback_client() const {
     return pingback_client_.get();

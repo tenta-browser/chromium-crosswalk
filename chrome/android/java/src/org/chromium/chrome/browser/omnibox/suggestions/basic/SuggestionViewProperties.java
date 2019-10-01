@@ -24,37 +24,29 @@ import java.lang.annotation.RetentionPolicy;
 /**
  * The properties associated with rendering the suggestion view.
  */
-class SuggestionViewProperties {
-    @IntDef({SuggestionIcon.UNDEFINED, SuggestionIcon.BOOKMARK, SuggestionIcon.HISTORY,
+public class SuggestionViewProperties {
+    @IntDef({SuggestionIcon.UNSET, SuggestionIcon.BOOKMARK, SuggestionIcon.HISTORY,
             SuggestionIcon.GLOBE, SuggestionIcon.MAGNIFIER, SuggestionIcon.VOICE,
-            SuggestionIcon.CALCULATOR, SuggestionIcon.DICTIONARY, SuggestionIcon.FINANCE,
-            SuggestionIcon.KNOWLEDGE, SuggestionIcon.SUNRISE, SuggestionIcon.TRANSLATION,
-            SuggestionIcon.WEATHER, SuggestionIcon.EVENT, SuggestionIcon.CURRENCY,
-            SuggestionIcon.SPORTS})
+            SuggestionIcon.CALCULATOR, SuggestionIcon.FAVICON, SuggestionIcon.TOTAL_COUNT})
     @Retention(RetentionPolicy.SOURCE)
     public @interface SuggestionIcon {
-        int UNDEFINED = -1;
-        int BOOKMARK = 0;
-        int HISTORY = 1;
-        int GLOBE = 2;
-        int MAGNIFIER = 3;
-        int VOICE = 4;
-        int CALCULATOR = 5;
-        int DICTIONARY = 6;
-        int FINANCE = 7;
-        int KNOWLEDGE = 8;
-        int SUNRISE = 9;
-        int TRANSLATION = 10;
-        int WEATHER = 11;
-        int EVENT = 12;
-        int CURRENCY = 13;
-        int SPORTS = 14;
+        // This enum is used to back UMA histograms, and should therefore be treated as append-only.
+        // See http://cs.chromium.org/SuggestionIconOrFaviconType
+        int UNSET = 0;
+        int BOOKMARK = 1;
+        int HISTORY = 2;
+        int GLOBE = 3;
+        int MAGNIFIER = 4;
+        int VOICE = 5;
+        int CALCULATOR = 6;
+        int FAVICON = 7;
+        int TOTAL_COUNT = 8;
     }
 
     /**
      * Container for suggestion text that prevents updates when the text/spans has not changed.
      */
-    static class SuggestionTextContainer {
+    public static class SuggestionTextContainer {
         public final Spannable text;
 
         public SuggestionTextContainer(Spannable text) {
@@ -102,7 +94,7 @@ class SuggestionViewProperties {
     }
 
     /** The delegate to handle actions on the suggestion view. */
-    public static final WritableObjectPropertyKey<SuggestionView.SuggestionViewDelegate> DELEGATE =
+    public static final WritableObjectPropertyKey<SuggestionViewDelegate> DELEGATE =
             new WritableObjectPropertyKey<>();
 
     /** Whether the suggestion is for an answer. */
@@ -119,6 +111,9 @@ class SuggestionViewProperties {
 
     /** The suggestion icon type shown. */
     public static final WritableIntPropertyKey SUGGESTION_ICON_TYPE = new WritableIntPropertyKey();
+    /** Bitmap (typically site favicon) to be displayed as a suggestion icon. */
+    public static final WritableObjectPropertyKey<Bitmap> SUGGESTION_ICON_BITMAP =
+            new WritableObjectPropertyKey<>();
 
     /**
      * The sizing information for the first line of text.
@@ -126,7 +121,7 @@ class SuggestionViewProperties {
      * The first item is the unit of size (e.g. TypedValue.COMPLEX_UNIT_PX), and the second item
      * is the size itself.
      */
-    public static final WritableObjectPropertyKey<Pair<Integer, Float>> TEXT_LINE_1_SIZING =
+    public static final WritableObjectPropertyKey<Pair<Integer, Integer>> TEXT_LINE_1_SIZING =
             new WritableObjectPropertyKey<>();
     /** The maximum number of lines to be shown for the first line of text. */
     public static final WritableIntPropertyKey TEXT_LINE_1_MAX_LINES = new WritableIntPropertyKey();
@@ -146,7 +141,7 @@ class SuggestionViewProperties {
      * The first item is the unit of size (e.g. TypedValue.COMPLEX_UNIT_PX), and the second item
      * is the size itself.
      */
-    public static final WritableObjectPropertyKey<Pair<Integer, Float>> TEXT_LINE_2_SIZING =
+    public static final WritableObjectPropertyKey<Pair<Integer, Integer>> TEXT_LINE_2_SIZING =
             new WritableObjectPropertyKey<>();
     /** The maximum number of lines to be shown for the second line of text. */
     public static final WritableIntPropertyKey TEXT_LINE_2_MAX_LINES = new WritableIntPropertyKey();
@@ -164,7 +159,7 @@ class SuggestionViewProperties {
             HAS_ANSWER_IMAGE, ANSWER_IMAGE, REFINABLE, SUGGESTION_ICON_TYPE, TEXT_LINE_1_SIZING,
             TEXT_LINE_1_MAX_LINES, TEXT_LINE_1_TEXT_COLOR, TEXT_LINE_1_TEXT_DIRECTION,
             TEXT_LINE_1_TEXT, TEXT_LINE_2_SIZING, TEXT_LINE_2_MAX_LINES, TEXT_LINE_2_TEXT_COLOR,
-            TEXT_LINE_2_TEXT_DIRECTION, TEXT_LINE_2_TEXT};
+            TEXT_LINE_2_TEXT_DIRECTION, TEXT_LINE_2_TEXT, SUGGESTION_ICON_BITMAP};
 
     public static final PropertyKey[] ALL_KEYS =
             PropertyModel.concatKeys(ALL_UNIQUE_KEYS, SuggestionCommonProperties.ALL_KEYS);

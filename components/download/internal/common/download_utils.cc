@@ -6,9 +6,15 @@
 
 #include "base/files/file_util.h"
 #include "base/format_macros.h"
+#include "base/i18n/file_util_icu.h"
+#include "base/metrics/field_trial_params.h"
 #include "base/rand_util.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "components/download/public/common/download_create_info.h"
+#include "components/download/public/common/download_features.h"
 #include "components/download/public/common/download_interrupt_reasons_utils.h"
 #include "components/download/public/common/download_save_info.h"
 #include "components/download/public/common/download_stats.h"
@@ -18,10 +24,22 @@
 #include "net/http/http_request_headers.h"
 #include "net/http/http_status_code.h"
 #include "services/network/public/cpp/resource_request.h"
+#if defined(OS_ANDROID)
+#include "base/android/content_uri_utils.h"
+#include "components/download/internal/common/android/download_collection_bridge.h"
+#endif
 
 namespace download {
 
 namespace {
+// Default value for |kDownloadContentValidationLengthFinchKey|, when no
+// parameter is specified.
+const int64_t kDefaultContentValidationLength = 1024;
+
+// If the file_offset value from SaveInfo is equal to this, no content
+// validation will be performed and download stream will be written to
+// file starting at the offset from the response.
+const int64_t kInvalidFileWriteOffset = -1;
 
 void AppendExtraHeaders(net::HttpRequestHeaders* headers,
                         DownloadUrlParameters* params) {
@@ -104,9 +122,9 @@ DownloadInterruptReason HandleSuccessfulServerResponse(
 
     case net::HTTP_NO_CONTENT:
     case net::HTTP_RESET_CONTENT:
-    // These two status codes don't have an entity (or rather RFC 7231
-    // requires that there be no entity). They are treated the same as the
-    // resource not being found since there is no entity to download.
+      // These two status codes don't have an entity (or rather RFC 7231
+      // requires that there be no entity). They are treated the same as the
+      // resource not being found since there is no entity to download.
 
     case net::HTTP_NOT_FOUND:
       result = DOWNLOAD_INTERRUPT_REASON_SERVER_BAD_CONTENT;
@@ -155,6 +173,7 @@ DownloadInterruptReason HandleSuccessfulServerResponse(
       // The response can be HTTP 200 or other error code when
       // |fetch_error_body| is true.
       save_info->offset = 0;
+      save_info->file_offset = kInvalidFileWriteOffset;
       save_info->hash_of_partial_file.clear();
       save_info->hash_state.reset();
       return DOWNLOAD_INTERRUPT_REASON_NONE;
@@ -240,8 +259,11 @@ std::unique_ptr<network::ResourceRequest> CreateResourceRequest(
   request->allow_download = true;
   request->is_main_frame = true;
 
-  if (params->render_process_host_id() >= 0)
-    request->render_frame_id = params->render_frame_host_routing_id();
+  // Downloads should be treated as navigations from Fetch spec perspective.
+  // See also:
+  // - https://crbug.com/952834
+  // - https://github.com/whatwg/fetch/issues/896#issuecomment-484423278
+  request->fetch_request_mode = network::mojom::FetchRequestMode::kNavigate;
 
   bool has_upload_data = false;
   if (params->post_body()) {
@@ -302,9 +324,13 @@ std::unique_ptr<net::HttpRequestHeaders> GetAdditionalRequestHeaders(
   bool has_etag = !params->etag().empty();
 
   // Strong validator(i.e. etag or last modified) is required in range requests
-  // for download resumption and parallel download.
-  DCHECK(has_etag || has_last_modified);
-  if (!has_etag && !has_last_modified) {
+  // for download resumption and parallel download, unless
+  // |kAllowDownloadResumptionWithoutStrongValidators| is enabled.
+  bool allow_resumption =
+      has_etag || has_last_modified ||
+      base::FeatureList::IsEnabled(
+          features::kAllowDownloadResumptionWithoutStrongValidators);
+  if (!allow_resumption) {
     DVLOG(1) << "Creating partial request without strong validators.";
     AppendExtraHeaders(headers.get(), params);
     return headers;
@@ -440,11 +466,11 @@ ResumeMode GetDownloadResumeMode(const GURL& url,
       break;
 
     case DOWNLOAD_INTERRUPT_REASON_SERVER_NO_RANGE:
-    // The server disagreed with the file offset that we sent.
+      // The server disagreed with the file offset that we sent.
 
     case DOWNLOAD_INTERRUPT_REASON_FILE_HASH_MISMATCH:
-    // The file on disk was found to not match the expected hash. Discard and
-    // start from beginning.
+      // The file on disk was found to not match the expected hash. Discard and
+      // start from beginning.
 
     case DOWNLOAD_INTERRUPT_REASON_FILE_TOO_SHORT:
       // The [possibly persisted] file offset disagreed with the file on disk.
@@ -532,11 +558,62 @@ bool IsDownloadDone(const GURL& url,
 
 bool DeleteDownloadedFile(const base::FilePath& path) {
   DCHECK(GetDownloadTaskRunner()->RunsTasksInCurrentSequence());
-
+#if defined(OS_ANDROID)
+  if (path.IsContentUri()) {
+    base::DeleteContentUri(path);
+    return true;
+  }
+#endif
   // Make sure we only delete files.
   if (base::DirectoryExists(path))
     return true;
   return base::DeleteFile(path, false);
 }
 
+download::DownloadItem::DownloadRenameResult RenameDownloadedFile(
+    const base::FilePath& from_path,
+    const base::FilePath& to_path) {
+  if (!base::PathExists(from_path) ||
+      !base::DirectoryExists(from_path.DirName()))
+    return DownloadItem::DownloadRenameResult::FAILURE_UNAVAILABLE;
+
+  if (!base::DirectoryExists(to_path.DirName()))
+    return DownloadItem::DownloadRenameResult::FAILURE_NAME_INVALID;
+
+  if (base::PathExists(to_path))
+    return DownloadItem::DownloadRenameResult::FAILURE_NAME_CONFLICT;
+
+  int max_path_component_length =
+      base::GetMaximumPathComponentLength(to_path.DirName());
+  if (max_path_component_length != -1) {
+    if (static_cast<int>(to_path.value().length()) >=
+        max_path_component_length) {
+      return DownloadItem::DownloadRenameResult::FAILURE_NAME_TOO_LONG;
+    }
+  }
+#if defined(OS_ANDROID)
+  if (from_path.IsContentUri()) {
+    return DownloadCollectionBridge::RenameDownloadUri(from_path,
+                                                       to_path.BaseName())
+               ? download::DownloadItem::DownloadRenameResult::SUCCESS
+               : download::DownloadItem::DownloadRenameResult::
+                     FAILURE_NAME_INVALID;
+  }
+#endif
+
+  return base::Move(from_path, to_path)
+             ? download::DownloadItem::DownloadRenameResult::SUCCESS
+             : download::DownloadItem::DownloadRenameResult::
+                   FAILURE_NAME_INVALID;
+}
+
+int64_t GetDownloadValidationLengthConfig() {
+  std::string finch_value = base::GetFieldTrialParamValueByFeature(
+      features::kAllowDownloadResumptionWithoutStrongValidators,
+      kDownloadContentValidationLengthFinchKey);
+  int64_t result;
+  return base::StringToInt64(finch_value, &result)
+             ? result
+             : kDefaultContentValidationLength;
+}
 }  // namespace download

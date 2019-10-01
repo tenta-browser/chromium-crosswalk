@@ -7,24 +7,32 @@
 #include <stddef.h>
 
 #include <map>
+#include <string>
 #include <utility>
 
 #include "apps/launcher.h"
 #include "base/bind.h"
+#include "base/feature_list.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chromeos/crostini/crostini_util.h"
 #include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "chrome/browser/chromeos/file_manager/app_id.h"
 #include "chrome/browser/chromeos/file_manager/arc_file_tasks.h"
 #include "chrome/browser/chromeos/file_manager/crostini_file_tasks.h"
 #include "chrome/browser/chromeos/file_manager/file_browser_handlers.h"
+#include "chrome/browser/chromeos/file_manager/file_tasks_notifier.h"
 #include "chrome/browser/chromeos/file_manager/fileapi_util.h"
 #include "chrome/browser/chromeos/file_manager/open_util.h"
+#include "chrome/browser/chromeos/file_manager/open_with_browser.h"
+#include "chrome/browser/chromeos/fileapi/file_system_backend.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
+#include "chrome/browser/extensions/launch_util.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/extensions/app_launch_params.h"
 #include "chrome/browser/ui/extensions/application_launch.h"
 #include "chrome/browser/ui/webui/extensions/extension_icon_source.h"
 #include "chrome/common/extensions/api/file_browser_handlers/file_browser_handler.h"
@@ -38,17 +46,20 @@
 #include "extensions/browser/api/file_handlers/mime_util.h"
 #include "extensions/browser/entry_info.h"
 #include "extensions/browser/extension_host.h"
+#include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/extension_util.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension_set.h"
 #include "storage/browser/fileapi/file_system_url.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/mime_util/mime_util.h"
+#include "ui/base/window_open_disposition.h"
 
 using extensions::Extension;
 using extensions::api::file_manager_private::Verb;
-using extensions::app_file_handler_util::FindFileHandlersForEntries;
+using extensions::app_file_handler_util::FindFileHandlerMatchesForEntries;
 using storage::FileSystemURL;
 
 namespace file_manager {
@@ -117,10 +128,14 @@ void KeepOnlyFileManagerInternalTasks(std::vector<FullTaskDescriptor>* tasks) {
 
 // Returns true if the given task is a handler by built-in apps like the Files
 // app itself or QuickOffice etc. They are used as the initial default app.
-bool IsFallbackFileHandler(const file_tasks::TaskDescriptor& task) {
-  if (task.task_type != file_tasks::TASK_TYPE_FILE_BROWSER_HANDLER &&
-      task.task_type != file_tasks::TASK_TYPE_FILE_HANDLER)
+bool IsFallbackFileHandler(const FullTaskDescriptor& task) {
+  if ((task.task_descriptor().task_type !=
+           file_tasks::TASK_TYPE_FILE_BROWSER_HANDLER &&
+       task.task_descriptor().task_type !=
+           file_tasks::TASK_TYPE_FILE_HANDLER) ||
+      task.is_generic_file_handler()) {
     return false;
+  }
 
   const char* const kBuiltInApps[] = {
       kFileManagerAppId,
@@ -133,8 +148,9 @@ bool IsFallbackFileHandler(const file_tasks::TaskDescriptor& task) {
       extension_misc::kQuickOfficeExtensionId};
 
   for (size_t i = 0; i < base::size(kBuiltInApps); ++i) {
-    if (task.app_id == kBuiltInApps[i])
+    if (task.task_descriptor().app_id == kBuiltInApps[i]) {
       return true;
+    }
   }
   return false;
 }
@@ -179,6 +195,36 @@ void PostProcessFoundTasks(
   std::move(callback).Run(std::move(result_list));
 }
 
+// Returns true if |extension_id| and |action_id| indicate that the file
+// currently being handled should be opened with the browser. This function
+// is used to handle certain action IDs of the file manager.
+bool ShouldBeOpenedWithBrowser(const std::string& extension_id,
+                               const std::string& action_id) {
+  return extension_id == kFileManagerAppId &&
+         (action_id == "view-pdf" || action_id == "view-swf" ||
+          action_id == "view-in-browser" ||
+          action_id == "open-hosted-generic" ||
+          action_id == "open-hosted-gdoc" ||
+          action_id == "open-hosted-gsheet" ||
+          action_id == "open-hosted-gslides");
+}
+
+// Opens the files specified by |file_urls| with the browser for |profile|.
+// Returns true on success. It's a failure if no files are opened.
+bool OpenFilesWithBrowser(Profile* profile,
+                          const std::vector<FileSystemURL>& file_urls,
+                          const std::string& action_id) {
+  int num_opened = 0;
+  for (size_t i = 0; i < file_urls.size(); ++i) {
+    const FileSystemURL& file_url = file_urls[i];
+    if (chromeos::FileSystemBackend::CanHandleURL(file_url)) {
+      num_opened +=
+          util::OpenFileWithBrowser(profile, file_url, action_id) ? 1 : 0;
+    }
+  }
+  return num_opened > 0;
+}
+
 }  // namespace
 
 FullTaskDescriptor::FullTaskDescriptor(const TaskDescriptor& task_descriptor,
@@ -186,13 +232,15 @@ FullTaskDescriptor::FullTaskDescriptor(const TaskDescriptor& task_descriptor,
                                        const Verb task_verb,
                                        const GURL& icon_url,
                                        bool is_default,
-                                       bool is_generic_file_handler)
+                                       bool is_generic_file_handler,
+                                       bool is_file_extension_match)
     : task_descriptor_(task_descriptor),
       task_title_(task_title),
       task_verb_(task_verb),
       icon_url_(icon_url),
       is_default_(is_default),
-      is_generic_file_handler_(is_generic_file_handler) {}
+      is_generic_file_handler_(is_generic_file_handler),
+      is_file_extension_match_(is_file_extension_match) {}
 
 FullTaskDescriptor::~FullTaskDescriptor() = default;
 
@@ -319,6 +367,10 @@ bool ExecuteFileTask(Profile* profile,
                               task.task_type, NUM_TASK_TYPE);
   }
 
+  if (auto* notifier = FileTasksNotifier::GetForProfile(profile)) {
+    notifier->NotifyFileTasks(file_urls);
+  }
+
   // ARC apps needs mime types for launching. Retrieve them first.
   if (task.task_type == TASK_TYPE_ARC_APP) {
     extensions::app_file_handler_util::MimeTypeCollector* mime_collector =
@@ -334,6 +386,18 @@ bool ExecuteFileTask(Profile* profile,
     DCHECK_EQ(kCrostiniAppActionID, task.action_id);
     ExecuteCrostiniTask(profile, task, file_urls, std::move(done));
     return true;
+  }
+
+  // Some action IDs of the file manager's file browser handlers require the
+  // files to be directly opened with the browser.
+  if (ShouldBeOpenedWithBrowser(task.app_id, task.action_id)) {
+    const bool result =
+        OpenFilesWithBrowser(profile, file_urls, task.action_id);
+    if (result && done) {
+      std::move(done).Run(
+          extensions::api::file_manager_private::TASK_RESULT_OPENED);
+    }
+    return result;
   }
 
   // Get the extension.
@@ -354,8 +418,22 @@ bool ExecuteFileTask(Profile* profile,
     std::vector<base::FilePath> paths;
     for (size_t i = 0; i != file_urls.size(); ++i)
       paths.push_back(file_urls[i].path());
-    apps::LaunchPlatformAppWithFileHandler(extension_task_profile, extension,
-                                           task.action_id, paths);
+
+    if (!extension->from_bookmark()) {
+      apps::LaunchPlatformAppWithFileHandler(extension_task_profile, extension,
+                                             task.action_id, paths);
+    } else {
+      extensions::LaunchContainer launch_container =
+          extensions::GetLaunchContainer(
+              extensions::ExtensionPrefs::Get(extension_task_profile),
+              extension);
+      AppLaunchParams params(extension_task_profile, extension,
+                             launch_container,
+                             WindowOpenDisposition::NEW_FOREGROUND_TAB,
+                             extensions::AppLaunchSource::SOURCE_FILE_HANDLER);
+      params.override_url = GURL(task.action_id);
+      OpenApplication(params);
+    }
     if (!done.is_null())
       std::move(done).Run(
           extensions::api::file_manager_private::TASK_RESULT_MESSAGE_SENT);
@@ -405,42 +483,52 @@ void FindFileHandlerTasks(Profile* profile,
        ++iter) {
     const Extension* extension = iter->get();
 
-    // Check that the extension can be launched via an event. This includes all
-    // platform apps plus whitelisted extensions.
-    if (!CanLaunchViaEvent(extension))
+    bool is_bookmark_app =
+        extension->from_bookmark() &&
+        extension->GetType() == extensions::Manifest::TYPE_HOSTED_APP;
+    // Check that the extension can be launched with files. This includes all
+    // platform apps plus whitelisted extensions, and bookmark apps, if
+    // file handling is enabled.
+    if (!CanLaunchViaEvent(extension) &&
+        (!is_bookmark_app ||
+         !base::FeatureList::IsEnabled(blink::features::kNativeFileSystemAPI) ||
+         !base::FeatureList::IsEnabled(blink::features::kFileHandlingAPI))) {
       continue;
+    }
 
     if (profile->IsOffTheRecord() &&
         !extensions::util::IsIncognitoEnabled(extension->id(), profile))
       continue;
 
-    typedef std::vector<const extensions::FileHandlerInfo*> FileHandlerList;
-    FileHandlerList file_handlers =
-        FindFileHandlersForEntries(*extension, entries);
+    typedef std::vector<extensions::FileHandlerMatch> FileHandlerMatchList;
+    FileHandlerMatchList file_handlers =
+        FindFileHandlerMatchesForEntries(*extension, entries);
     if (file_handlers.empty())
       continue;
 
     // A map which has as key a handler verb, and as value a pair of the
     // handler with which to open the given entries and a boolean marking
     // if the handler is a good match.
-    std::map<std::string, std::pair<const extensions::FileHandlerInfo*, bool>>
+    std::map<std::string, std::pair<const extensions::FileHandlerMatch*, bool>>
         handlers_for_entries;
     // Show the first good matching handler of each verb supporting the given
     // entries that corresponds to the app. If there doesn't exist such handler,
     // show the first matching handler of the verb.
-    for (const extensions::FileHandlerInfo* handler : file_handlers) {
+    for (const auto& handler_match : file_handlers) {
+      const extensions::FileHandlerInfo* handler = handler_match.handler;
       bool good_match = IsGoodMatchFileHandler(*handler, entries);
       auto it = handlers_for_entries.find(handler->verb);
       if (it == handlers_for_entries.end() ||
           (!it->second.second /* existing handler not a good match */ &&
            good_match)) {
         handlers_for_entries[handler->verb] =
-            std::make_pair(handler, good_match);
+            std::make_pair(&handler_match, good_match);
       }
     }
 
     for (const auto& entry : handlers_for_entries) {
-      const extensions::FileHandlerInfo* handler = entry.second.first;
+      const extensions::FileHandlerMatch* match = entry.second.first;
+      const extensions::FileHandlerInfo* handler = match->handler;
       std::string task_id = file_tasks::MakeTaskID(
           extension->id(), file_tasks::TASK_TYPE_FILE_HANDLER, handler->id);
 
@@ -466,12 +554,16 @@ void FindFileHandlerTasks(Profile* profile,
         DCHECK(handler->verb == extensions::file_handler_verbs::kOpenWith);
         verb = Verb::VERB_OPEN_WITH;
       }
+      // If the handler was matched purely on the file name extension then
+      // the manifest declared its 'file_handler' to match. Used for fallback
+      // selection of the handler when we don't have a default handler set
+      const bool is_file_extension_match = match->matched_file_extension;
 
       result_list->push_back(FullTaskDescriptor(
           TaskDescriptor(extension->id(), file_tasks::TASK_TYPE_FILE_HANDLER,
                          handler->id),
           extension->name(), verb, best_icon, false /* is_default */,
-          is_generic_file_handler));
+          is_generic_file_handler, is_file_extension_match));
     }
   }
 }
@@ -510,7 +602,8 @@ void FindFileBrowserHandlerTasks(
         TaskDescriptor(extension_id, file_tasks::TASK_TYPE_FILE_BROWSER_HANDLER,
                        handler->id()),
         handler->title(), Verb::VERB_NONE /* no verb for FileBrowserHandler */,
-        icon_url, false /* is_default */, false /* is_generic_file_handler */));
+        icon_url, false /* is_default */, false /* is_generic_file_handler */,
+        false /* is_file_extension_match */));
   }
 }
 
@@ -578,13 +671,25 @@ void ChooseAndSetDefaultTask(const PrefService& pref_service,
     }
   }
 
+  // No default task, check for an explicit file extension match (without
+  // MIME match) in the extension manifest and pick that over the fallback
+  // handlers below (see crbug.com/803930)
+  for (size_t i = 0; i < tasks->size(); ++i) {
+    FullTaskDescriptor& task = (*tasks)[i];
+    if (task.is_file_extension_match() && !task.is_generic_file_handler() &&
+        !IsFallbackFileHandler(task)) {
+      task.set_is_default(true);
+      return;
+    }
+  }
+
   // No default tasks found. If there is any fallback file browser handler,
   // make it as default task, so it's selected by default.
   for (size_t i = 0; i < tasks->size(); ++i) {
-    FullTaskDescriptor* task = &tasks->at(i);
-    DCHECK(!task->is_default());
-    if (IsFallbackFileHandler(task->task_descriptor())) {
-      task->set_is_default(true);
+    FullTaskDescriptor& task = (*tasks)[i];
+    DCHECK(!task.is_default());
+    if (IsFallbackFileHandler(task)) {
+      task.set_is_default(true);
       return;
     }
   }

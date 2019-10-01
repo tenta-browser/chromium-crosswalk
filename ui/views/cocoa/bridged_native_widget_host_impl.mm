@@ -7,14 +7,19 @@
 #include <utility>
 
 #include "base/mac/foundation_util.h"
+#include "base/strings/sys_string_conversions.h"
+#include "components/remote_cocoa/app_shim/bridged_native_widget_impl.h"
+#include "components/remote_cocoa/app_shim/mouse_capture.h"
+#include "components/remote_cocoa/app_shim/native_widget_mac_nswindow.h"
+#include "components/remote_cocoa/browser/ns_view_ids.h"
 #include "mojo/public/cpp/bindings/strong_associated_binding.h"
 #include "ui/accelerated_widget_mac/window_resize_helper_mac.h"
 #include "ui/base/cocoa/animation_utils.h"
 #include "ui/base/cocoa/remote_accessibility_api.h"
 #include "ui/base/cocoa/remote_layer_api.h"
 #include "ui/base/hit_test.h"
+#include "ui/base/ime/init/input_method_factory.h"
 #include "ui/base/ime/input_method.h"
-#include "ui/base/ime/input_method_factory.h"
 #include "ui/compositor/recyclable_compositor_mac.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/geometry/dip_util.h"
@@ -22,6 +27,7 @@
 #include "ui/native_theme/native_theme_mac.h"
 #include "ui/views/cocoa/text_input_host.h"
 #include "ui/views/cocoa/tooltip_manager_mac.h"
+#include "ui/views/controls/label.h"
 #include "ui/views/controls/menu/menu_config.h"
 #include "ui/views/controls/menu/menu_controller.h"
 #include "ui/views/views_delegate.h"
@@ -31,12 +37,9 @@
 #include "ui/views/window/dialog_client_view.h"
 #include "ui/views/window/dialog_delegate.h"
 #include "ui/views/word_lookup_client.h"
-#include "ui/views_bridge_mac/bridged_native_widget_impl.h"
-#include "ui/views_bridge_mac/cocoa_mouse_capture.h"
-#include "ui/views_bridge_mac/native_widget_mac_nswindow.h"
 
-using views_bridge_mac::mojom::BridgedNativeWidgetInitParams;
-using views_bridge_mac::mojom::WindowVisibilityState;
+using remote_cocoa::mojom::BridgedNativeWidgetInitParams;
+using remote_cocoa::mojom::WindowVisibilityState;
 
 namespace views {
 
@@ -49,10 +52,10 @@ namespace {
 // underlying connection closes.
 // https://crbug.com/915572
 class BridgedNativeWidgetHostDummy
-    : public views_bridge_mac::mojom::BridgedNativeWidgetHost {
+    : public remote_cocoa::mojom::BridgedNativeWidgetHost {
  public:
-  BridgedNativeWidgetHostDummy() {}
-  ~BridgedNativeWidgetHostDummy() override {}
+  BridgedNativeWidgetHostDummy() = default;
+  ~BridgedNativeWidgetHostDummy() override = default;
 
  private:
   void OnVisibilityChanged(bool visible) override {}
@@ -169,7 +172,7 @@ class BridgedNativeWidgetHostDummy
   void ValidateUserInterfaceItem(
       int32_t command,
       ValidateUserInterfaceItemCallback callback) override {
-    views_bridge_mac::mojom::ValidateUserInterfaceItemResultPtr result;
+    remote_cocoa::mojom::ValidateUserInterfaceItemResultPtr result;
     std::move(callback).Run(std::move(result));
   }
   void ExecuteCommand(int32_t command,
@@ -291,7 +294,7 @@ BridgedNativeWidgetHostImpl* BridgedNativeWidgetHostImpl::GetFromId(
 BridgedNativeWidgetHostImpl::BridgedNativeWidgetHostImpl(NativeWidgetMac* owner)
     : widget_id_(++g_last_bridged_native_widget_id),
       native_widget_mac_(owner),
-      root_view_id_(ui::NSViewIds::GetNewId()),
+      root_view_id_(remote_cocoa::GetNewNSViewId()),
       accessibility_focus_overrider_(this),
       text_input_host_(new TextInputHost(this)),
       host_mojo_binding_(this) {
@@ -351,8 +354,8 @@ BridgedNativeWidgetHostImpl::GetNativeViewAccessibleForNSWindow() const {
   return remote_window_accessible_.get();
 }
 
-views_bridge_mac::mojom::BridgedNativeWidget*
-BridgedNativeWidgetHostImpl::bridge() const {
+remote_cocoa::mojom::BridgedNativeWidget* BridgedNativeWidgetHostImpl::bridge()
+    const {
   if (bridge_ptr_)
     return bridge_ptr_.get();
   if (bridge_impl_)
@@ -370,7 +373,8 @@ void BridgedNativeWidgetHostImpl::CreateLocalBridge(
 
 void BridgedNativeWidgetHostImpl::CreateRemoteBridge(
     BridgeFactoryHost* bridge_factory_host,
-    views_bridge_mac::mojom::CreateWindowParamsPtr window_create_params) {
+    remote_cocoa::mojom::CreateWindowParamsPtr window_create_params) {
+  accessibility_focus_overrider_.SetAppIsRemote(true);
   bridge_factory_host_ = bridge_factory_host;
   bridge_factory_host_->AddObserver(this);
 
@@ -378,21 +382,22 @@ void BridgedNativeWidgetHostImpl::CreateRemoteBridge(
   // handle to track this window in this process.
   {
     auto local_window_create_params =
-        views_bridge_mac::mojom::CreateWindowParams::New();
+        remote_cocoa::mojom::CreateWindowParams::New();
     local_window_create_params->style_mask = NSBorderlessWindowMask;
     local_window_ = BridgedNativeWidgetImpl::CreateNSWindow(
         local_window_create_params.get());
     [local_window_ setBridgedNativeWidgetId:widget_id_];
     [local_window_ setAlphaValue:0.0];
-    local_view_id_mapping_ = std::make_unique<ui::ScopedNSViewIdMapping>(
-        root_view_id_, [local_window_ contentView]);
+    local_view_id_mapping_ =
+        std::make_unique<remote_cocoa::ScopedNSViewIdMapping>(
+            root_view_id_, [local_window_ contentView]);
   }
 
   // Initialize |bridge_ptr_| to point to a bridge created by |factory|.
-  views_bridge_mac::mojom::BridgedNativeWidgetHostAssociatedPtr host_ptr;
+  remote_cocoa::mojom::BridgedNativeWidgetHostAssociatedPtr host_ptr;
   host_mojo_binding_.Bind(mojo::MakeRequest(&host_ptr),
                           ui::WindowResizeHelperMac::Get()->task_runner());
-  views_bridge_mac::mojom::TextInputHostAssociatedPtr text_input_host_ptr;
+  remote_cocoa::mojom::TextInputHostAssociatedPtr text_input_host_ptr;
   text_input_host_->BindRequest(mojo::MakeRequest(&text_input_host_ptr));
   bridge_factory_host_->GetFactory()->CreateBridgedNativeWidget(
       widget_id_, mojo::MakeRequest(&bridge_ptr_), host_ptr.PassInterface(),
@@ -611,6 +616,22 @@ void BridgedNativeWidgetHostImpl::OnWidgetInitDone() {
     dialog->AddObserver(this);
 }
 
+bool BridgedNativeWidgetHostImpl::RedispatchKeyEvent(NSEvent* event) {
+  // If the target window is in-process, then redispatch the event directly,
+  // and give an accurate return value.
+  if (bridge_impl_)
+    return bridge_impl_->RedispatchKeyEvent(event);
+
+  // If the target window is out of process then always report the event as
+  // handled (because it should never be handled in this process).
+  bridge()->RedispatchKeyEvent(
+      [event type], [event modifierFlags], [event timestamp],
+      base::SysNSStringToUTF16([event characters]),
+      base::SysNSStringToUTF16([event charactersIgnoringModifiers]),
+      [event keyCode]);
+  return true;
+}
+
 ui::InputMethod* BridgedNativeWidgetHostImpl::GetInputMethod() {
   if (!input_method_) {
     input_method_ = ui::CreateInputMethod(this, gfx::kNullAcceleratedWidget);
@@ -653,13 +674,24 @@ void BridgedNativeWidgetHostImpl::SetParent(
         std::find(parent_->children_.begin(), parent_->children_.end(), this);
     DCHECK(found != parent_->children_.end());
     parent_->children_.erase(found);
+    parent_ = nullptr;
+  }
+
+  // We can only re-parent to another Widget if that Widget is hosted in the
+  // same process that we were already hosted by. If this is not the case, just
+  // close the Widget.
+  // https://crbug.com/957927
+  BridgeFactoryHost* new_bridge_factory_host =
+      new_parent ? new_parent->bridge_factory_host() : bridge_factory_host_;
+  if (new_bridge_factory_host != bridge_factory_host_) {
+    DLOG(ERROR) << "Cannot migrate views::NativeWidget to another process, "
+                   "closing it instead.";
+    bridge()->CloseWindow();
+    return;
   }
 
   parent_ = new_parent;
   if (parent_) {
-    // We can only re-parent to another Widget if that Widget is hosted in the
-    // same process that we were already hosted by.
-    CHECK_EQ(bridge_factory_host_, parent_->bridge_factory_host());
     parent_->children_.push_back(this);
     bridge()->SetParent(parent_->bridged_native_widget_id());
   } else {
@@ -681,8 +713,10 @@ void BridgedNativeWidgetHostImpl::ClearAssociationForView(const View* view) {
 }
 
 void BridgedNativeWidgetHostImpl::ReorderChildViews() {
-  std::map<NSView*, int> rank;
   Widget* widget = native_widget_mac_->GetWidget();
+  if (!widget->GetRootView())
+    return;
+  std::map<NSView*, int> rank;
   RankNSViewsRecursive(widget->GetRootView(), &rank);
   if (bridge_impl_)
     bridge_impl_->SortSubviews(std::move(rank));
@@ -694,8 +728,8 @@ void BridgedNativeWidgetHostImpl::RankNSViewsRecursive(
   auto it = associated_views_.find(view);
   if (it != associated_views_.end())
     rank->emplace(it->second, rank->size());
-  for (int i = 0; i < view->child_count(); ++i)
-    RankNSViewsRecursive(view->child_at(i), rank);
+  for (View* child : view->children())
+    RankNSViewsRecursive(child, rank);
 }
 
 void BridgedNativeWidgetHostImpl::UpdateLocalWindowFrame(
@@ -712,7 +746,7 @@ NSView* BridgedNativeWidgetHostImpl::GetGlobalCaptureView() {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// BridgedNativeWidgetHostImpl, views_bridge_mac::BridgedNativeWidgetHostHelper:
+// BridgedNativeWidgetHostImpl, remote_cocoa::BridgedNativeWidgetHostHelper:
 
 id BridgedNativeWidgetHostImpl::GetNativeViewAccessible() {
   return root_view_ ? root_view_->GetNativeViewAccessible() : nil;
@@ -734,8 +768,7 @@ bool BridgedNativeWidgetHostImpl::DispatchKeyEventToMenuController(
   return false;
 }
 
-views_bridge_mac::DragDropClient*
-BridgedNativeWidgetHostImpl::GetDragDropClient() {
+remote_cocoa::DragDropClient* BridgedNativeWidgetHostImpl::GetDragDropClient() {
   return drag_drop_client_.get();
 }
 
@@ -765,7 +798,7 @@ void BridgedNativeWidgetHostImpl::OnBridgeFactoryHostDestroying(
 
 ////////////////////////////////////////////////////////////////////////////////
 // BridgedNativeWidgetHostImpl,
-// views_bridge_mac::mojom::BridgedNativeWidgetHost:
+// remote_cocoa::mojom::BridgedNativeWidgetHost:
 
 void BridgedNativeWidgetHostImpl::OnVisibilityChanged(bool window_visible) {
   is_visible_ = window_visible;
@@ -822,7 +855,9 @@ bool BridgedNativeWidgetHostImpl::GetHasMenuController(
     bool* has_menu_controller) {
   MenuController* menu_controller = MenuController::GetActiveInstance();
   *has_menu_controller = menu_controller && root_view_ &&
-                         menu_controller->owner() == root_view_->GetWidget();
+                         menu_controller->owner() == root_view_->GetWidget() &&
+                         // The editable combobox menu does not swallow keys.
+                         !menu_controller->IsEditableCombobox();
   return true;
 }
 
@@ -881,8 +916,7 @@ bool BridgedNativeWidgetHostImpl::GetTooltipTextAt(
     gfx::Point view_point = location_in_content;
     views::View::ConvertPointToScreen(root_view_, &view_point);
     views::View::ConvertPointFromScreen(view, &view_point);
-    if (!view->GetTooltipText(view_point, new_tooltip_text))
-      DCHECK(new_tooltip_text->empty());
+    *new_tooltip_text = view->GetTooltipText(view_point);
   }
   return true;
 }
@@ -1106,7 +1140,7 @@ bool BridgedNativeWidgetHostImpl::GetCanWindowBecomeKey(
 bool BridgedNativeWidgetHostImpl::GetAlwaysRenderWindowAsKey(
     bool* always_render_as_key) {
   *always_render_as_key =
-      root_view_ ? root_view_->GetWidget()->IsAlwaysRenderAsActive() : false;
+      root_view_ ? root_view_->GetWidget()->ShouldPaintAsActive() : false;
   return true;
 }
 
@@ -1154,8 +1188,8 @@ bool BridgedNativeWidgetHostImpl::GetRootViewAccessibilityToken(
 
 bool BridgedNativeWidgetHostImpl::ValidateUserInterfaceItem(
     int32_t command,
-    views_bridge_mac::mojom::ValidateUserInterfaceItemResultPtr* out_result) {
-  *out_result = views_bridge_mac::mojom::ValidateUserInterfaceItemResult::New();
+    remote_cocoa::mojom::ValidateUserInterfaceItemResultPtr* out_result) {
+  *out_result = remote_cocoa::mojom::ValidateUserInterfaceItemResult::New();
   native_widget_mac_->ValidateUserInterfaceItem(command, out_result->get());
   return true;
 }
@@ -1187,7 +1221,7 @@ bool BridgedNativeWidgetHostImpl::HandleAccelerator(
 
 ////////////////////////////////////////////////////////////////////////////////
 // BridgedNativeWidgetHostImpl,
-// views_bridge_mac::mojom::BridgedNativeWidgetHost synchronous callbacks:
+// remote_cocoa::mojom::BridgedNativeWidgetHost synchronous callbacks:
 
 void BridgedNativeWidgetHostImpl::GetSheetOffsetY(
     GetSheetOffsetYCallback callback) {
@@ -1314,7 +1348,7 @@ void BridgedNativeWidgetHostImpl::GetRootViewAccessibilityToken(
 void BridgedNativeWidgetHostImpl::ValidateUserInterfaceItem(
     int32_t command,
     ValidateUserInterfaceItemCallback callback) {
-  views_bridge_mac::mojom::ValidateUserInterfaceItemResultPtr result;
+  remote_cocoa::mojom::ValidateUserInterfaceItemResultPtr result;
   ValidateUserInterfaceItem(command, &result);
   std::move(callback).Run(std::move(result));
 }
@@ -1374,13 +1408,13 @@ void BridgedNativeWidgetHostImpl::OnDidChangeFocus(View* focused_before,
 
 ui::EventDispatchDetails BridgedNativeWidgetHostImpl::DispatchKeyEventPostIME(
     ui::KeyEvent* key,
-    base::OnceCallback<void(bool)> ack_callback) {
+    DispatchKeyEventPostIMECallback callback) {
   DCHECK(focus_manager_);
   if (!focus_manager_->OnKeyEvent(*key))
     key->StopPropagation();
   else
     native_widget_mac_->GetWidget()->OnKeyEvent(key);
-  CallDispatchKeyEventPostIMEAck(key, std::move(ack_callback));
+  RunDispatchKeyEventPostIMECallback(key, std::move(callback));
   return ui::EventDispatchDetails();
 }
 
@@ -1404,6 +1438,10 @@ void BridgedNativeWidgetHostImpl::OnDeviceScaleFactorChanged(
     float new_device_scale_factor) {
   native_widget_mac_->GetWidget()->DeviceScaleFactorChanged(
       old_device_scale_factor, new_device_scale_factor);
+}
+
+void BridgedNativeWidgetHostImpl::UpdateVisualState() {
+  native_widget_mac_->GetWidget()->LayoutRootViewIfNecessary();
 }
 
 ////////////////////////////////////////////////////////////////////////////////

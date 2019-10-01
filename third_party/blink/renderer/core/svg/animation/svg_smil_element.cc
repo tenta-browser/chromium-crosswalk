@@ -39,6 +39,7 @@
 #include "third_party/blink/renderer/core/svg/svg_uri_reference.h"
 #include "third_party/blink/renderer/core/xlink_names.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
@@ -48,11 +49,8 @@ namespace blink {
 
 class RepeatEvent final : public Event {
  public:
-  static RepeatEvent* Create(const AtomicString& type, int repeat) {
-    return MakeGarbageCollected<RepeatEvent>(type, Bubbles::kNo,
-                                             Cancelable::kNo, repeat);
-  }
-
+  RepeatEvent(const AtomicString& type, int repeat)
+      : RepeatEvent(type, Bubbles::kNo, Cancelable::kNo, repeat) {}
   RepeatEvent(const AtomicString& type,
               Bubbles bubbles,
               Cancelable cancelable,
@@ -78,11 +76,6 @@ static const double kInvalidCachedTime = -1.;
 
 class ConditionEventListener final : public NativeEventListener {
  public:
-  static ConditionEventListener* Create(SVGSMILElement* animation,
-                                        SVGSMILElement::Condition* condition) {
-    return MakeGarbageCollected<ConditionEventListener>(animation, condition);
-  }
-
   ConditionEventListener(SVGSMILElement* animation,
                          SVGSMILElement::Condition* condition)
       : animation_(animation), condition_(condition) {}
@@ -190,11 +183,13 @@ void SVGSMILElement::Condition::ConnectEventBase(
         WTF::BindRepeating(&SVGSMILElement::BuildPendingResource,
                            WrapWeakPersistent(&timed_element)));
   }
-  if (!target || !target->IsSVGElement())
+  auto* svg_element = DynamicTo<SVGElement>(target);
+  if (!svg_element)
     return;
   DCHECK(!event_listener_);
-  event_listener_ = ConditionEventListener::Create(&timed_element, this);
-  base_element_ = ToSVGElement(target);
+  event_listener_ =
+      MakeGarbageCollected<ConditionEventListener>(&timed_element, this);
+  base_element_ = svg_element;
   base_element_->addEventListener(name_, event_listener_, false);
   timed_element.AddReferenceTo(base_element_);
 }
@@ -267,8 +262,7 @@ void SVGSMILElement::BuildPendingResource() {
   } else {
     target = SVGURIReference::ObserveTarget(target_id_observer_, *this, href);
   }
-  SVGElement* svg_target =
-      target && target->IsSVGElement() ? ToSVGElement(target) : nullptr;
+  auto* svg_target = DynamicTo<SVGElement>(target);
 
   if (svg_target && !svg_target->isConnected())
     svg_target = nullptr;
@@ -411,10 +405,6 @@ SMILTime SVGSMILElement::ParseClockValue(const String& data) {
   return result;
 }
 
-static void SortTimeList(Vector<SMILTimeWithOrigin>& time_list) {
-  std::sort(time_list.begin(), time_list.end());
-}
-
 bool SVGSMILElement::ParseCondition(const String& value,
                                     BeginOrEnd begin_or_end) {
   String parse_string = value.StripWhiteSpace();
@@ -477,9 +467,9 @@ bool SVGSMILElement::ParseCondition(const String& value,
     type = Condition::kEventBase;
   }
 
-  conditions_.push_back(
-      Condition::Create(type, begin_or_end, AtomicString(base_id),
-                        AtomicString(name_string), offset, repeat));
+  conditions_.push_back(MakeGarbageCollected<Condition>(
+      type, begin_or_end, AtomicString(base_id), AtomicString(name_string),
+      offset, repeat));
 
   if (type == Condition::kEventBase && begin_or_end == kEnd)
     has_end_event_conditions_ = true;
@@ -494,21 +484,22 @@ void SVGSMILElement::ParseBeginOrEnd(const String& parse_string,
   if (begin_or_end == kEnd)
     has_end_event_conditions_ = false;
   HashSet<SMILTime> existing;
-  for (unsigned n = 0; n < time_list.size(); ++n) {
-    if (!time_list[n].Time().IsUnresolved())
-      existing.insert(time_list[n].Time().Value());
+  for (const auto& instance_time : time_list) {
+    if (!instance_time.Time().IsUnresolved())
+      existing.insert(instance_time.Time());
   }
   Vector<String> split_string;
   parse_string.Split(';', split_string);
-  for (unsigned n = 0; n < split_string.size(); ++n) {
-    SMILTime value = ParseClockValue(split_string[n]);
-    if (value.IsUnresolved())
-      ParseCondition(split_string[n], begin_or_end);
-    else if (!existing.Contains(value.Value()))
+  for (const auto& item : split_string) {
+    SMILTime value = ParseClockValue(item);
+    if (value.IsUnresolved()) {
+      ParseCondition(item, begin_or_end);
+    } else if (!existing.Contains(value)) {
       time_list.push_back(
           SMILTimeWithOrigin(value, SMILTimeWithOrigin::kParserOrigin));
+    }
   }
-  SortTimeList(time_list);
+  std::sort(time_list.begin(), time_list.end());
 }
 
 void SVGSMILElement::ParseAttribute(const AttributeModificationParams& params) {
@@ -710,6 +701,12 @@ SMILTime SVGSMILElement::SimpleDuration() const {
   return std::min(Dur(), SMILTime::Indefinite());
 }
 
+static void InsertSorted(Vector<SMILTimeWithOrigin>& list,
+                         SMILTimeWithOrigin time) {
+  auto* position = std::lower_bound(list.begin(), list.end(), time);
+  list.insert(position - list.begin(), time);
+}
+
 void SVGSMILElement::AddInstanceTime(BeginOrEnd begin_or_end,
                                      SMILTime time,
                                      SMILTimeWithOrigin::Origin origin) {
@@ -724,8 +721,7 @@ void SVGSMILElement::AddInstanceTime(BeginOrEnd begin_or_end,
     return;
   Vector<SMILTimeWithOrigin>& list =
       begin_or_end == kBegin ? begin_times_ : end_times_;
-  list.push_back(time_with_origin);
-  SortTimeList(list);
+  InsertSorted(list, time_with_origin);
   if (begin_or_end == kBegin)
     BeginListChanged(elapsed);
   else
@@ -1243,7 +1239,8 @@ void SVGSMILElement::DispatchPendingEvent(const AtomicString& event_type) {
   if (event_type == "repeatn") {
     unsigned repeat_event_count = repeat_event_count_list_.front();
     repeat_event_count_list_.EraseAt(0);
-    DispatchEvent(*RepeatEvent::Create(event_type, repeat_event_count));
+    DispatchEvent(
+        *MakeGarbageCollected<RepeatEvent>(event_type, repeat_event_count));
   } else {
     DispatchEvent(*Event::Create(event_type));
   }

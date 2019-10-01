@@ -4,6 +4,7 @@
 
 #include "components/journey/journey_info_fetcher.h"
 
+#include "base/bind.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "components/journey/journey_info_json_request.h"
@@ -27,7 +28,7 @@ void JourneyInfoFetcher::FetchJourneyInfo(
     std::vector<int64_t> timestamps,
     FetchResponseAvailableCallback callback) {
   if (!identity_manager_->HasPrimaryAccount()) {
-    FetchFinished(std::move(callback), /*result=*/nullptr,
+    FetchFinished(std::move(callback), /*result=*/base::nullopt,
                   "Primary Account is not Available. Sign in is required");
     return;
   }
@@ -82,8 +83,8 @@ void JourneyInfoFetcher::AccessTokenError(const GoogleServiceAuthError& error) {
         timestamp_and_callback = std::move(pending_requests_.front());
     pending_requests_.pop();
 
-    FetchFinished(std::move(timestamp_and_callback.second), /*result=*/nullptr,
-                  error.ToString());
+    FetchFinished(std::move(timestamp_and_callback.second),
+                  /*result=*/base::nullopt, error.ToString());
   }
 }
 
@@ -114,7 +115,7 @@ const std::string& JourneyInfoFetcher::GetLastJsonForDebugging() const {
 void JourneyInfoFetcher::JsonRequestDone(
     std::unique_ptr<JourneyInfoJsonRequest> request,
     FetchResponseAvailableCallback callback,
-    std::unique_ptr<base::Value> result,
+    base::Optional<base::Value> result,
     const std::string& error_detail) {
   DCHECK(request);
 
@@ -123,7 +124,7 @@ void JourneyInfoFetcher::JsonRequestDone(
 }
 
 void JourneyInfoFetcher::FetchFinished(FetchResponseAvailableCallback callback,
-                                       std::unique_ptr<base::Value> result,
+                                       base::Optional<base::Value> result,
                                        const std::string& error_detail) {
   DCHECK((result && !result->is_none()) || error_detail != "");
 

@@ -40,10 +40,12 @@
 #include "gpu/command_buffer/common/mailbox.h"
 #include "gpu/command_buffer/common/sync_token.h"
 #include "gpu/config/gpu_feature_info.h"
+#include "third_party/blink/public/platform/web_graphics_context_3d_provider.h"
 #include "third_party/blink/renderer/platform/geometry/int_size.h"
 #include "third_party/blink/renderer/platform/graphics/gpu/webgl_image_conversion.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_types_3d.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
+#include "third_party/blink/renderer/platform/wtf/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/deque.h"
 #include "third_party/blink/renderer/platform/wtf/ref_counted.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
@@ -67,6 +69,8 @@ class GLES2Interface;
 
 namespace blink {
 class CanvasColorParams;
+class CanvasResource;
+class CanvasResourceProvider;
 class Extensions3DUtil;
 class StaticBitmapImage;
 class WebGraphicsContext3DProvider;
@@ -94,11 +98,6 @@ class PLATFORM_EXPORT DrawingBuffer : public cc::TextureLayerClient,
     virtual void DrawingBufferClientRestoreFramebufferBinding() = 0;
     virtual void DrawingBufferClientRestorePixelUnpackBufferBinding() = 0;
     virtual void DrawingBufferClientRestorePixelPackBufferBinding() = 0;
-  };
-
-  struct WebGLContextLimits {
-    uint32_t max_active_webgl_contexts = 0;
-    uint32_t max_active_webgl_contexts_on_worker = 0;
   };
 
   enum PreserveDrawingBuffer {
@@ -207,7 +206,6 @@ class PLATFORM_EXPORT DrawingBuffer : public cc::TextureLayerClient,
   Client* client() { return client_; }
   WebGLVersion webgl_version() const { return webgl_version_; }
   bool destroyed() const { return destruction_in_progress_; }
-  const WebGLContextLimits& webgl_context_limits();
 
   // cc::TextureLayerClient implementation.
   bool PrepareTransferableResource(
@@ -228,6 +226,7 @@ class PLATFORM_EXPORT DrawingBuffer : public cc::TextureLayerClient,
   bool CopyToPlatformTexture(gpu::gles2::GLES2Interface*,
                              GLenum dst_target,
                              GLuint dst_texture,
+                             GLint dst_level,
                              bool premultiply_alpha,
                              bool flip_y,
                              const IntPoint& dst_texture_offset,
@@ -239,7 +238,7 @@ class PLATFORM_EXPORT DrawingBuffer : public cc::TextureLayerClient,
 
   int SampleCount() const { return sample_count_; }
   bool ExplicitResolveOfMultisampleData() const {
-    return anti_aliasing_mode_ == gpu::kAntialiasingModeMSAAExplicitResolve;
+    return anti_aliasing_mode_ == kAntialiasingModeMSAAExplicitResolve;
   }
 
   // Rebind the read and draw framebuffers that WebGL is expecting.
@@ -252,6 +251,8 @@ class PLATFORM_EXPORT DrawingBuffer : public cc::TextureLayerClient,
   // when the DrawingBuffer is using a CHROMIUM image for its backing
   // store and RGB emulation is in use (basically, macOS only).
   class PLATFORM_EXPORT ScopedRGBEmulationForBlitFramebuffer {
+    STACK_ALLOCATED();
+
    public:
     ScopedRGBEmulationForBlitFramebuffer(DrawingBuffer*,
                                          bool is_user_draw_framebuffer_bound);
@@ -261,6 +262,9 @@ class PLATFORM_EXPORT DrawingBuffer : public cc::TextureLayerClient,
     scoped_refptr<DrawingBuffer> drawing_buffer_;
     bool doing_work_ = false;
   };
+
+  scoped_refptr<CanvasResource> AsCanvasResource(
+      base::WeakPtr<CanvasResourceProvider> resource_provider);
 
  protected:  // For unittests
   DrawingBuffer(std::unique_ptr<WebGraphicsContext3DProvider>,
@@ -299,6 +303,8 @@ class PLATFORM_EXPORT DrawingBuffer : public cc::TextureLayerClient,
   // This structure should wrap all public entrypoints that may modify GL state.
   // It will restore all state when it drops out of scope.
   class ScopedStateRestorer {
+    USING_FAST_MALLOC(ScopedStateRestorer);
+
    public:
     ScopedStateRestorer(DrawingBuffer*);
     ~ScopedStateRestorer();
@@ -333,8 +339,8 @@ class PLATFORM_EXPORT DrawingBuffer : public cc::TextureLayerClient,
     ColorBuffer(DrawingBuffer*,
                 const IntSize&,
                 GLuint texture_id,
-                GLuint image_id,
-                std::unique_ptr<gfx::GpuMemoryBuffer>);
+                std::unique_ptr<gfx::GpuMemoryBuffer>,
+                gpu::Mailbox mailbox);
     ~ColorBuffer();
 
     // The owning DrawingBuffer. Note that DrawingBuffer is explicitly destroyed
@@ -343,7 +349,6 @@ class PLATFORM_EXPORT DrawingBuffer : public cc::TextureLayerClient,
     scoped_refptr<DrawingBuffer> drawing_buffer;
     const IntSize size;
     const GLuint texture_id = 0;
-    const GLuint image_id = 0;
     std::unique_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer;
 
     // If we're emulating an RGB back buffer using an RGBA Chromium
@@ -355,6 +360,9 @@ class PLATFORM_EXPORT DrawingBuffer : public cc::TextureLayerClient,
     // There are bugs in the semantics of RGB8 textures in this
     // situation (the alpha channel is zeroed), requiring more fixups.
     GLuint rgb_workaround_texture_id = 0;
+
+    // The mailbox for |rgb_workaround_texture_id|.
+    gpu::Mailbox rgb_workaround_mailbox;
 
     // The mailbox used to send this buffer to the compositor.
     gpu::Mailbox mailbox;
@@ -469,7 +477,6 @@ class PLATFORM_EXPORT DrawingBuffer : public cc::TextureLayerClient,
 
   const PreserveDrawingBuffer preserve_drawing_buffer_;
   const WebGLVersion webgl_version_;
-  WebGLContextLimits webgl_context_limits_;
 
   std::unique_ptr<WebGraphicsContext3DProviderWrapper> context_provider_;
   // Lifetime is tied to the m_contextProvider.
@@ -555,14 +562,16 @@ class PLATFORM_EXPORT DrawingBuffer : public cc::TextureLayerClient,
   const gfx::ColorSpace storage_color_space_;
   const gfx::ColorSpace sampler_color_space_;
 
-  gpu::AntialiasingMode anti_aliasing_mode_ = gpu::kAntialiasingModeNone;
+  AntialiasingMode anti_aliasing_mode_ = kAntialiasingModeNone;
 
   bool use_half_float_storage_ = false;
 
   int max_texture_size_ = 0;
   int sample_count_ = 0;
+  int eqaa_storage_sample_count_ = 0;
   bool destruction_in_progress_ = false;
   bool is_hidden_ = false;
+  bool has_eqaa_support = false;
   SkFilterQuality filter_quality_ = kLow_SkFilterQuality;
 
   scoped_refptr<cc::TextureLayer> layer_;

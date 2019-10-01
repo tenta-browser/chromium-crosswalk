@@ -58,6 +58,9 @@ net::URLRequestJob* MaybeCreateURLRequestResourceBundleJob(
 // Return the |request|'s resource path relative to the Chromium resources path
 // (chrome::DIR_RESOURCES) *if* the request refers to a resource within the
 // Chrome resource bundle. If not then the returned file path will be empty.
+// |resource_id| is used to check whether the requested resource is registered
+// as a component extensions resource, via
+// ChromeComponentExtensionResourceManager::IsComponentExtensionResource()
 base::FilePath GetBundleResourcePath(
     const network::ResourceRequest& request,
     const base::FilePath& extension_resources_path,

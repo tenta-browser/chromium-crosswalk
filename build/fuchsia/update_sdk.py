@@ -6,7 +6,10 @@
 """Updates the Fuchsia SDK to the given revision. Should be used in a 'hooks_os'
 entry so that it only runs when .gclient's target_os includes 'fuchsia'."""
 
+from __future__ import print_function
+
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -24,9 +27,51 @@ import find_depot_tools
 SDK_SUBDIRS = ["arch", "pkg", "qemu", "sysroot", "target",
                "toolchain_libs", "tools"]
 
+EXTRA_SDK_HASH_PREFIX = ''
+
+def GetSdkGeneration(hash):
+  if not hash:
+    return None
+
+  cmd = [os.path.join(find_depot_tools.DEPOT_TOOLS_PATH, 'gsutil.py'), 'ls',
+         '-L', GetBucketForPlatform() + hash]
+  sdk_details = subprocess.check_output(cmd)
+  m = re.search('Generation:\s*(\d*)', sdk_details)
+  if not m:
+    return None
+  return int(m.group(1))
+
+
 def GetSdkHashForPlatform():
   filename = '{platform}.sdk.sha1'.format(platform =  GetHostOsFromPlatform())
-  return os.path.join(os.path.dirname(__file__), filename)
+
+  # Get the hash of the SDK in chromium.
+  sdk_hash = None
+  hash_file = os.path.join(os.path.dirname(__file__), filename)
+  with open(hash_file, 'r') as f:
+    sdk_hash = f.read().strip()
+
+  # Get the hash of the SDK with the extra prefix.
+  extra_sdk_hash = None
+  if EXTRA_SDK_HASH_PREFIX:
+    extra_hash_file = os.path.join(os.path.dirname(__file__),
+                                   EXTRA_SDK_HASH_PREFIX + filename)
+    with open(extra_hash_file, 'r') as f:
+      extra_sdk_hash = f.read().strip()
+
+  # If both files are empty, return an error.
+  if not sdk_hash and not extra_sdk_hash:
+    print(
+        'No SHA1 found in {} or {}'.format(hash_file, extra_hash_file),
+        file=sys.stderr)
+    return 1
+
+  # Return the newer SDK based on the generation number.
+  sdk_generation = GetSdkGeneration(sdk_hash)
+  extra_sdk_generation = GetSdkGeneration(extra_sdk_hash)
+  if extra_sdk_generation > sdk_generation:
+    return extra_sdk_hash
+  return sdk_hash
 
 def GetBucketForPlatform():
   return 'gs://fuchsia/sdk/core/{platform}-amd64/'.format(
@@ -35,7 +80,7 @@ def GetBucketForPlatform():
 
 def EnsureDirExists(path):
   if not os.path.exists(path):
-    print 'Creating directory %s' % path
+    print('Creating directory %s' % path)
     os.makedirs(path)
 
 
@@ -43,7 +88,7 @@ def EnsureDirExists(path):
 def Cleanup(path):
   hash_file = os.path.join(path, '.hash')
   if os.path.exists(hash_file):
-    print 'Removing old SDK from %s.' % path
+    print('Removing old SDK from %s.' % path)
     for d in SDK_SUBDIRS:
       to_remove = os.path.join(path, d)
       if os.path.isdir(to_remove):
@@ -63,7 +108,7 @@ def UpdateTimestampsRecursive(path):
 
 def main():
   if len(sys.argv) != 1:
-    print >>sys.stderr, 'usage: %s' % sys.argv[0]
+    print('usage: %s' % sys.argv[0], file=sys.stderr)
     return 1
 
   # Quietly exit if there's no SDK support for this platform.
@@ -78,12 +123,8 @@ def main():
   sdk_root = os.path.join(REPOSITORY_ROOT, 'third_party', 'fuchsia-sdk')
   Cleanup(sdk_root)
 
-  hash_file = GetSdkHashForPlatform()
-  with open(hash_file, 'r') as f:
-    sdk_hash = f.read().strip()
-
+  sdk_hash = GetSdkHashForPlatform()
   if not sdk_hash:
-    print >>sys.stderr, 'No SHA1 found in %s' % hash_file
     return 1
 
   output_dir = os.path.join(sdk_root, 'sdk')
@@ -97,7 +138,7 @@ def main():
         subprocess.check_call([os.path.join(sdk_root, 'gen_build_defs.py')])
         return 0
 
-  print 'Downloading SDK %s...' % sdk_hash
+  print('Downloading SDK %s...' % sdk_hash)
 
   if os.path.isdir(output_dir):
     shutil.rmtree(output_dir)

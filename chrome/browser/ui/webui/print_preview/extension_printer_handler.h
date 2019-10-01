@@ -25,10 +25,6 @@ namespace cloud_devices {
 class CloudDeviceDescription;
 }
 
-namespace device {
-class UsbDevice;
-}
-
 namespace gfx {
 class Size;
 }
@@ -56,12 +52,9 @@ class ExtensionPrinterHandler : public PrinterHandler {
                         GetPrintersDoneCallback done_callback) override;
   void StartGetCapability(const std::string& destination_id,
                           GetCapabilityCallback callback) override;
-  void StartPrint(const std::string& destination_id,
-                  const std::string& capability,
-                  const base::string16& job_title,
-                  const std::string& ticket_json,
-                  const gfx::Size& page_size,
-                  const scoped_refptr<base::RefCountedMemory>& print_data,
+  void StartPrint(const base::string16& job_title,
+                  base::Value settings,
+                  scoped_refptr<base::RefCountedMemory> print_data,
                   PrintCallback callback) override;
   void StartGrantPrinterAccess(const std::string& printer_id,
                                GetPrinterInfoCallback callback) override;
@@ -76,9 +69,8 @@ class ExtensionPrinterHandler : public PrinterHandler {
   // by |printer_description|.
   // |callback| is called with the converted data.
   void ConvertToPWGRaster(
-      const scoped_refptr<base::RefCountedMemory>& data,
+      scoped_refptr<base::RefCountedMemory> data,
       const cloud_devices::CloudDeviceDescription& printer_description,
-      const cloud_devices::CloudDeviceDescription& ticket,
       const gfx::Size& page_size,
       std::unique_ptr<extensions::PrinterProviderPrintJob> job,
       PrintJobCallback callback);
@@ -102,7 +94,7 @@ class ExtensionPrinterHandler : public PrinterHandler {
 
   void OnUsbDevicesEnumerated(
       const AddedPrintersCallback& callback,
-      const std::vector<scoped_refptr<device::UsbDevice>>& devices);
+      std::vector<device::mojom::UsbDeviceInfoPtr> devices);
 
   Profile* const profile_;
   GetPrintersDoneCallback done_callback_;

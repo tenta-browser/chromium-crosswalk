@@ -221,7 +221,8 @@ void SupervisedUserInternalsMessageHandler::SendBasicInfo() {
   // |identity_manager| is null in incognito and guest profiles.
   if (identity_manager) {
     for (const auto& account :
-         identity_manager->GetAccountsWithRefreshTokens()) {
+         identity_manager
+             ->GetExtendedAccountInfoForAccountsWithRefreshToken()) {
       base::ListValue* section_user = AddSection(section_list.get(),
           "User Information for " + account.full_name);
       AddSectionEntry(section_user, "Account id", account.account_id);
@@ -242,10 +243,11 @@ void SupervisedUserInternalsMessageHandler::SendBasicInfo() {
 
   // Trigger retrieval of the user settings
   SupervisedUserSettingsService* settings_service =
-      SupervisedUserSettingsServiceFactory::GetForProfile(profile);
-  user_settings_subscription_ = settings_service->Subscribe(base::Bind(
-        &SupervisedUserInternalsMessageHandler::SendSupervisedUserSettings,
-        weak_factory_.GetWeakPtr()));
+      SupervisedUserSettingsServiceFactory::GetForKey(profile->GetProfileKey());
+  user_settings_subscription_ =
+      settings_service->SubscribeForSettingsChange(base::Bind(
+          &SupervisedUserInternalsMessageHandler::SendSupervisedUserSettings,
+          weak_factory_.GetWeakPtr()));
 }
 
 void SupervisedUserInternalsMessageHandler::SendSupervisedUserSettings(

@@ -8,6 +8,8 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/task/post_task.h"
@@ -121,17 +123,21 @@ using file_system_provider::AbortCallback;
 
 SmbFileSystem::SmbFileSystem(
     const file_system_provider::ProvidedFileSystemInfo& file_system_info,
+    MountIdCallback mount_id_callback,
     UnmountCallback unmount_callback,
-    RequestCredentialsCallback request_creds_callback)
+    RequestCredentialsCallback request_creds_callback,
+    RequestUpdatedSharePathCallback request_path_callback)
     : file_system_info_(file_system_info),
+      mount_id_callback_(std::move(mount_id_callback)),
       unmount_callback_(std::move(unmount_callback)),
       request_creds_callback_(std::move(request_creds_callback)),
+      request_path_callback_(std::move(request_path_callback)),
       task_queue_(kTaskQueueCapacity) {}
 
 SmbFileSystem::~SmbFileSystem() {}
 
 int32_t SmbFileSystem::GetMountId() const {
-  return GetMountIdFromFileSystemId(file_system_info_.file_system_id());
+  return mount_id_callback_.Run(file_system_info_);
 }
 
 std::string SmbFileSystem::GetMountPath() const {
@@ -191,7 +197,13 @@ void SmbFileSystem::HandleRequestUnmountCallback(
     smbprovider::ErrorType error) {
   task_queue_.TaskFinished();
   base::File::Error result = TranslateToFileError(error);
-  if (result == base::File::FILE_OK) {
+  if (result == base::File::FILE_OK ||
+      // Mount ID wasn't found. smbprovider might have crashed and restarted.
+      // This shouldn't prevent the user from removing the share.
+      result == base::File::FILE_ERROR_NOT_FOUND ||
+      // Mount process either has not yet completed, or failed. This also
+      // shouldn't prevent the user from removing the share.
+      GetMountId() < 0) {
     result =
         RunUnmountCallback(file_system_info_.file_system_id(),
                            file_system_provider::Service::UNMOUNT_REASON_USER);
@@ -207,11 +219,38 @@ AbortCallback SmbFileSystem::GetMetadata(
     return HandleSyncRedundantGetMetadata(fields, std::move(callback));
   }
 
+  int32_t mount_id = GetMountId();
+  if (mount_id < 0 && entry_path.value() == "/") {
+    // If the mount process hasn't completed, return a dummy entry for the root
+    // directory. This is needed for the Files app to see the share has been
+    // mounted.
+    std::unique_ptr<file_system_provider::EntryMetadata> metadata =
+        std::make_unique<file_system_provider::EntryMetadata>();
+    if (RequestedIsDirectory(fields)) {
+      metadata->is_directory = std::make_unique<bool>(true);
+    }
+    if (RequestedName(fields)) {
+      metadata->name = std::make_unique<std::string>();
+    }
+    if (RequestedSize(fields)) {
+      metadata->size = std::make_unique<int64_t>(0);
+    }
+    if (RequestedModificationTime(fields)) {
+      metadata->modification_time = std::make_unique<base::Time>();
+    }
+    if (RequestedThumbnail(fields)) {
+      metadata->thumbnail = std::make_unique<std::string>(kUnknownImageDataUri);
+    }
+    // Mime types are not supported.
+    std::move(callback).Run(std::move(metadata), base::File::FILE_OK);
+    return CreateAbortCallback();
+  }
+
   auto reply =
       base::BindOnce(&SmbFileSystem::HandleRequestGetMetadataEntryCallback,
                      AsWeakPtr(), fields, std::move(callback));
   SmbTask task = base::BindOnce(&SmbProviderClient::GetMetadataEntry,
-                                GetWeakSmbProviderClient(), GetMountId(),
+                                GetWeakSmbProviderClient(), mount_id,
                                 entry_path, std::move(reply));
 
   return EnqueueTaskAndGetCallback(std::move(task));
@@ -573,6 +612,11 @@ void SmbFileSystem::RequestUpdatedCredentials(base::OnceClosure reply) {
   request_creds_callback_.Run(GetMountPath(), GetMountId(), std::move(reply));
 }
 
+void SmbFileSystem::RequestUpdatedSharePath(
+    SmbService::StartReadDirIfSuccessfulCallback reply) {
+  request_path_callback_.Run(GetMountPath(), GetMountId(), std::move(reply));
+}
+
 void SmbFileSystem::HandleRequestReadDirectoryCallback(
     storage::AsyncFileUtil::ReadDirectoryCallback callback,
     const base::ElapsedTimer& metrics_timer,
@@ -690,14 +734,26 @@ void SmbFileSystem::HandleStartReadDirectoryCallback(
     const smbprovider::DirectoryEntryListProto& entries) {
   task_queue_.TaskFinished();
 
-  if (error == smbprovider::ERROR_ACCESS_DENIED) {
-    // Request updated credentials for share, then retry the read directory from
-    // the start.
-    base::OnceClosure retry =
-        base::BindOnce(&SmbFileSystem::StartReadDirectory, AsWeakPtr(),
-                       directory_path, operation_id, std::move(callback));
-    RequestUpdatedCredentials(std::move(retry));
-    return;
+  if (IsRecoverableError(error)) {
+    if (error == smbprovider::ERROR_ACCESS_DENIED) {
+      base::OnceClosure retry =
+          base::BindOnce(&SmbFileSystem::StartReadDirectory, AsWeakPtr(),
+                         directory_path, operation_id, std::move(callback));
+      // Request updated credentials for share, then retry the read directory
+      // from the start.
+      RequestUpdatedCredentials(std::move(retry));
+      return;
+    }
+
+    if (error == smbprovider::ERROR_NOT_FOUND) {
+      // Request updated share path for share, then retry the read directory
+      // from the start.
+      SmbService::StartReadDirIfSuccessfulCallback retry_start_read_dir =
+          base::BindOnce(&SmbFileSystem::RetryStartReadDir, AsWeakPtr(),
+                         directory_path, operation_id, std::move(callback));
+      RequestUpdatedSharePath(std::move(retry_start_read_dir));
+      return;
+    }
   }
 
   int entries_count = 0;
@@ -857,6 +913,27 @@ void SmbFileSystem::HandleStatusCallback(
 base::WeakPtr<file_system_provider::ProvidedFileSystemInterface>
 SmbFileSystem::GetWeakPtr() {
   return AsWeakPtr();
+}
+
+bool SmbFileSystem::IsRecoverableError(smbprovider::ErrorType error) const {
+  return (error == smbprovider::ERROR_NOT_FOUND) ||
+         (error == smbprovider::ERROR_INVALID_OPERATION) ||
+         (error == smbprovider::ERROR_ACCESS_DENIED);
+}
+
+void SmbFileSystem::RetryStartReadDir(
+    const base::FilePath& directory_path,
+    OperationId operation_id,
+    storage::AsyncFileUtil::ReadDirectoryCallback callback,
+    bool should_retry_start_read_dir) {
+  if (should_retry_start_read_dir) {
+    StartReadDirectory(directory_path, operation_id, std::move(callback));
+  } else {
+    // Run |callback| to terminate StartReadDirectory early.
+    std::move(callback).Run(base::File::FILE_ERROR_NOT_FOUND,
+                            storage::AsyncFileUtil::EntryList(),
+                            false /* has_more */);
+  }
 }
 
 }  // namespace smb_client

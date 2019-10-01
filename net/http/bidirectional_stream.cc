@@ -36,25 +36,23 @@ namespace net {
 
 namespace {
 
-std::unique_ptr<base::Value> NetLogHeadersCallback(
-    const spdy::SpdyHeaderBlock* headers,
-    NetLogCaptureMode capture_mode) {
-  auto dict = std::make_unique<base::DictionaryValue>();
-  dict->Set("headers", ElideSpdyHeaderBlockForNetLog(*headers, capture_mode));
+base::Value NetLogHeadersCallback(const spdy::SpdyHeaderBlock* headers,
+                                  NetLogCaptureMode capture_mode) {
+  base::DictionaryValue dict;
+  dict.SetKey("headers", ElideSpdyHeaderBlockForNetLog(*headers, capture_mode));
   return std::move(dict);
 }
 
-std::unique_ptr<base::Value> NetLogCallback(const GURL* url,
-                                            const std::string* method,
-                                            const HttpRequestHeaders* headers,
-                                            NetLogCaptureMode capture_mode) {
-  auto dict = std::make_unique<base::DictionaryValue>();
-  dict->SetString("url", url->possibly_invalid_spec());
-  dict->SetString("method", *method);
+base::Value NetLogCallback(const GURL* url,
+                           const std::string* method,
+                           const HttpRequestHeaders* headers,
+                           NetLogCaptureMode capture_mode) {
+  base::DictionaryValue dict;
+  dict.SetString("url", url->possibly_invalid_spec());
+  dict.SetString("method", *method);
   std::string empty;
-  std::unique_ptr<base::Value> headers_param(
-      headers->NetLogCallback(&empty, capture_mode));
-  dict->Set("headers", std::move(headers_param));
+  base::Value headers_param(headers->NetLogCallback(&empty, capture_mode));
+  dict.SetKey("headers", std::move(headers_param));
   return std::move(dict);
 }
 
@@ -107,8 +105,8 @@ BidirectionalStream::BidirectionalStream(
   if (!request_info_->url.SchemeIs(url::kHttpsScheme)) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(&BidirectionalStream::NotifyFailed,
-                   weak_factory_.GetWeakPtr(), ERR_DISALLOWED_URL_SCHEME));
+        base::BindOnce(&BidirectionalStream::NotifyFailed,
+                       weak_factory_.GetWeakPtr(), ERR_DISALLOWED_URL_SCHEME));
     return;
   }
 
@@ -376,7 +374,8 @@ void BidirectionalStream::OnWebSocketHandshakeStreamReady(
 void BidirectionalStream::OnStreamFailed(
     int result,
     const NetErrorDetails& net_error_details,
-    const SSLConfig& used_ssl_config) {
+    const SSLConfig& used_ssl_config,
+    const ProxyInfo& used_proxy_info) {
   DCHECK_LT(result, 0);
   DCHECK_NE(result, ERR_IO_PENDING);
   DCHECK(stream_request_);
@@ -418,16 +417,6 @@ void BidirectionalStream::OnNeedsClientAuth(const SSLConfig& used_ssl_config,
                                          nullptr);
   stream_request_ = nullptr;
   StartRequest(ssl_config);
-}
-
-void BidirectionalStream::OnHttpsProxyTunnelResponseRedirect(
-    const HttpResponseInfo& response_info,
-    const SSLConfig& used_ssl_config,
-    const ProxyInfo& used_proxy_info,
-    std::unique_ptr<HttpStream> stream) {
-  DCHECK(stream_request_);
-
-  NotifyFailed(ERR_HTTPS_PROXY_TUNNEL_RESPONSE_REDIRECT);
 }
 
 void BidirectionalStream::OnQuicBroken() {}

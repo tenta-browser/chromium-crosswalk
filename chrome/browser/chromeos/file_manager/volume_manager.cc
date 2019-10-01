@@ -10,15 +10,20 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
+#include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/memory/weak_ptr.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/system/sys_info.h"
 #include "base/task/post_task.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
 #include "chrome/browser/chromeos/arc/fileapi/arc_documents_provider_root_map.h"
@@ -48,7 +53,10 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "services/device/public/mojom/mtp_manager.mojom.h"
+#include "services/device/public/mojom/mtp_storage_info.mojom.h"
 #include "storage/browser/fileapi/external_mount_points.h"
+#include "ui/base/l10n/l10n_util.h"
+#include "ui/chromeos/strings/grit/ui_chromeos_strings.h"
 
 namespace file_manager {
 namespace {
@@ -182,6 +190,34 @@ chromeos::MountAccessMode GetExternalStorageAccessMode(const Profile* profile) {
              : chromeos::MOUNT_ACCESS_MODE_READ_WRITE;
 }
 
+void RecordDownloadsDiskUsageStats(base::FilePath downloads_path) {
+  constexpr int64_t kOneMiB = 1024 * 1024;
+  // For now assume a maximum bucket size of 512GB, which exceeds all current
+  // chromeOS hard disk sizes.
+  constexpr int64_t k512GiBInMiB = 512 * 1024;
+
+  int64_t download_directory_size_in_bytes =
+      base::ComputeDirectorySize(downloads_path);
+
+  base::UmaHistogramCustomCounts(
+      "FileBrowser.Downloads.DirectorySizeMiB",
+      static_cast<int>(download_directory_size_in_bytes / kOneMiB), 1,
+      k512GiBInMiB, 100);
+
+  int64_t total_disk_space_in_bytes =
+      base::SysInfo::AmountOfTotalDiskSpace(downloads_path);
+
+  // total_disk_space_in_bytes can be -1 on error.
+  if (total_disk_space_in_bytes > 0) {
+    int percentage_space_used = std::lround(
+        (download_directory_size_in_bytes * 100.0) / total_disk_space_in_bytes);
+
+    base::UmaHistogramPercentage(
+        "FileBrowser.Downloads.DirectoryPercentageOfDiskUsage",
+        percentage_space_used);
+  }
+}
+
 }  // namespace
 
 Volume::Volume()
@@ -247,7 +283,7 @@ std::unique_ptr<Volume> Volume::CreateForRemovable(
     volume->file_system_type_ = disk->file_system_type();
     volume->volume_label_ = disk->device_label();
     volume->device_type_ = disk->device_type();
-    volume->system_path_prefix_ = base::FilePath(disk->system_path_prefix());
+    volume->storage_device_path_ = base::FilePath(disk->storage_device_path());
     volume->is_parent_ = disk->is_parent();
     volume->is_read_only_ = disk->is_read_only();
     volume->is_read_only_removable_device_ = disk->is_read_only_hardware();
@@ -369,7 +405,8 @@ std::unique_ptr<Volume> Volume::CreateForDocumentsProvider(
     const std::string& document_id,
     const std::string& title,
     const std::string& summary,
-    const GURL& icon_url) {
+    const GURL& icon_url,
+    bool read_only) {
   std::unique_ptr<Volume> volume(new Volume());
   volume->type_ = VOLUME_TYPE_DOCUMENTS_PROVIDER;
   volume->device_type_ = chromeos::DEVICE_TYPE_UNKNOWN;
@@ -378,9 +415,14 @@ std::unique_ptr<Volume> Volume::CreateForDocumentsProvider(
   volume->mount_path_ =
       arc::GetDocumentsProviderMountPath(authority, document_id);
   volume->mount_condition_ = chromeos::disks::MOUNT_CONDITION_NONE;
-  volume->volume_label_ = title;
-  // TODO(fukino): Set a proper flag when write operations are supported.
-  volume->is_read_only_ = true;
+  if (summary.empty()) {
+    volume->volume_label_ = title;
+  } else {
+    volume->volume_label_ = l10n_util::GetStringFUTF8(
+        IDS_FILE_BROWSER_DOCPROVIDER_ROOT_LABEL_WITH_SUMMARY,
+        base::UTF8ToUTF16(title), base::UTF8ToUTF16(summary));
+  }
+  volume->is_read_only_ = read_only;
   volume->watchable_ = false;
   volume->volume_id_ = arc::GetDocumentsProviderVolumeId(authority, root_id);
   if (!icon_url.is_empty()) {
@@ -407,11 +449,14 @@ std::unique_ptr<Volume> Volume::CreateForTesting(
   // Keep source_path empty.
   volume->source_ = SOURCE_DEVICE;
   volume->mount_path_ = path;
-  volume->system_path_prefix_ = device_path;
+  volume->storage_device_path_ = device_path;
   volume->mount_condition_ = chromeos::disks::MOUNT_CONDITION_NONE;
   volume->is_read_only_ = read_only;
   volume->volume_id_ = GenerateVolumeId(*volume);
   volume->drive_label_ = drive_label;
+  if (volume_type == VOLUME_TYPE_REMOVABLE_DISK_PARTITION) {
+    volume->file_system_type_ = "ext4";
+  }
   return volume;
 }
 
@@ -420,7 +465,7 @@ std::unique_ptr<Volume> Volume::CreateForTesting(
     const base::FilePath& device_path,
     const base::FilePath& mount_path) {
   std::unique_ptr<Volume> volume(new Volume());
-  volume->system_path_prefix_ = device_path;
+  volume->storage_device_path_ = device_path;
   volume->mount_path_ = mount_path;
   return volume;
 }
@@ -468,6 +513,13 @@ void VolumeManager::Initialize() {
 
   DoMountEvent(chromeos::MOUNT_ERROR_NONE,
                Volume::CreateForDownloads(localVolume));
+
+  // Asyncrhonously record the disk usage for the downloads path
+  base::PostTaskWithTraits(
+      FROM_HERE,
+      {base::MayBlock(), base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN,
+       base::TaskPriority::BEST_EFFORT},
+      base::BindOnce(&RecordDownloadsDiskUsageStats, std::move(localVolume)));
 
   // Subscribe to DriveIntegrationService.
   drive_integration_service_->AddObserver(this);
@@ -636,6 +688,14 @@ bool VolumeManager::RegisterAndroidFilesDirectoryForTesting(
   return true;
 }
 
+bool VolumeManager::RegisterMediaViewForTesting(
+    const std::string& root_document_id) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  DoMountEvent(chromeos::MOUNT_ERROR_NONE,
+               Volume::CreateForMediaView(root_document_id));
+  return true;
+}
+
 bool VolumeManager::RemoveAndroidFilesDirectoryForTesting(
     const base::FilePath& path) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
@@ -700,6 +760,19 @@ void VolumeManager::AddVolumeForTesting(const base::FilePath& path,
 void VolumeManager::AddVolumeForTesting(std::unique_ptr<Volume> volume) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DoMountEvent(chromeos::MOUNT_ERROR_NONE, std::move(volume));
+}
+
+void VolumeManager::RemoveVolumeForTesting(const base::FilePath& path,
+                                           VolumeType volume_type,
+                                           chromeos::DeviceType device_type,
+                                           bool read_only,
+                                           const base::FilePath& device_path,
+                                           const std::string& drive_label) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  DoUnmountEvent(
+      chromeos::MOUNT_ERROR_NONE,
+      *Volume::CreateForTesting(path, volume_type, device_type, read_only,
+                                device_path, drive_label));
 }
 
 void VolumeManager::OnFileSystemMounted() {
@@ -872,16 +945,14 @@ void VolumeManager::OnFormatEvent(
       }
       return;
     case chromeos::disks::DiskMountManager::FORMAT_COMPLETED:
-      if (error_code == chromeos::FORMAT_ERROR_NONE) {
-        // If format is completed successfully, try to mount the device.
-        // MountPath auto-detects filesystem format if second argument is
-        // empty. The third argument (mount label) is not used in a disk mount
-        // operation.
-        disk_mount_manager_->MountPath(device_path, std::string(),
-                                       std::string(), {},
-                                       chromeos::MOUNT_TYPE_DEVICE,
-                                       GetExternalStorageAccessMode(profile_));
-      }
+      // Even if format did not complete successfully, try to mount the device
+      // so the user can retry.
+      // MountPath auto-detects filesystem format if second argument is
+      // empty. The third argument (mount label) is not used in a disk mount
+      // operation.
+      disk_mount_manager_->MountPath(device_path, std::string(), std::string(),
+                                     {}, chromeos::MOUNT_TYPE_DEVICE,
+                                     GetExternalStorageAccessMode(profile_));
 
       for (auto& observer : observers_) {
         observer.OnFormatCompleted(device_path,
@@ -987,17 +1058,28 @@ void VolumeManager::OnProvidedFileSystemUnmount(
 }
 
 void VolumeManager::OnExternalStorageDisabledChangedUnmountCallback(
+    std::vector<std::string> remaining_mount_paths,
     chromeos::MountError error_code) {
-  if (disk_mount_manager_->mount_points().empty())
+  LOG_IF(ERROR, error_code != chromeos::MOUNT_ERROR_NONE)
+      << "Unmount on ExternalStorageDisabled policy change failed: "
+      << error_code;
+
+  while (!remaining_mount_paths.empty()) {
+    std::string mount_path = remaining_mount_paths.back();
+    remaining_mount_paths.pop_back();
+    if (!base::ContainsKey(disk_mount_manager_->mount_points(), mount_path)) {
+      // The mount point could have already been removed for another reason
+      // (i.e. the disk was removed by the user).
+      continue;
+    }
+
+    disk_mount_manager_->UnmountPath(
+        mount_path, chromeos::UNMOUNT_OPTIONS_NONE,
+        base::BindOnce(
+            &VolumeManager::OnExternalStorageDisabledChangedUnmountCallback,
+            weak_ptr_factory_.GetWeakPtr(), std::move(remaining_mount_paths)));
     return;
-  // Repeat until unmount all paths
-  const std::string& mount_path =
-      disk_mount_manager_->mount_points().begin()->second.mount_path;
-  disk_mount_manager_->UnmountPath(
-      mount_path, chromeos::UNMOUNT_OPTIONS_NONE,
-      base::BindOnce(
-          &VolumeManager::OnExternalStorageDisabledChangedUnmountCallback,
-          weak_ptr_factory_.GetWeakPtr()));
+  }
 }
 
 void VolumeManager::OnArcPlayStoreEnabledChanged(bool enabled) {
@@ -1044,17 +1126,26 @@ void VolumeManager::OnExternalStorageDisabledChanged() {
   // make it available.
   if (profile_->GetPrefs()->GetBoolean(prefs::kExternalStorageDisabled)) {
     // We do not iterate on mount_points directly, because mount_points can
-    // be changed by UnmountPath().
-    // TODO(hidehiko): Is it necessary to unmount mounted archives, too, here?
-    if (disk_mount_manager_->mount_points().empty())
+    // be changed by UnmountPath(). Also, a failing unmount shouldn't be retried
+    // indefinitely. So make a set of all the mount points that should be
+    // unmounted (all external media mounts), and iterate through them.
+    std::vector<std::string> remaining_mount_paths;
+    for (auto& mount_point : disk_mount_manager_->mount_points()) {
+      if (mount_point.second.mount_type == chromeos::MOUNT_TYPE_DEVICE) {
+        remaining_mount_paths.push_back(mount_point.first);
+      }
+    }
+    if (remaining_mount_paths.empty()) {
       return;
-    const std::string& mount_path =
-        disk_mount_manager_->mount_points().begin()->second.mount_path;
+    }
+
+    std::string mount_path = remaining_mount_paths.back();
+    remaining_mount_paths.pop_back();
     disk_mount_manager_->UnmountPath(
         mount_path, chromeos::UNMOUNT_OPTIONS_NONE,
         base::BindOnce(
             &VolumeManager::OnExternalStorageDisabledChangedUnmountCallback,
-            weak_ptr_factory_.GetWeakPtr()));
+            weak_ptr_factory_.GetWeakPtr(), std::move(remaining_mount_paths)));
   }
 }
 
@@ -1102,8 +1193,6 @@ void VolumeManager::DoAttachMtpStorage(
   // hierarchical file system, and writing to external storage devices is not
   // prohibited by the preference.
   const bool read_only =
-      base::CommandLine::ForCurrentProcess()->HasSwitch(
-          chromeos::switches::kDisableMtpWriteSupport) ||
       mtp_storage_info->access_capability != kAccessCapabilityReadWrite ||
       mtp_storage_info->filesystem_type !=
           kFilesystemTypeGenericHierarchical ||
@@ -1156,17 +1245,21 @@ void VolumeManager::OnRemovableStorageDetached(
   }
 }
 
-void VolumeManager::OnDocumentsProviderRootAdded(const std::string& authority,
-                                                 const std::string& root_id,
-                                                 const std::string& document_id,
-                                                 const std::string& title,
-                                                 const std::string& summary,
-                                                 const GURL& icon_url) {
+void VolumeManager::OnDocumentsProviderRootAdded(
+    const std::string& authority,
+    const std::string& root_id,
+    const std::string& document_id,
+    const std::string& title,
+    const std::string& summary,
+    const GURL& icon_url,
+    bool read_only,
+    const std::vector<std::string>& mime_types) {
   arc::ArcDocumentsProviderRootMap::GetForArcBrowserContext()->RegisterRoot(
-      authority, document_id);
-  DoMountEvent(chromeos::MOUNT_ERROR_NONE,
-               Volume::CreateForDocumentsProvider(
-                   authority, root_id, document_id, title, summary, icon_url));
+      authority, document_id, root_id, read_only, mime_types);
+  DoMountEvent(
+      chromeos::MOUNT_ERROR_NONE,
+      Volume::CreateForDocumentsProvider(authority, root_id, document_id, title,
+                                         summary, icon_url, read_only));
 }
 
 void VolumeManager::OnDocumentsProviderRootRemoved(
@@ -1176,7 +1269,7 @@ void VolumeManager::OnDocumentsProviderRootRemoved(
   DoUnmountEvent(chromeos::MOUNT_ERROR_NONE,
                  *Volume::CreateForDocumentsProvider(
                      authority, root_id, std::string(), std::string(),
-                     std::string(), GURL()));
+                     std::string(), GURL(), false));
   arc::ArcDocumentsProviderRootMap::GetForArcBrowserContext()->UnregisterRoot(
       authority, document_id);
 }

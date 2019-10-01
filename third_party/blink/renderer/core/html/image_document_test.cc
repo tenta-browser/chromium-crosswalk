@@ -76,7 +76,9 @@ class WindowToViewportScalingChromeClient : public EmptyChromeClient {
 
 class ImageDocumentTest : public testing::Test {
  protected:
-  void TearDown() override { ThreadState::Current()->CollectAllGarbage(); }
+  void TearDown() override {
+    ThreadState::Current()->CollectAllGarbageForTesting();
+  }
 
   void CreateDocumentWithoutLoadingImage(int view_width, int view_height);
   void CreateDocument(int view_width, int view_height);
@@ -101,8 +103,8 @@ void ImageDocumentTest::CreateDocumentWithoutLoadingImage(int view_width,
   FillWithEmptyClients(page_clients);
   chrome_client_ = MakeGarbageCollected<WindowToViewportScalingChromeClient>();
   page_clients.chrome_client = chrome_client_;
-  dummy_page_holder_ =
-      DummyPageHolder::Create(IntSize(view_width, view_height), &page_clients);
+  dummy_page_holder_ = std::make_unique<DummyPageHolder>(
+      IntSize(view_width, view_height), &page_clients);
 
   LocalFrame& frame = dummy_page_holder_->GetFrame();
   frame.GetDocument()->Shutdown();
@@ -264,8 +266,9 @@ class ImageDocumentViewportTest : public SimTest {
   }
 
   ImageDocument& GetDocument() {
-    Document* document =
-        ToLocalFrame(WebView().GetPage()->MainFrame())->DomWindow()->document();
+    Document* document = To<LocalFrame>(WebView().GetPage()->MainFrame())
+                             ->DomWindow()
+                             ->document();
     ImageDocument* image_document = static_cast<ImageDocument*>(document);
     return *image_document;
   }

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/important_file_writer.h"
@@ -29,6 +30,7 @@
 #include "content/browser/indexed_db/indexed_db_context_impl.h"
 #include "content/browser/indexed_db/indexed_db_data_format_version.h"
 #include "content/browser/indexed_db/indexed_db_database_error.h"
+#include "content/browser/indexed_db/indexed_db_factory.h"
 #include "content/browser/indexed_db/indexed_db_leveldb_coding.h"
 #include "content/browser/indexed_db/indexed_db_leveldb_operations.h"
 #include "content/browser/indexed_db/indexed_db_metadata_coding.h"
@@ -512,19 +514,24 @@ bool IndexCursorOptions(
 }  // namespace
 
 IndexedDBBackingStore::IndexedDBBackingStore(
+    Mode backing_store_mode,
     IndexedDBFactory* indexed_db_factory,
     const Origin& origin,
     const FilePath& blob_path,
     std::unique_ptr<LevelDBDatabase> db,
     base::SequencedTaskRunner* task_runner)
-    : indexed_db_factory_(indexed_db_factory),
+    : backing_store_mode_(backing_store_mode),
+      indexed_db_factory_(indexed_db_factory),
       origin_(origin),
       blob_path_(blob_path),
       origin_identifier_(ComputeOriginIdentifier(origin)),
       task_runner_(task_runner),
       db_(std::move(db)),
-      active_blob_registry_(this),
-      committing_transaction_count_(0) {
+      active_blob_registry_(this) {
+  if (backing_store_mode == Mode::kInMemory) {
+    indexed_db_factory_ = nullptr;
+    blob_path_ = FilePath();
+  }
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
 }
 
@@ -1316,9 +1323,9 @@ class IndexedDBBackingStore::Transaction::ChainedBlobWriterImpl
       WriteDescriptorVec;
   static scoped_refptr<ChainedBlobWriterImpl> Create(
       int64_t database_id,
-      IndexedDBBackingStore* backing_store,
+      base::WeakPtr<IndexedDBBackingStore> backing_store,
       WriteDescriptorVec* blobs,
-      scoped_refptr<IndexedDBBackingStore::BlobWriteCallback> callback) {
+      IndexedDBBackingStore::BlobWriteCallback callback) {
     auto writer = base::WrapRefCounted(new ChainedBlobWriterImpl(
         database_id, backing_store, std::move(callback)));
     writer->blobs_.swap(*blobs);
@@ -1350,7 +1357,7 @@ class IndexedDBBackingStore::Transaction::ChainedBlobWriterImpl
       ++iter_;
       WriteNextFile();
     } else {
-      callback_->Run(BlobWriteResult::FAILURE_ASYNC);
+      std::move(callback_).Run(BlobWriteResult::FAILURE_ASYNC);
     }
   }
 
@@ -1362,14 +1369,13 @@ class IndexedDBBackingStore::Transaction::ChainedBlobWriterImpl
   }
 
  private:
-  ChainedBlobWriterImpl(
-      int64_t database_id,
-      IndexedDBBackingStore* backing_store,
-      scoped_refptr<IndexedDBBackingStore::BlobWriteCallback> callback)
+  ChainedBlobWriterImpl(int64_t database_id,
+                        base::WeakPtr<IndexedDBBackingStore> backing_store,
+                        IndexedDBBackingStore::BlobWriteCallback callback)
       : waiting_for_callback_(false),
         database_id_(database_id),
         backing_store_(backing_store),
-        callback_(callback),
+        callback_(std::move(callback)),
         aborted_(false) {}
   ~ChainedBlobWriterImpl() override {}
 
@@ -1381,11 +1387,12 @@ class IndexedDBBackingStore::Transaction::ChainedBlobWriterImpl
     }
     if (iter_ == blobs_.end()) {
       DCHECK(!self_ref_.get());
-      callback_->Run(BlobWriteResult::SUCCESS_ASYNC);
+      std::move(callback_).Run(BlobWriteResult::SUCCESS_ASYNC);
       return;
     } else {
-      if (!backing_store_->WriteBlobFile(database_id_, *iter_, this)) {
-        callback_->Run(BlobWriteResult::FAILURE_ASYNC);
+      if (!backing_store_ ||
+          !backing_store_->WriteBlobFile(database_id_, *iter_, this)) {
+        std::move(callback_).Run(BlobWriteResult::FAILURE_ASYNC);
         return;
       }
       waiting_for_callback_ = true;
@@ -1397,11 +1404,11 @@ class IndexedDBBackingStore::Transaction::ChainedBlobWriterImpl
   WriteDescriptorVec blobs_;
   WriteDescriptorVec::const_iterator iter_;
   int64_t database_id_;
-  IndexedDBBackingStore* backing_store_;
+  base::WeakPtr<IndexedDBBackingStore> backing_store_;
   // Callback result is useless as call stack is no longer transaction's
   // operations queue. Errors are instead handled in
   // IndexedDBTransaction::BlobWriteComplete.
-  scoped_refptr<IndexedDBBackingStore::BlobWriteCallback> callback_;
+  IndexedDBBackingStore::BlobWriteCallback callback_;
   std::unique_ptr<FileWriterDelegate> delegate_;
   bool aborted_;
 
@@ -1454,10 +1461,10 @@ class LocalWriteClosure : public FileWriterDelegate::DelegateWriteCallback,
                                  std::unique_ptr<storage::BlobDataHandle> blob,
                                  const base::Time& last_modified) {
     DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
-    std::unique_ptr<storage::FileStreamWriter> writer(
+    std::unique_ptr<storage::FileStreamWriter> writer =
         storage::FileStreamWriter::CreateForLocalFile(
             task_runner_.get(), file_path, 0,
-            storage::FileStreamWriter::CREATE_NEW_FILE));
+            storage::FileStreamWriter::CREATE_NEW_FILE);
     std::unique_ptr<FileWriterDelegate> delegate(
         std::make_unique<FileWriterDelegate>(
             std::move(writer), storage::FlushPolicy::FLUSH_ON_COMPLETION));
@@ -1525,9 +1532,13 @@ bool IndexedDBBackingStore::WriteBlobFile(
   if (!MakeIDBBlobDirectory(blob_path_, database_id, descriptor.key()))
     return false;
 
+  bool use_copy_file = descriptor.is_file() && !descriptor.file_path().empty();
+  UMA_HISTOGRAM_BOOLEAN("Storage.IndexedDB.WriteBlobFileViaCopy",
+                        use_copy_file);
+
   FilePath path = GetBlobFileName(database_id, descriptor.key());
 
-  if (descriptor.is_file() && !descriptor.file_path().empty()) {
+  if (use_copy_file) {
     if (!base::CopyFile(descriptor.file_path(), path))
       return false;
 
@@ -1715,7 +1726,7 @@ Status IndexedDBBackingStore::CleanUpBlobJournal(
   s = journal_transaction->Commit();
   // Notify blob files cleaned even if commit fails, as files could still be
   // deleted. |indexed_db_factory_| is null for in-memory backing stores.
-  if (indexed_db_factory_)
+  if (!is_incognito())
     indexed_db_factory_->BlobFilesCleaned(origin_);
   return s;
 }
@@ -2038,11 +2049,11 @@ IndexedDBBackingStore::Cursor::Cursor(
 }
 
 IndexedDBBackingStore::Cursor::Cursor(
-    scoped_refptr<IndexedDBBackingStore> backing_store,
+    IndexedDBBackingStore* backing_store,
     IndexedDBBackingStore::Transaction* transaction,
     int64_t database_id,
     const CursorOptions& cursor_options)
-    : backing_store_(backing_store.get()),
+    : backing_store_(backing_store),
       transaction_(transaction),
       database_id_(database_id),
       cursor_options_(cursor_options) {}
@@ -2299,7 +2310,7 @@ const IndexedDBKey& IndexedDBBackingStore::Cursor::primary_key() const {
 class ObjectStoreKeyCursorImpl : public IndexedDBBackingStore::Cursor {
  public:
   ObjectStoreKeyCursorImpl(
-      scoped_refptr<IndexedDBBackingStore> backing_store,
+      IndexedDBBackingStore* backing_store,
       IndexedDBBackingStore::Transaction* transaction,
       int64_t database_id,
       const IndexedDBBackingStore::Cursor::CursorOptions& cursor_options)
@@ -2376,7 +2387,7 @@ bool ObjectStoreKeyCursorImpl::LoadCurrentRow(Status* s) {
 class ObjectStoreCursorImpl : public IndexedDBBackingStore::Cursor {
  public:
   ObjectStoreCursorImpl(
-      scoped_refptr<IndexedDBBackingStore> backing_store,
+      IndexedDBBackingStore* backing_store,
       IndexedDBBackingStore::Transaction* transaction,
       int64_t database_id,
       const IndexedDBBackingStore::Cursor::CursorOptions& cursor_options)
@@ -2450,7 +2461,7 @@ bool ObjectStoreCursorImpl::LoadCurrentRow(Status* s) {
 class IndexKeyCursorImpl : public IndexedDBBackingStore::Cursor {
  public:
   IndexKeyCursorImpl(
-      scoped_refptr<IndexedDBBackingStore> backing_store,
+      IndexedDBBackingStore* backing_store,
       IndexedDBBackingStore::Transaction* transaction,
       int64_t database_id,
       const IndexedDBBackingStore::Cursor::CursorOptions& cursor_options)
@@ -2567,7 +2578,7 @@ bool IndexKeyCursorImpl::LoadCurrentRow(Status* s) {
 class IndexCursorImpl : public IndexedDBBackingStore::Cursor {
  public:
   IndexCursorImpl(
-      scoped_refptr<IndexedDBBackingStore> backing_store,
+      IndexedDBBackingStore* backing_store,
       IndexedDBBackingStore::Transaction* transaction,
       int64_t database_id,
       const IndexedDBBackingStore::Cursor::CursorOptions& cursor_options)
@@ -2795,12 +2806,6 @@ IndexedDBBackingStore::OpenIndexCursor(
   return std::move(cursor);
 }
 
-void IndexedDBBackingStore::StartPreCloseTasks() {
-  DCHECK(pre_close_task_queue_);
-  pre_close_task_queue_->Start(base::BindOnce(
-      &IndexedDBBackingStore::GetCompleteMetadata, base::Unretained(this)));
-}
-
 bool IndexedDBBackingStore::IsBlobCleanupPending() {
   return journal_cleaning_timer_.IsRunning();
 }
@@ -2947,7 +2952,7 @@ void IndexedDBBackingStore::Transaction::PartitionBlobsToRemove(
 }
 
 Status IndexedDBBackingStore::Transaction::CommitPhaseOne(
-    scoped_refptr<BlobWriteCallback> callback) {
+    BlobWriteCallback callback) {
   IDB_TRACE("IndexedDBBackingStore::Transaction::CommitPhaseOne");
   DCHECK(transaction_.get());
   DCHECK(backing_store_->task_runner()->RunsTasksInCurrentSequence());
@@ -2977,9 +2982,9 @@ Status IndexedDBBackingStore::Transaction::CommitPhaseOne(
   if (!new_files_to_write.empty()) {
     // This kicks off the writes of the new blobs, if any.
     // This call will zero out new_blob_entries and new_files_to_write.
-    WriteNewBlobs(&new_blob_entries, &new_files_to_write, callback);
+    WriteNewBlobs(&new_blob_entries, &new_files_to_write, std::move(callback));
   } else {
-    return callback->Run(BlobWriteResult::SUCCESS_SYNC);
+    return std::move(callback).Run(BlobWriteResult::SUCCESS_SYNC);
   }
 
   return Status::OK();
@@ -3080,49 +3085,10 @@ Status IndexedDBBackingStore::Transaction::CommitPhaseTwo() {
   return s;
 }
 
-
-class IndexedDBBackingStore::Transaction::BlobWriteCallbackWrapper
-    : public IndexedDBBackingStore::BlobWriteCallback {
- public:
-  BlobWriteCallbackWrapper(
-      base::WeakPtr<IndexedDBBackingStore::Transaction> transaction,
-      void* tracing_end_ptr,
-      scoped_refptr<BlobWriteCallback> callback)
-      : transaction_(std::move(transaction)),
-        tracing_end_ptr_(tracing_end_ptr),
-        callback_(callback) {}
-  Status Run(BlobWriteResult result) override {
-    DCHECK_NE(result, BlobWriteResult::SUCCESS_SYNC);
-    IDB_ASYNC_TRACE_END("IndexedDBBackingStore::Transaction::WriteNewBlobs",
-                        tracing_end_ptr_);
-    Status leveldb_result = callback_->Run(result);
-    switch (result) {
-      case BlobWriteResult::FAILURE_ASYNC:
-        break;
-      case BlobWriteResult::SUCCESS_ASYNC:
-      case BlobWriteResult::SUCCESS_SYNC:
-        if (transaction_)
-          transaction_->chained_blob_writer_ = nullptr;
-        break;
-    }
-    return leveldb_result;
-  }
-
- private:
-  ~BlobWriteCallbackWrapper() override {}
-  friend class base::RefCounted<IndexedDBBackingStore::BlobWriteCallback>;
-
-  base::WeakPtr<IndexedDBBackingStore::Transaction> transaction_;
-  const void* const tracing_end_ptr_;
-  scoped_refptr<BlobWriteCallback> callback_;
-
-  DISALLOW_COPY_AND_ASSIGN(BlobWriteCallbackWrapper);
-};
-
 void IndexedDBBackingStore::Transaction::WriteNewBlobs(
     BlobEntryKeyValuePairVec* new_blob_entries,
     WriteDescriptorVec* new_files_to_write,
-    scoped_refptr<BlobWriteCallback> callback) {
+    BlobWriteCallback callback) {
   IDB_ASYNC_TRACE_BEGIN("IndexedDBBackingStore::Transaction::WriteNewBlobs",
                         this);
   DCHECK(!new_files_to_write->empty());
@@ -3139,8 +3105,28 @@ void IndexedDBBackingStore::Transaction::WriteNewBlobs(
   // Creating the writer will start it going asynchronously. The transaction
   // can be destructed before the callback is triggered.
   chained_blob_writer_ = ChainedBlobWriterImpl::Create(
-      database_id_, backing_store_, new_files_to_write,
-      new BlobWriteCallbackWrapper(ptr_factory_.GetWeakPtr(), this, callback));
+      database_id_, backing_store_->AsWeakPtr(), new_files_to_write,
+      base::BindOnce(
+          [](base::WeakPtr<IndexedDBBackingStore::Transaction> transaction,
+             void* tracing_end_ptr, BlobWriteCallback final_callback,
+             BlobWriteResult result) {
+            DCHECK_NE(result, BlobWriteResult::SUCCESS_SYNC);
+            IDB_ASYNC_TRACE_END(
+                "IndexedDBBackingStore::Transaction::WriteNewBlobs",
+                tracing_end_ptr);
+            Status leveldb_result = std::move(final_callback).Run(result);
+            switch (result) {
+              case BlobWriteResult::FAILURE_ASYNC:
+                break;
+              case BlobWriteResult::SUCCESS_ASYNC:
+              case BlobWriteResult::SUCCESS_SYNC:
+                if (transaction)
+                  transaction->chained_blob_writer_ = nullptr;
+                break;
+            }
+            return leveldb_result;
+          },
+          ptr_factory_.GetWeakPtr(), this, std::move(callback)));
 }
 
 void IndexedDBBackingStore::Transaction::Rollback() {

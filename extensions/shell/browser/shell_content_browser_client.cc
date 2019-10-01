@@ -94,11 +94,15 @@ content::BrowserContext* ShellContentBrowserClient::GetBrowserContext() {
   return browser_main_parts_->browser_context();
 }
 
-content::BrowserMainParts* ShellContentBrowserClient::CreateBrowserMainParts(
+std::unique_ptr<content::BrowserMainParts>
+ShellContentBrowserClient::CreateBrowserMainParts(
     const content::MainFunctionParams& parameters) {
-  browser_main_parts_ =
+  auto browser_main_parts =
       CreateShellBrowserMainParts(parameters, browser_main_delegate_);
-  return browser_main_parts_;
+
+  browser_main_parts_ = browser_main_parts.get();
+
+  return browser_main_parts;
 }
 
 void ShellContentBrowserClient::RenderProcessWillLaunch(
@@ -137,7 +141,8 @@ void ShellContentBrowserClient::GetQuotaSettings(
     content::StoragePartition* partition,
     storage::OptionalQuotaSettingsCallback callback) {
   storage::GetNominalDynamicSettings(
-      partition->GetPath(), context->IsOffTheRecord(), std::move(callback));
+      partition->GetPath(), context->IsOffTheRecord(),
+      storage::GetDefaultDiskInfoHelper(), std::move(callback));
 }
 
 bool ShellContentBrowserClient::IsHandledURL(const GURL& url) {
@@ -176,10 +181,10 @@ void ShellContentBrowserClient::SiteInstanceGotProcess(
 
   base::PostTaskWithTraits(
       FROM_HERE, {BrowserThread::IO},
-      base::Bind(&InfoMap::RegisterExtensionProcess,
-                 browser_main_parts_->extension_system()->info_map(),
-                 extension->id(), site_instance->GetProcess()->GetID(),
-                 site_instance->GetId()));
+      base::BindOnce(&InfoMap::RegisterExtensionProcess,
+                     browser_main_parts_->extension_system()->info_map(),
+                     extension->id(), site_instance->GetProcess()->GetID(),
+                     site_instance->GetId()));
 }
 
 void ShellContentBrowserClient::SiteInstanceDeleting(
@@ -200,10 +205,10 @@ void ShellContentBrowserClient::SiteInstanceDeleting(
 
   base::PostTaskWithTraits(
       FROM_HERE, {BrowserThread::IO},
-      base::Bind(&InfoMap::UnregisterExtensionProcess,
-                 browser_main_parts_->extension_system()->info_map(),
-                 extension->id(), site_instance->GetProcess()->GetID(),
-                 site_instance->GetId()));
+      base::BindOnce(&InfoMap::UnregisterExtensionProcess,
+                     browser_main_parts_->extension_system()->info_map(),
+                     extension->id(), site_instance->GetProcess()->GetID(),
+                     site_instance->GetId()));
 }
 
 void ShellContentBrowserClient::AppendExtraCommandLineSwitches(
@@ -316,8 +321,8 @@ bool ShellContentBrowserClient::HandleExternalProtocol(
     bool is_main_frame,
     ui::PageTransition page_transition,
     bool has_user_gesture,
-    const std::string& method,
-    const net::HttpRequestHeaders& headers) {
+    network::mojom::URLLoaderFactoryRequest* factory_request,
+    network::mojom::URLLoaderFactory*& out_factory) {
   return false;
 }
 
@@ -337,10 +342,12 @@ std::string ShellContentBrowserClient::GetUserAgent() const {
   return content::BuildUserAgentFromProduct("Chrome/" PRODUCT_VERSION);
 }
 
-ShellBrowserMainParts* ShellContentBrowserClient::CreateShellBrowserMainParts(
+std::unique_ptr<ShellBrowserMainParts>
+ShellContentBrowserClient::CreateShellBrowserMainParts(
     const content::MainFunctionParams& parameters,
     ShellBrowserMainDelegate* browser_main_delegate) {
-  return new ShellBrowserMainParts(parameters, browser_main_delegate);
+  return std::make_unique<ShellBrowserMainParts>(parameters,
+                                                 browser_main_delegate);
 }
 
 void ShellContentBrowserClient::AppendRendererSwitches(

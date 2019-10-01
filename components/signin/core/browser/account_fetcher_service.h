@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include <memory>
+#include <string>
 #include <unordered_map>
 
 #include "base/macros.h"
@@ -20,7 +21,7 @@
 
 class AccountInfoFetcher;
 class AccountTrackerService;
-class OAuth2TokenService;
+class ProfileOAuth2TokenService;
 class PrefRegistrySimple;
 class SigninClient;
 
@@ -38,12 +39,7 @@ class ImageDecoder;
 class ImageFetcherImpl;
 }  // namespace image_fetcher
 
-namespace invalidation {
-class InvalidationService;
-}
-
-class AccountFetcherService : public KeyedService,
-                              public OAuth2TokenService::Observer {
+class AccountFetcherService : public OAuth2TokenService::Observer {
  public:
   // Name of the preference that tracks the int64_t representation of the last
   // time the AccountTrackerService was updated.
@@ -59,30 +55,36 @@ class AccountFetcherService : public KeyedService,
   static void RegisterPrefs(PrefRegistrySimple* user_prefs);
 
   void Initialize(SigninClient* signin_client,
-                  OAuth2TokenService* token_service,
+                  ProfileOAuth2TokenService* token_service,
                   AccountTrackerService* account_tracker_service,
                   std::unique_ptr<image_fetcher::ImageDecoder> image_decoder);
 
-  // KeyedService implementation
-  void Shutdown() override;
+  void Shutdown();
 
   // Indicates if all user information has been fetched. If the result is false,
   // there are still unfininshed fetchers.
   virtual bool IsAllUserInfoFetched() const;
 
-  void FetchUserInfoBeforeSignin(const std::string& account_id);
+  void ForceRefreshOfAccountInfo(const std::string& account_id);
 
   AccountTrackerService* account_tracker_service() const {
     return account_tracker_service_;
   }
 
-  // It is important that network fetches are not enabled until the profile is
-  // loaded independent of when we inject the invalidation service.
-  // See http://crbug.com/441399 for more context.
-  void SetupInvalidationsOnProfileLoad(
-      invalidation::InvalidationService* invalidation_service);
+  // It is important that network fetches are not enabled until the network is
+  // initialized. See http://crbug.com/441399 for more context.
+  void OnNetworkInitialized();
 
+  // Force-enables network fetches. For use in testing contexts. Use this only
+  // if also controlling the URLLoaderFactory used to make network requests
+  // (via |signin_client|).
   void EnableNetworkFetchesForTest();
+
+  // Force-enables account removals in response to refresh token revocations.
+  // For use in testing contexts. Safer to use than
+  // EnableNetworkFetchesForTest(), as invoking this method does not result in
+  // network requests.
+  void EnableAccountRemovalForTest();
 
 #if defined(OS_ANDROID)
   // Called by ChildAccountInfoFetcherAndroid.
@@ -112,9 +114,9 @@ class AccountFetcherService : public KeyedService,
   // Virtual so that tests can override the network fetching behaviour.
   // Further the two fetches are managed by a different refresh logic and
   // thus, can not be combined.
-  virtual void StartFetchingUserInfo(const std::string& account_id);
+  void StartFetchingUserInfo(const std::string& account_id);
 #if defined(OS_ANDROID)
-  virtual void StartFetchingChildInfo(const std::string& account_id);
+  void StartFetchingChildInfo(const std::string& account_id);
 
   // If there is more than one account in a profile, we forcibly reset the
   // child status for an account to be false.
@@ -139,24 +141,21 @@ class AccountFetcherService : public KeyedService,
                       const gfx::Image& image,
                       const image_fetcher::RequestMetadata& image_metadata);
 
-  AccountTrackerService* account_tracker_service_;           // Not owned.
-  OAuth2TokenService* token_service_;                        // Not owned.
-  SigninClient* signin_client_;                              // Not owned.
-  invalidation::InvalidationService* invalidation_service_;  // Not owned.
-  bool network_fetches_enabled_;
-  bool profile_loaded_;
-  bool refresh_tokens_loaded_;
+  AccountTrackerService* account_tracker_service_ = nullptr;  // Not owned.
+  ProfileOAuth2TokenService* token_service_ = nullptr;        // Not owned.
+  SigninClient* signin_client_ = nullptr;                     // Not owned.
+  bool network_fetches_enabled_ = false;
+  bool network_initialized_ = false;
+  bool refresh_tokens_loaded_ = false;
+  bool shutdown_called_ = false;
+  bool enable_account_removal_for_test_ = false;
   base::Time last_updated_;
   base::OneShotTimer timer_;
-  bool shutdown_called_;
 
 #if defined(OS_ANDROID)
   std::string child_request_account_id_;
   std::unique_ptr<ChildAccountInfoFetcherAndroid> child_info_request_;
 #endif
-
-  // Only disabled in tests.
-  bool scheduled_refresh_enabled_;
 
   // Holds references to account info fetchers keyed by account_id.
   std::unordered_map<std::string, std::unique_ptr<AccountInfoFetcher>>

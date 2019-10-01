@@ -35,7 +35,7 @@ bool HasFocusableChild(const AXNode* node) {
 
 bool HasOnlyTextChildren(const AXNode* node) {
   for (auto* child : node->children()) {
-    if (!child->IsTextNode())
+    if (!child->IsText())
       return false;
   }
   return true;
@@ -74,10 +74,10 @@ bool IsNativeTextControl(const AXNode* node) {
 }
 
 bool IsLeaf(const AXNode* node) {
-  if (node->child_count() == 0)
+  if (node->children().empty())
     return true;
 
-  if (IsNativeTextControl(node) || node->IsTextNode()) {
+  if (IsNativeTextControl(node) || node->IsText()) {
     return true;
   }
 
@@ -98,7 +98,7 @@ bool IsLeaf(const AXNode* node) {
 }
 
 base::string16 GetInnerText(const AXNode* node) {
-  if (node->IsTextNode()) {
+  if (node->IsText()) {
     return node->data().GetString16Attribute(ax::mojom::StringAttribute::kName);
   }
   base::string16 text;
@@ -158,7 +158,7 @@ base::string16 GetText(const AXNode* node, bool show_password) {
       node->data().GetIntAttribute(ax::mojom::IntAttribute::kNameFrom));
   if (ui::IsListItem(node->data().role) &&
       name_from == ax::mojom::NameFrom::kContents) {
-    if (node->child_count() > 0 && !HasOnlyTextChildren(node))
+    if (!node->children().empty() && !HasOnlyTextChildren(node))
       return base::string16();
   }
 

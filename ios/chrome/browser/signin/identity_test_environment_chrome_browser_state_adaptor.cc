@@ -4,24 +4,22 @@
 
 #include "ios/chrome/browser/signin/identity_test_environment_chrome_browser_state_adaptor.h"
 
-#include "ios/chrome/browser/signin/account_tracker_service_factory.h"
-#include "ios/chrome/browser/signin/fake_gaia_cookie_manager_service_builder.h"
-#include "ios/chrome/browser/signin/fake_oauth2_token_service_builder.h"
-#include "ios/chrome/browser/signin/fake_signin_manager_builder.h"
-#include "ios/chrome/browser/signin/gaia_cookie_manager_service_factory.h"
+#include <utility>
+
+#include "base/bind.h"
+#include "components/signin/core/browser/account_consistency_method.h"
+#include "components/signin/core/browser/identity_manager_wrapper.h"
+#include "components/signin/core/browser/test_signin_client.h"
+#include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/signin/identity_manager_factory.h"
-#include "ios/chrome/browser/signin/profile_oauth2_token_service_factory.h"
-#include "ios/chrome/browser/signin/signin_manager_factory.h"
+#include "ios/chrome/browser/signin/profile_oauth2_token_service_ios_provider_impl.h"
+#include "ios/chrome/browser/signin/signin_client_factory.h"
 
 namespace {
 
-TestChromeBrowserState::TestingFactories GetIdentityTestEnvironmentFactories() {
-  return {{ios::GaiaCookieManagerServiceFactory::GetInstance(),
-           base::BindRepeating(&BuildFakeGaiaCookieManagerService)},
-          {ProfileOAuth2TokenServiceFactory::GetInstance(),
-           base::BindRepeating(&BuildFakeOAuth2TokenService)},
-          {ios::SigninManagerFactory::GetInstance(),
-           base::BindRepeating(&ios::BuildFakeSigninManager)}};
+std::unique_ptr<KeyedService> BuildTestSigninClient(web::BrowserState* state) {
+  return std::make_unique<TestSigninClient>(
+      ios::ChromeBrowserState::FromBrowserState(state)->GetPrefs());
 }
 
 }  // namespace
@@ -52,8 +50,10 @@ IdentityTestEnvironmentChromeBrowserStateAdaptor::
 std::unique_ptr<TestChromeBrowserState>
 IdentityTestEnvironmentChromeBrowserStateAdaptor::
     CreateChromeBrowserStateForIdentityTestEnvironment(
-        TestChromeBrowserState::Builder& builder) {
-  for (auto& identity_factory : GetIdentityTestEnvironmentFactories()) {
+        TestChromeBrowserState::Builder& builder,
+        bool use_ios_token_service_delegate) {
+  for (auto& identity_factory :
+       GetIdentityTestEnvironmentFactories(use_ios_token_service_delegate)) {
     builder.AddTestingFactory(identity_factory.first, identity_factory.second);
   }
 
@@ -63,9 +63,11 @@ IdentityTestEnvironmentChromeBrowserStateAdaptor::
 // static
 void IdentityTestEnvironmentChromeBrowserStateAdaptor::
     SetIdentityTestEnvironmentFactoriesOnBrowserContext(
-        TestChromeBrowserState* browser_state) {
-  for (const auto& factory_pair : GetIdentityTestEnvironmentFactories()) {
-    factory_pair.first->SetTestingFactory(browser_state, factory_pair.second);
+        TestChromeBrowserState* chrome_browser_state) {
+  for (const auto& factory_pair : GetIdentityTestEnvironmentFactories(
+           /*use_ios_token_service_delegate=*/false)) {
+    factory_pair.first->SetTestingFactory(chrome_browser_state,
+                                          factory_pair.second);
   }
 }
 
@@ -74,23 +76,57 @@ void IdentityTestEnvironmentChromeBrowserStateAdaptor::
     AppendIdentityTestEnvironmentFactories(
         TestChromeBrowserState::TestingFactories* factories_to_append_to) {
   TestChromeBrowserState::TestingFactories identity_factories =
-      GetIdentityTestEnvironmentFactories();
+      GetIdentityTestEnvironmentFactories(
+          /*use_ios_token_service_delegate=*/false);
   factories_to_append_to->insert(factories_to_append_to->end(),
                                  identity_factories.begin(),
                                  identity_factories.end());
 }
 
+// static
+std::unique_ptr<KeyedService>
+IdentityTestEnvironmentChromeBrowserStateAdaptor::BuildIdentityManagerForTests(
+    web::BrowserState* browser_state) {
+  ios::ChromeBrowserState* chrome_browser_state =
+      ios::ChromeBrowserState::FromBrowserState(browser_state);
+
+  return identity::IdentityTestEnvironment::BuildIdentityManagerForTests(
+      SigninClientFactory::GetForBrowserState(chrome_browser_state),
+      chrome_browser_state->GetPrefs(), base::FilePath(),
+      signin::AccountConsistencyMethod::kMirror);
+}
+
+// static
+std::unique_ptr<KeyedService> IdentityTestEnvironmentChromeBrowserStateAdaptor::
+    BuildIdentityManagerForTestWithIOSDelegate(
+        web::BrowserState* browser_state) {
+  ios::ChromeBrowserState* chrome_browser_state =
+      ios::ChromeBrowserState::FromBrowserState(browser_state);
+
+  identity::IdentityTestEnvironment::ExtraParams extra_params;
+  extra_params.token_service_provider =
+      std::make_unique<ProfileOAuth2TokenServiceIOSProviderImpl>();
+
+  return identity::IdentityTestEnvironment::BuildIdentityManagerForTests(
+      SigninClientFactory::GetForBrowserState(chrome_browser_state),
+      chrome_browser_state->GetPrefs(), base::FilePath(),
+      signin::AccountConsistencyMethod::kMirror, std::move(extra_params));
+}
+
+// static
+TestChromeBrowserState::TestingFactories
+IdentityTestEnvironmentChromeBrowserStateAdaptor::
+    GetIdentityTestEnvironmentFactories(bool use_ios_token_service_delegate) {
+  return {{SigninClientFactory::GetInstance(),
+           base::BindRepeating(&BuildTestSigninClient)},
+          {IdentityManagerFactory::GetInstance(),
+           base::BindRepeating(use_ios_token_service_delegate
+                                   ? &BuildIdentityManagerForTestWithIOSDelegate
+                                   : &BuildIdentityManagerForTests)}};
+}
+
 IdentityTestEnvironmentChromeBrowserStateAdaptor::
     IdentityTestEnvironmentChromeBrowserStateAdaptor(
-        ios::ChromeBrowserState* browser_state)
+        ios::ChromeBrowserState* chrome_browser_state)
     : identity_test_env_(
-          ios::AccountTrackerServiceFactory::GetForBrowserState(browser_state),
-          static_cast<FakeProfileOAuth2TokenService*>(
-              ProfileOAuth2TokenServiceFactory::GetForBrowserState(
-                  browser_state)),
-          static_cast<FakeSigninManager*>(
-              ios::SigninManagerFactory::GetForBrowserState(browser_state)),
-          static_cast<FakeGaiaCookieManagerService*>(
-              ios::GaiaCookieManagerServiceFactory::GetForBrowserState(
-                  browser_state)),
-          IdentityManagerFactory::GetForBrowserState(browser_state)) {}
+          IdentityManagerFactory::GetForBrowserState(chrome_browser_state)) {}

@@ -12,10 +12,9 @@
 
 #include "base/bind.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/time/time.h"
+#include "base/test/bind_test_util.h"
 #include "chrome/browser/signin/identity_test_environment_profile_adaptor.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
-#include "chrome/browser/sync/profile_sync_test_util.h"
 #include "chrome/browser/ui/search/search_ipc_router.h"
 #include "chrome/common/search/mock_embedded_search_client.h"
 #include "chrome/common/url_constants.h"
@@ -23,8 +22,8 @@
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_profile.h"
-#include "components/browser_sync/profile_sync_service.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/sync/driver/test_sync_service.h"
 #include "content/public/browser/web_contents.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -73,7 +72,10 @@ class SearchTabHelperTest : public ChromeRenderViewHostTestHarness {
   content::BrowserContext* CreateBrowserContext() override {
     TestingProfile::TestingFactories factories = {
         {ProfileSyncServiceFactory::GetInstance(),
-         base::BindRepeating(&BuildMockProfileSyncService)}};
+         base::BindLambdaForTesting(
+             [](content::BrowserContext*) -> std::unique_ptr<KeyedService> {
+               return std::make_unique<syncer::TestSyncService>();
+             })}};
 
     // Per comments on content::RenderViewHostTestHarness, it takes ownership of
     // the returned object.
@@ -91,18 +93,16 @@ class SearchTabHelperTest : public ChromeRenderViewHostTestHarness {
 
   // Configure the account to |sync_history| or not.
   void SetHistorySync(bool sync_history) {
-    browser_sync::ProfileSyncServiceMock* sync_service =
-        static_cast<browser_sync::ProfileSyncServiceMock*>(
+    syncer::TestSyncService* sync_service =
+        static_cast<syncer::TestSyncService*>(
             ProfileSyncServiceFactory::GetForProfile(profile()));
 
-    ON_CALL(*sync_service->GetUserSettingsMock(), IsFirstSetupComplete())
-        .WillByDefault(Return(true));
+    sync_service->SetFirstSetupComplete(true);
     syncer::ModelTypeSet types;
     if (sync_history) {
       types.Put(syncer::TYPED_URLS);
     }
-    ON_CALL(*sync_service->GetUserSettingsMock(), GetChosenDataTypes())
-        .WillByDefault(Return(types));
+    sync_service->SetPreferredDataTypes(types);
   }
 
   identity::IdentityTestEnvironment* identity_test_env() {
@@ -115,87 +115,6 @@ class SearchTabHelperTest : public ChromeRenderViewHostTestHarness {
   std::unique_ptr<IdentityTestEnvironmentProfileAdaptor>
       identity_test_env_adaptor_;
 };
-
-TEST_F(SearchTabHelperTest, ChromeIdentityCheckMatch) {
-  NavigateAndCommit(GURL(chrome::kChromeSearchLocalNtpUrl));
-  SetUpAccount("foo@bar.com");
-  SearchTabHelper* search_tab_helper =
-      SearchTabHelper::FromWebContents(web_contents());
-  ASSERT_NE(nullptr, search_tab_helper);
-
-  const base::string16 test_identity = base::ASCIIToUTF16("foo@bar.com");
-  EXPECT_TRUE(search_tab_helper->ChromeIdentityCheck(test_identity));
-}
-
-TEST_F(SearchTabHelperTest, ChromeIdentityCheckMatchSlightlyDifferentGmail) {
-  NavigateAndCommit(GURL(chrome::kChromeSearchLocalNtpUrl));
-  SetUpAccount("foobar123@gmail.com");
-  SearchTabHelper* search_tab_helper =
-      SearchTabHelper::FromWebContents(web_contents());
-  ASSERT_NE(nullptr, search_tab_helper);
-
-  // For gmail, canonicalization is done so that email addresses have a
-  // standard form.
-  const base::string16 test_identity =
-      base::ASCIIToUTF16("Foo.Bar.123@gmail.com");
-  EXPECT_TRUE(search_tab_helper->ChromeIdentityCheck(test_identity));
-}
-
-TEST_F(SearchTabHelperTest, ChromeIdentityCheckMatchSlightlyDifferentGmail2) {
-  NavigateAndCommit(GURL(chrome::kChromeSearchLocalNtpUrl));
-  SetUpAccount("chrome.user.7FOREVER");
-  SearchTabHelper* search_tab_helper =
-      SearchTabHelper::FromWebContents(web_contents());
-  ASSERT_NE(nullptr, search_tab_helper);
-
-  // For gmail/googlemail, canonicalization is done so that email addresses have
-  // a standard form.
-  const base::string16 test_identity =
-      base::ASCIIToUTF16("chromeuser7forever@googlemail.com");
-  EXPECT_TRUE(search_tab_helper->ChromeIdentityCheck(test_identity));
-}
-
-TEST_F(SearchTabHelperTest, ChromeIdentityCheckMismatch) {
-  NavigateAndCommit(GURL(chrome::kChromeSearchLocalNtpUrl));
-  SetUpAccount("foo@bar.com");
-  SearchTabHelper* search_tab_helper =
-      SearchTabHelper::FromWebContents(web_contents());
-  ASSERT_NE(nullptr, search_tab_helper);
-
-  const base::string16 test_identity = base::ASCIIToUTF16("bar@foo.com");
-  EXPECT_FALSE(search_tab_helper->ChromeIdentityCheck(test_identity));
-}
-
-TEST_F(SearchTabHelperTest, ChromeIdentityCheckSignedOutMismatch) {
-  NavigateAndCommit(GURL(chrome::kChromeSearchLocalNtpUrl));
-  // This test does not sign in.
-  SearchTabHelper* search_tab_helper =
-      SearchTabHelper::FromWebContents(web_contents());
-  ASSERT_NE(nullptr, search_tab_helper);
-
-  const base::string16 test_identity = base::ASCIIToUTF16("bar@foo.com");
-  EXPECT_FALSE(search_tab_helper->ChromeIdentityCheck(test_identity));
-}
-
-TEST_F(SearchTabHelperTest, HistorySyncCheckSyncing) {
-  NavigateAndCommit(GURL(chrome::kChromeSearchLocalNtpUrl));
-  SetHistorySync(true);
-  SearchTabHelper* search_tab_helper =
-      SearchTabHelper::FromWebContents(web_contents());
-  ASSERT_NE(nullptr, search_tab_helper);
-
-  EXPECT_TRUE(search_tab_helper->HistorySyncCheck());
-}
-
-TEST_F(SearchTabHelperTest, HistorySyncCheckNotSyncing) {
-  NavigateAndCommit(GURL(chrome::kChromeSearchLocalNtpUrl));
-  SetHistorySync(false);
-  SearchTabHelper* search_tab_helper =
-      SearchTabHelper::FromWebContents(web_contents());
-  ASSERT_NE(nullptr, search_tab_helper);
-
-  EXPECT_FALSE(search_tab_helper->HistorySyncCheck());
-}
 
 TEST_F(SearchTabHelperTest, FileSelectedUpdatesLastSelectedDirectory) {
   NavigateAndCommit(GURL(chrome::kChromeUINewTabURL));

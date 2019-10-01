@@ -25,9 +25,9 @@
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/browser_sync/profile_sync_service.h"
 #include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/account_info.h"
+#include "components/sync/driver/sync_service.h"
 #include "content/public/browser/web_ui.h"
 #include "extensions/common/constants.h"
 #include "services/identity/public/cpp/identity_manager.h"
@@ -1119,8 +1119,12 @@ void MediaRouterWebUIMessageHandler::MaybeUpdateFirstRunFlowData() {
 AccountInfo MediaRouterWebUIMessageHandler::GetAccountInfo() {
   identity::IdentityManager* identity_manager =
       IdentityManagerFactory::GetForProfile(Profile::FromWebUI(web_ui()));
-  return identity_manager ? identity_manager->GetPrimaryAccountInfo()
-                          : AccountInfo();
+  if (!identity_manager)
+    return AccountInfo();
+  base::Optional<AccountInfo> primary_account_info =
+      identity_manager->FindExtendedAccountInfoForAccount(
+          identity_manager->GetPrimaryAccountInfo());
+  return primary_account_info.value_or(AccountInfo{});
 }
 
 int MediaRouterWebUIMessageHandler::CurrentCastModeForRouteId(

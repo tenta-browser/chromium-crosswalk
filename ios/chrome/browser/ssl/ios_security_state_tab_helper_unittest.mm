@@ -8,7 +8,7 @@
 #import "ios/chrome/browser/ssl/insecure_input_tab_helper.h"
 #import "ios/web/public/navigation_item.h"
 #import "ios/web/public/navigation_manager.h"
-#include "ios/web/public/ssl_status.h"
+#include "ios/web/public/security/ssl_status.h"
 #import "ios/web/public/test/web_test_with_web_state.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -32,10 +32,9 @@ class IOSSecurityStateTabHelperTest : public web::WebTestWithWebState {
 
   // Returns the InsecureInputEventData for current WebState().
   security_state::InsecureInputEventData GetInsecureInputEventData() const {
-    security_state::SecurityInfo info;
-    IOSSecurityStateTabHelper::FromWebState(web_state())
-        ->GetSecurityInfo(&info);
-    return info.insecure_input_events;
+    return IOSSecurityStateTabHelper::FromWebState(web_state())
+        ->GetVisibleSecurityState()
+        ->insecure_input_events;
   }
 
   InsecureInputTabHelper* insecure_input() { return insecure_input_; }

@@ -5,8 +5,8 @@
 #include "content/test/test_navigation_url_loader_delegate.h"
 
 #include "base/run_loop.h"
+#include "content/browser/navigation_subresource_loader_params.h"
 #include "content/common/navigation_params.h"
-#include "content/common/navigation_subresource_loader_params.h"
 #include "content/public/browser/global_request_id.h"
 #include "content/public/browser/navigation_data.h"
 #include "services/network/public/cpp/resource_response.h"
@@ -69,7 +69,7 @@ void TestNavigationURLLoaderDelegate::OnResponseStarted(
   url_loader_client_endpoints_ = std::move(url_loader_client_endpoints);
   if (response->head.ssl_info.has_value())
     ssl_info_ = *response->head.ssl_info;
-  is_download_ = is_download && IsNavigationDownloadAllowed(download_policy);
+  is_download_ = is_download && download_policy.IsDownloadAllowed();
   if (response_started_)
     response_started_->Quit();
 }

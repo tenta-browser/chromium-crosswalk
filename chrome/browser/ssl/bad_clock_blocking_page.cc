@@ -6,7 +6,6 @@
 
 #include <utility>
 
-#include "base/callback_helpers.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/browser/interstitials/chrome_metrics_helper.h"
 #include "chrome/browser/interstitials/enterprise_util.h"
@@ -26,8 +25,8 @@
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/ssl_status.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/renderer_preferences.h"
 #include "net/base/net_errors.h"
+#include "third_party/blink/public/mojom/renderer_preferences.mojom.h"
 
 using content::InterstitialPageDelegate;
 using content::NavigationController;
@@ -142,7 +141,7 @@ void BadClockBlockingPage::CommandReceived(const std::string& command) {
 }
 
 void BadClockBlockingPage::OverrideRendererPrefs(
-    content::RendererPreferences* prefs) {
+    blink::mojom::RendererPreferences* prefs) {
   Profile* profile =
       Profile::FromBrowserContext(web_contents()->GetBrowserContext());
   renderer_preferences_util::UpdateFromSystemSettings(prefs, profile);
@@ -160,6 +159,5 @@ void BadClockBlockingPage::NotifyDenyCertificate() {
   if (callback_.is_null())
     return;
 
-  base::ResetAndReturn(&callback_)
-      .Run(content::CERTIFICATE_REQUEST_RESULT_TYPE_CANCEL);
+  std::move(callback_).Run(content::CERTIFICATE_REQUEST_RESULT_TYPE_CANCEL);
 }

@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "base/base64.h"
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/logging.h"
 #include "base/memory/singleton.h"
@@ -16,11 +17,10 @@
 #include "chrome/browser/chromeos/platform_keys/platform_keys.h"
 #include "chrome/browser/net/nss_context.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
-#include "chrome/browser/policy/profile_policy_connector_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "components/arc/arc_bridge_service.h"
 #include "components/arc/arc_browser_context_keyed_service_factory_base.h"
 #include "components/arc/arc_service_manager.h"
+#include "components/arc/session/arc_bridge_service.h"
 #include "components/policy/core/common/policy_namespace.h"
 #include "components/policy/policy_constants.h"
 #include "net/cert/x509_certificate.h"
@@ -45,9 +45,7 @@ class ArcCertStoreBridgeFactory
 
  private:
   friend base::DefaultSingletonTraits<ArcCertStoreBridgeFactory>;
-  ArcCertStoreBridgeFactory() {
-    DependsOn(policy::ProfilePolicyConnectorFactory::GetInstance());
-  }
+  ArcCertStoreBridgeFactory() {}
   ~ArcCertStoreBridgeFactory() override = default;
 };
 
@@ -107,7 +105,7 @@ ArcCertStoreBridge::ArcCertStoreBridge(content::BrowserContext* context,
   DVLOG(1) << "ArcCertStoreBridge::ArcCertStoreBridge";
 
   const auto* profile_policy_connector =
-      policy::ProfilePolicyConnectorFactory::GetForBrowserContext(context_);
+      Profile::FromBrowserContext(context_)->GetProfilePolicyConnector();
   policy_service_ = profile_policy_connector->policy_service();
   DCHECK(policy_service_);
 

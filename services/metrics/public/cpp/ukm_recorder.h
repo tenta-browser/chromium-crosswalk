@@ -14,14 +14,10 @@
 #include "services/metrics/public/cpp/metrics_export.h"
 #include "services/metrics/public/cpp/ukm_source.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
-#include "services/metrics/public/mojom/ukm_interface.mojom.h"
+#include "services/metrics/public/mojom/ukm_interface.mojom-forward.h"
 #include "url/gurl.h"
 
-class BackgroundFetchDelegateImpl;
-class IOSChromePasswordManagerClient;
-class MediaEngagementSession;
-class PlatformNotificationServiceImpl;
-class PluginInfoHostImpl;
+class PermissionUmaUtil;
 
 namespace autofill {
 class TestAutofillClient;
@@ -29,47 +25,20 @@ class TestAutofillClient;
 
 namespace blink {
 class Document;
-class NavigatorVR;
 }  // namespace blink
-
-namespace cc {
-class UkmManager;
-}  // namespace cc
-
-namespace content {
-class CrossSiteDocumentResourceHandler;
-class WebContentsImpl;
-class PluginServiceImpl;
-}  // namespace content
-
-namespace download {
-class DownloadUkmHelper;
-}  // namespace download
-
-namespace password_manager {
-class PasswordManagerMetricsRecorder;
-}  // namespace password_manager
-
-namespace payments {
-class JourneyLogger;
-}  // namespace payments
 
 namespace metrics {
 class UkmRecorderInterface;
 }  // namespace metrics
 
-namespace translate {
-class TranslateRankerImpl;
-}  // namespace translate
-
 namespace ukm {
 
 class DelegatingUkmRecorder;
 class TestRecordingHelper;
+class UkmBackgroundRecorderService;
 
 namespace internal {
 class SourceUrlRecorderWebContentsObserver;
-class SourceUrlRecorderWebStateObserver;
 }  // namespace internal
 
 // This feature controls whether UkmService should be created.
@@ -95,7 +64,7 @@ class METRICS_EXPORT UkmRecorder {
   virtual void AddEntry(mojom::UkmEntryPtr entry) = 0;
 
   // Disables sampling for testing purposes.
-  virtual void DisableSamplingForTesting(){};
+  virtual void DisableSamplingForTesting() {}
 
  protected:
   // Type-safe wrappers for Update<X> functions.
@@ -103,31 +72,17 @@ class METRICS_EXPORT UkmRecorder {
   void RecordAppURL(base::UkmSourceId source_id, const GURL& url);
 
  private:
-  friend BackgroundFetchDelegateImpl;
   friend DelegatingUkmRecorder;
-  friend IOSChromePasswordManagerClient;
-  friend MediaEngagementSession;
-  friend PlatformNotificationServiceImpl;
-  friend PluginInfoHostImpl;
   friend TestRecordingHelper;
+  friend UkmBackgroundRecorderService;
   friend autofill::TestAutofillClient;
   friend blink::Document;
-  friend blink::NavigatorVR;
-  friend cc::UkmManager;
-  friend content::CrossSiteDocumentResourceHandler;
-  friend content::PluginServiceImpl;
-  friend content::WebContentsImpl;
-  friend download::DownloadUkmHelper;
-  friend internal::SourceUrlRecorderWebContentsObserver;
-  friend internal::SourceUrlRecorderWebStateObserver;
   friend metrics::UkmRecorderInterface;
-  friend password_manager::PasswordManagerMetricsRecorder;
-  friend payments::JourneyLogger;
-  friend translate::TranslateRankerImpl;
+  friend PermissionUmaUtil;
 
   // Associates the SourceId with a URL. Most UKM recording code should prefer
   // to use a shared SourceId that is already associated with a URL, rather
-  // than using this API directly. New uses of this API must be auditted to
+  // than using this API directly. New uses of this API must be audited to
   // maintain privacy constraints.
   virtual void UpdateSourceURL(SourceId source_id, const GURL& url) = 0;
 

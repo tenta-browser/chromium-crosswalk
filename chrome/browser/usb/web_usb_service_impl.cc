@@ -14,6 +14,8 @@
 #include "chrome/browser/usb/usb_chooser_context_factory.h"
 #include "chrome/browser/usb/usb_tab_helper.h"
 #include "content/public/browser/browser_thread.h"
+#include "media/mojo/interfaces/remoting_common.mojom.h"
+#include "services/device/public/mojom/usb_enumeration_options.mojom.h"
 
 WebUsbServiceImpl::WebUsbServiceImpl(
     content::RenderFrameHost* render_frame_host,
@@ -28,9 +30,8 @@ WebUsbServiceImpl::WebUsbServiceImpl(
       content::WebContents::FromRenderFrameHost(render_frame_host_);
   // This class is destroyed on cross-origin navigations and so it is safe to
   // cache these values.
-  requesting_origin_ = render_frame_host_->GetLastCommittedURL().GetOrigin();
-  embedding_origin_ =
-      web_contents->GetMainFrame()->GetLastCommittedURL().GetOrigin();
+  requesting_origin_ = render_frame_host_->GetLastCommittedOrigin();
+  embedding_origin_ = web_contents->GetMainFrame()->GetLastCommittedOrigin();
   Profile* profile =
       Profile::FromBrowserContext(web_contents->GetBrowserContext());
   chooser_context_ = UsbChooserContextFactory::GetForProfile(profile);
@@ -127,8 +128,9 @@ void WebUsbServiceImpl::SetClient(
   clients_.AddPtr(std::move(client_ptr));
 }
 
-void WebUsbServiceImpl::OnPermissionRevoked(const GURL& requesting_origin,
-                                            const GURL& embedding_origin) {
+void WebUsbServiceImpl::OnPermissionRevoked(
+    const url::Origin& requesting_origin,
+    const url::Origin& embedding_origin) {
   if (requesting_origin_ != requesting_origin ||
       embedding_origin_ != embedding_origin) {
     return;

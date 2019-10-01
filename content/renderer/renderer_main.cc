@@ -9,15 +9,11 @@
 #include "base/command_line.h"
 #include "base/debug/debugger.h"
 #include "base/debug/leak_annotations.h"
-#include "base/feature_list.h"
 #include "base/i18n/rtl.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/pending_task.h"
 #include "base/run_loop.h"
-#include "base/sampling_heap_profiler/sampling_heap_profiler.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_util.h"
 #include "base/system/sys_info.h"
 #include "base/task/sequence_manager/sequence_manager.h"
 #include "base/threading/platform_thread.h"
@@ -32,6 +28,7 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/common/main_function_params.h"
 #include "content/public/renderer/content_renderer_client.h"
+#include "content/public/renderer/render_thread.h"
 #include "content/renderer/render_process_impl.h"
 #include "content/renderer/render_thread_impl.h"
 #include "content/renderer/renderer_main_platform_delegate.h"
@@ -68,9 +65,6 @@
 namespace content {
 namespace {
 
-const base::Feature kMainThreadUsesSequenceManager{
-    "BlinkMainThreadUsesSequenceManager", base::FEATURE_DISABLED_BY_DEFAULT};
-
 // This function provides some ways to test crash and assertion handling
 // behavior of the renderer.
 static void HandleRendererErrorTestParameters(
@@ -87,10 +81,9 @@ std::unique_ptr<base::MessagePump> CreateMainThreadMessagePump() {
   // As long as scrollbars on Mac are painted with Cocoa, the message pump
   // needs to be backed by a Foundation-level loop to process NSTimers. See
   // http://crbug.com/306348#c24 for details.
-  return std::make_unique<base::MessagePumpNSRunLoop>();
+  return base::MessagePump::Create(base::MessagePump::Type::NS_RUNLOOP);
 #else
-  return base::MessageLoop::CreateMessagePumpForType(
-      base::MessageLoop::TYPE_DEFAULT);
+  return base::MessagePump::Create(base::MessagePump::Type::DEFAULT);
 #endif
 }
 
@@ -107,18 +100,6 @@ int RendererMain(const MainFunctionParams& parameters) {
       kTraceEventRendererProcessSortIndex);
 
   const base::CommandLine& command_line = parameters.command_line;
-
-  base::SamplingHeapProfiler::Init();
-  if (command_line.HasSwitch(switches::kSamplingHeapProfiler)) {
-    base::SamplingHeapProfiler* profiler = base::SamplingHeapProfiler::Get();
-    unsigned sampling_interval = 0;
-    bool parsed = base::StringToUint(
-        command_line.GetSwitchValueASCII(switches::kSamplingHeapProfiler),
-        &sampling_interval);
-    if (parsed && sampling_interval > 0)
-      profiler->SetSamplingInterval(sampling_interval * 1024);
-    profiler->Start();
-  }
 
 #if defined(OS_MACOSX)
   base::mac::ScopedNSAutoreleasePool* pool = parameters.autorelease_pool;
@@ -148,6 +129,10 @@ int RendererMain(const MainFunctionParams& parameters) {
 
   base::PlatformThread::SetName("CrRendererMain");
 
+  // Force main thread initialization. When the implementation is based on a
+  // better means of determining which is the main thread, remove.
+  RenderThread::IsMainThread();
+
 #if defined(OS_ANDROID)
   // If we have any pending LibraryLoader histograms, record them.
   base::android::RecordLibraryLoaderRendererHistograms();
@@ -163,19 +148,9 @@ int RendererMain(const MainFunctionParams& parameters) {
     }
   }
 
-  std::unique_ptr<base::MessageLoop> main_message_loop;
-  std::unique_ptr<blink::scheduler::WebThreadScheduler> main_thread_scheduler;
-  if (!base::FeatureList::IsEnabled(kMainThreadUsesSequenceManager)) {
-    main_message_loop =
-        std::make_unique<base::MessageLoop>(CreateMainThreadMessagePump());
-    main_thread_scheduler =
-        blink::scheduler::WebThreadScheduler::CreateMainThreadScheduler(
-            /*message_pump=*/nullptr, initial_virtual_time);
-  } else {
-    main_thread_scheduler =
-        blink::scheduler::WebThreadScheduler::CreateMainThreadScheduler(
-            CreateMainThreadMessagePump(), initial_virtual_time);
-  }
+  std::unique_ptr<blink::scheduler::WebThreadScheduler> main_thread_scheduler =
+      blink::scheduler::WebThreadScheduler::CreateMainThreadScheduler(
+          CreateMainThreadMessagePump(), initial_virtual_time);
 
   platform.PlatformInitialize();
 

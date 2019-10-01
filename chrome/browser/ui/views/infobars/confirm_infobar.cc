@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "build/build_config.h"
 #include "chrome/browser/infobars/infobar_service.h"
@@ -17,7 +18,7 @@
 #include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/link.h"
-#include "ui/views/view_properties.h"
+#include "ui/views/view_class_properties.h"
 
 // InfoBarService -------------------------------------------------------------
 
@@ -66,10 +67,10 @@ void ConfirmInfoBar::Layout() {
   InfoBarView::Layout();
 
   int x = StartX();
-  Labels labels;
-  labels.push_back(label_);
-  labels.push_back(link_);
-  AssignWidths(&labels, std::max(0, EndX() - x - NonLabelWidth()));
+  Views views;
+  views.push_back(label_);
+  views.push_back(link_);
+  AssignWidths(&views, std::max(0, EndX() - x - NonLabelWidth()));
 
   ChromeLayoutProvider* layout_provider = ChromeLayoutProvider::Get();
 
@@ -127,16 +128,16 @@ ConfirmInfoBarDelegate* ConfirmInfoBar::GetDelegate() {
 
 views::MdTextButton* ConfirmInfoBar::CreateButton(
     ConfirmInfoBarDelegate::InfoBarButton type) {
-  auto* button =
+  auto button =
       views::MdTextButton::Create(this, GetDelegate()->GetButtonLabel(type));
   button->SetProperty(
       views::kMarginsKey,
       new gfx::Insets(ChromeLayoutProvider::Get()->GetDistanceMetric(
                           DISTANCE_TOAST_CONTROL_VERTICAL),
                       0));
-  AddChildView(button);
-  button->SizeToPreferredSize();
-  return button;
+  auto* button_ptr = AddChildView(std::move(button));
+  button_ptr->SizeToPreferredSize();
+  return button_ptr;
 }
 
 int ConfirmInfoBar::NonLabelWidth() const {

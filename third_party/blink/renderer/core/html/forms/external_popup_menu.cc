@@ -99,10 +99,10 @@ bool ExternalPopupMenu::ShowInternal() {
     LayoutObject* layout_object = owner_element_->GetLayoutObject();
     if (!layout_object || !layout_object->IsBox())
       return false;
-    FloatQuad quad(ToLayoutBox(layout_object)
-                       ->LocalToAbsoluteQuad(FloatQuad(
-                           ToLayoutBox(layout_object)->BorderBoundingBox())));
-    IntRect rect(quad.EnclosingBoundingBox());
+    IntRect rect = EnclosingIntRect(
+        ToLayoutBox(layout_object)
+            ->LocalToAbsoluteRect(
+                ToLayoutBox(layout_object)->PhysicalBorderBoxRect()));
     IntRect rect_in_viewport = local_frame_->View()->FrameToViewport(rect);
     web_external_popup_menu_->Show(rect_in_viewport);
     return true;
@@ -213,7 +213,7 @@ void ExternalPopupMenu::DidAcceptIndices(const WebVector<int>& indices) {
   HTMLSelectElement* owner_element = owner_element_;
   owner_element->PopupDidHide();
 
-  if (indices.size() == 0) {
+  if (indices.empty()) {
     owner_element->SelectOptionByPopup(-1);
   } else if (!owner_element->IsMultiple()) {
     owner_element->SelectOptionByPopup(

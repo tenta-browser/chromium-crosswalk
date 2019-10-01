@@ -28,6 +28,7 @@
 #include "ui/gfx/image/image_skia_operations.h"
 #include "ui/gfx/image/image_skia_source.h"
 #include "ui/views/animation/ink_drop_impl.h"
+#include "ui/views/controls/button/button.h"
 #include "ui/views/controls/button/label_button_border.h"
 #include "ui/views/controls/menu/menu_controller.h"
 #include "ui/views/controls/menu/menu_model_adapter.h"
@@ -48,6 +49,8 @@ const int kBorderInset = 0;
 ////////////////////////////////////////////////////////////////////////////////
 // ToolbarActionView
 
+const char ToolbarActionView::kClassName[] = "ToolbarActionView";
+
 ToolbarActionView::ToolbarActionView(
     ToolbarActionViewController* view_controller,
     ToolbarActionView::Delegate* delegate)
@@ -56,7 +59,7 @@ ToolbarActionView::ToolbarActionView(
       delegate_(delegate) {
   SetInkDropMode(InkDropMode::ON);
   set_has_ink_drop_action_on_click(true);
-  set_id(VIEW_ID_BROWSER_ACTION);
+  SetID(VIEW_ID_BROWSER_ACTION);
   view_controller_->SetDelegate(this);
   SetHorizontalAlignment(gfx::ALIGN_CENTER);
   set_drag_controller(delegate_);
@@ -75,6 +78,10 @@ ToolbarActionView::ToolbarActionView(
 
 ToolbarActionView::~ToolbarActionView() {
   view_controller_->SetDelegate(nullptr);
+}
+
+const char* ToolbarActionView::GetClassName() const {
+  return kClassName;
 }
 
 void ToolbarActionView::OnBoundsChanged(const gfx::Rect& previous_bounds) {
@@ -106,9 +113,13 @@ std::unique_ptr<LabelButtonBorder> ToolbarActionView::CreateDefaultBorder()
 }
 
 bool ToolbarActionView::IsTriggerableEvent(const ui::Event& event) {
-  return views::MenuButton::IsTriggerableEvent(event) &&
-         (base::TimeTicks::Now() - popup_closed_time_).InMilliseconds() >
-             views::kMinimumMsBetweenButtonClicks;
+  // By default MenuButton checks the time since the menu closure, but that
+  // prevents left clicks from showing the extension popup when the context menu
+  // is showing.  The time check is to prevent reshowing on the same click that
+  // closed the menu, when this class handles via |suppress_next_release_|, so
+  // it's not necessary.  Bypass it by calling IsTriggerableEventType() instead
+  // of IsTriggerableEvent().
+  return views::MenuButton::IsTriggerableEventType(event);
 }
 
 SkColor ToolbarActionView::GetInkDropBaseColor() const {
@@ -133,7 +144,7 @@ ToolbarActionView::CreateInkDropHighlight() const {
 
 bool ToolbarActionView::OnKeyPressed(const ui::KeyEvent& event) {
   if (event.key_code() == ui::VKEY_DOWN) {
-    ShowContextMenuForView(this, gfx::Point(), ui::MENU_SOURCE_KEYBOARD);
+    ShowContextMenuForViewImpl(this, gfx::Point(), ui::MENU_SOURCE_KEYBOARD);
     return true;
   }
   return MenuButton::OnKeyPressed(event);
@@ -171,7 +182,7 @@ void ToolbarActionView::UpdateState() {
   SchedulePaint();
 }
 
-void ToolbarActionView::OnMenuButtonClicked(views::MenuButton* sender,
+void ToolbarActionView::OnMenuButtonClicked(views::Button* sender,
                                             const gfx::Point& point,
                                             const ui::Event* event) {
   if (!view_controller_->IsEnabled(GetCurrentWebContents())) {
@@ -205,15 +216,37 @@ gfx::Size ToolbarActionView::CalculatePreferredSize() const {
 }
 
 bool ToolbarActionView::OnMousePressed(const ui::MouseEvent& event) {
-  if (event.IsOnlyLeftMouseButton() && !view_controller()->IsShowingPopup()) {
-    // This event is likely to trigger the MenuButton action.
-    // TODO(bruthig): The ACTION_PENDING triggering logic should be in
-    // MenuButton::OnPressed() however there is a bug with the pressed state
-    // logic in MenuButton. See http://crbug.com/567252.
-    AnimateInkDrop(views::InkDropState::ACTION_PENDING, &event);
+  if (event.IsOnlyLeftMouseButton()) {
+    if (view_controller()->IsShowingPopup()) {
+      // Left-clicking the button should always hide the popup.  In most cases,
+      // this would have happened automatically anyway due to the popup losing
+      // activation, but if the popup is currently being inspected, the
+      // activation loss will not automatically close it, so force-hide here.
+      view_controller_->HidePopup();
+
+      // Since we just hid the popup, don't allow the mouse release for this
+      // click to re-show it.
+      suppress_next_release_ = true;
+    } else {
+      // This event is likely to trigger the MenuButton action.
+      // TODO(bruthig): The ACTION_PENDING triggering logic should be in
+      // MenuButton::OnPressed() however there is a bug with the pressed state
+      // logic in MenuButton. See http://crbug.com/567252.
+      AnimateInkDrop(views::InkDropState::ACTION_PENDING, &event);
+    }
   }
 
   return MenuButton::OnMousePressed(event);
+}
+
+void ToolbarActionView::OnMouseReleased(const ui::MouseEvent& event) {
+  // MenuButton::OnMouseReleased() may synchronously delete |this|, so writing
+  // member variables after that point is unsafe.  Instead, copy the old value
+  // of |suppress_next_release_| so it can be updated now.
+  const bool suppress_next_release = suppress_next_release_;
+  suppress_next_release_ = false;
+  if (!suppress_next_release)
+    MenuButton::OnMouseReleased(event);
 }
 
 void ToolbarActionView::OnGestureEvent(ui::GestureEvent* event) {
@@ -226,11 +259,18 @@ void ToolbarActionView::OnGestureEvent(ui::GestureEvent* event) {
 
 void ToolbarActionView::OnDragDone() {
   views::MenuButton::OnDragDone();
+
+  // The mouse release that ends a drag does not generate a mouse release event,
+  // so OnMouseReleased() doesn't get called.  Thus if the click that started
+  // the drag set |suppress_next_release_|, it must be reset here or the next
+  // mouse release after the drag will be erroneously discarded.
+  suppress_next_release_ = false;
+
   delegate_->OnToolbarActionViewDragDone();
 }
 
 void ToolbarActionView::ViewHierarchyChanged(
-    const ViewHierarchyChangedDetails& details) {
+    const views::ViewHierarchyChangedDetails& details) {
   if (details.is_add && !called_register_command_ && GetFocusManager()) {
     view_controller_->RegisterCommand();
     called_register_command_ = true;
@@ -247,11 +287,11 @@ views::FocusManager* ToolbarActionView::GetFocusManagerForAccelerator() {
   return GetFocusManager();
 }
 
-views::View* ToolbarActionView::GetReferenceViewForPopup() {
+views::Button* ToolbarActionView::GetReferenceButtonForPopup() {
   // Browser actions in the overflow menu can still show popups, so we may need
   // a reference view other than this button's parent. If so, use the overflow
-  // view.
-  return visible() ? this : delegate_->GetOverflowReferenceView();
+  // view which is a BrowserAppMenuButton.
+  return GetVisible() ? this : delegate_->GetOverflowReferenceView();
 }
 
 bool ToolbarActionView::IsMenuRunning() const {
@@ -261,24 +301,24 @@ bool ToolbarActionView::IsMenuRunning() const {
 void ToolbarActionView::OnPopupShown(bool by_user) {
   // If this was through direct user action, we press the menu button.
   if (by_user) {
-    // We set the state of the menu button we're using as a reference view,
-    // which is either this or the overflow reference view.
-    // This cast is safe because GetReferenceViewForPopup returns either |this|
-    // or delegate_->GetOverflowReferenceView(), which returns a MenuButton.
-    views::MenuButton* reference_view =
-        static_cast<views::MenuButton*>(GetReferenceViewForPopup());
-    pressed_lock_ = reference_view->menu_button_event_handler()->TakeLock();
+    // GetReferenceButtonForPopup returns either |this| or
+    // delegate_->GetOverflowReferenceView() which is a BrowserAppMenuButton.
+    // This cast is safe because both will have a MenuButtonController.
+    views::MenuButtonController* reference_view_controller =
+        static_cast<views::MenuButtonController*>(
+            GetReferenceButtonForPopup()->button_controller());
+    pressed_lock_ = reference_view_controller->TakeLock();
   }
 }
 
 void ToolbarActionView::OnPopupClosed() {
-  popup_closed_time_ = base::TimeTicks::Now();
   pressed_lock_.reset();  // Unpress the menu button if it was pressed.
 }
 
-void ToolbarActionView::ShowContextMenuForView(views::View* source,
-                                               const gfx::Point& point,
-                                               ui::MenuSourceType source_type) {
+void ToolbarActionView::ShowContextMenuForViewImpl(
+    views::View* source,
+    const gfx::Point& point,
+    ui::MenuSourceType source_type) {
   if (CloseActiveMenuIfNeeded())
     return;
 
@@ -292,7 +332,8 @@ void ToolbarActionView::DoShowContextMenu(ui::MenuSourceType source_type) {
   if (!context_menu_model)
     return;
 
-  DCHECK(visible());  // We should never show a context menu for a hidden item.
+  DCHECK(
+      GetVisible());  // We should never show a context menu for a hidden item.
 
   int run_types =
       views::MenuRunner::HAS_MNEMONICS | views::MenuRunner::CONTEXT_MENU;
@@ -310,13 +351,14 @@ void ToolbarActionView::DoShowContextMenu(ui::MenuSourceType source_type) {
   // menu. Any action that would lead to the deletion of |this| first triggers
   // the closing of the menu through lost capture.
   menu_adapter_.reset(new views::MenuModelAdapter(
-      context_menu_model,
-      base::Bind(&ToolbarActionView::OnMenuClosed, base::Unretained(this))));
+      context_menu_model, base::BindRepeating(&ToolbarActionView::OnMenuClosed,
+                                              base::Unretained(this))));
   menu_ = menu_adapter_->CreateMenu();
   menu_runner_.reset(new views::MenuRunner(menu_, run_types));
 
-  menu_runner_->RunMenuAt(parent, this, GetAnchorBoundsInScreen(),
-                          views::MENU_ANCHOR_TOPLEFT, source_type);
+  menu_runner_->RunMenuAt(parent, button_controller(),
+                          GetAnchorBoundsInScreen(),
+                          views::MenuAnchorPosition::kTopLeft, source_type);
 }
 
 bool ToolbarActionView::CloseActiveMenuIfNeeded() {
@@ -332,7 +374,7 @@ bool ToolbarActionView::CloseActiveMenuIfNeeded() {
     if (menu_controller->in_nested_run()) {
       // There is another menu showing. Close the outermost menu (since we are
       // shown in the same menu, we don't want to close the whole thing).
-      menu_controller->Cancel(views::MenuController::EXIT_OUTERMOST);
+      menu_controller->Cancel(views::MenuController::ExitType::kOutermost);
       return true;
     }
   }

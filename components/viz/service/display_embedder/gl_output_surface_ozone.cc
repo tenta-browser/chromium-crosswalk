@@ -4,25 +4,41 @@
 
 #include "components/viz/service/display_embedder/gl_output_surface_ozone.h"
 
+#include <utility>
+
+#include "components/viz/service/display_embedder/overlay_candidate_validator_ozone.h"
 #include "ui/display/types/display_snapshot.h"
+#include "ui/ozone/public/overlay_candidates_ozone.h"
+#include "ui/ozone/public/overlay_manager_ozone.h"
+#include "ui/ozone/public/ozone_platform.h"
 
 namespace viz {
 
 GLOutputSurfaceOzone::GLOutputSurfaceOzone(
     scoped_refptr<VizProcessContextProvider> context_provider,
     gpu::SurfaceHandle surface_handle,
-    SyntheticBeginFrameSource* synthetic_begin_frame_source,
     gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager,
-    uint32_t target,
-    uint32_t internal_format)
+    std::vector<OverlayStrategy> strategies)
     : GLOutputSurfaceBufferQueue(context_provider,
                                  surface_handle,
-                                 synthetic_begin_frame_source,
                                  gpu_memory_buffer_manager,
-                                 target,
-                                 internal_format,
-                                 display::DisplaySnapshot::PrimaryFormat()) {}
+                                 display::DisplaySnapshot::PrimaryFormat()) {
+  if (!strategies.empty()) {
+    auto* overlay_manager =
+        ui::OzonePlatform::GetInstance()->GetOverlayManager();
+    std::unique_ptr<ui::OverlayCandidatesOzone> overlay_candidates =
+        overlay_manager->CreateOverlayCandidates(surface_handle);
+    overlay_candidate_validator_ =
+        std::make_unique<OverlayCandidateValidatorOzone>(
+            std::move(overlay_candidates), std::move(strategies));
+  }
+}
 
-GLOutputSurfaceOzone::~GLOutputSurfaceOzone() {}
+GLOutputSurfaceOzone::~GLOutputSurfaceOzone() = default;
+
+std::unique_ptr<OverlayCandidateValidator>
+GLOutputSurfaceOzone::TakeOverlayCandidateValidator() {
+  return std::move(overlay_candidate_validator_);
+}
 
 }  // namespace viz

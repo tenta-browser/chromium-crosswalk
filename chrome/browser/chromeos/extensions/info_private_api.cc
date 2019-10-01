@@ -12,6 +12,7 @@
 #include "ash/public/cpp/ash_pref_names.h"
 #include "ash/public/cpp/stylus_utils.h"
 #include "base/memory/ptr_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/system/sys_info.h"
 #include "base/values.h"
 #include "chrome/browser/app_mode/app_mode_utils.h"
@@ -50,6 +51,9 @@ const char kPropertyHWID[] = "hwid";
 
 // Key which corresponds to the customization ID setting.
 const char kPropertyCustomizationID[] = "customizationId";
+
+// Key which corresponds to the oem_device_requisition setting.
+const char kPropertyDeviceRequisition[] = "deviceRequisition";
 
 // Key which corresponds to the home provider property.
 const char kPropertyHomeProvider[] = "homeProvider";
@@ -291,6 +295,15 @@ std::unique_ptr<base::Value> ChromeosInfoPrivateGetFunction::GetValue(
     provider->GetMachineStatistic(chromeos::system::kCustomizationIdKey,
                                   &customization_id);
     return std::make_unique<base::Value>(customization_id);
+  }
+
+  if (property_name == kPropertyDeviceRequisition) {
+    std::string device_requisition;
+    chromeos::system::StatisticsProvider* provider =
+        chromeos::system::StatisticsProvider::GetInstance();
+    provider->GetMachineStatistic(chromeos::system::kOemDeviceRequisitionKey,
+                                  &device_requisition);
+    return std::make_unique<base::Value>(device_requisition);
   }
 
   if (property_name == kPropertyHomeProvider) {

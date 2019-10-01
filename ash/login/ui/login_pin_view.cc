@@ -11,6 +11,7 @@
 #include "ash/public/cpp/login_constants.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/strings/grit/ash_strings.h"
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -18,6 +19,7 @@
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/events/keycodes/dom/dom_code.h"
+#include "ui/gfx/geometry/size.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/views/animation/flood_fill_ink_drop_ripple.h"
 #include "ui/views/animation/ink_drop_highlight.h"
@@ -58,6 +60,12 @@ constexpr int kRepeatingBackspaceDelayMs = 150;
 // Size of the md-ripple when a PIN button is tapped.
 constexpr int kRippleSizeDp = 54;
 
+// Button sizes. Button height varies per keyboard style, while button width is
+// the same for both styles.
+constexpr int kAlphanumericButtonHeightDp = 78;
+constexpr int kNumericButtonHeightDp = 70;
+constexpr int kButtonWidthDp = 78;
+
 base::string16 GetButtonLabelForNumber(int value) {
   DCHECK(value >= 0 && value < int{base::size(kPinLabels)});
   return base::ASCIIToUTF16(std::to_string(value));
@@ -78,16 +86,17 @@ int GetViewIdForPinNumber(int number) {
 // A base class for pin button in the pin keyboard.
 class BasePinButton : public views::InkDropHostView {
  public:
-  explicit BasePinButton(const base::RepeatingClosure& on_press,
-                         const base::string16& accessible_name)
+  explicit BasePinButton(const gfx::Size& size,
+                         const base::string16& accessible_name,
+                         const base::RepeatingClosure& on_press)
       : on_press_(on_press), accessible_name_(accessible_name) {
     SetFocusBehavior(FocusBehavior::ALWAYS);
-    SetPreferredSize(
-        gfx::Size(LoginPinView::kButtonSizeDp, LoginPinView::kButtonSizeDp));
+    SetPreferredSize(size);
+
     auto layout =
         std::make_unique<views::BoxLayout>(views::BoxLayout::kVertical);
     layout->set_main_axis_alignment(
-        views::BoxLayout::MAIN_AXIS_ALIGNMENT_CENTER);
+        views::BoxLayout::MainAxisAlignment::kCenter);
     SetLayoutManager(std::move(layout));
 
     // Layer rendering is needed for animation. Enable it here for
@@ -194,31 +203,38 @@ class BasePinButton : public views::InkDropHostView {
 // A PIN button that displays a digit number and corresponding letter mapping.
 class DigitPinButton : public BasePinButton {
  public:
-  DigitPinButton(int value, const LoginPinView::OnPinKey& on_key)
-      : BasePinButton(base::BindRepeating(on_key, value),
-                      GetButtonLabelForNumber(value)) {
-    set_id(GetViewIdForPinNumber(value));
+  DigitPinButton(int value,
+                 bool show_sub_label,
+                 const gfx::Size& size,
+                 const LoginPinView::OnPinKey& on_key)
+      : BasePinButton(size,
+                      GetButtonLabelForNumber(value),
+                      base::BindRepeating(on_key, value)) {
+    SetID(GetViewIdForPinNumber(value));
     const gfx::FontList& base_font_list = views::Label::GetDefaultFontList();
     views::Label* label = new views::Label(GetButtonLabelForNumber(value),
                                            views::style::CONTEXT_BUTTON,
                                            views::style::STYLE_PRIMARY);
-    views::Label* sub_label = new views::Label(
-        GetButtonSubLabelForNumber(value), views::style::CONTEXT_BUTTON,
-        views::style::STYLE_PRIMARY);
     label->SetEnabledColor(login_constants::kButtonEnabledColor);
-    sub_label->SetEnabledColor(
-        SkColorSetA(login_constants::kButtonEnabledColor,
-                    login_constants::kButtonDisabledAlpha));
     label->SetAutoColorReadabilityEnabled(false);
-    sub_label->SetAutoColorReadabilityEnabled(false);
     label->SetSubpixelRenderingEnabled(false);
-    sub_label->SetSubpixelRenderingEnabled(false);
     label->SetFontList(base_font_list.Derive(8, gfx::Font::FontStyle::NORMAL,
                                              gfx::Font::Weight::LIGHT));
-    sub_label->SetFontList(base_font_list.Derive(
-        -3, gfx::Font::FontStyle::NORMAL, gfx::Font::Weight::NORMAL));
     AddChildView(label);
-    AddChildView(sub_label);
+
+    if (show_sub_label) {
+      views::Label* sub_label = new views::Label(
+          GetButtonSubLabelForNumber(value), views::style::CONTEXT_BUTTON,
+          views::style::STYLE_PRIMARY);
+      sub_label->SetEnabledColor(
+          SkColorSetA(login_constants::kButtonEnabledColor,
+                      login_constants::kButtonDisabledAlpha));
+      sub_label->SetAutoColorReadabilityEnabled(false);
+      sub_label->SetSubpixelRenderingEnabled(false);
+      sub_label->SetFontList(base_font_list.Derive(
+          -3, gfx::Font::FontStyle::NORMAL, gfx::Font::Weight::NORMAL));
+      AddChildView(sub_label);
+    }
   }
 
   ~DigitPinButton() override = default;
@@ -229,18 +245,15 @@ class DigitPinButton : public BasePinButton {
 
 }  // namespace
 
-// static
-const int LoginPinView::kButtonSizeDp = 78;
-
 // A PIN button that displays backspace icon.
 class LoginPinView::BackspacePinButton : public BasePinButton {
  public:
-  BackspacePinButton(const base::RepeatingClosure& on_press)
-      : BasePinButton(on_press,
+  BackspacePinButton(const gfx::Size& size,
+                     const base::RepeatingClosure& on_press)
+      : BasePinButton(size,
                       l10n_util::GetStringUTF16(
-                          IDS_ASH_PIN_KEYBOARD_DELETE_ACCESSIBLE_NAME)),
-        delay_timer_(std::make_unique<base::OneShotTimer>()),
-        repeat_timer_(std::make_unique<base::RepeatingTimer>()) {
+                          IDS_ASH_PIN_KEYBOARD_DELETE_ACCESSIBLE_NAME),
+                      on_press) {
     image_ = new views::ImageView();
     image_->SetImage(gfx::CreateVectorIcon(
         kLockScreenBackspaceIcon, login_constants::kButtonEnabledColor));
@@ -256,16 +269,17 @@ class LoginPinView::BackspacePinButton : public BasePinButton {
     repeat_timer_ = std::move(repeat_timer);
   }
 
-  // BasePinButton:
-  void OnEnabledChanged() override {
+  void OnEnabledChanged() {
     SkColor color = login_constants::kButtonEnabledColor;
-    if (!enabled()) {
+    if (!GetEnabled()) {
       color = SkColorSetA(color, login_constants::kButtonDisabledAlpha);
       CancelRepeat();
     }
 
     image_->SetImage(gfx::CreateVectorIcon(kLockScreenBackspaceIcon, color));
   }
+
+  // BasePinButton:
   void OnEvent(ui::Event* event) override {
     BasePinButton::OnEvent(event);
     if (event->handled())
@@ -342,13 +356,26 @@ class LoginPinView::BackspacePinButton : public BasePinButton {
   }
 
   bool is_held_ = false;
-  std::unique_ptr<base::OneShotTimer> delay_timer_;
-  std::unique_ptr<base::RepeatingTimer> repeat_timer_;
+  std::unique_ptr<base::OneShotTimer> delay_timer_ =
+      std::make_unique<base::OneShotTimer>();
+  std::unique_ptr<base::RepeatingTimer> repeat_timer_ =
+      std::make_unique<base::RepeatingTimer>();
 
   views::ImageView* image_ = nullptr;
+  views::PropertyChangedSubscription enabled_changed_subscription_ =
+      AddEnabledChangedCallback(base::BindRepeating(
+          &LoginPinView::BackspacePinButton::OnEnabledChanged,
+          base::Unretained(this)));
 
   DISALLOW_COPY_AND_ASSIGN(BackspacePinButton);
 };
+
+// static
+gfx::Size LoginPinView::TestApi::GetButtonSize(Style style) {
+  return gfx::Size(kButtonWidthDp, style == Style::kNumeric
+                                       ? kNumericButtonHeightDp
+                                       : kAlphanumericButtonHeightDp);
+}
 
 LoginPinView::TestApi::TestApi(LoginPinView* view) : view_(view) {}
 
@@ -369,7 +396,8 @@ void LoginPinView::TestApi::SetBackspaceTimers(
                                          std::move(repeat_timer));
 }
 
-LoginPinView::LoginPinView(const OnPinKey& on_key,
+LoginPinView::LoginPinView(Style keyboard_style,
+                           const OnPinKey& on_key,
                            const OnPinBackspace& on_backspace)
     : NonAccessibleView(kLoginPinViewClassName),
       on_key_(on_key),
@@ -392,31 +420,41 @@ LoginPinView::LoginPinView(const OnPinKey& on_key,
   SetLayoutManager(
       std::make_unique<views::BoxLayout>(views::BoxLayout::kVertical));
 
+  bool show_letters = keyboard_style == Style::kAlphanumeric;
+  const gfx::Size button_size =
+      gfx::Size(kButtonWidthDp, show_letters ? kAlphanumericButtonHeightDp
+                                             : kNumericButtonHeightDp);
+
+  auto add_digit_button = [&](View* row, int value) {
+    row->AddChildView(
+        new DigitPinButton(value, show_letters, button_size, on_key_));
+  };
+
   // 1-2-3
   auto* row = build_and_add_row();
-  row->AddChildView(new DigitPinButton(1, on_key_));
-  row->AddChildView(new DigitPinButton(2, on_key_));
-  row->AddChildView(new DigitPinButton(3, on_key_));
+  add_digit_button(row, 1);
+  add_digit_button(row, 2);
+  add_digit_button(row, 3);
 
   // 4-5-6
   row = build_and_add_row();
-  row->AddChildView(new DigitPinButton(4, on_key_));
-  row->AddChildView(new DigitPinButton(5, on_key_));
-  row->AddChildView(new DigitPinButton(6, on_key_));
+  add_digit_button(row, 4);
+  add_digit_button(row, 5);
+  add_digit_button(row, 6);
 
   // 7-8-9
   row = build_and_add_row();
-  row->AddChildView(new DigitPinButton(7, on_key_));
-  row->AddChildView(new DigitPinButton(8, on_key_));
-  row->AddChildView(new DigitPinButton(9, on_key_));
+  add_digit_button(row, 7);
+  add_digit_button(row, 8);
+  add_digit_button(row, 9);
 
   // 0-backspace
   row = build_and_add_row();
   auto* spacer = new NonAccessibleView();
-  spacer->SetPreferredSize(gfx::Size(kButtonSizeDp, kButtonSizeDp));
+  spacer->SetPreferredSize(button_size);
   row->AddChildView(spacer);
-  row->AddChildView(new DigitPinButton(0, on_key_));
-  backspace_ = new BackspacePinButton(on_backspace_);
+  add_digit_button(row, 0);
+  backspace_ = new BackspacePinButton(button_size, on_backspace_);
   row->AddChildView(backspace_);
 }
 

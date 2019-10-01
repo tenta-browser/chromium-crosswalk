@@ -13,10 +13,6 @@
 #include "mojo/public/cpp/bindings/strong_binding_set.h"
 #include "services/ws/public/mojom/gpu.mojom.h"
 
-#if defined(OS_CHROMEOS)
-#include "services/ws/public/mojom/arc.mojom.h"
-#endif  // defined(OS_CHROMEOS)
-
 namespace base {
 class SingleThreadTaskRunner;
 }
@@ -27,10 +23,6 @@ class DiscardableSharedMemoryManager;
 
 namespace gpu {
 class ShaderCacheFactory;
-}
-
-namespace service_manager {
-class Connector;
 }
 
 namespace viz {
@@ -49,7 +41,6 @@ class GpuHostDelegate;
 class GpuHost : public viz::GpuHostImpl::Delegate {
  public:
   GpuHost(GpuHostDelegate* delegate,
-          service_manager::Connector* connector,
           discardable_memory::DiscardableSharedMemoryManager*
               discardable_shared_memory_manager);
   ~GpuHost() override;
@@ -60,10 +51,6 @@ class GpuHost : public viz::GpuHostImpl::Delegate {
   void Shutdown();
 
   void Add(mojom::GpuRequest request);
-
-#if defined(OS_CHROMEOS)
-  void AddArc(mojom::ArcRequest request);
-#endif  // defined(OS_CHROMEOS)
 
 #if defined(USE_OZONE)
   void BindOzoneGpuInterface(const std::string& interface_name,
@@ -102,6 +89,9 @@ class GpuHost : public viz::GpuHostImpl::Delegate {
       override;
   void BindInterface(const std::string& interface_name,
                      mojo::ScopedMessagePipeHandle interface_pipe) override;
+  void RunService(
+      const std::string& service_name,
+      mojo::PendingReceiver<service_manager::mojom::Service> receiver) override;
 #if defined(USE_OZONE)
   void TerminateGpuProcess(const std::string& message) override;
   void SendGpuProcessMessage(IPC::Message* message) override;
@@ -127,7 +117,7 @@ class GpuHost : public viz::GpuHostImpl::Delegate {
   std::unique_ptr<viz::VizMainImpl> viz_main_impl_;
 
 #if defined(OS_CHROMEOS)
-  mojo::StrongBindingSet<mojom::Arc> arc_bindings_;
+  mojo::StrongBindingSet<mojom::ArcGpu> arc_gpu_bindings_;
 #endif  // defined(OS_CHROMEOS)
 
   DISALLOW_COPY_AND_ASSIGN(GpuHost);

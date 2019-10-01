@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "base/base64.h"
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -14,10 +15,10 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_content_browser_client.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser.h"
 #include "chrome/common/pref_names.h"
 #include "components/autofill/content/browser/risk/fingerprint.h"
 #include "components/autofill/content/browser/risk/proto/fingerprint.pb.h"
+#include "components/language/core/browser/pref_names.h"
 #include "components/metrics/metrics_service.h"
 #include "components/prefs/pref_service.h"
 #include "components/version_info/version_info.h"
@@ -27,6 +28,7 @@
 #include "services/service_manager/public/cpp/connector.h"
 
 #if !defined(OS_ANDROID)
+#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "extensions/browser/app_window/app_window.h"
@@ -82,7 +84,7 @@ void LoadRiskData(uint64_t obfuscated_gaia_id,
           ->GetPrefs();
   std::string charset = user_prefs->GetString(::prefs::kDefaultCharset);
   std::string accept_languages =
-      user_prefs->GetString(::prefs::kAcceptLanguages);
+      user_prefs->GetString(::language::prefs::kAcceptLanguages);
   base::Time install_time = base::Time::FromTimeT(
       g_browser_process->metrics_service()->GetInstallDate());
 

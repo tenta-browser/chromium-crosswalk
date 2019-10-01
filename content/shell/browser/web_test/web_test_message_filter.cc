@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/task/post_task.h"
 #include "base/threading/thread_restrictions.h"
@@ -23,12 +24,21 @@
 #include "content/shell/common/web_test/web_test_messages.h"
 #include "content/shell/test_runner/web_test_delegate.h"
 #include "content/test/mock_platform_notification_service.h"
+#include "net/base/completion_once_callback.h"
 #include "net/base/net_errors.h"
 #include "storage/browser/database/database_tracker.h"
 #include "storage/browser/fileapi/isolated_context.h"
 #include "storage/browser/quota/quota_manager.h"
 
 namespace content {
+
+static MockPlatformNotificationService* GetMockPlatformNotificationService() {
+  auto* client = WebTestContentBrowserClient::Get();
+  auto* context = client->GetWebTestBrowserContext();
+  auto* service = client->GetPlatformNotificationService(context);
+
+  return static_cast<MockPlatformNotificationService*>(service);
+}
 
 WebTestMessageFilter::WebTestMessageFilter(
     int render_process_id,
@@ -123,7 +133,7 @@ void WebTestMessageFilter::OnRegisterIsolatedFileSystem(
 void WebTestMessageFilter::OnClearAllDatabases() {
   DCHECK(database_tracker_->task_runner()->RunsTasksInCurrentSequence());
   database_tracker_->DeleteDataModifiedSince(base::Time(),
-                                             net::CompletionCallback());
+                                             net::CompletionOnceCallback());
 }
 
 void WebTestMessageFilter::OnSetDatabaseQuota(int quota) {
@@ -144,22 +154,15 @@ void WebTestMessageFilter::OnSimulateWebNotificationClick(
     const base::Optional<int>& action_index,
     const base::Optional<base::string16>& reply) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  MockPlatformNotificationService* platform_notification_service =
-      static_cast<MockPlatformNotificationService*>(
-          WebTestContentBrowserClient::Get()->GetPlatformNotificationService());
-
-  platform_notification_service->SimulateClick(title, action_index, reply);
+  GetMockPlatformNotificationService()->SimulateClick(title, action_index,
+                                                      reply);
 }
 
 void WebTestMessageFilter::OnSimulateWebNotificationClose(
     const std::string& title,
     bool by_user) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  MockPlatformNotificationService* platform_notification_service =
-      static_cast<MockPlatformNotificationService*>(
-          WebTestContentBrowserClient::Get()->GetPlatformNotificationService());
-
-  platform_notification_service->SimulateClose(title, by_user);
+  GetMockPlatformNotificationService()->SimulateClose(title, by_user);
 }
 
 void WebTestMessageFilter::OnDeleteAllCookies() {
@@ -201,6 +204,8 @@ void WebTestMessageFilter::OnSetPermission(
     type = PermissionType::SENSORS;
   } else if (name == "background-fetch") {
     type = PermissionType::BACKGROUND_FETCH;
+  } else if (name == "periodic-background-sync") {
+    type = PermissionType::PERIODIC_BACKGROUND_SYNC;
   } else {
     NOTREACHED();
     type = PermissionType::NOTIFICATIONS;

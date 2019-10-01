@@ -11,6 +11,7 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
+#include "base/files/scoped_temp_dir.h"
 #include "base/json/json_reader.h"
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
@@ -56,7 +57,6 @@
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/layout.h"
-#include "ui/base/ui_base_features.h"
 #include "ui/compositor/compositor_switches.h"
 #include "ui/gfx/codec/jpeg_codec.h"
 #include "ui/gfx/codec/png_codec.h"
@@ -139,7 +139,7 @@ class TestJavaScriptDialogManager : public JavaScriptDialogManager,
     } else {
       callback_ = std::move(callback);
     }
-  };
+  }
 
   void RunBeforeUnloadDialog(WebContents* web_contents,
                              RenderFrameHost* render_frame_host,
@@ -502,9 +502,6 @@ class CaptureScreenshotTest : public DevToolsProtocolTest {
 };
 
 IN_PROC_BROWSER_TEST_F(CaptureScreenshotTest, CaptureScreenshot) {
-  // TODO(crbug.com/877172): CopyOutputRequests not allowed.
-  if (features::IsSingleProcessMash())
-    return;
   // This test fails consistently on low-end Android devices.
   // See crbug.com/653637.
   // TODO(eseckler): Reenable with error limit if necessary.
@@ -527,9 +524,6 @@ IN_PROC_BROWSER_TEST_F(CaptureScreenshotTest, CaptureScreenshot) {
 }
 
 IN_PROC_BROWSER_TEST_F(CaptureScreenshotTest, CaptureScreenshotJpeg) {
-  // TODO(crbug.com/877172): CopyOutputRequests not allowed.
-  if (features::IsSingleProcessMash())
-    return;
   // This test fails consistently on low-end Android devices.
   // See crbug.com/653637.
   // TODO(eseckler): Reenable with error limit if necessary.
@@ -571,9 +565,6 @@ IN_PROC_BROWSER_TEST_F(CaptureScreenshotTest,
   PlaceAndCaptureBox(kFrameSize, gfx::Size(100, 200), 2.0, 1.);
   PlaceAndCaptureBox(kFrameSize, gfx::Size(100, 200), 0.5, 1.);
 
-  // Ensure that content outside the emulated frame is painted, too.
-  PlaceAndCaptureBox(kFrameSize, gfx::Size(10, 8192), 1.0, 1.);
-
   // Check non-1 device scale factor.
   PlaceAndCaptureBox(kFrameSize, gfx::Size(100, 200), 1.0, 2.);
   // Ensure not emulating device scale factor works.
@@ -584,9 +575,6 @@ IN_PROC_BROWSER_TEST_F(CaptureScreenshotTest,
 // of a page that does not specify one.
 IN_PROC_BROWSER_TEST_F(CaptureScreenshotTest,
                        SetDefaultBackgroundColorOverride) {
-  // TODO(crbug.com/877172): CopyOutputRequests not allowed.
-  if (features::IsSingleProcessMash())
-    return;
   if (base::SysInfo::IsLowEndDevice())
     return;
 
@@ -627,9 +615,6 @@ IN_PROC_BROWSER_TEST_F(CaptureScreenshotTest,
 // and semi-transparent background, and that setDeviceMetricsOverride doesn't
 // affect it.
 IN_PROC_BROWSER_TEST_F(CaptureScreenshotTest, TransparentScreenshots) {
-  // TODO(crbug.com/877172): CopyOutputRequests not allowed.
-  if (features::IsSingleProcessMash())
-    return;
   if (base::SysInfo::IsLowEndDevice())
     return;
 
@@ -1287,7 +1272,7 @@ IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest, VirtualTimeTest) {
 IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest, CertificateError) {
   net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
   https_server.SetSSLConfig(net::EmbeddedTestServer::CERT_EXPIRED);
-  https_server.ServeFilesFromSourceDirectory("content/test/data");
+  https_server.ServeFilesFromSourceDirectory(GetTestDataFilePath());
   ASSERT_TRUE(https_server.Start());
   GURL test_url = https_server.GetURL("/devtools/navigation.html");
   std::unique_ptr<base::DictionaryValue> params;
@@ -1375,7 +1360,7 @@ IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest,
                        CertificateErrorRequestInterception) {
   net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
   https_server.SetSSLConfig(net::EmbeddedTestServer::CERT_EXPIRED);
-  https_server.ServeFilesFromSourceDirectory("content/test/data");
+  https_server.ServeFilesFromSourceDirectory(GetTestDataFilePath());
   ASSERT_TRUE(https_server.Start());
   GURL test_url = https_server.GetURL("/devtools/navigation.html");
 
@@ -1385,13 +1370,13 @@ IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest,
   Attach();
   SendCommand("Network.enable", nullptr, true);
   SendCommand("Security.enable", nullptr, false);
-  SendCommand(
-      "Network.setRequestInterception",
-      base::JSONReader::Read("{\"patterns\": [{\"urlPattern\": \"*\"}]}"),
-      true);
+  SendCommand("Network.setRequestInterception",
+              base::JSONReader::ReadDeprecated(
+                  "{\"patterns\": [{\"urlPattern\": \"*\"}]}"),
+              true);
 
   SendCommand("Security.setIgnoreCertificateErrors",
-              base::JSONReader::Read("{\"ignore\": true}"), true);
+              base::JSONReader::ReadDeprecated("{\"ignore\": true}"), true);
 
   SendCommand("Network.clearBrowserCache", nullptr, true);
   SendCommand("Network.clearBrowserCookies", nullptr, true);
@@ -1402,8 +1387,8 @@ IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest,
   std::string interceptionId;
   EXPECT_TRUE(params->GetString("interceptionId", &interceptionId));
   SendCommand("Network.continueInterceptedRequest",
-              base::JSONReader::Read("{\"interceptionId\": \"" +
-                                     interceptionId + "\"}"),
+              base::JSONReader::ReadDeprecated("{\"interceptionId\": \"" +
+                                               interceptionId + "\"}"),
               false);
   continue_observer.Wait();
   EXPECT_EQ(test_url, shell()
@@ -1416,7 +1401,7 @@ IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest,
 IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest, CertificateErrorBrowserTarget) {
   net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
   https_server.SetSSLConfig(net::EmbeddedTestServer::CERT_EXPIRED);
-  https_server.ServeFilesFromSourceDirectory("content/test/data");
+  https_server.ServeFilesFromSourceDirectory(GetTestDataFilePath());
   ASSERT_TRUE(https_server.Start());
   GURL test_url = https_server.GetURL("/devtools/navigation.html");
   std::unique_ptr<base::DictionaryValue> params;
@@ -1633,7 +1618,7 @@ class SitePerProcessDevToolsProtocolTest : public DevToolsProtocolTest {
   void SetUpCommandLine(base::CommandLine* command_line) override {
     DevToolsProtocolTest::SetUpCommandLine(command_line);
     IsolateAllSitesForTesting(command_line);
-  };
+  }
 
   void SetUpOnMainThread() override {
     DevToolsProtocolTest::SetUpOnMainThread();
@@ -1854,8 +1839,7 @@ IN_PROC_BROWSER_TEST_F(DevToolsProtocolTouchTest, EnableTouch) {
 // serialized into the protocol message.
 IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest, CertificateExplanations) {
   net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
-  https_server.AddDefaultHandlers(
-      base::FilePath(FILE_PATH_LITERAL("content/test/data")));
+  https_server.AddDefaultHandlers(GetTestDataFilePath());
   ASSERT_TRUE(https_server.Start());
 
   shell()->LoadURL(GURL("about:blank"));
@@ -2013,8 +1997,6 @@ class TestShellDownloadManagerDelegate : public ShellDownloadManagerDelegate {
     }
     return true;
   }
-
-  bool GenerateFileHash() override { return true; }
 
   void SetDelayedOpen(bool delay) { delay_download_open_ = delay; }
 
@@ -2205,11 +2187,16 @@ class DevToolsDownloadContentTest : public DevToolsProtocolTest {
 // Check that downloading a single file works.
 IN_PROC_BROWSER_TEST_F(DevToolsDownloadContentTest, SingleDownload) {
   base::ThreadRestrictions::SetIOAllowed(true);
+  base::ScopedTempDir temp_dir;
+  ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+  std::string download_path =
+      temp_dir.GetPath().AppendASCII("download").AsUTF8Unsafe();
+
   SetupEnsureNoPendingDownloads();
   NavigateToURLBlockUntilNavigationsComplete(shell(), GURL("about:blank"), 1);
   Attach();
 
-  SetDownloadBehavior("allow", "download");
+  SetDownloadBehavior("allow", download_path);
   // Create a download, wait until it's started, and confirm
   // we're in the expected state.
   download::DownloadItem* download = StartDownloadAndReturnItem(
@@ -2339,11 +2326,18 @@ IN_PROC_BROWSER_TEST_F(DevToolsDownloadContentTest, ResetDownloadState) {
 // corrupted files.
 IN_PROC_BROWSER_TEST_F(DevToolsDownloadContentTest, MAYBE_MultiDownload) {
   base::ThreadRestrictions::SetIOAllowed(true);
+  base::ScopedTempDir temp_dir;
+  ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+  std::string download1_path =
+      temp_dir.GetPath().AppendASCII("download1").AsUTF8Unsafe();
+  std::string download2_path =
+      temp_dir.GetPath().AppendASCII("download2").AsUTF8Unsafe();
+
   SetupEnsureNoPendingDownloads();
   NavigateToURLBlockUntilNavigationsComplete(shell(), GURL("about:blank"), 1);
   Attach();
 
-  SetDownloadBehavior("allow", "download1");
+  SetDownloadBehavior("allow", download1_path);
   // Create a download, wait until it's started, and confirm
   // we're in the expected state.
   download::DownloadItem* download1 = StartDownloadAndReturnItem(
@@ -2352,7 +2346,7 @@ IN_PROC_BROWSER_TEST_F(DevToolsDownloadContentTest, MAYBE_MultiDownload) {
   ASSERT_EQ(download::DownloadItem::IN_PROGRESS, download1->GetState());
 
   NavigateToURLBlockUntilNavigationsComplete(shell(), GURL("about:blank"), 1);
-  SetDownloadBehavior("allow", "download2");
+  SetDownloadBehavior("allow", download2_path);
   // Start the second download and wait until it's done.
   GURL url(embedded_test_server()->GetURL("/download/download-test.lib"));
   download::DownloadItem* download2 = StartDownloadAndReturnItem(shell(), url);
@@ -2378,14 +2372,14 @@ IN_PROC_BROWSER_TEST_F(DevToolsDownloadContentTest, MAYBE_MultiDownload) {
   // |file1| should be full of '*'s, and |file2| should be the same as the
   // source file.
   base::FilePath file1(download1->GetTargetFilePath());
-  ASSERT_EQ(file1.DirName().MaybeAsASCII(), "download1");
+  ASSERT_EQ(file1.DirName().MaybeAsASCII(), download1_path);
   size_t file_size1 = content::SlowDownloadHttpResponse::kFirstDownloadSize +
                       content::SlowDownloadHttpResponse::kSecondDownloadSize;
   std::string expected_contents(file_size1, '*');
   ASSERT_TRUE(VerifyFile(file1, expected_contents, file_size1));
 
   base::FilePath file2(download2->GetTargetFilePath());
-  ASSERT_EQ(file2.DirName().MaybeAsASCII(), "download2");
+  ASSERT_EQ(file2.DirName().MaybeAsASCII(), download2_path);
   ASSERT_TRUE(base::ContentsEqual(
       file2, GetTestFilePath("download", "download-test.lib")));
 }

@@ -21,9 +21,9 @@
 #include "base/synchronization/waitable_event.h"
 #include "base/task/post_task.h"
 #include "base/threading/thread_restrictions.h"
-#include "chrome/browser/dbus/dbus_thread_linux.h"
 #include "chrome/grit/chromium_strings.h"
 #include "components/autofill/core/common/password_form.h"
+#include "components/dbus/dbus_thread_linux.h"
 #include "components/password_manager/core/browser/password_manager_util.h"
 #include "dbus/bus.h"
 #include "dbus/message.h"
@@ -255,7 +255,7 @@ void SerializeValue(const std::vector<std::unique_ptr<PasswordForm>>& forms,
   pickle->WriteInt(kPickleVersion);
   pickle->WriteUInt64(forms.size());
   for (const auto& form : forms) {
-    pickle->WriteInt(form->scheme);
+    pickle->WriteInt(static_cast<int>(form->scheme));
     pickle->WriteString(form->origin.spec());
     pickle->WriteString(form->action.spec());
     pickle->WriteString16(form->username_element);
@@ -266,7 +266,7 @@ void SerializeValue(const std::vector<std::unique_ptr<PasswordForm>>& forms,
     pickle->WriteBool(form->preferred);
     pickle->WriteBool(form->blacklisted_by_user);
     pickle->WriteInt64(form->date_created.ToInternalValue());
-    pickle->WriteInt(form->type);
+    pickle->WriteInt(static_cast<int>(form->type));
     pickle->WriteInt(form->times_used);
     autofill::SerializeFormData(form->form_data, pickle);
     pickle->WriteInt64(form->date_synced.ToInternalValue());
@@ -278,7 +278,7 @@ void SerializeValue(const std::vector<std::unique_ptr<PasswordForm>>& forms,
                             ? std::string()
                             : form->federation_origin.Serialize());
     pickle->WriteBool(form->skip_zero_click);
-    pickle->WriteInt(form->generation_upload_status);
+    pickle->WriteInt(static_cast<int>(form->generation_upload_status));
   }
 }
 
@@ -309,7 +309,7 @@ NativeBackendKWallet::~NativeBackendKWallet() {
   // scope. The NativeBackend will be destroyed before that occurs, but that's
   // OK.
   if (kwallet_dbus_.GetSessionBus()) {
-    chrome::GetDBusTaskRunner()->PostTask(
+    dbus_thread_linux::GetTaskRunner()->PostTask(
         FROM_HERE, base::BindOnce(&dbus::Bus::ShutdownAndBlock,
                                   kwallet_dbus_.GetSessionBus()));
   }
@@ -330,7 +330,7 @@ bool NativeBackendKWallet::InitWithBus(scoped_refptr<dbus::Bus> optional_bus) {
                             base::WaitableEvent::InitialState::NOT_SIGNALED);
   // NativeBackendKWallet isn't reference counted, but we wait for InitWithBus
   // to finish, so we can safely use base::Unretained here.
-  chrome::GetDBusTaskRunner()->PostTask(
+  dbus_thread_linux::GetTaskRunner()->PostTask(
       FROM_HERE,
       base::BindOnce(&NativeBackendKWallet::InitOnBackgroundTaskRunner,
                      base::Unretained(this), optional_bus, &event, &success));
@@ -347,7 +347,7 @@ void NativeBackendKWallet::InitOnBackgroundTaskRunner(
     scoped_refptr<dbus::Bus> optional_bus,
     base::WaitableEvent* event,
     bool* success) {
-  DCHECK(chrome::GetDBusTaskRunner()->RunsTasksInCurrentSequence());
+  DCHECK(dbus_thread_linux::GetTaskRunner()->RunsTasksInCurrentSequence());
   DCHECK(!kwallet_dbus_.GetSessionBus());
   if (optional_bus.get()) {
     // The optional_bus parameter is given when this method is called in tests.
@@ -369,7 +369,7 @@ void NativeBackendKWallet::InitOnBackgroundTaskRunner(
 }
 
 NativeBackendKWallet::InitResult NativeBackendKWallet::InitWallet() {
-  DCHECK(chrome::GetDBusTaskRunner()->RunsTasksInCurrentSequence());
+  DCHECK(dbus_thread_linux::GetTaskRunner()->RunsTasksInCurrentSequence());
 
   // Check that KWallet is enabled.
   bool enabled = false;
@@ -413,7 +413,7 @@ password_manager::PasswordStoreChangeList NativeBackendKWallet::AddLogin(
   auto it = std::partition(
       forms.begin(), forms.end(),
       [&form](const std::unique_ptr<PasswordForm>& current_form) {
-        return !ArePasswordFormUniqueKeyEqual(form, *current_form);
+        return !ArePasswordFormUniqueKeysEqual(form, *current_form);
       });
   password_manager::PasswordStoreChangeList changes;
   if (it != forms.end()) {
@@ -449,7 +449,7 @@ bool NativeBackendKWallet::UpdateLogin(
   auto it = std::partition(
       forms.begin(), forms.end(),
       [&form](const std::unique_ptr<PasswordForm>& current_form) {
-        return !ArePasswordFormUniqueKeyEqual(form, *current_form);
+        return !ArePasswordFormUniqueKeysEqual(form, *current_form);
       });
 
   if (it == forms.end())
@@ -481,7 +481,7 @@ bool NativeBackendKWallet::RemoveLogin(
   std::vector<std::unique_ptr<PasswordForm>> kept_forms;
   kept_forms.reserve(all_forms.size());
   for (std::unique_ptr<PasswordForm>& saved_form : all_forms) {
-    if (!ArePasswordFormUniqueKeyEqual(form, *saved_form)) {
+    if (!ArePasswordFormUniqueKeysEqual(form, *saved_form)) {
       kept_forms.push_back(std::move(saved_form));
     }
   }
@@ -562,7 +562,7 @@ bool NativeBackendKWallet::GetAllLogins(
 
 scoped_refptr<base::SequencedTaskRunner>
 NativeBackendKWallet::GetBackgroundTaskRunner() {
-  return chrome::GetDBusTaskRunner();
+  return dbus_thread_linux::GetTaskRunner();
 }
 
 bool NativeBackendKWallet::GetLoginsList(
@@ -811,7 +811,7 @@ NativeBackendKWallet::DeserializeValue(const std::string& signon_realm,
 }
 
 int NativeBackendKWallet::WalletHandle() {
-  DCHECK(chrome::GetDBusTaskRunner()->RunsTasksInCurrentSequence());
+  DCHECK(dbus_thread_linux::GetTaskRunner()->RunsTasksInCurrentSequence());
 
   // Open the wallet.
   // TODO(mdm): Are we leaking these handles? Find out.

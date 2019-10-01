@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env vpython
 # Copyright 2016 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -19,6 +19,7 @@ Sample usage:
 
 import argparse
 import json
+import logging
 import os
 import sys
 import traceback
@@ -28,6 +29,9 @@ import xcodebuild_runner
 
 
 def main():
+  logging.basicConfig(format='[%(asctime)s:%(levelname)s] %(message)s',
+    level=logging.DEBUG, datefmt='%I:%M:%S')
+
   args, test_args = parse_args()
 
   summary = {}
@@ -40,6 +44,7 @@ def main():
     if args.xcode_parallelization:
       tr = xcodebuild_runner.SimulatorParallelTestRunner(
           args.app,
+          args.host_app,
           args.iossim,
           args.xcode_build_version,
           args.version,
@@ -139,9 +144,8 @@ def parse_args():
   parser.add_argument(
     '-a',
     '--app',
-    help='Compiled .app to run.',
+    help='Compiled .app to run for EG1, Compiled -Runner.app for EG2',
     metavar='app',
-    required='-x' not in sys.argv and '--xcode-parallelization' not in sys.argv,
   )
   parser.add_argument(
     '-b',
@@ -156,6 +160,12 @@ def parse_args():
     action='append',
     help='Environment variable to pass to the test itself.',
     metavar='ENV=val',
+  )
+  parser.add_argument(
+    '--host-app',
+    help='Compiled host .app to run.',
+    default='NO_PATH',
+    metavar='host_app',
   )
   parser.add_argument(
     '-i',

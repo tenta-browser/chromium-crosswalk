@@ -8,23 +8,29 @@
 
 #include "base/bind.h"
 #include "base/path_service.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #import "base/test/ios/wait_util.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/values.h"
+#include "ios/web/common/features.h"
 #import "ios/web/navigation/navigation_manager_impl.h"
 #import "ios/web/navigation/wk_based_navigation_manager_impl.h"
 #import "ios/web/navigation/wk_navigation_util.h"
-#import "ios/web/public/crw_navigation_item_storage.h"
-#import "ios/web/public/crw_session_storage.h"
-#include "ios/web/public/features.h"
 #import "ios/web/public/navigation_item.h"
 #import "ios/web/public/navigation_manager.h"
+#import "ios/web/public/session/crw_navigation_item_storage.h"
+#import "ios/web/public/session/crw_session_storage.h"
+#import "ios/web/public/test/fakes/test_web_client.h"
 #import "ios/web/public/test/fakes/test_web_state_delegate.h"
 #import "ios/web/public/test/web_test_with_web_state.h"
 #import "ios/web/public/test/web_view_content_test_util.h"
 #import "ios/web/public/web_client.h"
+#import "ios/web/public/web_state/web_state_observer.h"
+#include "ios/web/test/test_url_constants.h"
+#include "net/test/embedded_test_server/default_handlers.h"
+#include "net/test/embedded_test_server/embedded_test_server.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_unittest_util.h"
@@ -40,9 +46,18 @@ using base::test::ios::kWaitForPageLoadTimeout;
 namespace web {
 namespace {
 
+// Error when loading an app specific page.
+const char kUnsupportedUrlErrorPage[] = "NSURLErrorDomain error -1002.";
+
 // A text string from the test HTML page in the session storage returned  by
 // GetTestSessionStorage().
 const char kTestSessionStoragePageText[] = "pony";
+
+// A text string that is included in |kTestPageHTML|.
+const char kTextInTestPageHTML[] = "test";
+
+// A test page HTML containing |kTextInTestPageHTML|.
+const char kTestPageHTML[] = "<html><body>test</body><html>";
 
 // Returns a session storage with a single committed entry of a test HTML page.
 CRWSessionStorage* GetTestSessionStorage() {
@@ -72,7 +87,8 @@ enum NavigationManagerChoice {
 
 // Test fixture for web::WebTest class.
 class WebStateTest
-    : public WebTestWithWebState,
+    : public TestWebClient,
+      public WebTestWithWebState,
       public ::testing::WithParamInterface<NavigationManagerChoice> {
  protected:
   WebStateTest() {
@@ -217,23 +233,21 @@ TEST_P(WebStateTest, Snapshot) {
   base::test::ios::SpinRunLoopWithMinDelay(base::TimeDelta::FromSecondsD(0.2));
   web_state()->TakeSnapshot(
       gfx::RectF(rect), base::BindOnce(^(const gfx::Image& snapshot) {
-        if (@available(iOS 11, *)) {
-          ASSERT_FALSE(snapshot.IsEmpty());
-          EXPECT_GT(snapshot.Width(), 0);
-          EXPECT_GT(snapshot.Height(), 0);
-          int red_pixel_x = (snapshot.Width() / 2) - 10;
-          int white_pixel_x = (snapshot.Width() / 2) + 10;
-          // Test a pixel on the left (red) side.
-          gfx::test::CheckColors(
-              gfx::test::GetPlatformImageColor(
-                  gfx::test::ToPlatformType(snapshot), red_pixel_x, 50),
-              SK_ColorRED);
-          // Test a pixel on the right (white) side.
-          gfx::test::CheckColors(
-              gfx::test::GetPlatformImageColor(
-                  gfx::test::ToPlatformType(snapshot), white_pixel_x, 50),
-              SK_ColorWHITE);
-        }
+        ASSERT_FALSE(snapshot.IsEmpty());
+        EXPECT_GT(snapshot.Width(), 0);
+        EXPECT_GT(snapshot.Height(), 0);
+        int red_pixel_x = (snapshot.Width() / 2) - 10;
+        int white_pixel_x = (snapshot.Width() / 2) + 10;
+        // Test a pixel on the left (red) side.
+        gfx::test::CheckColors(
+            gfx::test::GetPlatformImageColor(
+                gfx::test::ToPlatformType(snapshot), red_pixel_x, 50),
+            SK_ColorRED);
+        // Test a pixel on the right (white) side.
+        gfx::test::CheckColors(
+            gfx::test::GetPlatformImageColor(
+                gfx::test::ToPlatformType(snapshot), white_pixel_x, 50),
+            SK_ColorWHITE);
         snapshot_complete = true;
       }));
   WaitForCondition(^{
@@ -339,6 +353,7 @@ TEST_P(WebStateTest, RestoreLargeSession) {
   CRWSessionStorage* session_storage = [[CRWSessionStorage alloc] init];
   session_storage.itemStorages = item_storages;
   auto web_state = WebState::CreateWithStorageSession(params, session_storage);
+  web_state->SetKeepRenderProcessAlive(true);
   WebState* web_state_ptr = web_state.get();
   NavigationManager* navigation_manager = web_state->GetNavigationManager();
   // TODO(crbug.com/873729): The session will not be restored until
@@ -437,6 +452,7 @@ TEST_P(WebStateTest, CallStopDuringSessionRestore) {
   CRWSessionStorage* session_storage = [[CRWSessionStorage alloc] init];
   session_storage.itemStorages = item_storages;
   auto web_state = WebState::CreateWithStorageSession(params, session_storage);
+  web_state->SetKeepRenderProcessAlive(true);
   WebState* web_state_ptr = web_state.get();
   NavigationManager* navigation_manager = web_state->GetNavigationManager();
   // TODO(crbug.com/873729): The session will not be restored until
@@ -480,6 +496,7 @@ TEST_P(WebStateTest, CallLoadURLWithParamsDuringSessionRestore) {
   CRWSessionStorage* session_storage = [[CRWSessionStorage alloc] init];
   session_storage.itemStorages = item_storages;
   auto web_state = WebState::CreateWithStorageSession(params, session_storage);
+  web_state->SetKeepRenderProcessAlive(true);
   WebState* web_state_ptr = web_state.get();
   NavigationManager* navigation_manager = web_state->GetNavigationManager();
   // TODO(crbug.com/873729): The session will not be restored until
@@ -530,6 +547,7 @@ TEST_P(WebStateTest, CallReloadDuringSessionRestore) {
   CRWSessionStorage* session_storage = [[CRWSessionStorage alloc] init];
   session_storage.itemStorages = item_storages;
   auto web_state = WebState::CreateWithStorageSession(params, session_storage);
+  web_state->SetKeepRenderProcessAlive(true);
   WebState* web_state_ptr = web_state.get();
   NavigationManager* navigation_manager = web_state->GetNavigationManager();
   // TODO(crbug.com/873729): The session will not be restored until
@@ -625,7 +643,65 @@ TEST_P(WebStateTest, DisableAndReenableWebUsage) {
                                                  kTestSessionStoragePageText));
 }
 
-INSTANTIATE_TEST_CASE_P(
+// Tests that loading an HTML page after a failed navigation works.
+TEST_P(WebStateTest, LoadChromeThenHTML) {
+  GURL app_specific_url(
+      base::StringPrintf("%s://app_specific_url", kTestAppSpecificScheme));
+  web::NavigationManager::WebLoadParams load_params(app_specific_url);
+  web_state()->GetNavigationManager()->LoadURLWithParams(load_params);
+  EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForPageLoadTimeout, ^{
+    return !web_state()->IsLoading();
+  }));
+  // Wait for the error loading.
+  EXPECT_TRUE(test::WaitForWebViewContainingText(web_state(),
+                                                 kUnsupportedUrlErrorPage));
+  NSString* data_html = @(kTestPageHTML);
+  web_state()->LoadData([data_html dataUsingEncoding:NSUTF8StringEncoding],
+                        @"text/html", GURL("https://www.chromium.org"));
+  EXPECT_TRUE(
+      test::WaitForWebViewContainingText(web_state(), kTextInTestPageHTML));
+}
+
+// Tests that reloading after loading HTML page will load the online page.
+TEST_P(WebStateTest, LoadChromeThenWaitThenHTMLThenReload) {
+  net::EmbeddedTestServer server;
+  net::test_server::RegisterDefaultHandlers(&server);
+  ASSERT_TRUE(server.Start());
+  GURL echo_url = server.GetURL("/echo");
+
+  GURL app_specific_url(
+      base::StringPrintf("%s://app_specific_url", kTestAppSpecificScheme));
+  web::NavigationManager::WebLoadParams load_params(app_specific_url);
+  web_state()->GetNavigationManager()->LoadURLWithParams(load_params);
+  // Wait for the error loading.
+  EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForPageLoadTimeout, ^{
+    return !web_state()->IsLoading();
+  }));
+  EXPECT_TRUE(test::WaitForWebViewContainingText(web_state(),
+                                                 kUnsupportedUrlErrorPage));
+  NSString* data_html = @(kTestPageHTML);
+  web_state()->LoadData([data_html dataUsingEncoding:NSUTF8StringEncoding],
+                        @"text/html", echo_url);
+  EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForPageLoadTimeout, ^{
+    return !web_state()->IsLoading();
+  }));
+  EXPECT_TRUE(
+      test::WaitForWebViewContainingText(web_state(), kTextInTestPageHTML));
+
+  web_state()->GetNavigationManager()->Reload(web::ReloadType::NORMAL, true);
+  EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForPageLoadTimeout, ^{
+    return !web_state()->IsLoading();
+  }));
+
+  EXPECT_TRUE(test::WaitForWebViewContainingText(web_state(), "Echo"));
+  web_state()->GetNavigationManager()->Reload(web::ReloadType::NORMAL, true);
+  EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForPageLoadTimeout, ^{
+    return !web_state()->IsLoading();
+  }));
+  EXPECT_TRUE(test::WaitForWebViewContainingText(web_state(), "Echo"));
+}
+
+INSTANTIATE_TEST_SUITE_P(
     ProgrammaticWebStateTest,
     WebStateTest,
     ::testing::Values(

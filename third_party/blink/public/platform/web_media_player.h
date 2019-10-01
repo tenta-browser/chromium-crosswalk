@@ -31,7 +31,9 @@
 #ifndef THIRD_PARTY_BLINK_PUBLIC_PLATFORM_WEB_MEDIA_PLAYER_H_
 #define THIRD_PARTY_BLINK_PUBLIC_PLATFORM_WEB_MEDIA_PLAYER_H_
 
+#include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
+#include "components/viz/common/surfaces/surface_id.h"
 #include "third_party/blink/public/platform/web_callbacks.h"
 #include "third_party/blink/public/platform/web_content_decryption_module.h"
 #include "third_party/blink/public/platform/web_media_source.h"
@@ -60,7 +62,6 @@ class WebURL;
 enum class WebFullscreenVideoStatus;
 struct WebRect;
 struct WebSize;
-struct PictureInPictureControlInfo;
 
 class WebMediaPlayer {
  public:
@@ -137,14 +138,6 @@ class WebMediaPlayer {
     kAlways,
   };
 
-  // Callback to get notified when the Picture-in-Picture window is opened.
-  using PipWindowOpenedCallback = base::OnceCallback<void(const WebSize&)>;
-  // Callback to get notified when Picture-in-Picture window is closed.
-  using PipWindowClosedCallback = base::OnceClosure;
-  // Callback to get notified when the Picture-in-Picture window is resized.
-  using PipWindowResizedCallback =
-      base::RepeatingCallback<void(const WebSize&)>;
-
   virtual ~WebMediaPlayer() = default;
 
   virtual LoadTiming Load(LoadType, const WebMediaPlayerSource&, CorsMode) = 0;
@@ -156,18 +149,10 @@ class WebMediaPlayer {
   virtual void SetRate(double) = 0;
   virtual void SetVolume(double) = 0;
 
-  // Enter Picture-in-Picture and notifies Blink with window size
-  // when video successfully enters Picture-in-Picture.
-  virtual void EnterPictureInPicture(PipWindowOpenedCallback) = 0;
-  // Exit Picture-in-Picture and notifies Blink when it's done.
-  virtual void ExitPictureInPicture(PipWindowClosedCallback) = 0;
-  // Assign custom controls to the Picture-in-Picture window.
-  virtual void SetPictureInPictureCustomControls(
-      const std::vector<PictureInPictureControlInfo>&) = 0;
-  // Register a callback that will be run when the Picture-in-Picture window
-  // is resized.
-  virtual void RegisterPictureInPictureWindowResizeCallback(
-      PipWindowResizedCallback) = 0;
+  // The associated media element is going to enter Picture-in-Picture. This
+  // method should make sure the player is set up for this and has a SurfaceId
+  // as it will be needed.
+  virtual void OnRequestPictureInPicture() = 0;
 
   virtual void RequestRemotePlayback() {}
   virtual void RequestRemotePlaybackControl() {}
@@ -180,8 +165,8 @@ class WebMediaPlayer {
   virtual WebTimeRanges Seekable() const = 0;
 
   // Attempts to switch the audio output device.
-  virtual void SetSinkId(const WebString& sink_id,
-                         std::unique_ptr<WebSetSinkIdCallbacks>) = 0;
+  virtual void SetSinkId(const WebString& sing_id,
+                         WebSetSinkIdCompleteCallback) = 0;
 
   // True if the loaded media has a playable video/audio track.
   virtual bool HasVideo() const = 0;
@@ -341,6 +326,17 @@ class WebMediaPlayer {
     return false;
   }
 
+  // Share video frame texture to |texture|. If the sharing is impossible or
+  // fails, it returns false.
+  virtual bool PrepareVideoFrameForWebGL(
+      gpu::gles2::GLES2Interface* gl,
+      unsigned target,
+      unsigned texture,
+      int already_uploaded_id = -1,
+      WebMediaPlayer::VideoFrameUploadMetadata* out_metadata = nullptr) {
+    return false;
+  }
+
   virtual WebAudioSourceProvider* GetAudioSourceProvider() { return nullptr; }
 
   virtual void SetContentDecryptionModule(
@@ -411,6 +407,20 @@ class WebMediaPlayer {
   virtual void OnBecameVisible() {}
 
   virtual bool IsOpaque() const { return false; }
+
+  // Returns the id given by the WebMediaPlayerDelegate. This is used by the
+  // Blink code to pass a player id to mojo services.
+  // TODO(mlamouri): remove this and move the id handling to Blink.
+  virtual int GetDelegateId() { return -1; }
+
+  // Returns the SurfaceId the video element is currently using.
+  // Returns base::nullopt if the element isn't a video or doesn't have a
+  // SurfaceId associated to it.
+  virtual base::Optional<viz::SurfaceId> GetSurfaceId() {
+    return base::nullopt;
+  }
+
+  virtual base::WeakPtr<WebMediaPlayer> AsWeakPtr() = 0;
 };
 
 }  // namespace blink

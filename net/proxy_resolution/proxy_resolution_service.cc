@@ -314,39 +314,37 @@ class ProxyResolverFactoryForPacResult : public ProxyResolverFactory {
 };
 
 // Returns NetLog parameters describing a proxy configuration change.
-std::unique_ptr<base::Value> NetLogProxyConfigChangedCallback(
+base::Value NetLogProxyConfigChangedCallback(
     const base::Optional<ProxyConfigWithAnnotation>* old_config,
     const ProxyConfigWithAnnotation* new_config,
     NetLogCaptureMode /* capture_mode */) {
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+  base::Value dict(base::Value::Type::DICTIONARY);
   // The "old_config" is optional -- the first notification will not have
   // any "previous" configuration.
   if (old_config->has_value())
-    dict->Set("old_config", (*old_config)->value().ToValue());
-  dict->Set("new_config", new_config->value().ToValue());
-  return std::move(dict);
+    dict.SetKey("old_config", (*old_config)->value().ToValue());
+  dict.SetKey("new_config", new_config->value().ToValue());
+  return dict;
 }
 
-std::unique_ptr<base::Value> NetLogBadProxyListCallback(
-    const ProxyRetryInfoMap* retry_info,
-    NetLogCaptureMode /* capture_mode */) {
-  auto dict = std::make_unique<base::DictionaryValue>();
-  auto list = std::make_unique<base::ListValue>();
+base::Value NetLogBadProxyListCallback(const ProxyRetryInfoMap* retry_info,
+                                       NetLogCaptureMode /* capture_mode */) {
+  base::Value dict(base::Value::Type::DICTIONARY);
+  base::Value list(base::Value::Type::LIST);
 
-  for (auto iter = retry_info->begin(); iter != retry_info->end(); ++iter) {
-    list->AppendString(iter->first);
-  }
-  dict->Set("bad_proxy_list", std::move(list));
-  return std::move(dict);
+  for (const auto& retry_info_pair : *retry_info)
+    list.GetList().emplace_back(retry_info_pair.first);
+  dict.SetKey("bad_proxy_list", std::move(list));
+  return dict;
 }
 
 // Returns NetLog parameters on a successfuly proxy resolution.
-std::unique_ptr<base::Value> NetLogFinishedResolvingProxyCallback(
+base::Value NetLogFinishedResolvingProxyCallback(
     const ProxyInfo* result,
     NetLogCaptureMode /* capture_mode */) {
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-  dict->SetString("pac_string", result->ToPacString());
-  return std::move(dict);
+  base::Value dict(base::Value::Type::DICTIONARY);
+  dict.SetStringKey("pac_string", result->ToPacString());
+  return dict;
 }
 
 #if defined(OS_CHROMEOS)
@@ -365,10 +363,22 @@ class UnsetProxyConfigService : public ProxyConfigService {
 #endif
 
 // Returns a sanitized copy of |url| which is safe to pass on to a PAC script.
-// The method for sanitizing is determined by |policy|. See the comments for
-// that enum for details.
-GURL SanitizeUrl(const GURL& url,
-                 ProxyResolutionService::SanitizeUrlPolicy policy) {
+//
+// PAC scripts are modelled as being controllable by a network-present
+// attacker (since such an attacker can influence the outcome of proxy
+// auto-discovery, or modify the contents of insecurely delivered PAC scripts).
+//
+// As such, it is important that the full path/query of https:// URLs not be
+// sent to PAC scripts, since that would give an attacker access to data that
+// is ordinarily protected by TLS.
+//
+// Obscuring the path for http:// URLs isn't being done since it doesn't matter
+// for security (attacker can already route traffic through their HTTP proxy
+// and see the full URL for http:// requests).
+//
+// TODO(https://crbug.com/882536): Use the same stripping for insecure URL
+// schemes.
+GURL SanitizeUrl(const GURL& url) {
   DCHECK(url.is_valid());
 
   GURL::Replacements replacements;
@@ -376,8 +386,7 @@ GURL SanitizeUrl(const GURL& url,
   replacements.ClearPassword();
   replacements.ClearRef();
 
-  if (policy == ProxyResolutionService::SanitizeUrlPolicy::SAFE &&
-      url.SchemeIsCryptographic()) {
+  if (url.SchemeIsCryptographic()) {
     replacements.ClearPath();
     replacements.ClearQuery();
   }
@@ -431,7 +440,7 @@ class ProxyResolutionService::InitProxyResolver {
  public:
   InitProxyResolver()
       : proxy_resolver_factory_(nullptr),
-        proxy_resolver_(NULL),
+        proxy_resolver_(nullptr),
         resolver_using_auto_detected_script_(nullptr),
         next_state_(STATE_NONE),
         quick_check_enabled_(true) {}
@@ -719,7 +728,8 @@ class ProxyResolutionService::PacFileDeciderPoller {
 
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE,
-        base::Bind(&PacFileDeciderPoller::DoPoll, weak_factory_.GetWeakPtr()),
+        base::BindOnce(&PacFileDeciderPoller::DoPoll,
+                       weak_factory_.GetWeakPtr()),
         next_poll_delay_);
   }
 
@@ -746,7 +756,7 @@ class ProxyResolutionService::PacFileDeciderPoller {
     // Start the PAC file decider to see if anything has changed.
     // TODO(eroman): Pass a proper NetLog rather than NULL.
     decider_.reset(
-        new PacFileDecider(pac_file_fetcher_, dhcp_pac_file_fetcher_, NULL));
+        new PacFileDecider(pac_file_fetcher_, dhcp_pac_file_fetcher_, nullptr));
     decider_->set_quick_check_enabled(quick_check_enabled_);
     int result = decider_->Start(
         config_, TimeDelta(), proxy_resolver_expects_pac_bytes_,
@@ -766,7 +776,7 @@ class ProxyResolutionService::PacFileDeciderPoller {
       // the notification.
       base::ThreadTaskRunnerHandle::Get()->PostTask(
           FROM_HERE,
-          base::Bind(
+          base::BindOnce(
               &PacFileDeciderPoller::NotifyProxyResolutionServiceOfChange,
               weak_factory_.GetWeakPtr(), result, decider_->script_data(),
               decider_->effective_config()));
@@ -843,7 +853,7 @@ class ProxyResolutionService::PacFileDeciderPoller {
 
 // static
 const ProxyResolutionService::PacPollPolicy*
-    ProxyResolutionService::PacFileDeciderPoller::poll_policy_ = NULL;
+    ProxyResolutionService::PacFileDeciderPoller::poll_policy_ = nullptr;
 
 class ProxyResolutionService::RequestImpl
     : public ProxyResolutionService::Request {
@@ -1049,17 +1059,18 @@ ProxyResolutionService::ProxyResolutionService(
     std::unique_ptr<ProxyConfigService> config_service,
     std::unique_ptr<ProxyResolverFactory> resolver_factory,
     NetLog* net_log)
-    : resolver_factory_(std::move(resolver_factory)),
+    : config_service_(std::move(config_service)),
+      resolver_factory_(std::move(resolver_factory)),
       current_state_(STATE_NONE),
+      permanent_error_(OK),
       net_log_(net_log),
       stall_proxy_auto_config_delay_(
           TimeDelta::FromMilliseconds(kDelayAfterNetworkChangesMs)),
       quick_check_enabled_(true),
-      sanitize_url_policy_(SanitizeUrlPolicy::SAFE),
       weak_ptr_factory_(this) {
   NetworkChangeNotifier::AddIPAddressObserver(this);
   NetworkChangeNotifier::AddDNSObserver(this);
-  ResetConfigService(std::move(config_service));
+  config_service_->AddObserver(this);
 }
 
 // static
@@ -1096,7 +1107,7 @@ std::unique_ptr<ProxyResolutionService> ProxyResolutionService::CreateFixed(
   // TODO(eroman): This isn't quite right, won't work if |pc| specifies
   //               a PAC script.
   return CreateUsingSystemProxyResolver(
-      std::make_unique<ProxyConfigServiceFixed>(pc), NULL);
+      std::make_unique<ProxyConfigServiceFixed>(pc), nullptr);
 }
 
 // static
@@ -1174,7 +1185,7 @@ int ProxyResolutionService::ResolveProxy(const GURL& raw_url,
   // script). The goal is to remove sensitive data (like embedded user names
   // and password), and local data (i.e. reference fragment) which does not need
   // to be disclosed to the resolver.
-  GURL url = SanitizeUrl(raw_url, sanitize_url_policy_);
+  GURL url = SanitizeUrl(raw_url);
 
   // Check if the request can be completed right away. (This is the case when
   // using a direct connection for example).
@@ -1338,7 +1349,7 @@ void ProxyResolutionService::OnInitProxyResolverComplete(int result) {
                  base::Unretained(this)),
       fetched_config_.value(), resolver_factory_->expects_pac_bytes(),
       pac_file_fetcher_.get(), dhcp_pac_file_fetcher_.get(), result,
-      init_proxy_resolver_->script_data(), NULL));
+      init_proxy_resolver_->script_data(), nullptr));
   script_poller_->set_quick_check_enabled(quick_check_enabled_);
 
   init_proxy_resolver_.reset();
@@ -1534,23 +1545,6 @@ ProxyResolutionService::State ProxyResolutionService::ResetProxyConfig(
   current_state_ = STATE_NONE;
 
   return previous_state;
-}
-
-void ProxyResolutionService::ResetConfigService(
-    std::unique_ptr<ProxyConfigService> new_proxy_config_service) {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  State previous_state = ResetProxyConfig(true);
-
-  // Release the old configuration service.
-  if (config_service_.get())
-    config_service_->RemoveObserver(this);
-
-  // Set the new configuration service.
-  config_service_ = std::move(new_proxy_config_service);
-  config_service_->AddObserver(this);
-
-  if (previous_state != STATE_NONE)
-    ApplyProxyConfigIfAvailable();
 }
 
 void ProxyResolutionService::ForceReloadProxyConfig() {

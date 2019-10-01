@@ -47,9 +47,6 @@ String CSSStepsTimingFunctionValue::CustomCSSText() const {
     case StepsTimingFunction::StepPosition::START:
       step_position_string = "start";
       break;
-    case StepsTimingFunction::StepPosition::MIDDLE:
-      step_position_string = "middle";
-      break;
     case StepsTimingFunction::StepPosition::END:
       step_position_string = "end";
       break;
@@ -60,15 +57,6 @@ String CSSStepsTimingFunctionValue::CustomCSSText() const {
 bool CSSStepsTimingFunctionValue::Equals(
     const CSSStepsTimingFunctionValue& other) const {
   return steps_ == other.steps_ && step_position_ == other.step_position_;
-}
-
-String CSSFramesTimingFunctionValue::CustomCSSText() const {
-  return "frames(" + String::Number(frames_) + ")";
-}
-
-bool CSSFramesTimingFunctionValue::Equals(
-    const CSSFramesTimingFunctionValue& other) const {
-  return frames_ == other.frames_;
 }
 
 }  // namespace cssvalue

@@ -134,7 +134,7 @@ bool URLRequestFileJob::IsRedirectResponse(GURL* location,
 
   base::FilePath new_path = file_path_;
   bool resolved;
-  resolved = base::win::ResolveShortcut(new_path, &new_path, NULL);
+  resolved = base::win::ResolveShortcut(new_path, &new_path, nullptr);
 
   // If shortcut is not resolved successfully, do not redirect.
   if (!resolved)
@@ -189,11 +189,6 @@ void URLRequestFileJob::GetResponseInfo(HttpResponseInfo* info) {
                                         net::HttpRequestHeaders::kContentType,
                                         meta_info_.mime_type.c_str()));
   info->headers = headers;
-}
-
-void URLRequestFileJob::OnSuspend() {
-  // Unlike URLRequestJob, don't suspend active requests here. Requests for
-  // file URLs need not be suspended when the system suspends.
 }
 
 void URLRequestFileJob::OnOpenComplete(int result) {}
@@ -322,7 +317,7 @@ void URLRequestFileJob::DidRead(scoped_refptr<IOBuffer> buf, int result) {
   }
 
   OnReadComplete(buf.get(), result);
-  buf = NULL;
+  buf = nullptr;
 
   ReadRawDataComplete(result);
 }

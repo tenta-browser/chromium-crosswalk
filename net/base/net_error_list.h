@@ -4,8 +4,9 @@
 
 // This file intentionally does not have header guards, it's included
 // inside a macro to generate enum values. The following line silences a
-// presubmit warning that would otherwise be triggered by this:
+// presubmit and Tricium warning that would otherwise be triggered by this:
 // no-include-guard-because-multiply-included
+// NOLINT(build/header_guard)
 
 // This file contains the list of network errors.
 
@@ -281,8 +282,7 @@ NET_ERROR(SSL_CLIENT_AUTH_SIGNATURE_FAILED, -141)
 // which exceeds size threshold).
 NET_ERROR(MSG_TOO_BIG, -142)
 
-// A SPDY session already exists, and should be used instead of this connection.
-NET_ERROR(SPDY_SESSION_ALREADY_EXISTS, -143)
+// Error -143 was removed (SPDY_SESSION_ALREADY_EXISTS)
 
 // Error -144 was removed (LIMIT_VIOLATION).
 
@@ -395,19 +395,7 @@ NET_ERROR(WS_UPGRADE, -173)
 // visible, because the normal Read() method is used as a fallback.
 NET_ERROR(READ_IF_READY_NOT_IMPLEMENTED, -174)
 
-// This error is emitted if TLS 1.3 is enabled, connecting with it failed, but
-// retrying at a downgraded maximum version succeeded. This could mean:
-//
-// 1. This is a transient network error that will be resolved when the user
-//    reloads.
-//
-// 2. The user is behind a buggy network middlebox, firewall, or proxy which is
-//    interfering with TLS 1.3.
-//
-// 3. The server is buggy and does not implement TLS version negotiation
-//    correctly. TLS 1.3 was tweaked to avoid a common server bug here, so this
-//    is unlikely.
-NET_ERROR(SSL_VERSION_INTERFERENCE, -175)
+// Error -175 was removed (SSL_VERSION_INTERFERENCE).
 
 // No socket buffer space is available.
 NET_ERROR(NO_BUFFER_SPACE, -176)
@@ -436,6 +424,10 @@ NET_ERROR(WRONG_VERSION_ON_EARLY_DATA, -179)
 // TLS-terminating proxy which implemented TLS 1.2 incorrectly. (See
 // https://crbug.com/boringssl/226.)
 NET_ERROR(TLS13_DOWNGRADE_DETECTED, -180)
+
+// The server's certificate has a keyUsage extension incompatible with the
+// negotiated TLS key exchange method.
+NET_ERROR(SSL_KEY_USAGE_INCOMPATIBLE, -181)
 
 // Certificate error codes
 //
@@ -828,6 +820,12 @@ NET_ERROR(CACHE_AUTH_FAILURE_AFTER_READ, -410)
 // that the cache entry would not have been useable with the transaction's
 // current configuration (e.g. load flags, mode, etc.)
 NET_ERROR(CACHE_ENTRY_NOT_SUITABLE, -411)
+
+// The disk cache is unable to doom this entry.
+NET_ERROR(CACHE_DOOM_FAILURE, -412)
+
+// The disk cache is unable to open or create this entry.
+NET_ERROR(CACHE_OPEN_OR_CREATE_FAILURE, -413)
 
 // The server's response was insecure (e.g. there was a cert error).
 NET_ERROR(INSECURE_RESPONSE, -501)

@@ -239,20 +239,11 @@ login.createScreen('OAuthEnrollmentScreen', 'oauth-enrollment', function() {
     },
 
     /**
-     * Header text of the screen.
-     * @type {string}
-     */
-    get header() {
-      return loadTimeData.getString('oauthEnrollScreenTitle');
-    },
-
-    /**
      * Event handler that is invoked just before the frame is shown.
      * @param {Object} data Screen init payload, contains the signin frame
      * URL.
      */
     onBeforeShow: function(data) {
-      chrome.send('showGuestInOobe', [true]);
       if (Oobe.getInstance().forceKeyboardFlow) {
         // We run the tab remapping logic inside of the webview so that the
         // simulated tab events will use the webview tab-stops. Simulated tab
@@ -274,8 +265,6 @@ login.createScreen('OAuthEnrollmentScreen', 'oauth-enrollment', function() {
       var gaiaParams = {};
       gaiaParams.gaiaUrl = data.gaiaUrl;
       gaiaParams.clientId = data.clientId;
-      gaiaParams.chromeOSApiVersion = 2;
-      gaiaParams.isNewGaiaFlow = true;
       gaiaParams.needPassword = false;
       gaiaParams.hl = data.hl;
       if (data.management_domain) {
@@ -458,8 +447,8 @@ login.createScreen('OAuthEnrollmentScreen', 'oauth-enrollment', function() {
      */
     setAdJoinConfiguration: function(options) {
       this.offlineAdUi_.disabled = false;
-      this.offlineAdUi_.unlockPasswordStep = false;
       this.offlineAdUi_.setJoinConfigurationOptions(options);
+      this.offlineAdUi_.unlockPasswordStep = false;
     },
 
     /**

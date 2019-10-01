@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -30,28 +31,30 @@
 #include "build/build_config.h"
 #include "components/autofill/core/browser/autocomplete_history_manager.h"
 #include "components/autofill/core/browser/autofill_download_manager.h"
-#include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/metrics/form_events.h"
 #include "components/autofill/core/browser/mock_autocomplete_history_manager.h"
+#include "components/autofill/core/browser/payments/test_credit_card_save_manager.h"
 #include "components/autofill/core/browser/payments/test_payments_client.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
-#include "components/autofill/core/browser/popup_item_ids.h"
-#include "components/autofill/core/browser/suggestion.h"
 #include "components/autofill/core/browser/test_autofill_client.h"
 #include "components/autofill/core/browser/test_autofill_clock.h"
 #include "components/autofill/core/browser/test_autofill_download_manager.h"
 #include "components/autofill/core/browser/test_autofill_driver.h"
 #include "components/autofill/core/browser/test_autofill_external_delegate.h"
 #include "components/autofill/core/browser/test_autofill_manager.h"
-#include "components/autofill/core/browser/test_credit_card_save_manager.h"
 #include "components/autofill/core/browser/test_form_data_importer.h"
 #include "components/autofill/core/browser/test_form_structure.h"
 #include "components/autofill/core/browser/test_personal_data_manager.h"
+#include "components/autofill/core/browser/ui/popup_item_ids.h"
+#include "components/autofill/core/browser/ui/suggestion.h"
 #include "components/autofill/core/browser/validation.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
 #include "components/autofill/core/common/autofill_clock.h"
 #include "components/autofill/core/common/autofill_features.h"
+#include "components/autofill/core/common/autofill_payments_features.h"
 #include "components/autofill/core/common/autofill_prefs.h"
 #include "components/autofill/core/common/autofill_switches.h"
 #include "components/autofill/core/common/autofill_util.h"
@@ -173,10 +176,10 @@ void ExpectFilledForm(int page_id,
   EXPECT_EQ(expected_page_id, page_id);
   EXPECT_EQ(ASCIIToUTF16("MyForm"), filled_form.name);
   if (has_credit_card_fields) {
-    EXPECT_EQ(GURL("https://myform.com/form.html"), filled_form.origin);
+    EXPECT_EQ(GURL("https://myform.com/form.html"), filled_form.url);
     EXPECT_EQ(GURL("https://myform.com/submit.html"), filled_form.action);
   } else {
-    EXPECT_EQ(GURL("http://myform.com/form.html"), filled_form.origin);
+    EXPECT_EQ(GURL("http://myform.com/form.html"), filled_form.url);
     EXPECT_EQ(GURL("http://myform.com/submit.html"), filled_form.action);
   }
 
@@ -295,7 +298,6 @@ class AutofillManagerTest : public testing::Test {
                         /*identity_manager=*/nullptr,
                         /*client_profile_validator=*/nullptr,
                         /*history_service=*/nullptr,
-                        /*cookie_manager_sevice=*/nullptr,
                         /*is_off_the_record=*/false);
     personal_data_.SetPrefService(autofill_client_.GetPrefs());
 
@@ -313,8 +315,7 @@ class AutofillManagerTest : public testing::Test {
     payments::TestPaymentsClient* payments_client =
         new payments::TestPaymentsClient(
             autofill_driver_->GetURLLoaderFactory(),
-            autofill_client_.GetPrefs(), autofill_client_.GetIdentityManager(),
-            &personal_data_);
+            autofill_client_.GetIdentityManager(), &personal_data_);
     autofill_client_.set_test_payments_client(
         std::unique_ptr<payments::TestPaymentsClient>(payments_client));
     TestCreditCardSaveManager* credit_card_save_manager =
@@ -484,10 +485,10 @@ class AutofillManagerTest : public testing::Test {
                                     bool use_month_type) {
     form->name = ASCIIToUTF16("MyForm");
     if (is_https) {
-      form->origin = GURL("https://myform.com/form.html");
+      form->url = GURL("https://myform.com/form.html");
       form->action = GURL("https://myform.com/submit.html");
     } else {
-      form->origin = GURL("http://myform.com/form.html");
+      form->url = GURL("http://myform.com/form.html");
       form->action = GURL("http://myform.com/submit.html");
     }
 
@@ -528,14 +529,26 @@ class AutofillManagerTest : public testing::Test {
         .Times(AtLeast(1));
     autofill_manager_->FillOrPreviewCreditCardForm(
         AutofillDriver::FORM_DATA_ACTION_FILL, kDefaultPageID, *form,
-        form->fields[0], *card);
+        form->fields[0], card);
+  }
+
+  void OnDidGetRealPan(AutofillClient::PaymentsRpcResult result,
+                       const std::string& real_pan) {
+    payments::FullCardRequest* full_card_request =
+        autofill_manager_->credit_card_access_manager_->cvc_authenticator_
+            ->full_card_request_.get();
+    DCHECK(full_card_request);
+    full_card_request->OnDidGetRealPan(result, real_pan);
   }
 
   // Convenience method to cast the FullCardRequest into a CardUnmaskDelegate.
   CardUnmaskDelegate* full_card_unmask_delegate() {
-    DCHECK(autofill_manager_->full_card_request_);
-    return static_cast<CardUnmaskDelegate*>(
-        autofill_manager_->full_card_request_.get());
+    payments::FullCardRequest* full_card_request =
+        autofill_manager_->credit_card_access_manager_
+            ->credit_card_cvc_authenticator()
+            ->full_card_request_.get();
+    DCHECK(full_card_request);
+    return static_cast<CardUnmaskDelegate*>(full_card_request);
   }
 
   void DisableCreditCardAutofill() {
@@ -686,7 +699,7 @@ TEST_F(AutofillManagerTest, OnFormsSeen_DifferentFormStructures) {
   // Different form structure.
   FormData form2;
   form2.name = ASCIIToUTF16("MyForm");
-  form2.origin = GURL("https://myform.com/form.html");
+  form2.url = GURL("https://myform.com/form.html");
   form2.action = GURL("https://myform.com/submit.html");
   FormFieldData field;
   test::CreateTestFormField("First Name", "firstname", "", "text", &field);
@@ -716,7 +729,7 @@ TEST_F(AutofillManagerTest, OnFormsSeen_SendAutofillTypePredictionsToRenderer) {
   FormFieldData field;
   test::CreateTestFormField("Querty", "qwerty", "", "text", &field);
   form2.name = ASCIIToUTF16("NonQueryable");
-  form2.origin = form1.origin;
+  form2.url = form1.url;
   form2.action = GURL("https://myform.com/submit.html");
   form2.fields.push_back(field);
 
@@ -735,7 +748,7 @@ TEST_F(AutofillManagerTest, GetProfileSuggestions_UnrecognizedAttribute) {
   // Set up our form data.
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("https://myform.com/form.html");
+  form.url = GURL("https://myform.com/form.html");
   form.action = GURL("https://myform.com/submit.html");
   FormFieldData field;
   // Set a valid autocomplete attribute for the first name.
@@ -781,7 +794,7 @@ TEST_F(AutofillManagerTest,
   // Set up our form data.
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("https://myform.com/form.html");
+  form.url = GURL("https://myform.com/form.html");
   form.action = GURL("https://myform.com/submit.html");
   FormFieldData field;
   test::CreateTestFormField("First Name", "firstname", "", "text", &field);
@@ -815,7 +828,7 @@ TEST_F(AutofillManagerTest,
   // Set up our form data.
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("https://myform.com/form.html");
+  form.url = GURL("https://myform.com/form.html");
   form.action = GURL("https://myform.com/submit.html");
   FormFieldData field;
   test::CreateTestFormField("First Name", "firstname", "", "text", &field);
@@ -850,7 +863,7 @@ TEST_F(AutofillManagerTest,
   // Set up our form data.
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("https://myform.com/form.html");
+  form.url = GURL("https://myform.com/form.html");
   form.action = GURL("https://myform.com/submit.html");
   FormFieldData field;
   test::CreateTestFormField("First Name", "firstname", "", "text", &field);
@@ -888,7 +901,7 @@ TEST_F(AutofillManagerTest,
   // Set up our form data.
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("https://myform.com/form.html");
+  form.url = GURL("https://myform.com/form.html");
   form.action = GURL("https://myform.com/submit.html");
   FormFieldData field;
   test::CreateTestFormField("First Name", "firstname", "", "text", &field);
@@ -923,7 +936,7 @@ TEST_F(AutofillManagerTest,
   // Set up our form data.
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("https://myform.com/form.html");
+  form.url = GURL("https://myform.com/form.html");
   form.action = GURL("https://myform.com/submit.html");
   FormFieldData field;
   test::CreateTestFormField("First Name", "firstname", "", "text", &field);
@@ -1074,7 +1087,7 @@ TEST_F(AutofillManagerTest, GetProfileSuggestions_UnknownFields) {
   // Set up our form data.
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("http://myform.com/form.html");
+  form.url = GURL("http://myform.com/form.html");
   form.action = GURL("http://myform.com/submit.html");
 
   FormFieldData field;
@@ -1165,16 +1178,25 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestions_EmptyValue) {
   FormFieldData field = form.fields[1];
   GetAutofillSuggestions(form, field);
 
-  // Test that we sent the right values to the external delegate.
-  CheckSuggestions(
-      kDefaultPageID,
-      Suggestion(
-          std::string("Visa  ") + test::ObfuscatedCardDigitsAsUTF8("3456"),
-          "04/99", kVisaCard, autofill_manager_->GetPackedCreditCardID(4)),
-      Suggestion(std::string("Mastercard  ") +
-                     test::ObfuscatedCardDigitsAsUTF8("8765"),
-                 "10/98", kMasterCard,
-                 autofill_manager_->GetPackedCreditCardID(5)));
+#if defined(OS_ANDROID) || defined(OS_IOS)
+  const std::string kVisaSuggestionLabel = std::string("04/99");
+  const std::string kMasterCardSuggestionLabel = std::string("10/98");
+#else
+  const std::string kVisaSuggestionLabel = std::string("Expires on 04/99");
+  const std::string kMasterCardSuggestionLabel =
+      std::string("Expires on 10/98");
+#endif
+
+  // Test that we sent the credit card suggestions to the external delegate.
+  CheckSuggestions(kDefaultPageID,
+                   Suggestion(std::string("Visa  ") +
+                                  test::ObfuscatedCardDigitsAsUTF8("3456"),
+                              kVisaSuggestionLabel, kVisaCard,
+                              autofill_manager_->GetPackedCreditCardID(4)),
+                   Suggestion(std::string("Mastercard  ") +
+                                  test::ObfuscatedCardDigitsAsUTF8("8765"),
+                              kMasterCardSuggestionLabel, kMasterCard,
+                              autofill_manager_->GetPackedCreditCardID(5)));
 }
 
 // Test that we return all credit card profile suggestions when the triggering
@@ -1190,16 +1212,25 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestions_Whitespace) {
   field.value = ASCIIToUTF16("       ");
   GetAutofillSuggestions(form, field);
 
+#if defined(OS_ANDROID) || defined(OS_IOS)
+  const std::string kVisaSuggestionLabel = std::string("04/99");
+  const std::string kMasterCardSuggestionLabel = std::string("10/98");
+#else
+  const std::string kVisaSuggestionLabel = std::string("Expires on 04/99");
+  const std::string kMasterCardSuggestionLabel =
+      std::string("Expires on 10/98");
+#endif
+
   // Test that we sent the right values to the external delegate.
-  CheckSuggestions(
-      kDefaultPageID,
-      Suggestion(
-          std::string("Visa  ") + test::ObfuscatedCardDigitsAsUTF8("3456"),
-          "04/99", kVisaCard, autofill_manager_->GetPackedCreditCardID(4)),
-      Suggestion(std::string("Mastercard  ") +
-                     test::ObfuscatedCardDigitsAsUTF8("8765"),
-                 "10/98", kMasterCard,
-                 autofill_manager_->GetPackedCreditCardID(5)));
+  CheckSuggestions(kDefaultPageID,
+                   Suggestion(std::string("Visa  ") +
+                                  test::ObfuscatedCardDigitsAsUTF8("3456"),
+                              kVisaSuggestionLabel, kVisaCard,
+                              autofill_manager_->GetPackedCreditCardID(4)),
+                   Suggestion(std::string("Mastercard  ") +
+                                  test::ObfuscatedCardDigitsAsUTF8("8765"),
+                              kMasterCardSuggestionLabel, kMasterCard,
+                              autofill_manager_->GetPackedCreditCardID(5)));
 }
 
 // Test that we return all credit card profile suggestions when the triggering
@@ -1215,16 +1246,25 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestions_StopCharsOnly) {
   field.value = ASCIIToUTF16("____-____-____-____");
   GetAutofillSuggestions(form, field);
 
+#if defined(OS_ANDROID) || defined(OS_IOS)
+  const std::string kVisaSuggestionLabel = std::string("04/99");
+  const std::string kMasterCardSuggestionLabel = std::string("10/98");
+#else
+  const std::string kVisaSuggestionLabel = std::string("Expires on 04/99");
+  const std::string kMasterCardSuggestionLabel =
+      std::string("Expires on 10/98");
+#endif
+
   // Test that we sent the right values to the external delegate.
-  CheckSuggestions(
-      kDefaultPageID,
-      Suggestion(
-          std::string("Visa  ") + test::ObfuscatedCardDigitsAsUTF8("3456"),
-          "04/99", kVisaCard, autofill_manager_->GetPackedCreditCardID(4)),
-      Suggestion(std::string("Mastercard  ") +
-                     test::ObfuscatedCardDigitsAsUTF8("8765"),
-                 "10/98", kMasterCard,
-                 autofill_manager_->GetPackedCreditCardID(5)));
+  CheckSuggestions(kDefaultPageID,
+                   Suggestion(std::string("Visa  ") +
+                                  test::ObfuscatedCardDigitsAsUTF8("3456"),
+                              kVisaSuggestionLabel, kVisaCard,
+                              autofill_manager_->GetPackedCreditCardID(4)),
+                   Suggestion(std::string("Mastercard  ") +
+                                  test::ObfuscatedCardDigitsAsUTF8("8765"),
+                              kMasterCardSuggestionLabel, kMasterCard,
+                              autofill_manager_->GetPackedCreditCardID(5)));
 }
 
 // Test that we return all credit card profile suggestions when the triggering
@@ -1240,16 +1280,25 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestions_InvisibleUnicodeOnly) {
   field.value = base::string16({0x200E, 0x200F});
   GetAutofillSuggestions(form, field);
 
+#if defined(OS_ANDROID) || defined(OS_IOS)
+  const std::string kVisaSuggestionLabel = std::string("04/99");
+  const std::string kMasterCardSuggestionLabel = std::string("10/98");
+#else
+  const std::string kVisaSuggestionLabel = std::string("Expires on 04/99");
+  const std::string kMasterCardSuggestionLabel =
+      std::string("Expires on 10/98");
+#endif
+
   // Test that we sent the right values to the external delegate.
-  CheckSuggestions(
-      kDefaultPageID,
-      Suggestion(
-          std::string("Visa  ") + test::ObfuscatedCardDigitsAsUTF8("3456"),
-          "04/99", kVisaCard, autofill_manager_->GetPackedCreditCardID(4)),
-      Suggestion(std::string("Mastercard  ") +
-                     test::ObfuscatedCardDigitsAsUTF8("8765"),
-                 "10/98", kMasterCard,
-                 autofill_manager_->GetPackedCreditCardID(5)));
+  CheckSuggestions(kDefaultPageID,
+                   Suggestion(std::string("Visa  ") +
+                                  test::ObfuscatedCardDigitsAsUTF8("3456"),
+                              kVisaSuggestionLabel, kVisaCard,
+                              autofill_manager_->GetPackedCreditCardID(4)),
+                   Suggestion(std::string("Mastercard  ") +
+                                  test::ObfuscatedCardDigitsAsUTF8("8765"),
+                              kMasterCardSuggestionLabel, kMasterCard,
+                              autofill_manager_->GetPackedCreditCardID(5)));
 }
 
 // Test that we return all credit card profile suggestions when the triggering
@@ -1274,11 +1323,18 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestions_StopCharsWithInput) {
   field.value = ASCIIToUTF16("5255-66__-____-____");
   GetAutofillSuggestions(form, field);
 
+#if defined(OS_ANDROID) || defined(OS_IOS)
+  const std::string kMasterCardSuggestionLabel = std::string("08/17");
+#else
+  const std::string kMasterCardSuggestionLabel =
+      std::string("Expires on 08/17");
+#endif
+
   // Test that we sent the right value to the external delegate.
   CheckSuggestions(kDefaultPageID,
                    Suggestion(std::string("Mastercard  ") +
                                   test::ObfuscatedCardDigitsAsUTF8("3123"),
-                              "08/17", kMasterCard,
+                              kMasterCardSuggestionLabel, kMasterCard,
                               autofill_manager_->GetPackedCreditCardID(7)));
 }
 
@@ -1295,12 +1351,18 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestions_MatchCharacter) {
   test::CreateTestFormField("Card Number", "cardnumber", "78", "text", &field);
   GetAutofillSuggestions(form, field);
 
+#if defined(OS_ANDROID) || defined(OS_IOS)
+  const std::string kVisaSuggestionLabel = std::string("04/99");
+#else
+  const std::string kVisaSuggestionLabel = std::string("Expires on 04/99");
+#endif
+
   // Test that we sent the right values to the external delegate.
-  CheckSuggestions(
-      kDefaultPageID,
-      Suggestion(
-          std::string("Visa  ") + test::ObfuscatedCardDigitsAsUTF8("3456"),
-          "04/99", kVisaCard, autofill_manager_->GetPackedCreditCardID(4)));
+  CheckSuggestions(kDefaultPageID,
+                   Suggestion(std::string("Visa  ") +
+                                  test::ObfuscatedCardDigitsAsUTF8("3456"),
+                              kVisaSuggestionLabel, kVisaCard,
+                              autofill_manager_->GetPackedCreditCardID(4)));
 }
 
 // Test that we return credit card profile suggestions when the selected form
@@ -1315,24 +1377,33 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestions_NonCCNumber) {
   const FormFieldData& field = form.fields[0];
   GetAutofillSuggestions(form, field);
 
-#if defined(OS_ANDROID)
-  static const std::string kVisaSuggestion =
-      std::string("Visa  ") + test::ObfuscatedCardDigitsAsUTF8("3456");
-  static const std::string kMcSuggestion =
-      std::string("Mastercard  ") + test::ObfuscatedCardDigitsAsUTF8("8765");
-#else
-  static const std::string kVisaSuggestion =
+  const std::string obfuscated_last_four_digits1 =
       test::ObfuscatedCardDigitsAsUTF8("3456");
-  static const std::string kMcSuggestion =
+  const std::string obfuscated_last_four_digits2 =
       test::ObfuscatedCardDigitsAsUTF8("8765");
+
+#if defined(OS_ANDROID)
+  const std::string kVisaSuggestionLabel =
+      std::string("Visa  ") + obfuscated_last_four_digits1;
+  const std::string kMasterCardSuggestionLabel =
+      std::string("Mastercard  ") + obfuscated_last_four_digits2;
+#elif defined(OS_IOS)
+  const std::string kVisaSuggestionLabel = obfuscated_last_four_digits1;
+  const std::string kMasterCardSuggestionLabel = obfuscated_last_four_digits2;
+#else
+  const std::string kVisaSuggestionLabel = base::JoinString(
+      {"Visa  ", obfuscated_last_four_digits1, ", expires on 04/99"}, "");
+  const std::string kMasterCardSuggestionLabel = base::JoinString(
+      {"Mastercard  ", obfuscated_last_four_digits2, ", expires on 10/98"}, "");
 #endif
 
   // Test that we sent the right values to the external delegate.
-  CheckSuggestions(kDefaultPageID,
-                   Suggestion("Elvis Presley", kVisaSuggestion, kVisaCard,
-                              autofill_manager_->GetPackedCreditCardID(4)),
-                   Suggestion("Buddy Holly", kMcSuggestion, kMasterCard,
-                              autofill_manager_->GetPackedCreditCardID(5)));
+  CheckSuggestions(
+      kDefaultPageID,
+      Suggestion("Elvis Presley", kVisaSuggestionLabel, kVisaCard,
+                 autofill_manager_->GetPackedCreditCardID(4)),
+      Suggestion("Buddy Holly", kMasterCardSuggestionLabel, kMasterCard,
+                 autofill_manager_->GetPackedCreditCardID(5)));
 }
 
 // Test that we will eventually return the credit card signin promo when there
@@ -1411,16 +1482,25 @@ TEST_F(AutofillManagerTest,
   FormFieldData field = form.fields[1];
   GetAutofillSuggestions(form, field);
 
+#if defined(OS_ANDROID) || defined(OS_IOS)
+  const std::string kVisaSuggestionLabel = std::string("04/99");
+  const std::string kMasterCardSuggestionLabel = std::string("10/98");
+#else
+  const std::string kVisaSuggestionLabel = std::string("Expires on 04/99");
+  const std::string kMasterCardSuggestionLabel =
+      std::string("Expires on 10/98");
+#endif
+
   // Test that we sent the right values to the external delegate.
-  CheckSuggestions(
-      kDefaultPageID,
-      Suggestion(
-          std::string("Visa  ") + test::ObfuscatedCardDigitsAsUTF8("3456"),
-          "04/99", kVisaCard, autofill_manager_->GetPackedCreditCardID(4)),
-      Suggestion(std::string("Mastercard  ") +
-                     test::ObfuscatedCardDigitsAsUTF8("8765"),
-                 "10/98", kMasterCard,
-                 autofill_manager_->GetPackedCreditCardID(5)));
+  CheckSuggestions(kDefaultPageID,
+                   Suggestion(std::string("Visa  ") +
+                                  test::ObfuscatedCardDigitsAsUTF8("3456"),
+                              kVisaSuggestionLabel, kVisaCard,
+                              autofill_manager_->GetPackedCreditCardID(4)),
+                   Suggestion(std::string("Mastercard  ") +
+                                  test::ObfuscatedCardDigitsAsUTF8("8765"),
+                              kMasterCardSuggestionLabel, kMasterCard,
+                              autofill_manager_->GetPackedCreditCardID(5)));
 }
 
 // Test that we return credit card suggestions for secure pages that have a
@@ -1438,16 +1518,25 @@ TEST_F(AutofillManagerTest,
   FormFieldData field = form.fields[1];
   GetAutofillSuggestions(form, field);
 
+#if defined(OS_ANDROID) || defined(OS_IOS)
+  const std::string kVisaSuggestionLabel = std::string("04/99");
+  const std::string kMasterCardSuggestionLabel = std::string("10/98");
+#else
+  const std::string kVisaSuggestionLabel = std::string("Expires on 04/99");
+  const std::string kMasterCardSuggestionLabel =
+      std::string("Expires on 10/98");
+#endif
+
   // Test that we sent the right values to the external delegate.
-  CheckSuggestions(
-      kDefaultPageID,
-      Suggestion(
-          std::string("Visa  ") + test::ObfuscatedCardDigitsAsUTF8("3456"),
-          "04/99", kVisaCard, autofill_manager_->GetPackedCreditCardID(4)),
-      Suggestion(std::string("Mastercard  ") +
-                     test::ObfuscatedCardDigitsAsUTF8("8765"),
-                 "10/98", kMasterCard,
-                 autofill_manager_->GetPackedCreditCardID(5)));
+  CheckSuggestions(kDefaultPageID,
+                   Suggestion(std::string("Visa  ") +
+                                  test::ObfuscatedCardDigitsAsUTF8("3456"),
+                              kVisaSuggestionLabel, kVisaCard,
+                              autofill_manager_->GetPackedCreditCardID(4)),
+                   Suggestion(std::string("Mastercard  ") +
+                                  test::ObfuscatedCardDigitsAsUTF8("8765"),
+                              kMasterCardSuggestionLabel, kMasterCard,
+                              autofill_manager_->GetPackedCreditCardID(5)));
 }
 
 // Test that we return all credit card suggestions in the case that two cards
@@ -1473,20 +1562,32 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestions_RepeatedObfuscatedNumber) {
   FormFieldData field = form.fields[1];
   GetAutofillSuggestions(form, field);
 
+#if defined(OS_ANDROID) || defined(OS_IOS)
+  const std::string kVisaSuggestionLabel = std::string("04/99");
+  const std::string kMasterCardSuggestionLabel1 = std::string("10/98");
+  const std::string kMasterCardSuggestionLabel2 = std::string("05/99");
+#else
+  const std::string kVisaSuggestionLabel = std::string("Expires on 04/99");
+  const std::string kMasterCardSuggestionLabel1 =
+      std::string("Expires on 10/98");
+  const std::string kMasterCardSuggestionLabel2 =
+      std::string("Expires on 05/99");
+#endif
+
   // Test that we sent the right values to the external delegate.
-  CheckSuggestions(
-      kDefaultPageID,
-      Suggestion(
-          std::string("Visa  ") + test::ObfuscatedCardDigitsAsUTF8("3456"),
-          "04/99", kVisaCard, autofill_manager_->GetPackedCreditCardID(4)),
-      Suggestion(std::string("Mastercard  ") +
-                     test::ObfuscatedCardDigitsAsUTF8("8765"),
-                 "10/98", kMasterCard,
-                 autofill_manager_->GetPackedCreditCardID(5)),
-      Suggestion(std::string("Mastercard  ") +
-                     test::ObfuscatedCardDigitsAsUTF8("3456"),
-                 "05/99", kMasterCard,
-                 autofill_manager_->GetPackedCreditCardID(7)));
+  CheckSuggestions(kDefaultPageID,
+                   Suggestion(std::string("Visa  ") +
+                                  test::ObfuscatedCardDigitsAsUTF8("3456"),
+                              kVisaSuggestionLabel, kVisaCard,
+                              autofill_manager_->GetPackedCreditCardID(4)),
+                   Suggestion(std::string("Mastercard  ") +
+                                  test::ObfuscatedCardDigitsAsUTF8("8765"),
+                              kMasterCardSuggestionLabel1, kMasterCard,
+                              autofill_manager_->GetPackedCreditCardID(5)),
+                   Suggestion(std::string("Mastercard  ") +
+                                  test::ObfuscatedCardDigitsAsUTF8("3456"),
+                              kMasterCardSuggestionLabel2, kMasterCard,
+                              autofill_manager_->GetPackedCreditCardID(7)));
 }
 
 // Test that we return profile and credit card suggestions for combined forms.
@@ -1510,16 +1611,25 @@ TEST_F(AutofillManagerTest, GetAddressAndCreditCardSuggestions) {
   test::CreateTestFormField("Card Number", "cardnumber", "", "text", &field);
   GetAutofillSuggestions(kPageID2, form, field);
 
+#if defined(OS_ANDROID) || defined(OS_IOS)
+  const std::string kVisaSuggestionLabel = std::string("04/99");
+  const std::string kMasterCardSuggestionLabel = std::string("10/98");
+#else
+  const std::string kVisaSuggestionLabel = std::string("Expires on 04/99");
+  const std::string kMasterCardSuggestionLabel =
+      std::string("Expires on 10/98");
+#endif
+
   // Test that we sent the credit card suggestions to the external delegate.
-  CheckSuggestions(
-      kPageID2,
-      Suggestion(
-          std::string("Visa  ") + test::ObfuscatedCardDigitsAsUTF8("3456"),
-          "04/99", kVisaCard, autofill_manager_->GetPackedCreditCardID(4)),
-      Suggestion(std::string("Mastercard  ") +
-                     test::ObfuscatedCardDigitsAsUTF8("8765"),
-                 "10/98", kMasterCard,
-                 autofill_manager_->GetPackedCreditCardID(5)));
+  CheckSuggestions(kPageID2,
+                   Suggestion(std::string("Visa  ") +
+                                  test::ObfuscatedCardDigitsAsUTF8("3456"),
+                              kVisaSuggestionLabel, kVisaCard,
+                              autofill_manager_->GetPackedCreditCardID(4)),
+                   Suggestion(std::string("Mastercard  ") +
+                                  test::ObfuscatedCardDigitsAsUTF8("8765"),
+                              kMasterCardSuggestionLabel, kMasterCard,
+                              autofill_manager_->GetPackedCreditCardID(5)));
 }
 
 // Test that for non-https forms with both address and credit card fields, we
@@ -1609,9 +1719,9 @@ TEST_F(AutofillManagerTest,
 
   base::HistogramTester histogram_tester;
   FormSubmitted(form);
-  histogram_tester.ExpectBucketCount(
-      "Autofill.FormEvents.CreditCard",
-      AutofillMetrics::FORM_EVENT_SUGGESTION_SHOWN_SUBMITTED_ONCE, 1);
+  histogram_tester.ExpectBucketCount("Autofill.FormEvents.CreditCard",
+                                     FORM_EVENT_SUGGESTION_SHOWN_SUBMITTED_ONCE,
+                                     1);
 }
 
 // Test that we return normal autofill suggestions when trying to autofill
@@ -1715,7 +1825,7 @@ TEST_F(AutofillManagerTest, GetProfileSuggestions_ForPhonePrefixOrSuffix) {
   // Set up our form data.
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("http://myform.com/form.html");
+  form.url = GURL("http://myform.com/form.html");
   form.action = GURL("http://myform.com/submit.html");
 
   struct {
@@ -2038,7 +2148,7 @@ TEST_F(AutofillManagerTest, FillCreditCardForm_SplitName) {
   // Set up our form data.
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("https://myform.com/form.html");
+  form.url = GURL("https://myform.com/form.html");
   form.action = GURL("https://myform.com/submit.html");
 
   FormFieldData field;
@@ -2108,7 +2218,7 @@ TEST_F(AutofillManagerTest, FillAddressAndCreditCardForm) {
 TEST_F(AutofillManagerTest, FillAddressForm_UnrecognizedAttribute) {
   FormData address_form;
   address_form.name = ASCIIToUTF16("MyForm");
-  address_form.origin = GURL("https://myform.com/form.html");
+  address_form.url = GURL("https://myform.com/form.html");
   address_form.action = GURL("https://myform.com/submit.html");
   FormFieldData field;
   // Set a valid autocomplete attribute for the first name.
@@ -2154,7 +2264,7 @@ TEST_F(AutofillManagerTest, FillAddressForm_AutocompleteOffRespected) {
 
   FormData address_form;
   address_form.name = ASCIIToUTF16("MyForm");
-  address_form.origin = GURL("https://myform.com/form.html");
+  address_form.url = GURL("https://myform.com/form.html");
   address_form.action = GURL("https://myform.com/submit.html");
   FormFieldData field;
   test::CreateTestFormField("First name", "firstname", "", "text", &field);
@@ -2212,7 +2322,7 @@ TEST_F(AutofillManagerTest, FillAddressForm_AutocompleteOffRespected) {
 TEST_F(AutofillManagerTest, FillAddressForm_AutocompleteOffNotRespected) {
   FormData address_form;
   address_form.name = ASCIIToUTF16("MyForm");
-  address_form.origin = GURL("https://myform.com/form.html");
+  address_form.url = GURL("https://myform.com/form.html");
   address_form.action = GURL("https://myform.com/submit.html");
   FormFieldData field;
   test::CreateTestFormField("First name", "firstname", "", "text", &field);
@@ -2248,11 +2358,62 @@ TEST_F(AutofillManagerTest, FillAddressForm_AutocompleteOffNotRespected) {
                     "text", response_data.fields[3]);
 }
 
+// Test that if a company is of a format of a birthyear and the relevant feature
+// is enabled, we would not fill it.
+TEST_F(AutofillManagerTest, FillAddressForm_CompanyBirthyear) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(
+      features::kAutofillRejectCompanyBirthyear);
+
+  // Set up our form data.
+  FormData address_form;
+  address_form.name = ASCIIToUTF16("MyForm");
+  address_form.url = GURL("https://myform.com/form.html");
+  address_form.action = GURL("https://myform.com/submit.html");
+
+  FormFieldData field;
+  test::CreateTestFormField("First name", "firstname", "", "text", &field);
+  address_form.fields.push_back(field);
+  test::CreateTestFormField("Middle name", "middle", "", "text", &field);
+  address_form.fields.push_back(field);
+  test::CreateTestFormField("Last name", "lastname", "", "text", &field);
+  address_form.fields.push_back(field);
+  test::CreateTestFormField("Company", "company", "", "text", &field);
+  address_form.fields.push_back(field);
+
+  std::vector<FormData> address_forms(1, address_form);
+  FormsSeen(address_forms);
+
+  AutofillProfile profile;
+  const char guid[] = "00000000-0000-0000-0000-000000000123";
+  test::SetProfileInfo(&profile, "Elvis", "Aaron", "Presley",
+                       "theking@gmail.com", "1987", "3734 Elvis Presley Blvd.",
+                       "Apt. 10", "Memphis", "Tennessee", "38116", "US",
+                       "12345678901");
+  profile.set_guid(guid);
+  personal_data_.AddProfile(profile);
+
+  int response_page_id = 0;
+  FormData response_data;
+  FillAutofillFormDataAndSaveResults(
+      kDefaultPageID, address_form, *address_form.fields.begin(),
+      MakeFrontendID(std::string(), guid), &response_page_id, &response_data);
+
+  // All the fields should be filled except the company.
+  ExpectFilledField("First name", "firstname", "Elvis", "text",
+                    response_data.fields[0]);
+  ExpectFilledField("Middle name", "middle", "Aaron", "text",
+                    response_data.fields[1]);
+  ExpectFilledField("Last name", "lastname", "Presley", "text",
+                    response_data.fields[2]);
+  ExpectFilledField("Company", "company", "", "text", response_data.fields[3]);
+}
+
 // Test that a field with a value equal to it's placeholder attribute is filled.
 TEST_F(AutofillManagerTest, FillAddressForm_PlaceholderEqualsValue) {
   FormData address_form;
   address_form.name = ASCIIToUTF16("MyForm");
-  address_form.origin = GURL("https://myform.com/form.html");
+  address_form.url = GURL("https://myform.com/form.html");
   address_form.action = GURL("https://myform.com/submit.html");
   FormFieldData field;
   // Set the same placeholder and value for each field.
@@ -2294,7 +2455,7 @@ TEST_F(AutofillManagerTest, FillCreditCardForm_UnrecognizedAttribute) {
   // Set up the form data.
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("https://myform.com/form.html");
+  form.url = GURL("https://myform.com/form.html");
   form.action = GURL("https://myform.com/submit.html");
 
   FormFieldData field;
@@ -2371,7 +2532,7 @@ TEST_F(AutofillManagerTest, FillCreditCardForm_ExpiredCard) {
   // Set up the form data.
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("https://myform.com/form.html");
+  form.url = GURL("https://myform.com/form.html");
   form.action = GURL("https://myform.com/submit.html");
 
   // Create a credit card form.
@@ -2425,7 +2586,7 @@ TEST_F(AutofillManagerTest, FillFormWithNonFocusableFields) {
   // Create a form with both focusable and non-focusable fields.
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("https://myform.com/form.html");
+  form.url = GURL("https://myform.com/form.html");
   form.action = GURL("https://myform.com/submit.html");
 
   FormFieldData field;
@@ -2552,7 +2713,7 @@ TEST_F(AutofillManagerTest, FillFormWithAuthorSpecifiedSections) {
   // The billing section includes both address and credit card fields.
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("https://myform.com/form.html");
+  form.url = GURL("https://myform.com/form.html");
   form.action = GURL("https://myform.com/submit.html");
 
   FormFieldData field;
@@ -2615,7 +2776,7 @@ TEST_F(AutofillManagerTest, FillFormWithAuthorSpecifiedSections) {
     SCOPED_TRACE("Unnamed section");
     EXPECT_EQ(kDefaultPageID, response_page_id);
     EXPECT_EQ(ASCIIToUTF16("MyForm"), response_data.name);
-    EXPECT_EQ(GURL("https://myform.com/form.html"), response_data.origin);
+    EXPECT_EQ(GURL("https://myform.com/form.html"), response_data.url);
     EXPECT_EQ(GURL("https://myform.com/submit.html"), response_data.action);
     ASSERT_EQ(11U, response_data.fields.size());
 
@@ -2646,7 +2807,7 @@ TEST_F(AutofillManagerTest, FillFormWithAuthorSpecifiedSections) {
     SCOPED_TRACE("Billing address");
     EXPECT_EQ(kPageID2, response_page_id);
     EXPECT_EQ(ASCIIToUTF16("MyForm"), response_data.name);
-    EXPECT_EQ(GURL("https://myform.com/form.html"), response_data.origin);
+    EXPECT_EQ(GURL("https://myform.com/form.html"), response_data.url);
     EXPECT_EQ(GURL("https://myform.com/submit.html"), response_data.action);
     ASSERT_EQ(11U, response_data.fields.size());
 
@@ -2676,7 +2837,7 @@ TEST_F(AutofillManagerTest, FillFormWithAuthorSpecifiedSections) {
     SCOPED_TRACE("Credit card");
     EXPECT_EQ(kPageID3, response_page_id);
     EXPECT_EQ(ASCIIToUTF16("MyForm"), response_data.name);
-    EXPECT_EQ(GURL("https://myform.com/form.html"), response_data.origin);
+    EXPECT_EQ(GURL("https://myform.com/form.html"), response_data.url);
     EXPECT_EQ(GURL("https://myform.com/submit.html"), response_data.action);
     ASSERT_EQ(11U, response_data.fields.size());
 
@@ -2838,7 +2999,7 @@ TEST_F(AutofillManagerTest, FillPhoneNumber) {
   // parts. In the other form, rely on the autocomplete type attribute.
   FormData form_with_us_number_max_length;
   form_with_us_number_max_length.name = ASCIIToUTF16("MyMaxlengthPhoneForm");
-  form_with_us_number_max_length.origin =
+  form_with_us_number_max_length.url =
       GURL("http://myform.com/phone_form.html");
   form_with_us_number_max_length.action =
       GURL("http://myform.com/phone_submit.html");
@@ -2967,7 +3128,7 @@ TEST_F(AutofillManagerTest, FillFirstPhoneNumber_ComponentizedNumbers) {
   // Verify only the first complete number is filled when there are multiple
   // componentized number fields.
   FormData form_with_multiple_componentized_phone_fields;
-  form_with_multiple_componentized_phone_fields.origin =
+  form_with_multiple_componentized_phone_fields.url =
       GURL("http://www.foo.com/");
 
   FormFieldData field;
@@ -3034,7 +3195,7 @@ TEST_F(AutofillManagerTest, FillFirstPhoneNumber_WholeNumbers) {
   std::string guid(work_profile->guid());
 
   FormData form_with_multiple_whole_number_fields;
-  form_with_multiple_whole_number_fields.origin = GURL("http://www.foo.com/");
+  form_with_multiple_whole_number_fields.url = GURL("http://www.foo.com/");
 
   FormFieldData field;
   // Default is zero, have to set to a number autofill can process.
@@ -3088,7 +3249,7 @@ TEST_F(AutofillManagerTest, FillFirstPhoneNumber_FillPartsOnceOnly) {
   // Verify only the first complete number is filled when there are multiple
   // componentized number fields.
   FormData form_with_multiple_componentized_phone_fields;
-  form_with_multiple_componentized_phone_fields.origin =
+  form_with_multiple_componentized_phone_fields.url =
       GURL("http://www.foo.com/");
 
   FormFieldData field;
@@ -3161,7 +3322,7 @@ TEST_F(AutofillManagerTest,
   std::string guid(work_profile->guid());
 
   FormData form_with_misclassified_extension;
-  form_with_misclassified_extension.origin = GURL("http://www.foo.com/");
+  form_with_misclassified_extension.url = GURL("http://www.foo.com/");
 
   FormFieldData field;
   // Default is zero, have to set to a number autofill can process.
@@ -3172,7 +3333,7 @@ TEST_F(AutofillManagerTest,
   field.autocomplete_attribute = "name";
   form_with_misclassified_extension.fields.push_back(field);
   test::CreateTestFormField("address", "address", "", "text", &field);
-  field.autocomplete_attribute = "address";
+  field.autocomplete_attribute = "addresses";
   form_with_misclassified_extension.fields.push_back(field);
   test::CreateTestFormField("area code", "area_code", "", "text", &field);
   field.autocomplete_attribute = "tel-area-code";
@@ -3222,7 +3383,7 @@ TEST_F(AutofillManagerTest, FillFirstPhoneNumber_BestEfforFilling) {
   std::string guid(work_profile->guid());
 
   FormData form_with_no_complete_number;
-  form_with_no_complete_number.origin = GURL("http://www.foo.com/");
+  form_with_no_complete_number.url = GURL("http://www.foo.com/");
 
   FormFieldData field;
   // Default is zero, have to set to a number autofill can process.
@@ -3232,7 +3393,7 @@ TEST_F(AutofillManagerTest, FillFirstPhoneNumber_BestEfforFilling) {
   field.autocomplete_attribute = "name";
   form_with_no_complete_number.fields.push_back(field);
   test::CreateTestFormField("address", "address", "", "text", &field);
-  field.autocomplete_attribute = "address";
+  field.autocomplete_attribute = "address";  // not standard, but covered.
   form_with_no_complete_number.fields.push_back(field);
   test::CreateTestFormField("area code", "area_code", "", "text", &field);
   field.autocomplete_attribute = "tel-area-code";
@@ -3263,7 +3424,8 @@ TEST_F(AutofillManagerTest, FillFirstPhoneNumber_BestEfforFilling) {
   ASSERT_EQ(4U, response_data.fields.size());
   EXPECT_EQ(ASCIIToUTF16("Charles Hardin Holley"),
             response_data.fields[0].value);
-  EXPECT_EQ(base::string16(), response_data.fields[1].value);
+  EXPECT_EQ(ASCIIToUTF16("123 Apple St., unit 6"),
+            response_data.fields[1].value);
   EXPECT_EQ(ASCIIToUTF16("650"), response_data.fields[2].value);
   EXPECT_EQ(base::string16(), response_data.fields[3].value);
 }
@@ -3280,7 +3442,7 @@ TEST_F(AutofillManagerTest, FillFirstPhoneNumber_FocusOnSecondPhoneNumber) {
   std::string guid(work_profile->guid());
 
   FormData form_with_multiple_whole_number_fields;
-  form_with_multiple_whole_number_fields.origin = GURL("http://www.foo.com/");
+  form_with_multiple_whole_number_fields.url = GURL("http://www.foo.com/");
 
   FormFieldData field;
   // Default is zero, have to set to a number autofill can process.
@@ -3335,7 +3497,7 @@ TEST_F(AutofillManagerTest, FillFirstPhoneNumber_HiddenFieldShouldNotCount) {
   std::string guid(work_profile->guid());
 
   FormData form_with_multiple_whole_number_fields;
-  form_with_multiple_whole_number_fields.origin = GURL("http://www.foo.com/");
+  form_with_multiple_whole_number_fields.url = GURL("http://www.foo.com/");
 
   FormFieldData field;
   // Default is zero, have to set to a number autofill can process.
@@ -3385,7 +3547,7 @@ TEST_F(AutofillManagerTest, FillFirstPhoneNumber_HiddenFieldShouldNotCount) {
 TEST_F(AutofillManagerTest, FormWithHiddenOrPresentationalSelects) {
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("http://myform.com/form.html");
+  form.url = GURL("http://myform.com/form.html");
   form.action = GURL("http://myform.com/submit.html");
 
   FormFieldData field;
@@ -3411,7 +3573,7 @@ TEST_F(AutofillManagerTest, FormWithHiddenOrPresentationalSelects) {
                                             "Tennessee"};
     test::CreateTestSelectField("State", "state", "", values, contents,
                                 values.size(), &field);
-    field.role = FormFieldData::ROLE_ATTRIBUTE_PRESENTATION;
+    field.role = FormFieldData::RoleAttribute::kPresentation;
     form.fields.push_back(field);
   }
 
@@ -3420,7 +3582,7 @@ TEST_F(AutofillManagerTest, FormWithHiddenOrPresentationalSelects) {
   form.fields.push_back(field);
 
   test::CreateTestFormField("Street Address", "address", "", "text", &field);
-  field.role = FormFieldData::ROLE_ATTRIBUTE_PRESENTATION;
+  field.role = FormFieldData::RoleAttribute::kPresentation;
   form.fields.push_back(field);
 
   std::vector<FormData> forms(1, form);
@@ -3461,7 +3623,7 @@ TEST_F(AutofillManagerTest,
   std::string guid(work_profile->guid());
 
   FormData form_with_multiple_sections;
-  form_with_multiple_sections.origin = GURL("http://www.foo.com/");
+  form_with_multiple_sections.url = GURL("http://www.foo.com/");
 
   FormFieldData field;
   // Default is zero, have to set to a number autofill can process.
@@ -3606,7 +3768,7 @@ TEST_F(AutofillManagerTest, FormChangesAddField) {
 TEST_F(AutofillManagerTest, FormChangesVisibilityOfFields) {
   // Set up our form data.
   FormData form;
-  form.origin = GURL("http://www.foo.com/");
+  form.url = GURL("http://www.foo.com/");
 
   FormFieldData field;
 
@@ -3739,6 +3901,28 @@ TEST_F(AutofillManagerTest, FormSubmittedAutocompleteEnabled) {
   EXPECT_CALL(*(autocomplete_history_manager_.get()),
               OnWillSubmitForm(_, true));
   FormSubmitted(form);
+}
+
+// Test that the value patterns metric is reported.
+TEST_F(AutofillManagerTest, FormSubmitted_ValuePatternsMetric) {
+  // Set up our form data.
+  FormData form;
+  FormFieldData field;
+  test::CreateTestFormField("Some label", "my-field", "user@okaxis", "text",
+                            &field);
+  field.is_focusable = true;  // The metric skips hidden fields.
+  form.name = ASCIIToUTF16("my-form");
+  form.url = GURL("http://myform.com/form.html");
+  form.action = GURL("https://myform.com/submit.html");
+  form.fields.push_back(field);
+  std::vector<FormData> forms(1, form);
+  FormsSeen(forms);
+
+  base::HistogramTester histogram_tester;
+  FormSubmitted(form);
+  histogram_tester.ExpectUniqueSample("Autofill.SubmittedValuePatterns",
+                                      autofill::ValuePatternsMetric::kUpiVpa,
+                                      1);
 }
 
 // Test that when Autofill is disabled, Autocomplete suggestions are still
@@ -3972,7 +4156,7 @@ TEST_F(AutofillManagerTest, OnLoadedServerPredictions) {
   // Similarly, a second form.
   FormData form2;
   form2.name = ASCIIToUTF16("MyForm");
-  form2.origin = GURL("http://myform.com/form.html");
+  form2.url = GURL("http://myform.com/form.html");
   form2.action = GURL("http://myform.com/submit.html");
 
   FormFieldData field;
@@ -4046,7 +4230,7 @@ TEST_F(AutofillManagerTest, OnLoadedServerPredictionsFromApi) {
   // First form on the page.
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("http://myform.com/form.html");
+  form.url = GURL("http://myform.com/form.html");
   form.action = GURL("http://myform.com/submit.html");
   FormFieldData field;
   test::CreateTestFormField(/*label=*/"City", /*name=*/"city",
@@ -4069,7 +4253,7 @@ TEST_F(AutofillManagerTest, OnLoadedServerPredictionsFromApi) {
   // Second form on the page.
   FormData form2;
   form2.name = ASCIIToUTF16("MyForm2");
-  form2.origin = GURL("http://myform.com/form.html");
+  form2.url = GURL("http://myform.com/form.html");
   form2.action = GURL("http://myform.com/submit.html");
   test::CreateTestFormField("Last Name", "lastname", "", "text", &field);
   form2.fields.push_back(field);
@@ -4183,7 +4367,7 @@ TEST_F(AutofillManagerTest, OnLoadedServerPredictions_ResetManager) {
 TEST_F(AutofillManagerTest, DetermineHeuristicsWithOverallPrediction) {
   // Set up our form data.
   FormData form;
-  form.origin = GURL("https://www.myform.com");
+  form.url = GURL("https://www.myform.com");
   FormFieldData field;
   test::CreateTestFormField("First Name", "firstname", "", "text", &field);
   form.fields.push_back(field);
@@ -4422,8 +4606,8 @@ class ProfileMatchingTypesTest
     : public AutofillManagerTest,
       public ::testing::WithParamInterface<
           std::tuple<ProfileMatchingTypesTestCase,
-                     int,        // AutofillProfile::ValidityState
-                     bool>> {};  // AutofillProfile::ValidationSource
+                     int,        // AutofillDataModel::ValidityState
+                     bool>> {};  // AutofillDataModel::ValidationSource
 
 const ProfileMatchingTypesTestCase kProfileMatchingTypesTestCases[] = {
     // Profile fields matches.
@@ -4517,9 +4701,9 @@ TEST_P(ProfileMatchingTypesTest, DeterminePossibleFieldTypesForUpload) {
   // Unpack the test paramters
   const auto& test_case = std::get<0>(GetParam());
   auto validity_state =
-      static_cast<AutofillProfile::ValidityState>(std::get<1>(GetParam()));
+      static_cast<AutofillDataModel::ValidityState>(std::get<1>(GetParam()));
   const auto& validation_source =
-      static_cast<AutofillProfile::ValidationSource>(std::get<2>(GetParam()));
+      static_cast<AutofillDataModel::ValidationSource>(std::get<2>(GetParam()));
 
   SCOPED_TRACE(base::StringPrintf(
       "Test: input_value='%s', field_type=%s, validity_state=%d, "
@@ -4528,8 +4712,8 @@ TEST_P(ProfileMatchingTypesTest, DeterminePossibleFieldTypesForUpload) {
       AutofillType(test_case.field_type).ToString().c_str(), validity_state,
       validation_source));
 
-  ASSERT_LE(AutofillProfile::UNVALIDATED, validity_state);
-  ASSERT_LE(validity_state, AutofillProfile::UNSUPPORTED);
+  ASSERT_LE(AutofillDataModel::UNVALIDATED, validity_state);
+  ASSERT_LE(validity_state, AutofillDataModel::UNSUPPORTED);
 
   // Set up the test profiles.
   std::vector<AutofillProfile> profiles;
@@ -4556,11 +4740,11 @@ TEST_P(ProfileMatchingTypesTest, DeterminePossibleFieldTypesForUpload) {
     for (auto& profile : profiles) {
       if (test_case.field_type == UNKNOWN_TYPE) {
         // An UNKNOWN type is always UNVALIDATED
-        validity_state = AutofillProfile::UNVALIDATED;
+        validity_state = AutofillDataModel::UNVALIDATED;
       } else if (profile.IsAnInvalidPhoneNumber(test_case.field_type)) {
         // a phone field is a compound field, an invalid part would make it
         // invalid.
-        validity_state = AutofillProfile::INVALID;
+        validity_state = AutofillDataModel::INVALID;
       }
       profile.SetValidityState(test_case.field_type, validity_state,
                                validation_source);
@@ -4577,7 +4761,7 @@ TEST_P(ProfileMatchingTypesTest, DeterminePossibleFieldTypesForUpload) {
 
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("http://myform.com/form.html");
+  form.url = GURL("http://myform.com/form.html");
   form.action = GURL("http://myform.com/submit.html");
 
   FormFieldData field;
@@ -4605,19 +4789,19 @@ TEST_P(ProfileMatchingTypesTest, DeterminePossibleFieldTypesForUpload) {
     EXPECT_NE(possible_types_validities.end(),
               possible_types_validities.find(test_case.field_type));
     EXPECT_EQ(possible_types_validities[test_case.field_type][0],
-              (validation_source == AutofillProfile::SERVER)
+              (validation_source == AutofillDataModel::SERVER)
                   ? validity_state
-                  : AutofillProfile::UNVALIDATED);
+                  : AutofillDataModel::UNVALIDATED);
   }
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     AutofillManagerTest,
     ProfileMatchingTypesTest,
     testing::Combine(
         testing::ValuesIn(kProfileMatchingTypesTestCases),
-        testing::Range(static_cast<int>(AutofillProfile::UNVALIDATED),
-                       static_cast<int>(AutofillProfile::UNSUPPORTED) + 1),
+        testing::Range(static_cast<int>(AutofillDataModel::UNVALIDATED),
+                       static_cast<int>(AutofillDataModel::UNSUPPORTED) + 1),
         testing::Bool()));
 
 // Tests that DeterminePossibleFieldTypesForUpload is called when a form is
@@ -4625,7 +4809,7 @@ INSTANTIATE_TEST_CASE_P(
 TEST_F(AutofillManagerTest, DeterminePossibleFieldTypesForUpload_IsTriggered) {
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("http://myform.com/form.html");
+  form.url = GURL("http://myform.com/form.html");
   form.action = GURL("http://myform.com/submit.html");
 
   std::vector<ServerFieldTypeSet> expected_types;
@@ -4683,8 +4867,8 @@ TEST_F(AutofillManagerTest, DeterminePossibleFieldTypesWithMultipleValidities) {
                          "", "Memphis", "Tennessee", "38116", "US",
                          "(234) 567-8901");
     profile.set_guid("00000000-0000-0000-0000-000000000001");
-    profile.SetValidityState(ADDRESS_HOME_STATE, AutofillProfile::VALID,
-                             AutofillProfile::SERVER);
+    profile.SetValidityState(ADDRESS_HOME_STATE, AutofillDataModel::VALID,
+                             AutofillDataModel::SERVER);
     profiles.push_back(profile);
   }
   {
@@ -4693,8 +4877,8 @@ TEST_F(AutofillManagerTest, DeterminePossibleFieldTypesWithMultipleValidities) {
                          "1331 W Georgia", "", "Vancouver", "Tennessee",
                          "V4D 4S4", "CA", "(778) 567-8901");
     profile.set_guid("00000000-0000-0000-0000-000000000002");
-    profile.SetValidityState(ADDRESS_HOME_STATE, AutofillProfile::INVALID,
-                             AutofillProfile::SERVER);
+    profile.SetValidityState(ADDRESS_HOME_STATE, AutofillDataModel::INVALID,
+                             AutofillDataModel::SERVER);
     profiles.push_back(profile);
   }
 
@@ -4702,7 +4886,7 @@ TEST_F(AutofillManagerTest, DeterminePossibleFieldTypesWithMultipleValidities) {
   typedef struct {
     std::string input_value;
     ServerFieldType field_type;
-    std::vector<AutofillProfile::ValidityState> expected_validity_states;
+    std::vector<AutofillDataModel::ValidityState> expected_validity_states;
   } TestFieldData;
 
   std::vector<TestFieldData> test_cases[3];
@@ -4711,21 +4895,23 @@ TEST_F(AutofillManagerTest, DeterminePossibleFieldTypesWithMultipleValidities) {
   // possible_field_types would only include the type ADDRESS_HOME_STATE, and
   // the corresponding validity of that type would include both VALID and
   // INVALID.
-  test_cases[0].push_back({"Tennessee",
-                           ADDRESS_HOME_STATE,
-                           {AutofillProfile::VALID, AutofillProfile::INVALID}});
+  test_cases[0].push_back(
+      {"Tennessee",
+       ADDRESS_HOME_STATE,
+       {AutofillDataModel::VALID, AutofillDataModel::INVALID}});
   // Alice appears only in the second profile as a NAME_FIRST, and it's
   // UNVALIDATED.
   test_cases[1].push_back(
-      {"Alice", NAME_FIRST, {AutofillProfile::UNVALIDATED}});
+      {"Alice", NAME_FIRST, {AutofillDataModel::UNVALIDATED}});
   // An UNKNOWN type is always UNVALIDATED.
-  test_cases[2].push_back(
-      {"What a beautiful day!", UNKNOWN_TYPE, {AutofillProfile::UNVALIDATED}});
+  test_cases[2].push_back({"What a beautiful day!",
+                           UNKNOWN_TYPE,
+                           {AutofillDataModel::UNVALIDATED}});
 
   for (const std::vector<TestFieldData>& test_fields : test_cases) {
     FormData form;
     form.name = ASCIIToUTF16("MyForm");
-    form.origin = GURL("http://myform.com/form.html");
+    form.url = GURL("http://myform.com/form.html");
     form.action = GURL("http://myform.com/submit.html");
 
     // Create the form fields specified in the test case.
@@ -4914,7 +5100,7 @@ TEST_F(AutofillManagerTest, DisambiguateUploadTypes) {
   for (const std::vector<TestFieldData>& test_fields : test_cases) {
     FormData form;
     form.name = ASCIIToUTF16("MyForm");
-    form.origin = GURL("http://myform.com/form.html");
+    form.url = GURL("http://myform.com/form.html");
     form.action = GURL("http://myform.com/submit.html");
 
     // Create the form fields specified in the test case.
@@ -4996,7 +5182,7 @@ TEST_F(AutofillManagerTest, OnTextFieldDidChangeAndUnfocus_Upload) {
   // Set up our form data (it's already filled out with user data).
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("http://myform.com/form.html");
+  form.url = GURL("http://myform.com/form.html");
   form.action = GURL("http://myform.com/submit.html");
 
   std::vector<ServerFieldTypeSet> expected_types;
@@ -5046,7 +5232,7 @@ TEST_F(AutofillManagerTest, OnTextFieldDidChangeAndNavigation_Upload) {
   // Set up our form data (it's already filled out with user data).
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("http://myform.com/form.html");
+  form.url = GURL("http://myform.com/form.html");
   form.action = GURL("http://myform.com/submit.html");
 
   std::vector<ServerFieldTypeSet> expected_types;
@@ -5096,7 +5282,7 @@ TEST_F(AutofillManagerTest, OnDidFillAutofillFormDataAndUnfocus_Upload) {
   // Set up our form data (empty).
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("http://myform.com/form.html");
+  form.url = GURL("http://myform.com/form.html");
   form.action = GURL("http://myform.com/submit.html");
 
   std::vector<ServerFieldTypeSet> expected_types;
@@ -5145,7 +5331,7 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestions_UnrecognizedAttribute) {
   // Set up the form data.
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("https://myform.com/form.html");
+  form.url = GURL("https://myform.com/form.html");
   form.action = GURL("https://myform.com/submit.html");
 
   FormFieldData field;
@@ -5179,11 +5365,11 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestions_UnrecognizedAttribute) {
 // Test to verify suggestions appears for forms having credit card number split
 // across fields.
 TEST_F(AutofillManagerTest,
-       GetCreditCardSuggestions_ForNumberSpitAcrossFields) {
+       GetCreditCardSuggestions_ForNumberSplitAcrossFields) {
   // Set up our form data with credit card number split across fields.
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("https://myform.com/form.html");
+  form.url = GURL("https://myform.com/form.html");
   form.action = GURL("https://myform.com/submit.html");
 
   FormFieldData name_field;
@@ -5226,11 +5412,20 @@ TEST_F(AutofillManagerTest,
   // Get the suggestions for already filled credit card |number_field|.
   GetAutofillSuggestions(form, number_field);
 
-  CheckSuggestions(
-      kDefaultPageID,
-      Suggestion(
-          std::string("Visa  ") + test::ObfuscatedCardDigitsAsUTF8("3456"),
-          "04/99", kVisaCard, autofill_manager_->GetPackedCreditCardID(4)));
+#if defined(OS_ANDROID) || defined(OS_IOS)
+  const std::string kVisaSuggestionLabel = std::string("04/99");
+  const std::string kMasterCardSuggestionLabel = std::string("10/98");
+#else
+  const std::string kVisaSuggestionLabel = std::string("Expires on 04/99");
+  const std::string kMasterCardSuggestionLabel =
+      std::string("Expires on 10/98");
+#endif
+
+  CheckSuggestions(kDefaultPageID,
+                   Suggestion(std::string("Visa  ") +
+                                  test::ObfuscatedCardDigitsAsUTF8("3456"),
+                              kVisaSuggestionLabel, kVisaCard,
+                              autofill_manager_->GetPackedCreditCardID(4)));
 }
 
 // Test that inputs detected to be CVC inputs are forced to
@@ -5242,7 +5437,7 @@ TEST_F(AutofillManagerTest, DontSaveCvcInAutocompleteHistory) {
 
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("http://myform.com/form.html");
+  form.url = GURL("http://myform.com/form.html");
   form.action = GURL("http://myform.com/submit.html");
 
   struct {
@@ -5297,8 +5492,7 @@ TEST_F(AutofillManagerTest, DontOfferToSavePaymentsCard) {
   response.should_store_pan = false;
   response.cvc = ASCIIToUTF16("123");
   full_card_unmask_delegate()->OnUnmaskResponse(response);
-  autofill_manager_->OnDidGetRealPan(AutofillClient::SUCCESS,
-                                     "4012888888881881");
+  OnDidGetRealPan(AutofillClient::SUCCESS, "4012888888881881");
   autofill_manager_->OnFormSubmitted(form, false,
                                      SubmissionSource::FORM_SUBMISSION);
 }
@@ -5314,8 +5508,7 @@ TEST_F(AutofillManagerTest, FillInUpdatedExpirationDate) {
   response.exp_month = ASCIIToUTF16("02");
   response.exp_year = ASCIIToUTF16("2018");
   full_card_unmask_delegate()->OnUnmaskResponse(response);
-  autofill_manager_->OnDidGetRealPan(AutofillClient::SUCCESS,
-                                     "4012888888881881");
+  OnDidGetRealPan(AutofillClient::SUCCESS, "4012888888881881");
 }
 
 TEST_F(AutofillManagerTest, ProfileDisabledDoesNotFillFormData) {
@@ -5392,9 +5585,8 @@ TEST_F(AutofillManagerTest, CreditCardDisabledDoesNotSuggest) {
 // Verify that typing "gmail" will match "theking@gmail.com" and
 // "buddy@gmail.com" when substring matching is enabled.
 TEST_F(AutofillManagerTest, DisplaySuggestionsWithMatchingTokens) {
-  // Token matching is currently behind a flag.
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kEnableSuggestionsWithSubstringMatch);
+  base::test::ScopedFeatureList features;
+  features.InitAndEnableFeature(features::kAutofillTokenPrefixMatching);
 
   // Set up our form data.
   FormData form;
@@ -5414,9 +5606,8 @@ TEST_F(AutofillManagerTest, DisplaySuggestionsWithMatchingTokens) {
 // Verify that typing "apple" will match "123 Apple St." when substring matching
 // is enabled.
 TEST_F(AutofillManagerTest, DisplaySuggestionsWithMatchingTokens_CaseIgnored) {
-  // Token matching is currently behind a flag.
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kEnableSuggestionsWithSubstringMatch);
+  base::test::ScopedFeatureList features;
+  features.InitAndEnableFeature(features::kAutofillTokenPrefixMatching);
 
   // Set up our form data.
   FormData form;
@@ -5435,9 +5626,8 @@ TEST_F(AutofillManagerTest, DisplaySuggestionsWithMatchingTokens_CaseIgnored) {
 // Verify that typing "mail" will not match any of the "@gmail.com" email
 // addresses when substring matching is enabled.
 TEST_F(AutofillManagerTest, NoSuggestionForNonPrefixTokenMatch) {
-  // Token matching is currently behind a flag.
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kEnableSuggestionsWithSubstringMatch);
+  base::test::ScopedFeatureList features;
+  features.InitAndEnableFeature(features::kAutofillTokenPrefixMatching);
 
   // Set up our form data.
   FormData form;
@@ -5451,12 +5641,11 @@ TEST_F(AutofillManagerTest, NoSuggestionForNonPrefixTokenMatch) {
   EXPECT_FALSE(external_delegate_->on_suggestions_returned_seen());
 }
 
-// Verify that typing "pres" will match "Elvis Presley" when substring matching
-// is enabled.
+// Verify that typing "dre" matches "Nancy Drew" when substring matching is
+// enabled.
 TEST_F(AutofillManagerTest, DisplayCreditCardSuggestionsWithMatchingTokens) {
-  // Token matching is currently behind a flag.
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kEnableSuggestionsWithSubstringMatch);
+  base::test::ScopedFeatureList features;
+  features.InitAndEnableFeature(features::kAutofillTokenPrefixMatching);
 
   // Set up our form data.
   FormData form;
@@ -5465,29 +5654,40 @@ TEST_F(AutofillManagerTest, DisplayCreditCardSuggestionsWithMatchingTokens) {
   FormsSeen(forms);
 
   FormFieldData field;
-  test::CreateTestFormField("Name on Card", "nameoncard", "pres", "text",
+  test::CreateTestFormField("Name on Card", "nameoncard", "dre", "text",
                             &field);
-  GetAutofillSuggestions(form, field);
+
+  const char guid[] = "00000000-0000-0000-0000-000000000030";
+  CreditCard credit_card;
+  test::SetCreditCardInfo(&credit_card, "Nancy Drew",
+                          "4444555566667777",  // Visa
+                          "01", "2030", "1");
+  credit_card.set_guid(guid);
+  personal_data_.AddCreditCard(credit_card);
 
 #if defined(OS_ANDROID)
-  static const std::string kVisaSuggestion =
-      std::string("Visa  ") + test::ObfuscatedCardDigitsAsUTF8("3456");
+  const std::string kVisaSuggestionLabel =
+      std::string("Visa  ") + test::ObfuscatedCardDigitsAsUTF8("7777");
+#elif defined(OS_IOS)
+  const std::string kVisaSuggestionLabel =
+      test::ObfuscatedCardDigitsAsUTF8("7777");
 #else
-  static const std::string kVisaSuggestion =
-      test::ObfuscatedCardDigitsAsUTF8("3456");
+  const std::string kVisaSuggestionLabel = base::UTF16ToUTF8(
+      credit_card.NetworkOrBankNameLastFourDigitsAndDescriptiveExpiration(
+          "en-US"));
 #endif
 
+  GetAutofillSuggestions(form, field);
   CheckSuggestions(kDefaultPageID,
-                   Suggestion("Elvis Presley", kVisaSuggestion, kVisaCard,
-                              autofill_manager_->GetPackedCreditCardID(4)));
+                   Suggestion("Nancy Drew", kVisaSuggestionLabel, kVisaCard,
+                              MakeFrontendID(guid, std::string())));
 }
 
 // Verify that typing "lvis" will not match any of the credit card name when
 // substring matching is enabled.
 TEST_F(AutofillManagerTest, NoCreditCardSuggestionsForNonPrefixTokenMatch) {
-  // Token matching is currently behind a flag.
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kEnableSuggestionsWithSubstringMatch);
+  base::test::ScopedFeatureList features;
+  features.InitAndEnableFeature(features::kAutofillTokenPrefixMatching);
 
   // Set up our form data.
   FormData form;
@@ -5619,9 +5819,9 @@ TEST_F(AutofillManagerTest,
   // Set up our form data.
   FormData form;
   CreateTestCreditCardFormData(&form, false, false);
-  form.origin = GURL("http://myform.com/form.html");
+  form.url = GURL("http://myform.com/form.html");
   form.action = GURL("https://myform.com/submit.html");
-  autofill_client_.set_form_origin(form.origin);
+  autofill_client_.set_form_origin(form.url);
   std::vector<FormData> forms(1, form);
   FormsSeen(forms);
 
@@ -5650,7 +5850,7 @@ TEST_F(AutofillManagerTest,
   // Set up our form data.
   FormData form;
   CreateTestCreditCardFormData(&form, false, false);
-  form.origin = GURL("https://myform.com/form.html");
+  form.url = GURL("https://myform.com/form.html");
   form.action = GURL("http://myform.com/submit.html");
   std::vector<FormData> forms(1, form);
   FormsSeen(forms);
@@ -5695,9 +5895,8 @@ TEST_F(AutofillManagerTest, ShouldShowCreditCardSigninPromo_AddressField) {
 // substring matched.
 TEST_F(AutofillManagerTest,
        DisplaySuggestionsWithPrefixesPrecedeSubstringMatched) {
-  // Token matching is currently behind a flag.
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kEnableSuggestionsWithSubstringMatch);
+  base::test::ScopedFeatureList features;
+  features.InitAndEnableFeature(features::kAutofillTokenPrefixMatching);
 
   // Set up our form data.
   FormData form;
@@ -5741,7 +5940,7 @@ TEST_F(AutofillManagerTest, ShouldUploadForm) {
   // scenarios.
   FormData form;
   form.name = ASCIIToUTF16("TestForm");
-  form.origin = GURL("http://example.com/form.html");
+  form.url = GURL("http://example.com/form.html");
   form.action = GURL("http://example.com/submit.html");
 
   // Empty Form.
@@ -5859,7 +6058,7 @@ TEST_F(AutofillManagerTest,
   // Set up an address form.
   FormData mixed_form;
   mixed_form.name = ASCIIToUTF16("MyForm");
-  mixed_form.origin = GURL("https://myform.com/form.html");
+  mixed_form.url = GURL("https://myform.com/form.html");
   mixed_form.action = GURL("https://myform.com/submit.html");
   FormFieldData field;
   test::CreateTestFormField("First name", "firstname", "", "text", &field);
@@ -5897,7 +6096,7 @@ TEST_F(AutofillManagerTest,
   // Set up an address form.
   FormData mixed_form;
   mixed_form.name = ASCIIToUTF16("MyForm");
-  mixed_form.origin = GURL("https://myform.com/form.html");
+  mixed_form.url = GURL("https://myform.com/form.html");
   mixed_form.action = GURL("https://myform.com/submit.html");
   FormFieldData field;
   test::CreateTestFormField("First name", "firstname", "", "text", &field);
@@ -5935,7 +6134,7 @@ TEST_F(AutofillManagerTest,
   // Set up a credit card form.
   FormData mixed_form;
   mixed_form.name = ASCIIToUTF16("MyForm");
-  mixed_form.origin = GURL("https://myform.com/form.html");
+  mixed_form.url = GURL("https://myform.com/form.html");
   mixed_form.action = GURL("https://myform.com/submit.html");
   FormFieldData field;
   test::CreateTestFormField("Name on Card", "nameoncard", "", "text", &field);
@@ -5965,7 +6164,7 @@ TEST_F(AutofillManagerTest, DisplaySuggestionsForUpdatedServerTypedForm) {
   // Create a form with unknown heuristic fields.
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("http://myform.com/form.html");
+  form.url = GURL("http://myform.com/form.html");
   form.action = GURL("http://myform.com/submit.html");
 
   FormFieldData field;
@@ -6024,7 +6223,7 @@ TEST_F(AutofillManagerTest, DisplaySuggestionsForUpdatedServerTypedForm) {
 TEST_F(AutofillManagerTest, FormWithLongOptionValuesIsAcceptable) {
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("http://myform.com/form.html");
+  form.url = GURL("http://myform.com/form.html");
   form.action = GURL("http://myform.com/submit.html");
 
   FormFieldData field;
@@ -6070,7 +6269,7 @@ TEST_F(AutofillManagerTest, SmallForm_Upload_NoHeuristicsOrQuery) {
 
   // Set up the form.
   FormData form;
-  form.origin = GURL("http://myform.com/form.html");
+  form.url = GURL("http://myform.com/form.html");
   form.action = GURL("http://myform.com/submit.html");
   FormFieldData field;
   test::CreateTestFormField("Unknown", "unknown", "", "text", &field);
@@ -6233,18 +6432,523 @@ TEST_F(AutofillManagerTest, DidShowSuggestions_LogAutofillAddressShownMetric) {
   histogram_tester.ExpectBucketCount("Autofill.UserHappiness.Address",
                                      AutofillMetrics::SUGGESTIONS_SHOWN_ONCE,
                                      1);
-  histogram_tester.ExpectBucketCount(
-      "Autofill.FormEvents.Address",
-      AutofillMetrics::FORM_EVENT_SUGGESTIONS_SHOWN, 1);
-  histogram_tester.ExpectBucketCount(
-      "Autofill.FormEvents.Address",
-      AutofillMetrics::FORM_EVENT_SUGGESTIONS_SHOWN_ONCE, 1);
+  histogram_tester.ExpectBucketCount("Autofill.FormEvents.Address",
+                                     FORM_EVENT_SUGGESTIONS_SHOWN, 1);
+  histogram_tester.ExpectBucketCount("Autofill.FormEvents.Address",
+                                     FORM_EVENT_SUGGESTIONS_SHOWN_ONCE, 1);
 
   // No Autocomplete or credit cards logs.
   const std::string histograms = histogram_tester.GetAllHistogramsRecorded();
   EXPECT_THAT(histograms,
               Not(AnyOf(HasSubstr("Autocomplete.Events"),
                         HasSubstr("Autofill.FormEvents.CreditCard"))));
+}
+
+TEST_F(AutofillManagerTest, DidShowSuggestions_LogByType_AddressOnly) {
+  // Create a form with name and address fields.
+  FormData form;
+  form.name = ASCIIToUTF16("MyForm");
+  form.button_titles = {std::make_pair(
+      ASCIIToUTF16("Submit"), ButtonTitleType::BUTTON_ELEMENT_SUBMIT_TYPE)};
+  form.url = GURL("http://myform.com/form.html");
+  form.action = GURL("http://myform.com/submit.html");
+  form.main_frame_origin =
+      url::Origin::Create(GURL("https://myform_root.com/form.html"));
+  form.submission_event = SubmissionIndicatorEvent::SAME_DOCUMENT_NAVIGATION;
+
+  FormFieldData field;
+  test::CreateTestFormField("First Name", "firstname", "", "text", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Last Name", "lastname", "", "text", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Address Line 1", "addr1", "", "text", &field);
+  form.fields.push_back(field);
+
+  base::HistogramTester histogram_tester;
+  autofill_manager_->DidShowSuggestions(/*has_autofill_suggestions=*/true, form,
+                                        form.fields[0]);
+
+  histogram_tester.ExpectBucketCount("Autofill.FormEvents.Address.AddressOnly",
+                                     FORM_EVENT_SUGGESTIONS_SHOWN, 1);
+  histogram_tester.ExpectBucketCount("Autofill.FormEvents.Address.AddressOnly",
+                                     FORM_EVENT_SUGGESTIONS_SHOWN_ONCE, 1);
+
+  // Logging is not done for other types of address forms.
+  const std::string histograms = histogram_tester.GetAllHistogramsRecorded();
+  EXPECT_THAT(
+      histograms,
+      Not(AnyOf(
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusContact"),
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusEmail "),
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusEmailPlusPhone"),
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusPhone"),
+          HasSubstr("Autofill.FormEvents.Address.ContactOnly"),
+          HasSubstr("Autofill.FormEvents.Address.Other"))));
+}
+
+TEST_F(AutofillManagerTest,
+       DidShowSuggestions_LogByType_AddressOnlyWithoutName) {
+  // Create a form with address fields.
+  FormData form;
+  form.name = ASCIIToUTF16("MyForm");
+  form.button_titles = {std::make_pair(
+      ASCIIToUTF16("Submit"), ButtonTitleType::BUTTON_ELEMENT_SUBMIT_TYPE)};
+  form.url = GURL("http://myform.com/form.html");
+  form.action = GURL("http://myform.com/submit.html");
+  form.main_frame_origin =
+      url::Origin::Create(GURL("https://myform_root.com/form.html"));
+  form.submission_event = SubmissionIndicatorEvent::SAME_DOCUMENT_NAVIGATION;
+
+  FormFieldData field;
+  test::CreateTestFormField("Address Line 1", "addr1", "", "text", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Address Line 2", "addr2", "", "text", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Postal Code", "zipcode", "", "text", &field);
+  form.fields.push_back(field);
+
+  base::HistogramTester histogram_tester;
+  autofill_manager_->DidShowSuggestions(/*has_autofill_suggestions=*/true, form,
+                                        form.fields[0]);
+
+  histogram_tester.ExpectBucketCount("Autofill.FormEvents.Address.AddressOnly",
+                                     FORM_EVENT_SUGGESTIONS_SHOWN, 1);
+  histogram_tester.ExpectBucketCount("Autofill.FormEvents.Address.AddressOnly",
+                                     FORM_EVENT_SUGGESTIONS_SHOWN_ONCE, 1);
+
+  // Logging is not done for other types of address forms.
+  const std::string histograms = histogram_tester.GetAllHistogramsRecorded();
+  EXPECT_THAT(
+      histograms,
+      Not(AnyOf(
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusContact"),
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusEmail "),
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusEmailPlusPhone"),
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusPhone"),
+          HasSubstr("Autofill.FormEvents.Address.ContactOnly"),
+          HasSubstr("Autofill.FormEvents.Address.Other"))));
+}
+
+TEST_F(AutofillManagerTest, DidShowSuggestions_LogByType_ContactOnly) {
+  // Create a form with name and contact fields.
+  FormData form;
+  form.name = ASCIIToUTF16("MyForm");
+  form.button_titles = {std::make_pair(
+      ASCIIToUTF16("Submit"), ButtonTitleType::BUTTON_ELEMENT_SUBMIT_TYPE)};
+  form.url = GURL("http://myform.com/form.html");
+  form.action = GURL("http://myform.com/submit.html");
+  form.main_frame_origin =
+      url::Origin::Create(GURL("https://myform_root.com/form.html"));
+  form.submission_event = SubmissionIndicatorEvent::SAME_DOCUMENT_NAVIGATION;
+
+  FormFieldData field;
+  test::CreateTestFormField("First Name", "firstname", "", "text", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Last Name", "lastname", "", "text", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Email", "email", "", "email", &field);
+  form.fields.push_back(field);
+
+  base::HistogramTester histogram_tester;
+  autofill_manager_->DidShowSuggestions(/*has_autofill_suggestions=*/true, form,
+                                        form.fields[0]);
+  histogram_tester.ExpectBucketCount("Autofill.FormEvents.Address.ContactOnly",
+                                     FORM_EVENT_SUGGESTIONS_SHOWN, 1);
+  histogram_tester.ExpectBucketCount("Autofill.FormEvents.Address.ContactOnly",
+                                     FORM_EVENT_SUGGESTIONS_SHOWN_ONCE, 1);
+
+  // Logging is not done for other types of address forms.
+  const std::string histograms = histogram_tester.GetAllHistogramsRecorded();
+  EXPECT_THAT(
+      histograms,
+      Not(AnyOf(
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusContact"),
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusEmail "),
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusEmailPlusPhone"),
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusPhone"),
+          HasSubstr("Autofill.FormEvents.Address.AddressOnly"),
+          HasSubstr("Autofill.FormEvents.Address.Other"))));
+}
+
+TEST_F(AutofillManagerTest,
+       DidShowSuggestions_LogByType_ContactOnlyWithoutName) {
+  // Create a form with contact fields.
+  FormData form;
+  form.name = ASCIIToUTF16("MyForm");
+  form.button_titles = {std::make_pair(
+      ASCIIToUTF16("Submit"), ButtonTitleType::BUTTON_ELEMENT_SUBMIT_TYPE)};
+  form.url = GURL("http://myform.com/form.html");
+  form.action = GURL("http://myform.com/submit.html");
+  form.main_frame_origin =
+      url::Origin::Create(GURL("https://myform_root.com/form.html"));
+  form.submission_event = SubmissionIndicatorEvent::SAME_DOCUMENT_NAVIGATION;
+
+  FormFieldData field;
+  test::CreateTestFormField("Phone Number", "phonenumber", "", "tel", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Email", "email", "", "email", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Email", "email", "", "email", &field);
+  form.fields.push_back(field);
+
+  base::HistogramTester histogram_tester;
+  autofill_manager_->DidShowSuggestions(/*has_autofill_suggestions=*/true, form,
+                                        form.fields[0]);
+  histogram_tester.ExpectBucketCount("Autofill.FormEvents.Address.ContactOnly",
+                                     FORM_EVENT_SUGGESTIONS_SHOWN, 1);
+  histogram_tester.ExpectBucketCount("Autofill.FormEvents.Address.ContactOnly",
+                                     FORM_EVENT_SUGGESTIONS_SHOWN_ONCE, 1);
+
+  // Logging is not done for other types of address forms.
+  const std::string histograms = histogram_tester.GetAllHistogramsRecorded();
+  EXPECT_THAT(
+      histograms,
+      Not(AnyOf(
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusContact"),
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusEmail "),
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusEmailPlusPhone"),
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusPhone"),
+          HasSubstr("Autofill.FormEvents.Address.AddressOnly"),
+          HasSubstr("Autofill.FormEvents.Address.Other"))));
+}
+
+TEST_F(AutofillManagerTest, DidShowSuggestions_LogByType_Other) {
+  // Create a form with name fields.
+  FormData form;
+  form.name = ASCIIToUTF16("MyForm");
+  form.button_titles = {std::make_pair(
+      ASCIIToUTF16("Submit"), ButtonTitleType::BUTTON_ELEMENT_SUBMIT_TYPE)};
+  form.url = GURL("http://myform.com/form.html");
+  form.action = GURL("http://myform.com/submit.html");
+  form.main_frame_origin =
+      url::Origin::Create(GURL("https://myform_root.com/form.html"));
+  form.submission_event = SubmissionIndicatorEvent::SAME_DOCUMENT_NAVIGATION;
+
+  FormFieldData field;
+  test::CreateTestFormField("First Name", "firstname", "", "text", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Middle Name", "middlename", "", "text", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Last Name", "lastname", "", "text", &field);
+  form.fields.push_back(field);
+
+  base::HistogramTester histogram_tester;
+  autofill_manager_->DidShowSuggestions(/*has_autofill_suggestions=*/true, form,
+                                        form.fields[0]);
+  histogram_tester.ExpectBucketCount("Autofill.FormEvents.Address.Other",
+                                     FORM_EVENT_SUGGESTIONS_SHOWN, 1);
+  histogram_tester.ExpectBucketCount("Autofill.FormEvents.Address.Other",
+                                     FORM_EVENT_SUGGESTIONS_SHOWN_ONCE, 1);
+
+  // Logging is not done for other types of address forms.
+  const std::string histograms = histogram_tester.GetAllHistogramsRecorded();
+  EXPECT_THAT(
+      histograms,
+      Not(AnyOf(
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusContact"),
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusEmail "),
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusEmailPlusPhone"),
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusPhone"),
+          HasSubstr("Autofill.FormEvents.Address.AddressOnly"),
+          HasSubstr("Autofill.FormEvents.Address.ContactOnly"))));
+}
+
+TEST_F(AutofillManagerTest, DidShowSuggestions_LogByType_AddressPlusEmail) {
+  // Create a form with name, address, and email fields.
+  FormData form;
+  form.name = ASCIIToUTF16("MyForm");
+  form.button_titles = {std::make_pair(
+      ASCIIToUTF16("Submit"), ButtonTitleType::BUTTON_ELEMENT_SUBMIT_TYPE)};
+  form.url = GURL("http://myform.com/form.html");
+  form.action = GURL("http://myform.com/submit.html");
+  form.main_frame_origin =
+      url::Origin::Create(GURL("https://myform_root.com/form.html"));
+  form.submission_event = SubmissionIndicatorEvent::SAME_DOCUMENT_NAVIGATION;
+
+  FormFieldData field;
+  test::CreateTestFormField("First Name", "firstname", "", "text", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Last Name", "lastname", "", "text", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Address Line 1", "addr1", "", "text", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Email", "email", "", "email", &field);
+  form.fields.push_back(field);
+
+  base::HistogramTester histogram_tester;
+  autofill_manager_->DidShowSuggestions(/*has_autofill_suggestions=*/true, form,
+                                        form.fields[0]);
+  histogram_tester.ExpectBucketCount(
+      "Autofill.FormEvents.Address.AddressPlusEmail",
+      FORM_EVENT_SUGGESTIONS_SHOWN, 1);
+  histogram_tester.ExpectBucketCount(
+      "Autofill.FormEvents.Address.AddressPlusEmail",
+      FORM_EVENT_SUGGESTIONS_SHOWN_ONCE, 1);
+  histogram_tester.ExpectBucketCount(
+      "Autofill.FormEvents.Address.AddressPlusContact",
+      FORM_EVENT_SUGGESTIONS_SHOWN, 1);
+  histogram_tester.ExpectBucketCount(
+      "Autofill.FormEvents.Address.AddressPlusContact",
+      FORM_EVENT_SUGGESTIONS_SHOWN_ONCE, 1);
+
+  // Logging is not done for other types of address forms.
+  const std::string histograms = histogram_tester.GetAllHistogramsRecorded();
+  EXPECT_THAT(
+      histograms,
+      Not(AnyOf(
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusEmailPlusPhone"),
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusPhone"),
+          HasSubstr("Autofill.FormEvents.Address.AddressOnly"),
+          HasSubstr("Autofill.FormEvents.Address.ContactOnly"),
+          HasSubstr("Autofill.FormEvents.Address.Other"))));
+}
+
+TEST_F(AutofillManagerTest,
+       DidShowSuggestions_LogByType_AddressPlusEmailWithoutName) {
+  // Create a form with address and email fields.
+  FormData form;
+  form.name = ASCIIToUTF16("MyForm");
+  form.button_titles = {std::make_pair(
+      ASCIIToUTF16("Submit"), ButtonTitleType::BUTTON_ELEMENT_SUBMIT_TYPE)};
+  form.url = GURL("http://myform.com/form.html");
+  form.action = GURL("http://myform.com/submit.html");
+  form.main_frame_origin =
+      url::Origin::Create(GURL("https://myform_root.com/form.html"));
+  form.submission_event = SubmissionIndicatorEvent::SAME_DOCUMENT_NAVIGATION;
+
+  FormFieldData field;
+  test::CreateTestFormField("Address Line 1", "addr1", "", "text", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Address Line 2", "addr2", "", "text", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Email", "email", "", "email", &field);
+  form.fields.push_back(field);
+
+  base::HistogramTester histogram_tester;
+  autofill_manager_->DidShowSuggestions(/*has_autofill_suggestions=*/true, form,
+                                        form.fields[0]);
+  histogram_tester.ExpectBucketCount(
+      "Autofill.FormEvents.Address.AddressPlusEmail",
+      FORM_EVENT_SUGGESTIONS_SHOWN, 1);
+  histogram_tester.ExpectBucketCount(
+      "Autofill.FormEvents.Address.AddressPlusEmail",
+      FORM_EVENT_SUGGESTIONS_SHOWN_ONCE, 1);
+  histogram_tester.ExpectBucketCount(
+      "Autofill.FormEvents.Address.AddressPlusContact",
+      FORM_EVENT_SUGGESTIONS_SHOWN, 1);
+  histogram_tester.ExpectBucketCount(
+      "Autofill.FormEvents.Address.AddressPlusContact",
+      FORM_EVENT_SUGGESTIONS_SHOWN_ONCE, 1);
+
+  // Logging is not done for other types of address forms.
+  const std::string histograms = histogram_tester.GetAllHistogramsRecorded();
+  EXPECT_THAT(
+      histograms,
+      Not(AnyOf(
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusEmailPlusPhone"),
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusPhone"),
+          HasSubstr("Autofill.FormEvents.Address.AddressOnly"),
+          HasSubstr("Autofill.FormEvents.Address.ContactOnly"),
+          HasSubstr("Autofill.FormEvents.Address.Other"))));
+}
+
+TEST_F(AutofillManagerTest, DidShowSuggestions_LogByType_AddressPlusPhone) {
+  // Create a form with name fields.
+  FormData form;
+  form.name = ASCIIToUTF16("MyForm");
+  form.button_titles = {std::make_pair(
+      ASCIIToUTF16("Submit"), ButtonTitleType::BUTTON_ELEMENT_SUBMIT_TYPE)};
+  form.url = GURL("http://myform.com/form.html");
+  form.action = GURL("http://myform.com/submit.html");
+  form.main_frame_origin =
+      url::Origin::Create(GURL("https://myform_root.com/form.html"));
+  form.submission_event = SubmissionIndicatorEvent::SAME_DOCUMENT_NAVIGATION;
+
+  FormFieldData field;
+  test::CreateTestFormField("First Name", "firstname", "", "text", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Last Name", "lastname", "", "text", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Address Line 1", "addr1", "", "text", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Phone Number", "phonenumber", "", "tel", &field);
+  form.fields.push_back(field);
+
+  base::HistogramTester histogram_tester;
+  autofill_manager_->DidShowSuggestions(/*has_autofill_suggestions=*/true, form,
+                                        form.fields[0]);
+  histogram_tester.ExpectBucketCount(
+      "Autofill.FormEvents.Address.AddressPlusPhone",
+      FORM_EVENT_SUGGESTIONS_SHOWN, 1);
+  histogram_tester.ExpectBucketCount(
+      "Autofill.FormEvents.Address.AddressPlusPhone",
+      FORM_EVENT_SUGGESTIONS_SHOWN_ONCE, 1);
+  histogram_tester.ExpectBucketCount(
+      "Autofill.FormEvents.Address.AddressPlusContact",
+      FORM_EVENT_SUGGESTIONS_SHOWN, 1);
+  histogram_tester.ExpectBucketCount(
+      "Autofill.FormEvents.Address.AddressPlusContact",
+      FORM_EVENT_SUGGESTIONS_SHOWN_ONCE, 1);
+
+  // Logging is not done for other types of address forms.
+  const std::string histograms = histogram_tester.GetAllHistogramsRecorded();
+  EXPECT_THAT(
+      histograms,
+      Not(AnyOf(
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusEmailPlusPhone"),
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusEmail "),
+          HasSubstr("Autofill.FormEvents.Address.AddressOnly"),
+          HasSubstr("Autofill.FormEvents.Address.ContactOnly"),
+          HasSubstr("Autofill.FormEvents.Address.Other"))));
+}
+
+TEST_F(AutofillManagerTest,
+       DidShowSuggestions_LogByType_AddressPlusPhoneWithoutName) {
+  // Create a form with name, address, and phone fields.
+  FormData form;
+  form.name = ASCIIToUTF16("MyForm");
+  form.button_titles = {std::make_pair(
+      ASCIIToUTF16("Submit"), ButtonTitleType::BUTTON_ELEMENT_SUBMIT_TYPE)};
+  form.url = GURL("http://myform.com/form.html");
+  form.action = GURL("http://myform.com/submit.html");
+  form.main_frame_origin =
+      url::Origin::Create(GURL("https://myform_root.com/form.html"));
+  form.submission_event = SubmissionIndicatorEvent::SAME_DOCUMENT_NAVIGATION;
+
+  FormFieldData field;
+  test::CreateTestFormField("Address Line 1", "addr1", "", "text", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Address Line 2", "addr2", "", "text", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Phone Number", "phonenumber", "", "tel", &field);
+  form.fields.push_back(field);
+
+  base::HistogramTester histogram_tester;
+  autofill_manager_->DidShowSuggestions(/*has_autofill_suggestions=*/true, form,
+                                        form.fields[0]);
+  histogram_tester.ExpectBucketCount(
+      "Autofill.FormEvents.Address.AddressPlusPhone",
+      FORM_EVENT_SUGGESTIONS_SHOWN, 1);
+  histogram_tester.ExpectBucketCount(
+      "Autofill.FormEvents.Address.AddressPlusPhone",
+      FORM_EVENT_SUGGESTIONS_SHOWN_ONCE, 1);
+  histogram_tester.ExpectBucketCount(
+      "Autofill.FormEvents.Address.AddressPlusContact",
+      FORM_EVENT_SUGGESTIONS_SHOWN, 1);
+  histogram_tester.ExpectBucketCount(
+      "Autofill.FormEvents.Address.AddressPlusContact",
+      FORM_EVENT_SUGGESTIONS_SHOWN_ONCE, 1);
+
+  // Logging is not done for other types of address forms.
+  const std::string histograms = histogram_tester.GetAllHistogramsRecorded();
+  EXPECT_THAT(
+      histograms,
+      Not(AnyOf(
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusEmailPlusPhone"),
+          HasSubstr("Autofill.FormEvents.Address.AddressPlusEmail "),
+          HasSubstr("Autofill.FormEvents.Address.AddressOnly"),
+          HasSubstr("Autofill.FormEvents.Address.ContactOnly"),
+          HasSubstr("Autofill.FormEvents.Address.Other"))));
+}
+
+TEST_F(AutofillManagerTest,
+       DidShowSuggestions_LogByType_AddressPlusEmailPlusPhone) {
+  // Create a form with name, address, phone, and email fields.
+  FormData form;
+  form.name = ASCIIToUTF16("MyForm");
+  form.button_titles = {std::make_pair(
+      ASCIIToUTF16("Submit"), ButtonTitleType::BUTTON_ELEMENT_SUBMIT_TYPE)};
+  form.url = GURL("http://myform.com/form.html");
+  form.action = GURL("http://myform.com/submit.html");
+  form.main_frame_origin =
+      url::Origin::Create(GURL("https://myform_root.com/form.html"));
+  form.submission_event = SubmissionIndicatorEvent::SAME_DOCUMENT_NAVIGATION;
+
+  FormFieldData field;
+  test::CreateTestFormField("First Name", "firstname", "", "text", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Last Name", "lastname", "", "text", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Address Line 1", "addr1", "", "text", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Phone Number", "phonenumber", "", "tel", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Email", "email", "", "email", &field);
+  form.fields.push_back(field);
+
+  base::HistogramTester histogram_tester;
+  autofill_manager_->DidShowSuggestions(/*has_autofill_suggestions=*/true, form,
+                                        form.fields[0]);
+  histogram_tester.ExpectBucketCount(
+      "Autofill.FormEvents.Address.AddressPlusEmailPlusPhone",
+      FORM_EVENT_SUGGESTIONS_SHOWN, 1);
+  histogram_tester.ExpectBucketCount(
+      "Autofill.FormEvents.Address.AddressPlusEmailPlusPhone",
+      FORM_EVENT_SUGGESTIONS_SHOWN_ONCE, 1);
+  histogram_tester.ExpectBucketCount(
+      "Autofill.FormEvents.Address.AddressPlusContact",
+      FORM_EVENT_SUGGESTIONS_SHOWN, 1);
+  histogram_tester.ExpectBucketCount(
+      "Autofill.FormEvents.Address.AddressPlusContact",
+      FORM_EVENT_SUGGESTIONS_SHOWN_ONCE, 1);
+
+  // Logging is not done for other types of address forms.
+  const std::string histograms = histogram_tester.GetAllHistogramsRecorded();
+  EXPECT_THAT(
+      histograms,
+      Not(AnyOf(HasSubstr("Autofill.FormEvents.Address.AddressPlusPhone"),
+                HasSubstr("Autofill.FormEvents.Address.AddressPlusEmail "),
+                HasSubstr("Autofill.FormEvents.Address.AddressOnly"),
+                HasSubstr("Autofill.FormEvents.Address.ContactOnly"),
+                HasSubstr("Autofill.FormEvents.Address.Other"))));
+}
+
+TEST_F(AutofillManagerTest,
+       DidShowSuggestions_LogByType_AddressPlusEmailPlusPhoneWithoutName) {
+  // Create a form with address, phone, and email fields.
+  FormData form;
+  form.name = ASCIIToUTF16("MyForm");
+  form.button_titles = {std::make_pair(
+      ASCIIToUTF16("Submit"), ButtonTitleType::BUTTON_ELEMENT_SUBMIT_TYPE)};
+  form.url = GURL("http://myform.com/form.html");
+  form.action = GURL("http://myform.com/submit.html");
+  form.main_frame_origin =
+      url::Origin::Create(GURL("https://myform_root.com/form.html"));
+  form.submission_event = SubmissionIndicatorEvent::SAME_DOCUMENT_NAVIGATION;
+
+  FormFieldData field;
+  test::CreateTestFormField("Address Line 1", "addr1", "", "text", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Phone Number", "phonenumber", "", "tel", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Email", "email", "", "email", &field);
+  form.fields.push_back(field);
+
+  base::HistogramTester histogram_tester;
+  autofill_manager_->DidShowSuggestions(/*has_autofill_suggestions=*/true, form,
+                                        form.fields[0]);
+  histogram_tester.ExpectBucketCount(
+      "Autofill.FormEvents.Address.AddressPlusEmailPlusPhone",
+      FORM_EVENT_SUGGESTIONS_SHOWN, 1);
+  histogram_tester.ExpectBucketCount(
+      "Autofill.FormEvents.Address.AddressPlusEmailPlusPhone",
+      FORM_EVENT_SUGGESTIONS_SHOWN_ONCE, 1);
+  histogram_tester.ExpectBucketCount(
+      "Autofill.FormEvents.Address.AddressPlusContact",
+      FORM_EVENT_SUGGESTIONS_SHOWN, 1);
+  histogram_tester.ExpectBucketCount(
+      "Autofill.FormEvents.Address.AddressPlusContact",
+      FORM_EVENT_SUGGESTIONS_SHOWN_ONCE, 1);
+
+  // Logging is not done for other types of address forms.
+  const std::string histograms = histogram_tester.GetAllHistogramsRecorded();
+  EXPECT_THAT(
+      histograms,
+      Not(AnyOf(HasSubstr("Autofill.FormEvents.Address.AddressPlusPhone"),
+                HasSubstr("Autofill.FormEvents.Address.AddressPlusEmail "),
+                HasSubstr("Autofill.FormEvents.Address.AddressOnly"),
+                HasSubstr("Autofill.FormEvents.Address.ContactOnly"),
+                HasSubstr("Autofill.FormEvents.Address.Other"))));
 }
 
 TEST_F(AutofillManagerTest,
@@ -6264,12 +6968,10 @@ TEST_F(AutofillManagerTest,
   histogram_tester.ExpectBucketCount("Autofill.UserHappiness.CreditCard",
                                      AutofillMetrics::SUGGESTIONS_SHOWN_ONCE,
                                      1);
-  histogram_tester.ExpectBucketCount(
-      "Autofill.FormEvents.CreditCard",
-      AutofillMetrics::FORM_EVENT_SUGGESTIONS_SHOWN, 1);
-  histogram_tester.ExpectBucketCount(
-      "Autofill.FormEvents.CreditCard",
-      AutofillMetrics::FORM_EVENT_SUGGESTIONS_SHOWN_ONCE, 1);
+  histogram_tester.ExpectBucketCount("Autofill.FormEvents.CreditCard",
+                                     FORM_EVENT_SUGGESTIONS_SHOWN, 1);
+  histogram_tester.ExpectBucketCount("Autofill.FormEvents.CreditCard",
+                                     FORM_EVENT_SUGGESTIONS_SHOWN_ONCE, 1);
 
   // No Autocomplete or address logs.
   const std::string histograms = histogram_tester.GetAllHistogramsRecorded();
@@ -6284,9 +6986,8 @@ TEST_F(AutofillManagerTest,
 
   base::HistogramTester histogram_tester;
   autofill_manager_->DidSuppressPopup(form, form.fields[0]);
-  histogram_tester.ExpectBucketCount(
-      "Autofill.FormEvents.Address",
-      AutofillMetrics::FORM_EVENT_POPUP_SUPPRESSED, 1);
+  histogram_tester.ExpectBucketCount("Autofill.FormEvents.Address",
+                                     FORM_EVENT_POPUP_SUPPRESSED, 1);
 
   // No Autocomplete or credit cards logs.
   const std::string histograms = histogram_tester.GetAllHistogramsRecorded();
@@ -6303,56 +7004,14 @@ TEST_F(AutofillManagerTest,
 
   base::HistogramTester histogram_tester;
   autofill_manager_->DidSuppressPopup(form, form.fields[0]);
-  histogram_tester.ExpectBucketCount(
-      "Autofill.FormEvents.CreditCard",
-      AutofillMetrics::FORM_EVENT_POPUP_SUPPRESSED, 1);
+  histogram_tester.ExpectBucketCount("Autofill.FormEvents.CreditCard",
+                                     FORM_EVENT_POPUP_SUPPRESSED, 1);
 
   // No Autocomplete or address logs.
   const std::string histograms = histogram_tester.GetAllHistogramsRecorded();
   EXPECT_THAT(histograms, Not(AnyOf(HasSubstr("Autofill.UserHappiness"),
                                     HasSubstr("Autocomplete.Events"),
                                     HasSubstr("Autofill.FormEvents.Address"))));
-}
-
-// Tests that a call to the PDM's SyncServiceInitialized happens if in incognito
-// mode even if the sync service is null.
-TEST_F(AutofillManagerTest, CallingOnSyncServiceInitialized_NotOffTheRecord) {
-  // Setup the test PDM.
-  TestPersonalDataManager test_pdm;
-  ASSERT_FALSE(test_pdm.sync_service_initialized());
-
-  // Set the client to return a null sync service (default).
-  TestAutofillClient client;
-
-  // Create a new AutofillManager.
-  autofill_manager_.reset(
-      new TestAutofillManager(autofill_driver_.get(), &client, &test_pdm,
-                              autocomplete_history_manager_.get()));
-
-  // Make sure the PDM's sync service was initialized.
-  EXPECT_TRUE(test_pdm.sync_service_initialized());
-}
-
-// Tests that no call to the PDM's SyncServiceInitialized happens in incognito
-// mode.
-TEST_F(AutofillManagerTest, CallingOnSyncServiceInitialized_OffTheRecord) {
-  // Setup the test PDM.
-  TestPersonalDataManager test_pdm;
-  ASSERT_FALSE(test_pdm.sync_service_initialized());
-
-  // Set the client to return a null sync service (default).
-  TestAutofillClient client;
-
-  // Set the driver to return that the user is off the record.
-  TestAutofillDriver driver;
-  driver.SetIsIncognito(true);
-
-  // Create a new AutofillManager.
-  autofill_manager_.reset(new TestAutofillManager(
-      &driver, &client, &test_pdm, autocomplete_history_manager_.get()));
-
-  // Make sure the PDM's sync service was not initialized.
-  EXPECT_FALSE(test_pdm.sync_service_initialized());
 }
 
 // Test param indicates if there is an active screen reader.
@@ -6401,7 +7060,7 @@ class OnFocusOnFormFieldTest : public AutofillManagerTest,
 TEST_P(OnFocusOnFormFieldTest, AddressSuggestions) {
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("https://myform.com/form.html");
+  form.url = GURL("https://myform.com/form.html");
   form.action = GURL("https://myform.com/submit.html");
   FormFieldData field;
   // Set a valid autocomplete attribute for the first name.
@@ -6432,7 +7091,7 @@ TEST_P(OnFocusOnFormFieldTest, AddressSuggestions_AutocompleteOffNotRespected) {
 
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("https://myform.com/form.html");
+  form.url = GURL("https://myform.com/form.html");
   form.action = GURL("https://myform.com/submit.html");
   FormFieldData field;
   // Set a valid autocomplete attribute for the first name.
@@ -6460,7 +7119,7 @@ TEST_P(OnFocusOnFormFieldTest, AddressSuggestions_AutocompleteOffRespected) {
 
   FormData form;
   form.name = ASCIIToUTF16("MyForm");
-  form.origin = GURL("https://myform.com/form.html");
+  form.url = GURL("https://myform.com/form.html");
   form.action = GURL("https://myform.com/submit.html");
   FormFieldData field;
   // Set a valid autocomplete attribute for the first name.
@@ -6523,6 +7182,6 @@ TEST_P(OnFocusOnFormFieldTest, CreditCardSuggestions_Ablation) {
   CheckNoSuggestionsAvailableOnFieldFocus();
 }
 
-INSTANTIATE_TEST_CASE_P(All, OnFocusOnFormFieldTest, testing::Bool());
+INSTANTIATE_TEST_SUITE_P(All, OnFocusOnFormFieldTest, testing::Bool());
 
 }  // namespace autofill

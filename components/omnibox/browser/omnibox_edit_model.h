@@ -37,15 +37,6 @@ class Image;
 
 class OmniboxEditModel {
  public:
-  // Did the Omnibox focus originate via the user clicking on the Omnibox, on
-  // the Fakebox or the Search button?
-  enum FocusSource {
-    INVALID = 0,
-    OMNIBOX = 1,
-    FAKEBOX = 2,
-    SEARCH_BUTTON = 3
-  };
-
   struct State {
     State(bool user_input_in_progress,
           const base::string16& user_text,
@@ -54,7 +45,7 @@ class OmniboxEditModel {
           metrics::OmniboxEventProto::KeywordModeEntryMethod
               keyword_mode_entry_method,
           OmniboxFocusState focus_state,
-          FocusSource focus_source,
+          OmniboxFocusSource focus_source,
           const AutocompleteInput& autocomplete_input);
     State(const State& other);
     ~State();
@@ -66,16 +57,11 @@ class OmniboxEditModel {
     metrics::OmniboxEventProto::KeywordModeEntryMethod
         keyword_mode_entry_method;
     OmniboxFocusState focus_state;
-    FocusSource focus_source;
+    OmniboxFocusSource focus_source;
     const AutocompleteInput autocomplete_input;
    private:
     DISALLOW_ASSIGN(State);
   };
-
-  // This is a mirror of content::kMaxURLDisplayChars because ios cannot depend
-  // on content. If clipboard contains more than kMaxPasteAndGoTextLength
-  // characters, then the paste & go option will be disabled.
-  static const size_t kMaxPasteAndGoTextLength = 32 * 1024;
 
   OmniboxEditModel(OmniboxView* view,
                    OmniboxEditController* controller,
@@ -102,6 +88,8 @@ class OmniboxEditModel {
   OmniboxEditController* controller() const { return controller_; }
 
   OmniboxClient* client() const { return client_.get(); }
+
+  metrics::OmniboxEventProto::PageClassification GetPageClassification() const;
 
   // Returns the current state.  This assumes we are switching tabs, and changes
   // the internal state appropriately.
@@ -163,13 +151,10 @@ class OmniboxEditModel {
   // either the user is not editing or the edit does not have focus.
   bool ResetDisplayTexts();
 
-  // Returns the URL corresponding to the permanent text.
-  GURL PermanentURL() const;
-
   // Returns the permanent display text for the current page and Omnibox state.
   base::string16 GetPermanentDisplayText() const;
 
-  // Sets the user_text_ to |text|.
+  // Sets the user_text_ to |text|. Also enters user-input-in-progress mode.
   void SetUserText(const base::string16& text);
 
   // If the omnibox is currently displaying elided text, this method will
@@ -248,8 +233,8 @@ class OmniboxEditModel {
     return focus_state_ == OMNIBOX_FOCUS_VISIBLE;
   }
 
-  FocusSource focus_source() const { return focus_source_; }
-  void set_focus_source(FocusSource focus_source) {
+  OmniboxFocusSource focus_source() const { return focus_source_; }
+  void set_focus_source(OmniboxFocusSource focus_source) {
     focus_source_ = focus_source;
   }
 
@@ -260,6 +245,10 @@ class OmniboxEditModel {
   bool is_keyword_selected() const {
     return !is_keyword_hint_ && !keyword_.empty();
   }
+
+  // A stronger version of is_keyword_selected(), which depends on there
+  // being input after the keyword.
+  bool InExplicitExperimentalKeywordMode();
 
   // Accepts the current keyword hint as a keyword. It always returns true for
   // caller convenience. |entry_method| indicates how the user entered
@@ -416,7 +405,8 @@ class OmniboxEditModel {
   // Virtual for testing.
   virtual bool PopupIsOpen() const;
 
-  // Called whenever user_text_ should change.
+  // An internal method to set the user text. Notably, this differs from
+  // SetUserText because it does not change the user-input-in-progress state.
   void InternalSetUserText(const base::string16& text);
 
   // Conversion between user text and display text. User text is the text the
@@ -454,12 +444,6 @@ class OmniboxEditModel {
   // keyword.
   static bool IsSpaceCharForAcceptingKeyword(wchar_t c);
 
-  // Classify the current page being viewed as, for example, the new tab
-  // page or a normal web page.  Used for logging omnibox events for
-  // UMA opted-in users.  Examines the user's profile to determine if the
-  // current page is the user's home page.
-  metrics::OmniboxEventProto::PageClassification ClassifyPage() const;
-
   // Sets |match| and |alternate_nav_url| based on classifying |text|.
   // |alternate_nav_url| may be NULL.
   void ClassifyString(const base::string16& text,
@@ -494,7 +478,7 @@ class OmniboxEditModel {
   // Used to keep track whether the input currently in progress originated by
   // focusing in the Omnibox, Fakebox or Search button. This will be INVALID if
   // no input is in progress or the Omnibox is not focused.
-  FocusSource focus_source_;
+  OmniboxFocusSource focus_source_ = OmniboxFocusSource::INVALID;
 
   // Display-only text representing the current page. This could be any of:
   //  - The same as |url_for_editing_| if Steady State Elisions is OFF.
@@ -519,7 +503,10 @@ class OmniboxEditModel {
   bool user_input_in_progress_;
 
   // The text that the user has entered.  This does not include inline
-  // autocomplete text that has not yet been accepted.
+  // autocomplete text that has not yet been accepted.  |user_text_| can
+  // contain a string without |user_input_in_progress_| being true.
+  // For instance, this is the case when the user has unelided a URL without
+  // modifying its contents.
   base::string16 user_text_;
 
   // We keep track of when the user last focused on the omnibox.
@@ -572,12 +559,16 @@ class OmniboxEditModel {
   // and the popup is closed and "goog" is replaced by the permanent display
   // URL, which is the URL of the current page.
   //
-  // original_url_ is only valid when there is temporary text, and is used as
-  // the unique identifier of the originally selected item.  Thus, if the user
-  // arrows to a different item with the same text, we can still distinguish
-  // them and not revert all the way to the permanent display URL.
+  // original_user_text_with_keyword_ tracks the user_text_ before keywords are
+  // removed. When accepting a keyword (from either a default match or another
+  // lower in the dropdown), the user_text_ is destructively trimmed of its 1st
+  // word. In order to restore the user_text_ properly when the omnibox reverts,
+  // e.g. by pressing <escape> or pressing <up> until the first result is
+  // selected, we track original_user_text_with_keyword_.
+  // original_user_text_with_keyword_ is null if a keyword has not been
+  // accepted.
   bool has_temporary_text_;
-  GURL original_url_;
+  base::string16 original_user_text_with_keyword_;
 
   // When the user's last action was to paste, we disallow inline autocomplete
   // (on the theory that the user is trying to paste in a new URL or part of

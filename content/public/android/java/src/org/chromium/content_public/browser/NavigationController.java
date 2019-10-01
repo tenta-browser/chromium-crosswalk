@@ -4,6 +4,8 @@
 
 package org.chromium.content_public.browser;
 
+import android.support.annotation.Nullable;
+
 import org.chromium.base.VisibleForTesting;
 
 /**
@@ -147,6 +149,12 @@ public interface NavigationController {
     public NavigationEntry getEntryAtIndex(int index);
 
     /**
+     * @return The {@link NavigationEntry} that is appropriate to be displayed in the address bar.
+     */
+    @Nullable
+    NavigationEntry getVisibleEntry();
+
+    /**
      * @return The pending {@link NavigationEntry} for this controller or {@code null} if none
      *         exists.
      */
@@ -179,4 +187,10 @@ public interface NavigationController {
      * @param value The data value.
      */
     void setEntryExtraData(int index, String key, String value);
+
+    /**
+     * @param index The index of the navigation entry.
+     * @return true if the entry at |index| is marked to be skipped on back/forward UI.
+     */
+    public boolean isEntryMarkedToBeSkipped(int index);
 }

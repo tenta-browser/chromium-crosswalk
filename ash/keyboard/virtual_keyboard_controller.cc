@@ -9,13 +9,18 @@
 #include "ash/accessibility/accessibility_controller.h"
 #include "ash/ime/ime_controller.h"
 #include "ash/keyboard/ash_keyboard_controller.h"
+#include "ash/keyboard/ui/keyboard_controller.h"
+#include "ash/keyboard/ui/keyboard_util.h"
+#include "ash/public/cpp/keyboard/keyboard_switches.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/root_window_controller.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "ash/system/tray/system_tray_notifier.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "ash/wm/window_util.h"
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/strings/string_util.h"
 #include "ui/base/emoji/emoji_panel_helper.h"
@@ -24,9 +29,6 @@
 #include "ui/events/devices/input_device.h"
 #include "ui/events/devices/input_device_manager.h"
 #include "ui/events/devices/touchscreen_device.h"
-#include "ui/keyboard/keyboard_controller.h"
-#include "ui/keyboard/keyboard_util.h"
-#include "ui/keyboard/public/keyboard_switches.h"
 
 namespace ash {
 namespace {
@@ -39,8 +41,6 @@ bool IsVirtualKeyboardEnabled() {
 
 void ResetVirtualKeyboard() {
   keyboard::SetKeyboardEnabledFromShelf(false);
-  if (!keyboard::IsKeyboardEnabled())
-    Shell::Get()->DisableKeyboard();
 
   // Reset the keyset after disabling the virtual keyboard to prevent the IME
   // extension from accidentally loading the default keyset while it's shutting
@@ -187,9 +187,10 @@ void VirtualKeyboardController::UpdateDevices() {
 
 void VirtualKeyboardController::UpdateKeyboardEnabled() {
   if (IsVirtualKeyboardEnabled()) {
-    SetKeyboardEnabled(Shell::Get()
-                           ->tablet_mode_controller()
-                           ->AreInternalInputDeviceEventsBlocked());
+    keyboard::SetTouchKeyboardEnabled(
+        Shell::Get()
+            ->tablet_mode_controller()
+            ->AreInternalInputDeviceEventsBlocked());
     return;
   }
   bool ignore_internal_keyboard = Shell::Get()
@@ -197,24 +198,12 @@ void VirtualKeyboardController::UpdateKeyboardEnabled() {
                                       ->AreInternalInputDeviceEventsBlocked();
   bool is_internal_keyboard_active =
       has_internal_keyboard_ && !ignore_internal_keyboard;
-  SetKeyboardEnabled(!is_internal_keyboard_active && has_touchscreen_ &&
-                     (!has_external_keyboard_ || ignore_external_keyboard_));
+  keyboard::SetTouchKeyboardEnabled(
+      !is_internal_keyboard_active && has_touchscreen_ &&
+      (!has_external_keyboard_ || ignore_external_keyboard_));
   Shell::Get()->system_tray_notifier()->NotifyVirtualKeyboardSuppressionChanged(
       !is_internal_keyboard_active && has_touchscreen_ &&
       has_external_keyboard_);
-}
-
-void VirtualKeyboardController::SetKeyboardEnabled(bool enabled) {
-  bool was_enabled = keyboard::IsKeyboardEnabled();
-  keyboard::SetTouchKeyboardEnabled(enabled);
-  bool is_enabled = keyboard::IsKeyboardEnabled();
-  if (is_enabled == was_enabled)
-    return;
-  if (is_enabled) {
-    Shell::Get()->EnableKeyboard();
-  } else {
-    Shell::Get()->DisableKeyboard();
-  }
 }
 
 void VirtualKeyboardController::ForceShowKeyboard() {
@@ -228,7 +217,6 @@ void VirtualKeyboardController::ForceShowKeyboard() {
   // Otherwise, temporarily enable the virtual keyboard until it is dismissed.
   DCHECK(!keyboard::GetKeyboardEnabledFromShelf());
   keyboard::SetKeyboardEnabledFromShelf(true);
-  Shell::Get()->EnableKeyboard();
   keyboard_controller->ShowKeyboard(false);
 }
 
@@ -255,8 +243,7 @@ void VirtualKeyboardController::OnKeyboardHidden(bool is_temporary_hide) {
 void VirtualKeyboardController::OnActiveUserSessionChanged(
     const AccountId& account_id) {
   // Force on-screen keyboard to reset.
-  if (keyboard::IsKeyboardEnabled())
-    Shell::Get()->EnableKeyboard();
+  Shell::Get()->ash_keyboard_controller()->RebuildKeyboardIfEnabled();
 }
 
 void VirtualKeyboardController::OnBluetoothAdapterOrDeviceChanged(

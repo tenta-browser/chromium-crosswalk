@@ -4,7 +4,9 @@
 
 package org.chromium.chrome.browser.ntp.cards;
 
+import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
@@ -46,10 +48,13 @@ import org.mockito.MockitoAnnotations;
 import org.robolectric.annotation.Config;
 import org.robolectric.annotation.Implementation;
 import org.robolectric.annotation.Implements;
+import org.robolectric.annotation.Resetter;
+import org.robolectric.shadows.ShadowLooper;
 import org.robolectric.shadows.ShadowResources;
 
 import org.chromium.base.Callback;
 import org.chromium.base.task.test.CustomShadowAsyncTask;
+import org.chromium.base.task.test.ShadowPostTask;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.R;
@@ -93,7 +98,9 @@ import java.util.Locale;
  * the need for {@link CustomShadowAsyncTask}.
  */
 @RunWith(BaseRobolectricTestRunner.class)
-@Config(manifest = Config.NONE, shadows = {CustomShadowAsyncTask.class})
+@Config(manifest = Config.NONE,
+        shadows = {CustomShadowAsyncTask.class, ShadowPostTask.class,
+                NewTabPageAdapterTest.ShadowChromeFeatureList.class})
 @DisableFeatures({ChromeFeatureList.CONTENT_SUGGESTIONS_SCROLL_TO_LOAD,
         ChromeFeatureList.CHROME_DUET, ChromeFeatureList.UNIFIED_CONSENT})
 public class NewTabPageAdapterTest {
@@ -176,6 +183,7 @@ public class NewTabPageAdapterTest {
      */
     private static class ItemsMatcher { // TODO(pke): Find better name.
         private final List<String> mExpectedDescriptions = new ArrayList<>();
+        private final List<String> mExpectedNotDescriptions = new ArrayList<>();
         private final List<String> mActualDescriptions = new ArrayList<>();
 
         public ItemsMatcher(RecyclerViewAdapter.Delegate root) {
@@ -186,6 +194,10 @@ public class NewTabPageAdapterTest {
 
         private void expectDescription(String description) {
             mExpectedDescriptions.add(description);
+        }
+
+        private void expectNotDescription(String description) {
+            mExpectedNotDescriptions.add(description);
         }
 
         public void expectSection(SectionDescriptor descriptor) {
@@ -225,16 +237,39 @@ public class NewTabPageAdapterTest {
             expectDescription("ABOVE_THE_FOLD");
         }
 
-        public void expectAllDismissedItem() {
-            expectDescription("ALL_DISMISSED");
-        }
-
         public void expectFooter() {
             expectDescription("FOOTER");
         }
 
+        public void expectNotFooter() {
+            expectNotDescription("FOOTER");
+        }
+
         public void finish() {
             assertThat(mActualDescriptions, is(mExpectedDescriptions));
+            for (final String notDescriptions : mExpectedNotDescriptions) {
+                assertThat(mActualDescriptions, not(contains(notDescriptions)));
+            }
+        }
+    }
+
+    @Implements(ChromeFeatureList.class)
+    static class ShadowChromeFeatureList {
+        private static Integer sValue;
+
+        @Resetter
+        public static void reset() {
+            sValue = null;
+        }
+
+        @Implementation
+        public static int getFieldTrialParamByFeatureAsInt(
+                String featureName, String paramName, int defaultValue) {
+            return sValue == null ? defaultValue : sValue;
+        }
+
+        public static void setValue(int value) {
+            sValue = value;
         }
     }
 
@@ -269,6 +304,7 @@ public class NewTabPageAdapterTest {
         PrefServiceBridge.setInstanceForTesting(mPrefServiceBridge);
 
         resetUiDelegate();
+        NewTabPageAdapter.setHasLoadedBeforeForTest(false);
         reloadNtp();
     }
 
@@ -280,6 +316,8 @@ public class NewTabPageAdapterTest {
                 ChromePreferenceManager.NTP_SIGNIN_PROMO_DISMISSED, false);
         ChromePreferenceManager.getInstance().clearNewTabPageSigninPromoSuppressionPeriodStart();
         PrefServiceBridge.setInstanceForTesting(null);
+        ShadowPostTask.reset();
+        ShadowChromeFeatureList.reset();
     }
 
     /**
@@ -399,13 +437,13 @@ public class NewTabPageAdapterTest {
         ActionItem item = section.getActionItemForTesting();
 
         mSource.setStatusForCategory(TEST_CATEGORY, CategoryStatus.INITIALIZING);
-        assertEquals(ActionItem.State.LOADING, item.getState());
+        assertEquals(ActionItem.State.INITIAL_LOADING, item.getState());
 
         mSource.setStatusForCategory(TEST_CATEGORY, CategoryStatus.AVAILABLE);
         assertEquals(ActionItem.State.HIDDEN, item.getState());
 
         mSource.setStatusForCategory(TEST_CATEGORY, CategoryStatus.AVAILABLE_LOADING);
-        assertEquals(ActionItem.State.LOADING, item.getState());
+        assertEquals(ActionItem.State.INITIAL_LOADING, item.getState());
 
         // After the section gets disabled, it should gone completely, so checking the progress
         // indicator doesn't make sense anymore.
@@ -1023,81 +1061,50 @@ public class NewTabPageAdapterTest {
         // 5   | Footer
         assertItemsFor(sectionWithStatusCard().withSignInPromo().withProgress());
 
-        // When we remove the section, the All Dismissed item should be there.
-        int statusCardPosition = mAdapter.getFirstPositionForType(ItemViewType.STATUS);
-        mAdapter.dismissItem(statusCardPosition, itemDismissedCallback);
-
+        // When we remove the promo, we should be left with the status card
+        // And it shouldn't be dismissible
+        int promoCardPosition = mAdapter.getFirstPositionForType(ItemViewType.PROMO);
+        mAdapter.dismissItem(promoCardPosition, itemDismissedCallback);
         verify(itemDismissedCallback).onResult(anyString());
 
-        // Adapter content:
-        // Idx | Item
-        // ----|--------------------
-        // 0   | Above-the-fold
-        // 1   | All Dismissed
-        assertItemsFor();
-
-        // Disabling remote suggestions should remove both the promo and the AllDismissed item
-        mSource.setRemoteSuggestionsEnabled(false);
-        mAdapter.getSuggestionsSourceObserverForTesting().onCategoryStatusChanged(
-                ARTICLE_CATEGORY, CategoryStatus.CATEGORY_EXPLICITLY_DISABLED);
+        assertEquals(Collections.emptySet(),
+                mAdapter.getItemDismissalGroup(
+                        mAdapter.getFirstPositionForType(ItemViewType.STATUS)));
 
         // Adapter content:
         // Idx | Item
         // ----|--------------------
         // 0   | Above-the-fold
+        // 1   | Header
+        // 2   | Status
+        // 3   | Progress Indicator
+        // 4   | Footer
+        assertItemsFor(sectionWithStatusCard().withProgress());
+    }
+
+    @Test
+    @Feature({"Ntp"})
+    public void testArtificialDelay() {
+        ShadowChromeFeatureList.setValue(1000);
+        NewTabPageAdapter.setHasLoadedBeforeForTest(false);
+        reloadNtp();
+
         ItemsMatcher matcher = new ItemsMatcher(mAdapter.getRootForTesting());
         matcher.expectAboveTheFoldItem();
+        matcher.expectNotFooter();
         matcher.finish();
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks();
+        assertItemsFor(sectionWithStatusCard().withProgress());
+    }
 
-        // Prepare some suggestions. They should not load because the category is dismissed on
-        // the current NTP.
-        mSource.setRemoteSuggestionsEnabled(true);
-        mAdapter.getSuggestionsSourceObserverForTesting().onCategoryStatusChanged(
-                ARTICLE_CATEGORY, CategoryStatus.AVAILABLE);
-        mSource.setStatusForCategory(ARTICLE_CATEGORY, CategoryStatus.AVAILABLE);
-        List<SnippetArticle> suggestions = createDummySuggestions(1, ARTICLE_CATEGORY);
-        mSource.setSuggestionsForCategory(ARTICLE_CATEGORY, suggestions);
-        mSource.setInfoForCategory(
-                ARTICLE_CATEGORY, new CategoryInfoBuilder(ARTICLE_CATEGORY).build());
+    @Test
+    @Feature({"Ntp"})
+    public void testArtificialDelaySecondLoad() {
+        ShadowChromeFeatureList.setValue(1000);
+        reloadNtp();
+        reloadNtp();
 
-        // Adapter content:
-        // Idx | Item
-        // ----|--------------------
-        // 0   | Above-the-fold
-        // 1   | All Dismissed
-        assertItemsFor();
-
-        // Refresh suggestions
-        mAdapter.getSectionListForTesting().refreshSuggestions();
-
-        // Adapter content:
-        // Idx | Item
-        // ----|--------------------
-        // 0   | Above-the-fold
-        // 1   | Header
-        // 2   | Sign-in Promo
-        // 3   | Snippet
-        // 4   | Footer
-        assertItemsFor(section(suggestions).withSignInPromo());
-
-        // On Sign in, we should reset the sections, bring back suggestions instead of the All
-        // Dismissed item.
-        signInPromo = getSignInPromo();
-        assertNotNull(signInPromo);
-        signinObserver = signInPromo.getSigninObserverForTesting();
-        assertNotNull(signinObserver);
-        when(mMockSigninManager.isSignInAllowed()).thenReturn(true);
-        signinObserver.onSignInAllowedChanged();
-        signinObserver.onSignedIn();
-
-        // Adapter content:
-        // Idx | Item
-        // ----|--------------------
-        // 0   | Above-the-fold
-        // 1   | Header
-        // 2   | Suggestion
-        // 4   | Footer
-        assertItemsFor(section(suggestions));
+        assertItemsFor(sectionWithStatusCard().withProgress());
     }
 
     /**
@@ -1136,11 +1143,7 @@ public class NewTabPageAdapterTest {
         ItemsMatcher matcher = new ItemsMatcher(mAdapter.getRootForTesting());
         matcher.expectAboveTheFoldItem();
         for (SectionDescriptor descriptor : descriptors) matcher.expectSection(descriptor);
-        if (descriptors.length == 0) {
-            matcher.expectAllDismissedItem();
-        } else {
-            matcher.expectFooter();
-        }
+        matcher.expectFooter();
         matcher.finish();
     }
 

@@ -10,12 +10,17 @@
 #include <string>
 #include <vector>
 
-#include "ash/public/cpp/app_list/app_list_constants.h"
-#include "ash/public/cpp/app_list/app_list_features.h"
+#include "ash/public/cpp/app_list/app_list_config.h"
+#include "ash/public/cpp/app_list/app_list_metrics.h"
+#include "ash/public/cpp/app_list/app_list_types.h"
+#include "base/files/scoped_temp_dir.h"
 #include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
+#include "base/test/scoped_task_environment.h"
+#include "chrome/browser/ui/app_list/search/chrome_search_result.h"
 #include "chrome/browser/ui/app_list/search/search_provider.h"
 #include "chrome/browser/ui/app_list/test/fake_app_list_model_updater.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -25,10 +30,12 @@ class FakeAppListModelUpdater;
 namespace app_list {
 namespace test {
 
+using ResultType = ash::SearchResultType;
+
 // Maximum number of results to show in each mixer group.
 const size_t kMaxAppsGroupResults = 4;
 const size_t kMaxOmniboxResults = 4;
-const size_t kMaxWebstoreResults = 2;
+const size_t kMaxPlaystoreResults = 2;
 
 class TestSearchResult : public ChromeSearchResult {
  public:
@@ -43,6 +50,9 @@ class TestSearchResult : public ChromeSearchResult {
   // ChromeSearchResult overrides:
   void Open(int event_flags) override {}
   void InvokeAction(int action_index, int event_flags) override {}
+  SearchResultType GetSearchResultType() const override {
+    return app_list::SEARCH_RESULT_TYPE_BOUNDARY;
+  }
 
   // For reference equality testing. (Addresses cannot be used to test reference
   // equality because it is possible that an object will be allocated at the
@@ -62,11 +72,13 @@ int TestSearchResult::instantiation_count = 0;
 
 class TestSearchProvider : public SearchProvider {
  public:
-  explicit TestSearchProvider(const std::string& prefix)
+  TestSearchProvider(const std::string& prefix, ResultType result_type)
       : prefix_(prefix),
         count_(0),
         bad_relevance_range_(false),
-        display_type_(ash::SearchResultDisplayType::kList) {}
+        small_relevance_range_(false),
+        display_type_(ash::SearchResultDisplayType::kList),
+        result_type_(result_type) {}
   ~TestSearchProvider() override {}
 
   // SearchProvider overrides:
@@ -80,8 +92,13 @@ class TestSearchProvider : public SearchProvider {
       // of the canonical [0.0, 1.0] range.
       if (bad_relevance_range_)
         relevance = 10.0 - i * 10;
+      // If |small_relevance_range_|, keep the relevances in the same order, but
+      // make the differences very small: 0.5, 0.499, 0.498, ...
+      if (small_relevance_range_)
+        relevance = 0.5 - i / 100.0;
       TestSearchResult* result = new TestSearchResult(id, relevance);
       result->SetDisplayType(display_type_);
+      result->SetResultType(result_type_);
       Add(std::unique_ptr<ChromeSearchResult>(result));
     }
   }
@@ -92,12 +109,15 @@ class TestSearchProvider : public SearchProvider {
   }
   void set_count(size_t count) { count_ = count; }
   void set_bad_relevance_range() { bad_relevance_range_ = true; }
+  void set_small_relevance_range() { small_relevance_range_ = true; }
 
  private:
   std::string prefix_;
   size_t count_;
   bool bad_relevance_range_;
+  bool small_relevance_range_;
   ChromeSearchResult::DisplayType display_type_;
+  ResultType result_type_;
 
   DISALLOW_COPY_AND_ASSIGN(TestSearchProvider);
 };
@@ -111,21 +131,27 @@ class MixerTest : public testing::Test {
   void SetUp() override {
     model_updater_ = std::make_unique<FakeAppListModelUpdater>();
 
-    providers_.push_back(std::make_unique<TestSearchProvider>("app"));
-    providers_.push_back(std::make_unique<TestSearchProvider>("omnibox"));
-    providers_.push_back(std::make_unique<TestSearchProvider>("webstore"));
+    providers_.push_back(
+        std::make_unique<TestSearchProvider>("app", ResultType::kInternalApp));
+    providers_.push_back(
+        std::make_unique<TestSearchProvider>("omnibox", ResultType::kOmnibox));
+    providers_.push_back(std::make_unique<TestSearchProvider>(
+        "playstore", ResultType::kPlayStoreApp));
+  }
 
+  void CreateMixer() {
     mixer_ = std::make_unique<Mixer>(model_updater_.get());
 
     // TODO(warx): when fullscreen app list is default enabled, modify this test
     // to test answer card/apps group having relevance boost.
     size_t apps_group_id = mixer_->AddGroup(kMaxAppsGroupResults, 1.0, 0.0);
     size_t omnibox_group_id = mixer_->AddGroup(kMaxOmniboxResults, 1.0, 0.0);
-    size_t webstore_group_id = mixer_->AddGroup(kMaxWebstoreResults, 0.5, 0.0);
+    size_t playstore_group_id =
+        mixer_->AddGroup(kMaxPlaystoreResults, 0.5, 0.0);
 
     mixer_->AddProviderToGroup(apps_group_id, providers_[0].get());
     mixer_->AddProviderToGroup(omnibox_group_id, providers_[1].get());
-    mixer_->AddProviderToGroup(webstore_group_id, providers_[2].get());
+    mixer_->AddProviderToGroup(playstore_group_id, providers_[2].get());
   }
 
   void RunQuery() {
@@ -134,7 +160,8 @@ class MixerTest : public testing::Test {
     for (size_t i = 0; i < providers_.size(); ++i)
       providers_[i]->Start(query);
 
-    mixer_->MixAndPublish(kMaxSearchResults);
+    mixer_->MixAndPublish(AppListConfig::instance().max_search_results(),
+                          base::string16());
   }
 
   std::string GetResults() const {
@@ -150,12 +177,18 @@ class MixerTest : public testing::Test {
     return result;
   }
 
+  void Wait() { scoped_task_environment_.RunUntilIdle(); }
+
   Mixer* mixer() { return mixer_.get(); }
   TestSearchProvider* app_provider() { return providers_[0].get(); }
   TestSearchProvider* omnibox_provider() { return providers_[1].get(); }
-  TestSearchProvider* webstore_provider() { return providers_[2].get(); }
+  TestSearchProvider* playstore_provider() { return providers_[2].get(); }
 
  private:
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::ScopedFeatureList scoped_feature_list_;
+  base::ScopedTempDir temp_dir_;
+
   std::unique_ptr<Mixer> mixer_;
   std::unique_ptr<FakeAppListModelUpdater> model_updater_;
 
@@ -165,6 +198,8 @@ class MixerTest : public testing::Test {
 };
 
 TEST_F(MixerTest, Basic) {
+  CreateMixer();
+
   // Note: Some cases in |expected| have vastly more results than others, due to
   // the "at least 6" mechanism. If it gets at least 6 results from all
   // providers, it stops at 6. If not, it fetches potentially many more results
@@ -172,43 +207,43 @@ TEST_F(MixerTest, Basic) {
   struct TestCase {
     const size_t app_results;
     const size_t omnibox_results;
-    const size_t webstore_results;
+    const size_t playstore_results;
     const char* expected;
   } kTestCases[] = {
       {0, 0, 0, ""},
       {10, 0, 0, "app0,app1,app2,app3,app4,app5,app6,app7,app8,app9"},
       {0, 0, 10,
-       "webstore0,webstore1,webstore2,webstore3,webstore4,webstore5,webstore6,"
-       "webstore7,webstore8,webstore9"},
+       "playstore0,playstore1,playstore2,playstore3,playstore4,playstore5,"
+       "playstore6,playstore7,playstore8,playstore9"},
       {4, 6, 0, "app0,omnibox0,app1,omnibox1,app2,omnibox2,app3,omnibox3"},
       {4, 6, 2,
-       "app0,omnibox0,app1,omnibox1,app2,omnibox2,app3,omnibox3,webstore0,"
-       "webstore1"},
+       "app0,omnibox0,app1,omnibox1,app2,omnibox2,app3,omnibox3,playstore0,"
+       "playstore1"},
       {10, 10, 10,
-       "app0,omnibox0,app1,omnibox1,app2,omnibox2,app3,omnibox3,webstore0,"
-       "webstore1"},
+       "app0,omnibox0,app1,omnibox1,app2,omnibox2,app3,omnibox3,playstore0,"
+       "playstore1"},
       {0, 10, 0,
        "omnibox0,omnibox1,omnibox2,omnibox3,omnibox4,omnibox5,omnibox6,"
        "omnibox7,omnibox8,omnibox9"},
       {0, 10, 1,
-       "omnibox0,omnibox1,omnibox2,omnibox3,webstore0,omnibox4,omnibox5,"
+       "omnibox0,omnibox1,omnibox2,omnibox3,playstore0,omnibox4,omnibox5,"
        "omnibox6,omnibox7,omnibox8,omnibox9"},
-      {0, 10, 2, "omnibox0,omnibox1,omnibox2,omnibox3,webstore0,webstore1"},
+      {0, 10, 2, "omnibox0,omnibox1,omnibox2,omnibox3,playstore0,playstore1"},
       {1, 10, 0,
        "app0,omnibox0,omnibox1,omnibox2,omnibox3,omnibox4,omnibox5,omnibox6,"
        "omnibox7,omnibox8,omnibox9"},
       {2, 10, 0, "app0,omnibox0,app1,omnibox1,omnibox2,omnibox3"},
-      {2, 10, 1, "app0,omnibox0,app1,omnibox1,omnibox2,omnibox3,webstore0"},
+      {2, 10, 1, "app0,omnibox0,app1,omnibox1,omnibox2,omnibox3,playstore0"},
       {2, 10, 2,
-       "app0,omnibox0,app1,omnibox1,omnibox2,omnibox3,webstore0,webstore1"},
-      {2, 0, 2, "app0,app1,webstore0,webstore1"},
+       "app0,omnibox0,app1,omnibox1,omnibox2,omnibox3,playstore0,playstore1"},
+      {2, 0, 2, "app0,app1,playstore0,playstore1"},
       {0, 0, 0, ""},
   };
 
   for (size_t i = 0; i < base::size(kTestCases); ++i) {
     app_provider()->set_count(kTestCases[i].app_results);
     omnibox_provider()->set_count(kTestCases[i].omnibox_results);
-    webstore_provider()->set_count(kTestCases[i].webstore_results);
+    playstore_provider()->set_count(kTestCases[i].playstore_results);
     RunQuery();
 
     EXPECT_EQ(kTestCases[i].expected, GetResults()) << "Case " << i;
@@ -216,6 +251,8 @@ TEST_F(MixerTest, Basic) {
 }
 
 TEST_F(MixerTest, RemoveDuplicates) {
+  CreateMixer();
+
   const std::string dup = "dup";
 
   // This gives "dup0,dup1,dup2".
@@ -227,8 +264,8 @@ TEST_F(MixerTest, RemoveDuplicates) {
   omnibox_provider()->set_count(2);
 
   // This gives "dup0".
-  webstore_provider()->set_prefix(dup);
-  webstore_provider()->set_count(1);
+  playstore_provider()->set_prefix(dup);
+  playstore_provider()->set_count(1);
 
   RunQuery();
 

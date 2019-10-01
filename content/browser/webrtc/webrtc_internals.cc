@@ -9,6 +9,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/task/post_task.h"
@@ -32,12 +33,6 @@
 #include "services/device/public/mojom/wake_lock_provider.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "ui/shell_dialogs/select_file_policy.h"
-
-#if defined(OS_WIN)
-#define IntToStringType base::IntToString16
-#else
-#define IntToStringType base::IntToString
-#endif
 
 using base::ProcessId;
 using std::string;
@@ -254,8 +249,9 @@ void WebRTCInternals::OnUpdatePeerConnection(
   EnsureLogList(record)->Append(std::move(log_entry));
 }
 
-void WebRTCInternals::OnAddStats(base::ProcessId pid, int lid,
-                                 const base::ListValue& value) {
+void WebRTCInternals::OnAddStandardStats(base::ProcessId pid,
+                                         int lid,
+                                         const base::ListValue& value) {
   if (!observers_.might_have_observers())
     return;
 
@@ -265,7 +261,22 @@ void WebRTCInternals::OnAddStats(base::ProcessId pid, int lid,
 
   dict->SetKey("reports", value.Clone());
 
-  SendUpdate("addStats", std::move(dict));
+  SendUpdate("addStandardStats", std::move(dict));
+}
+
+void WebRTCInternals::OnAddLegacyStats(base::ProcessId pid,
+                                       int lid,
+                                       const base::ListValue& value) {
+  if (!observers_.might_have_observers())
+    return;
+
+  auto dict = std::make_unique<base::DictionaryValue>();
+  dict->SetInteger("pid", static_cast<int>(pid));
+  dict->SetInteger("lid", lid);
+
+  dict->SetKey("reports", value.Clone());
+
+  SendUpdate("addLegacyStats", std::move(dict));
 }
 
 void WebRTCInternals::OnGetUserMedia(int rid,
@@ -287,6 +298,7 @@ void WebRTCInternals::OnGetUserMedia(int rid,
   dict->SetInteger("rid", rid);
   dict->SetInteger("pid", static_cast<int>(pid));
   dict->SetString("origin", origin);
+  dict->SetDouble("timestamp", base::Time::Now().ToJsTime());
   if (audio)
     dict->SetString("audio", audio_constraints);
   if (video)

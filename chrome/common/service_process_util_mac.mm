@@ -11,6 +11,7 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/mac/bundle_locations.h"
 #include "base/mac/foundation_util.h"
@@ -28,6 +29,7 @@
 #include "chrome/common/mac/launchd.h"
 #include "chrome/common/service_process_util_posix.h"
 #include "components/version_info/version_info.h"
+#include "mojo/public/cpp/platform/features.h"
 
 using ::base::FilePathWatcher;
 
@@ -62,7 +64,8 @@ NSString* GetServiceProcessLaunchDSocketKey() {
 
 bool RemoveFromLaunchd() {
   // We're killing a file.
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   base::ScopedCFTypeRef<CFStringRef> name(CopyServiceProcessLaunchDName());
   return Launchd::GetInstance()->DeletePlist(Launchd::User,
                                              Launchd::Agent,
@@ -94,9 +97,19 @@ base::FilePath GetServiceProcessSocketName() {
   return socket_name;
 }
 
+NSString* GetServiceProcessMachName() {
+  base::scoped_nsobject<NSString> name(
+      base::mac::CFToNSCast(CopyServiceProcessLaunchDName()));
+  return [name stringByAppendingFormat:@".service_process.%lu",
+                                       [GetServiceProcessLaunchDLabel() hash]];
+}
+
 }  // namespace
 
 mojo::NamedPlatformChannel::ServerName GetServiceProcessServerName() {
+  if (base::FeatureList::IsEnabled(mojo::features::kMojoChannelMac)) {
+    return base::SysNSStringToUTF8(GetServiceProcessMachName());
+  }
   base::FilePath socket_name = GetServiceProcessSocketName();
   VLOG(1) << "ServiceProcessChannel: " << socket_name.value();
   return socket_name.value();
@@ -155,7 +168,19 @@ bool GetServiceProcessData(std::string* version, base::ProcessId* pid) {
 }
 
 bool ServiceProcessState::Initialize() {
-  mac::services::JobCheckinInfo info;
+  if (base::FeatureList::IsEnabled(mojo::features::kMojoChannelMac)) {
+    mac::services::JobInfo info;
+    // The Mach service will be checked when GetServiceProcessServerEndpoint()
+    // is called.
+    bool ok = Launchd::GetInstance()->GetJobInfo(
+        base::SysNSStringToUTF8(GetServiceProcessLaunchDLabel()), &info);
+    if (!ok) {
+      DLOG(ERROR) << "Failed to look up job info.";
+      return false;
+    }
+    state_->job_info.program = info.program;
+    return true;
+  }
   std::string socket_key =
       base::SysNSStringToUTF8(GetServiceProcessLaunchDSocketKey());
   if (!Launchd::GetInstance()->CheckIn(socket_key, &state_->job_info)) {
@@ -168,6 +193,11 @@ bool ServiceProcessState::Initialize() {
 
 mojo::PlatformChannelServerEndpoint
 ServiceProcessState::GetServiceProcessServerEndpoint() {
+  if (base::FeatureList::IsEnabled(mojo::features::kMojoChannelMac)) {
+    mojo::NamedPlatformChannel::Options options;
+    options.server_name = base::SysNSStringToUTF8(GetServiceProcessMachName());
+    return mojo::NamedPlatformChannel(options).TakeServerEndpoint();
+  }
   return mojo::PlatformChannelServerEndpoint(
       mojo::PlatformHandle(base::ScopedFD(state_->job_info.socket)));
 }
@@ -207,9 +237,14 @@ mac::services::JobOptions GetServiceProcessJobOptions(
   options.label = base::SysNSStringToUTF8(GetServiceProcessLaunchDLabel());
   options.executable_path = cmd_line->GetProgram().value();
   options.arguments = cmd_line->argv();
-  options.socket_name = GetServiceProcessSocketName().value();
-  options.socket_key =
-      base::SysNSStringToUTF8(GetServiceProcessLaunchDSocketKey());
+  if (base::FeatureList::IsEnabled(mojo::features::kMojoChannelMac)) {
+    options.mach_service_name =
+        base::SysNSStringToUTF8(GetServiceProcessMachName());
+  } else {
+    options.socket_name = GetServiceProcessSocketName().value();
+    options.socket_key =
+        base::SysNSStringToUTF8(GetServiceProcessLaunchDSocketKey());
+  }
 
   options.run_at_load = for_auto_launch;
   options.auto_launch = for_auto_launch;
@@ -251,6 +286,13 @@ CFDictionaryRef CreateServiceProcessLaunchdPlist(base::CommandLine* cmd_line,
     @LAUNCH_JOBKEY_SOCKETS : sockets,
   } mutableCopy];
 
+  if (base::FeatureList::IsEnabled(mojo::features::kMojoChannelMac)) {
+    NSString* mach_service_name = GetServiceProcessMachName();
+    [launchd_plist setObject:mach_service_name
+                      forKey:@LAUNCH_JOBKEY_MACHSERVICES];
+    [launchd_plist removeObjectForKey:@LAUNCH_JOBKEY_SOCKETS];
+  }
+
   if (for_auto_launch) {
     // We want the service process to be able to exit if there are no services
     // enabled. With a value of NO in the SuccessfulExit key, launchd will
@@ -273,7 +315,8 @@ CFDictionaryRef CreateServiceProcessLaunchdPlist(base::CommandLine* cmd_line,
 // auto launched on the next user login.
 bool ServiceProcessState::AddToAutoRun() {
   // We're creating directories and writing a file.
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   DCHECK(autorun_command_line_.get());
   base::ScopedCFTypeRef<CFStringRef> name(CopyServiceProcessLaunchDName());
   base::ScopedCFTypeRef<CFDictionaryRef> plist(
@@ -342,34 +385,13 @@ void ExecFilePathWatcherCallback::NotifyPathChanged(const base::FilePath& path,
   } else {
     bool in_trash = false;
     NSFileManager* file_manager = [NSFileManager defaultManager];
-    // Apple deprecated FSDetermineIfRefIsEnclosedByFolder() when deploying to
-    // 10.8, but didn't add getRelationship:... until 10.10.  So fall back to
-    // the deprecated function while running on 10.9 (and delete the else block
-    // when Chromium requires OS X 10.10+).
-    if (@available(macOS 10.10, *)) {
-      NSURLRelationship relationship;
-      if ([file_manager getRelationship:&relationship
-                            ofDirectory:NSTrashDirectory
-                               inDomain:0
-                            toItemAtURL:executable_fsref_
-                                  error:nil]) {
-        in_trash = relationship == NSURLRelationshipContains;
-      }
-    } else {
-      DCHECK(base::mac::IsAtMostOS10_9());
-      Boolean fs_in_trash;
-      FSRef ref;
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-      if (CFURLGetFSRef(base::mac::NSToCFCast(executable_fsref_.get()), &ref)) {
-        // This is ok because it only happens on 10.9 and won't be needed once
-        // we stop supporting that.
-        OSErr err = FSDetermineIfRefIsEnclosedByFolder(
-            kOnAppropriateDisk, kTrashFolderType, &ref, &fs_in_trash);
-#pragma clang diagnostic pop
-        if (err == noErr && fs_in_trash)
-          in_trash = true;
-      }
+    NSURLRelationship relationship;
+    if ([file_manager getRelationship:&relationship
+                          ofDirectory:NSTrashDirectory
+                             inDomain:0
+                          toItemAtURL:executable_fsref_
+                                error:nil]) {
+      in_trash = relationship == NSURLRelationshipContains;
     }
     if (in_trash) {
       needs_shutdown = true;

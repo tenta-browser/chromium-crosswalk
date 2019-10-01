@@ -217,6 +217,10 @@ void FakeDownloadItem::SetLastModifiedTime(
   last_modified_time_ = last_modified_time;
 }
 
+void FakeDownloadItem::SetHash(const std::string& hash) {
+  hash_ = hash;
+}
+
 const std::string& FakeDownloadItem::GetLastModifiedTime() const {
   return last_modified_time_;
 }
@@ -254,6 +258,11 @@ void FakeDownloadItem::OpenDownload() {
 }
 
 void FakeDownloadItem::ShowDownloadInShell() {
+  NOTREACHED();
+}
+
+void FakeDownloadItem::Rename(const base::FilePath& name,
+                              RenameDownloadCallback callback) {
   NOTREACHED();
 }
 
@@ -304,6 +313,12 @@ const GURL& FakeDownloadItem::GetTabUrl() const {
 const GURL& FakeDownloadItem::GetTabReferrerUrl() const {
   NOTREACHED();
   return dummy_url;
+}
+
+const base::Optional<url::Origin>& FakeDownloadItem::GetRequestInitiator()
+    const {
+  NOTREACHED();
+  return dummy_origin;
 }
 
 std::string FakeDownloadItem::GetSuggestedFilename() const {
@@ -367,8 +382,7 @@ FakeDownloadItem::GetTargetDisposition() const {
 }
 
 const std::string& FakeDownloadItem::GetHash() const {
-  NOTREACHED();
-  return dummy_string;
+  return hash_;
 }
 
 void FakeDownloadItem::DeleteFile(const base::Callback<void(bool)>& callback) {

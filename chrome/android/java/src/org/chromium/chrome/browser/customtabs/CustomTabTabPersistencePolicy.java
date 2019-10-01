@@ -18,6 +18,9 @@ import org.chromium.base.StreamUtil;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.task.AsyncTask;
+import org.chromium.base.task.BackgroundOnlyAsyncTask;
+import org.chromium.base.task.SequencedTaskRunner;
+import org.chromium.base.task.TaskRunner;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.compositor.layouts.content.TabContentManager;
 import org.chromium.chrome.browser.dependency_injection.ActivityScope;
@@ -40,7 +43,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executor;
 
 import javax.inject.Inject;
 
@@ -97,6 +99,7 @@ public class CustomTabTabPersistencePolicy implements TabPersistencePolicy {
     private final boolean mShouldRestore;
 
     private AsyncTask<Void> mInitializationTask;
+    private SequencedTaskRunner mTaskRunner;
     private boolean mDestroyed;
 
     @Inject
@@ -140,8 +143,8 @@ public class CustomTabTabPersistencePolicy implements TabPersistencePolicy {
     }
 
     @Override
-    public boolean performInitialization(Executor executor) {
-        mInitializationTask = new AsyncTask<Void>() {
+    public boolean performInitialization(TaskRunner taskRunner) {
+        mInitializationTask = new BackgroundOnlyAsyncTask<Void>() {
             @Override
             protected Void doInBackground() {
                 File stateDir = getOrCreateStateDirectory();
@@ -159,7 +162,7 @@ public class CustomTabTabPersistencePolicy implements TabPersistencePolicy {
                 }
                 return null;
             }
-        }.executeOnExecutor(executor);
+        }.executeOnTaskRunner(taskRunner);
 
         return true;
     }
@@ -213,18 +216,21 @@ public class CustomTabTabPersistencePolicy implements TabPersistencePolicy {
         mDestroyed = true;
     }
 
+    @Override
+    public void setTaskRunner(SequencedTaskRunner taskRunner) {
+        mTaskRunner = taskRunner;
+    }
+
     /**
      * Triggers an async deletion of the tab state metadata file.
      */
     public void deleteMetadataStateFileAsync() {
-        AsyncTask.SERIAL_EXECUTOR.execute(new Runnable() {
-            @Override
-            public void run() {
-                File stateDir = getOrCreateStateDirectory();
-                File metadataFile = new File(stateDir, getStateFileName());
-                if (metadataFile.exists() && !metadataFile.delete()) {
-                    Log.e(TAG, "Failed to delete file: " + metadataFile);
-                }
+        assert mTaskRunner != null;
+        mTaskRunner.postTask(() -> {
+            File stateDir = getOrCreateStateDirectory();
+            File metadataFile = new File(stateDir, getStateFileName());
+            if (metadataFile.exists() && !metadataFile.delete()) {
+                Log.e(TAG, "Failed to delete file: " + metadataFile);
             }
         });
     }

@@ -4,6 +4,7 @@
 
 #include "chrome/browser/android/explore_sites/clear_catalog_task.h"
 
+#include "base/bind.h"
 #include "chrome/browser/android/explore_sites/explore_sites_schema.h"
 #include "sql/database.h"
 #include "sql/meta_table.h"
@@ -24,8 +25,8 @@ void ClearCatalogTask::Run() {
         if (!ExploreSitesSchema::InitMetaTable(db, &meta_table))
           return false;
 
-        meta_table.DeleteKey("current_catalog");
-        meta_table.DeleteKey("downloading_catalog");
+        meta_table.DeleteKey(ExploreSitesSchema::kCurrentCatalogKey);
+        meta_table.DeleteKey(ExploreSitesSchema::kDownloadingCatalogKey);
 
         sql::Statement site_clear_statement(
             db->GetCachedStatement(SQL_FROM_HERE, "DELETE FROM sites"));

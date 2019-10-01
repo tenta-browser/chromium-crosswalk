@@ -27,7 +27,7 @@ const char* V8AnyCallbackFunctionOptionalAnyArg::NameInHeapSnapshot() const {
   return "V8AnyCallbackFunctionOptionalAnyArg";
 }
 
-v8::Maybe<ScriptValue> V8AnyCallbackFunctionOptionalAnyArg::Invoke(ScriptWrappable* callback_this_value, ScriptValue optionalAnyArg) {
+v8::Maybe<ScriptValue> V8AnyCallbackFunctionOptionalAnyArg::Invoke(bindings::V8ValueOrScriptWrappableAdapter callback_this_value, ScriptValue optionalAnyArg) {
   ScriptState* callback_relevant_script_state =
       CallbackRelevantScriptStateOrThrowException(
           "AnyCallbackFunctionOptionalAnyArg",
@@ -61,6 +61,11 @@ v8::Maybe<ScriptValue> V8AnyCallbackFunctionOptionalAnyArg::Invoke(ScriptWrappab
   v8::Context::BackupIncumbentScope backup_incumbent_scope(
       IncumbentScriptState()->GetContext());
 
+  if (UNLIKELY(ScriptForbiddenScope::IsScriptForbidden())) {
+    ScriptForbiddenScope::ThrowScriptForbiddenException(GetIsolate());
+    return v8::Nothing<ScriptValue>();
+  }
+
   v8::Local<v8::Function> function;
   // callback function's invoke:
   // step 4. If ! IsCallable(F) is false:
@@ -70,7 +75,12 @@ v8::Maybe<ScriptValue> V8AnyCallbackFunctionOptionalAnyArg::Invoke(ScriptWrappab
   function = CallbackFunction();
 
   v8::Local<v8::Value> this_arg;
-  this_arg = ToV8(callback_this_value, callback_relevant_script_state);
+  if (callback_this_value.IsEmpty()) {
+    // step 2. If thisArg was not given, let thisArg be undefined.
+    this_arg = v8::Undefined(GetIsolate());
+  } else {
+    this_arg = callback_this_value.V8Value(callback_relevant_script_state);
+  }
 
   // step: Let esArgs be the result of converting args to an ECMAScript
   //   arguments list. If this throws an exception, set completion to the
@@ -149,6 +159,11 @@ v8::Maybe<ScriptValue> V8AnyCallbackFunctionOptionalAnyArg::Construct(ScriptValu
   v8::Context::BackupIncumbentScope backup_incumbent_scope(
       IncumbentScriptState()->GetContext());
 
+  if (UNLIKELY(ScriptForbiddenScope::IsScriptForbidden())) {
+    ScriptForbiddenScope::ThrowScriptForbiddenException(GetIsolate());
+    return v8::Nothing<ScriptValue>();
+  }
+
   // step 3. If ! IsConstructor(F) is false, throw a TypeError exception.
   //
   // Note that step 7. and 8. are side effect free (except for a very rare
@@ -213,7 +228,7 @@ v8::Maybe<ScriptValue> V8AnyCallbackFunctionOptionalAnyArg::Construct(ScriptValu
   }
 }
 
-v8::Maybe<ScriptValue> V8PersistentCallbackFunction<V8AnyCallbackFunctionOptionalAnyArg>::Invoke(ScriptWrappable* callback_this_value, ScriptValue optionalAnyArg) {
+v8::Maybe<ScriptValue> V8PersistentCallbackFunction<V8AnyCallbackFunctionOptionalAnyArg>::Invoke(bindings::V8ValueOrScriptWrappableAdapter callback_this_value, ScriptValue optionalAnyArg) {
   return Proxy()->Invoke(
       callback_this_value, optionalAnyArg);
 }

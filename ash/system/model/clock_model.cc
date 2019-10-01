@@ -4,24 +4,27 @@
 
 #include "ash/system/model/clock_model.h"
 
-#include "ash/session/session_controller.h"
+#include "ash/public/cpp/system_tray_client.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "ash/system/model/clock_observer.h"
 #include "ash/system/model/system_tray_model.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
 
 namespace ash {
 
 ClockModel::ClockModel() : hour_clock_type_(base::GetHourClockType()) {
-  chromeos::DBusThreadManager::Get()->GetSystemClockClient()->AddObserver(this);
+  // SystemClockClient may be null in tests.
+  if (chromeos::SystemClockClient::Get()) {
+    chromeos::SystemClockClient::Get()->AddObserver(this);
+    can_set_time_ = chromeos::SystemClockClient::Get()->CanSetTime();
+  }
   chromeos::system::TimezoneSettings::GetInstance()->AddObserver(this);
-  can_set_time_ =
-      chromeos::DBusThreadManager::Get()->GetSystemClockClient()->CanSetTime();
 }
 
 ClockModel::~ClockModel() {
-  chromeos::DBusThreadManager::Get()->GetSystemClockClient()->RemoveObserver(
-      this);
+  // SystemClockClient may be null in tests.
+  if (chromeos::SystemClockClient::Get())
+    chromeos::SystemClockClient::Get()->RemoveObserver(this);
   chromeos::system::TimezoneSettings::GetInstance()->RemoveObserver(this);
 }
 
@@ -49,11 +52,11 @@ bool ClockModel::IsSettingsAvailable() const {
 }
 
 void ClockModel::ShowDateSettings() {
-  Shell::Get()->system_tray_model()->client_ptr()->ShowDateSettings();
+  Shell::Get()->system_tray_model()->client()->ShowDateSettings();
 }
 
 void ClockModel::ShowSetTimeDialog() {
-  Shell::Get()->system_tray_model()->client_ptr()->ShowSetTimeDialog();
+  Shell::Get()->system_tray_model()->client()->ShowSetTimeDialog();
 }
 
 void ClockModel::NotifyRefreshClock() {

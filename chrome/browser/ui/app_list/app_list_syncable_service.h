@@ -11,7 +11,6 @@
 #include <memory>
 #include <string>
 
-#include "ash/public/interfaces/app_list.mojom.h"
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
@@ -33,7 +32,6 @@ class ChromeAppListItem;
 class CrostiniAppModelBuilder;
 class ExtensionAppModelBuilder;
 class InternalAppModelBuilder;
-class PluginVmAppModelBuilder;
 class Profile;
 
 namespace extensions {
@@ -153,6 +151,9 @@ class AppListSyncableService : public syncer::SyncableService,
   // Returns true if this service was initialized.
   bool IsInitialized() const;
 
+  // Returns true if sync was started.
+  bool IsSyncing() const;
+
   // Registers new observers and makes sure that service is started.
   void AddObserverAndStart(Observer* observer);
   void RemoveObserver(Observer* observer);
@@ -168,6 +169,7 @@ class AppListSyncableService : public syncer::SyncableService,
   const SyncItemMap& sync_items() const { return sync_items_; }
 
   // syncer::SyncableService
+  void WaitUntilReadyToSync(base::OnceClosure done) override;
   syncer::SyncMergeResult MergeDataAndStartSyncing(
       syncer::ModelType type,
       const syncer::SyncDataList& initial_sync_data,
@@ -183,7 +185,7 @@ class AppListSyncableService : public syncer::SyncableService,
   void Shutdown() override;
 
  private:
-  class ModelUpdaterDelegate;
+  class ModelUpdaterObserver;
 
   // Builds the model once ExtensionService is ready.
   void BuildModel();
@@ -302,7 +304,7 @@ class AppListSyncableService : public syncer::SyncableService,
   Profile* profile_;
   extensions::ExtensionSystem* extension_system_;
   std::unique_ptr<AppListModelUpdater> model_updater_;
-  std::unique_ptr<ModelUpdaterDelegate> model_updater_delegate_;
+  std::unique_ptr<ModelUpdaterObserver> model_updater_observer_;
 
   std::unique_ptr<AppServiceAppModelBuilder> app_service_apps_builder_;
   // TODO(crbug.com/826982): delete all the other FooModelBuilder's, after
@@ -311,7 +313,6 @@ class AppListSyncableService : public syncer::SyncableService,
   std::unique_ptr<ArcAppModelBuilder> arc_apps_builder_;
   std::unique_ptr<CrostiniAppModelBuilder> crostini_apps_builder_;
   std::unique_ptr<InternalAppModelBuilder> internal_apps_builder_;
-  std::unique_ptr<PluginVmAppModelBuilder> plugin_vm_apps_builder_;
   std::unique_ptr<syncer::SyncChangeProcessor> sync_processor_;
   std::unique_ptr<syncer::SyncErrorFactory> sync_error_handler_;
   SyncItemMap sync_items_;
@@ -323,6 +324,7 @@ class AppListSyncableService : public syncer::SyncableService,
   bool first_app_list_sync_;
   const bool is_app_service_enabled_;
   std::string oem_folder_name_;
+  base::OnceClosure wait_until_ready_to_sync_cb_;
 
   // List of observers.
   base::ObserverList<Observer>::Unchecked observer_list_;

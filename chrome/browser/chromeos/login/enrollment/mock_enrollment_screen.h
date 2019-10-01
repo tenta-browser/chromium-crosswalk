@@ -16,9 +16,14 @@ namespace chromeos {
 
 class MockEnrollmentScreen : public EnrollmentScreen {
  public:
-  MockEnrollmentScreen(BaseScreenDelegate* base_screen_delegate,
-                       EnrollmentScreenView* view);
+  MockEnrollmentScreen(EnrollmentScreenView* view,
+                       const ScreenExitCallback& exit_callback);
   ~MockEnrollmentScreen() override;
+
+  MOCK_METHOD0(Show, void());
+  MOCK_METHOD0(Hide, void());
+
+  void ExitScreen(Result result);
 };
 
 class MockEnrollmentScreenView : public EnrollmentScreenView {

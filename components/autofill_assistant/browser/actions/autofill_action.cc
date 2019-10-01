@@ -11,11 +11,12 @@
 #include "base/callback.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
-#include "components/autofill/core/browser/autofill_profile.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill_assistant/browser/actions/action_delegate.h"
 #include "components/autofill_assistant/browser/batch_element_checker.h"
 #include "components/autofill_assistant/browser/client_memory.h"
+#include "components/autofill_assistant/browser/client_status.h"
 
 namespace autofill_assistant {
 
@@ -26,8 +27,6 @@ AutofillAction::AutofillAction(const ActionProto& proto)
     prompt_ = proto.use_address().prompt();
     name_ = proto.use_address().name();
     selector_ = Selector(proto.use_address().form_field_element());
-    fill_form_message_ = proto.use_address().strings().fill_form();
-    check_form_message_ = proto.use_address().strings().check_form();
     required_fields_value_status_.resize(
         proto_.use_address().required_fields_size(), UNKNOWN);
   } else {
@@ -36,8 +35,6 @@ AutofillAction::AutofillAction(const ActionProto& proto)
     prompt_ = proto.use_card().prompt();
     name_ = "";
     selector_ = Selector(proto.use_card().form_field_element());
-    fill_form_message_ = proto.use_card().strings().fill_form();
-    check_form_message_ = proto.use_card().strings().check_form();
   }
   DCHECK(!selector_.empty());
 }
@@ -60,11 +57,7 @@ void AutofillAction::InternalProcessAction(
       (!is_autofill_card_ &&
        delegate->GetClientMemory()->selected_address(name_));
   if (!has_valid_data) {
-    // User selected 'Fill manually'.
-    // TODO(crbug.com/806868): Check whether it is still possible to reach this
-    // part of the code.
-    delegate->StopCurrentScriptAndShutdown(fill_form_message_);
-    EndAction(MANUAL_FALLBACK);
+    EndAction(PRECONDITION_FAILED);
     return;
   }
 
@@ -72,12 +65,16 @@ void AutofillAction::InternalProcessAction(
 }
 
 void AutofillAction::EndAction(ProcessedActionStatusProto status) {
+  EndAction(ClientStatus(status));
+}
+
+void AutofillAction::EndAction(const ClientStatus& status) {
   UpdateProcessedAction(status);
   std::move(process_action_callback_).Run(std::move(processed_action_proto_));
 }
 
 void AutofillAction::FillFormWithData(ActionDelegate* delegate) {
-  delegate->ShortWaitForElementExist(
+  delegate->ShortWaitForElement(
       selector_, base::BindOnce(&AutofillAction::OnWaitForElement,
                                 weak_ptr_factory_.GetWeakPtr(),
                                 base::Unretained(delegate)));
@@ -113,8 +110,7 @@ void AutofillAction::OnGetFullCard(ActionDelegate* delegate,
   if (!card) {
     // Gracefully shutdown the script. The empty message forces the use of the
     // default message.
-    delegate->StopCurrentScriptAndShutdown("");
-    EndAction(MANUAL_FALLBACK);
+    EndAction(GET_FULL_CARD_FAILED);
     return;
   }
 
@@ -123,17 +119,16 @@ void AutofillAction::OnGetFullCard(ActionDelegate* delegate,
                                         weak_ptr_factory_.GetWeakPtr()));
 }
 
-void AutofillAction::OnCardFormFilled(bool successful) {
+void AutofillAction::OnCardFormFilled(const ClientStatus& status) {
   // TODO(crbug.com/806868): Implement required fields checking for cards.
-  EndAction(successful ? ACTION_APPLIED : OTHER_ACTION_STATUS);
-  return;
+  EndAction(status);
 }
 
 void AutofillAction::OnAddressFormFilled(ActionDelegate* delegate,
-                                         bool successful) {
+                                         const ClientStatus& status) {
   // In case Autofill failed, we fail the action.
-  if (!successful) {
-    EndAction(OTHER_ACTION_STATUS);
+  if (!status.ok()) {
+    EndAction(status);
     return;
   }
 
@@ -149,7 +144,7 @@ void AutofillAction::CheckRequiredFields(ActionDelegate* delegate,
   }
 
   DCHECK(!batch_element_checker_);
-  batch_element_checker_ = delegate->CreateBatchElementChecker();
+  batch_element_checker_ = std::make_unique<BatchElementChecker>();
   for (int i = 0; i < proto_.use_address().required_fields_size(); i++) {
     auto& required_address_field = proto_.use_address().required_fields(i);
     DCHECK_GT(required_address_field.element().selectors_size(), 0);
@@ -158,13 +153,11 @@ void AutofillAction::CheckRequiredFields(ActionDelegate* delegate,
         base::BindOnce(&AutofillAction::OnGetRequiredFieldValue,
                        weak_ptr_factory_.GetWeakPtr(), i));
   }
-  batch_element_checker_->Run(
-      base::TimeDelta::FromSeconds(0),
-      /* try_done= */ base::DoNothing(),
-      /* all_done= */
+  batch_element_checker_->AddAllDoneCallback(
       base::BindOnce(&AutofillAction::OnCheckRequiredFieldsDone,
                      weak_ptr_factory_.GetWeakPtr(), base::Unretained(delegate),
                      allow_fallback));
+  delegate->RunElementChecks(batch_element_checker_.get());
 }
 
 void AutofillAction::OnGetRequiredFieldValue(int required_fields_index,
@@ -194,9 +187,7 @@ void AutofillAction::OnCheckRequiredFieldsDone(ActionDelegate* delegate,
   }
 
   if (!allow_fallback) {
-    // Validation failed and we don't want to try the fallback, so we stop
-    // the script.
-    delegate->StopCurrentScriptAndShutdown(check_form_message_);
+    // Validation failed and we don't want to try the fallback.
     EndAction(MANUAL_FALLBACK);
     return;
   }
@@ -216,7 +207,6 @@ void AutofillAction::OnCheckRequiredFieldsDone(ActionDelegate* delegate,
     }
   }
   if (!has_fallbacks) {
-    delegate->StopCurrentScriptAndShutdown(check_form_message_);
     EndAction(MANUAL_FALLBACK);
     return;
   }
@@ -262,6 +252,7 @@ void AutofillAction::SetFallbackFieldValuesSequentially(
       Selector(required_fields.Get(required_fields_index).element()),
       fallback_value,
       required_fields.Get(required_fields_index).simulate_key_presses(),
+      required_fields.Get(required_fields_index).delay_in_millisecond(),
       base::BindOnce(&AutofillAction::OnSetFallbackFieldValue,
                      weak_ptr_factory_.GetWeakPtr(), delegate,
                      required_fields_index));
@@ -269,10 +260,9 @@ void AutofillAction::SetFallbackFieldValuesSequentially(
 
 void AutofillAction::OnSetFallbackFieldValue(ActionDelegate* delegate,
                                              int required_fields_index,
-                                             bool successful) {
-  if (!successful) {
+                                             const ClientStatus& status) {
+  if (!status.ok()) {
     // Fallback failed: we stop the script without checking the fields.
-    delegate->StopCurrentScriptAndShutdown(check_form_message_);
     EndAction(MANUAL_FALLBACK);
     return;
   }

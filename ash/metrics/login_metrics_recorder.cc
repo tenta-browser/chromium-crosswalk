@@ -5,7 +5,7 @@
 #include "ash/metrics/login_metrics_recorder.h"
 
 #include "ash/login/ui/lock_screen.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
@@ -142,6 +142,10 @@ void LoginMetricsRecorder::RecordUserShelfButtonClick(
     case ShelfButtonClickTarget::kCancelButton:
       // Should not be called in LOCKED nor LOGIN_PRIMARY states.
       NOTREACHED();
+      break;
+    case ShelfButtonClickTarget::kParentAccessButton:
+      DCHECK(is_lock);
+      LogUserClickOnLock(LockScreenUserClickTarget::kParentAccessButton);
       break;
     case ShelfButtonClickTarget::kTargetCount:
       NOTREACHED();

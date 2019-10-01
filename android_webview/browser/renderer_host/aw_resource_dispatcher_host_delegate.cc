@@ -12,11 +12,12 @@
 #include "android_webview/browser/aw_contents_client_bridge.h"
 #include "android_webview/browser/aw_contents_io_thread_client.h"
 #include "android_webview/browser/aw_resource_context.h"
-#include "android_webview/browser/aw_safe_browsing_resource_throttle.h"
 #include "android_webview/browser/net/aw_web_resource_request.h"
-#include "android_webview/browser/net_helpers.h"
+#include "android_webview/browser/network_service/net_helpers.h"
 #include "android_webview/browser/renderer_host/auto_login_parser.h"
+#include "android_webview/browser/safe_browsing/aw_safe_browsing_resource_throttle.h"
 #include "android_webview/common/url_constants.h"
+#include "base/bind.h"
 #include "base/task/post_task.h"
 #include "components/safe_browsing/android/safe_browsing_api_handler.h"
 #include "components/safe_browsing/features.h"
@@ -112,7 +113,7 @@ class IoThreadClientThrottle : public content::ResourceThrottle {
   void WillStartRequest(bool* defer) override;
   void WillRedirectRequest(const net::RedirectInfo& redirect_info,
                            bool* defer) override;
-  const char* GetNameForLogging() const override;
+  const char* GetNameForLogging() override;
 
   void OnIoThreadClientReady(int new_render_process_id,
                              int new_render_frame_id);
@@ -143,7 +144,7 @@ IoThreadClientThrottle::~IoThreadClientThrottle() {
       RemovePendingThrottleOnIoThread(this);
 }
 
-const char* IoThreadClientThrottle::GetNameForLogging() const {
+const char* IoThreadClientThrottle::GetNameForLogging() {
   return "IoThreadClientThrottle";
 }
 
@@ -153,7 +154,7 @@ IoThreadClientThrottle::GetIoThreadClient() const {
     return AwContentsIoThreadClient::GetServiceWorkerIoThreadClient();
 
   if (render_process_id_ == -1 || render_frame_id_ == -1) {
-    const content::ResourceRequestInfo* resourceRequestInfo =
+    content::ResourceRequestInfo* resourceRequestInfo =
         content::ResourceRequestInfo::ForRequest(request_);
     if (resourceRequestInfo == nullptr) {
       return nullptr;
@@ -244,7 +245,7 @@ void AwResourceDispatcherHostDelegate::RequestBeginning(
     content::AppCacheService* appcache_service,
     ResourceType resource_type,
     std::vector<std::unique_ptr<content::ResourceThrottle>>* throttles) {
-  const content::ResourceRequestInfo* request_info =
+  content::ResourceRequestInfo* request_info =
       content::ResourceRequestInfo::ForRequest(request);
 
   std::unique_ptr<IoThreadClientThrottle> ioThreadThrottle =
@@ -279,7 +280,7 @@ void AwResourceDispatcherHostDelegate::RequestBeginning(
   // webcontents is created.
   throttles->push_back(std::move(ioThreadThrottle));
 
-  bool is_main_frame = resource_type == content::RESOURCE_TYPE_MAIN_FRAME;
+  bool is_main_frame = resource_type == content::ResourceType::kMainFrame;
   throttles->push_back(
       std::make_unique<web_restrictions::WebRestrictionsResourceThrottle>(
           AwBrowserContext::GetDefault()->GetWebRestrictionProvider(),
@@ -289,7 +290,7 @@ void AwResourceDispatcherHostDelegate::RequestBeginning(
 void AwResourceDispatcherHostDelegate::RequestComplete(
     net::URLRequest* request) {
   if (request && !request->status().is_success()) {
-    const content::ResourceRequestInfo* request_info =
+    content::ResourceRequestInfo* request_info =
         content::ResourceRequestInfo::ForRequest(request);
 
     bool safebrowsing_hit = false;
@@ -335,7 +336,7 @@ void AwResourceDispatcherHostDelegate::DownloadStarting(
   if ("GET" != request->method())
     return;
 
-  const content::ResourceRequestInfo* request_info =
+  content::ResourceRequestInfo* request_info =
       content::ResourceRequestInfo::ForRequest(request);
 
   base::PostTaskWithTraits(
@@ -350,7 +351,7 @@ void AwResourceDispatcherHostDelegate::OnResponseStarted(
     net::URLRequest* request,
     content::ResourceContext* resource_context,
     network::ResourceResponse* response) {
-  const content::ResourceRequestInfo* request_info =
+  content::ResourceRequestInfo* request_info =
       content::ResourceRequestInfo::ForRequest(request);
   if (!request_info) {
     DLOG(FATAL) << "Started request without associated info: " <<
@@ -358,7 +359,7 @@ void AwResourceDispatcherHostDelegate::OnResponseStarted(
     return;
   }
 
-  if (request_info->GetResourceType() == content::RESOURCE_TYPE_MAIN_FRAME) {
+  if (request_info->GetResourceType() == content::ResourceType::kMainFrame) {
     // Check for x-auto-login header.
     HeaderData header_data;
     if (ParserHeaderInResponse(request, ALLOW_ANY_REALM, &header_data)) {

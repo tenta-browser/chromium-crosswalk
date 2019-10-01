@@ -27,9 +27,9 @@ import android.widget.TextView;
 import org.chromium.base.TraceEvent;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.compositor.layouts.EmptyOverviewModeObserver;
-import org.chromium.chrome.browser.compositor.layouts.LayoutManager;
-import org.chromium.chrome.browser.compositor.layouts.LayoutManagerChrome;
+import org.chromium.chrome.browser.compositor.layouts.OverviewModeBehavior;
 import org.chromium.chrome.browser.compositor.layouts.content.InvalidationAwareThumbnailProvider;
 import org.chromium.chrome.browser.explore_sites.ExperimentalExploreSitesSection;
 import org.chromium.chrome.browser.explore_sites.ExploreSitesBridge;
@@ -187,19 +187,13 @@ public class NewTabPageLayout extends LinearLayout implements TileGroup.Observer
         insertSiteSectionView();
 
         int variation = ExploreSitesBridge.getVariation();
-        if (ExploreSitesBridge.isEnabled(variation)) {
+        if (ExploreSitesBridge.isEnabled(variation)
+                && !ExploreSitesBridge.isIntegratedWithMostLikely(variation)) {
             mExploreSectionView = ((ViewStub) findViewById(R.id.explore_sites_stub)).inflate();
         } else if (ExploreSitesBridge.isExperimental(variation)) {
             ViewStub exploreStub = findViewById(R.id.explore_sites_stub);
             exploreStub.setLayoutResource(R.layout.experimental_explore_sites_section);
             mExploreSectionView = exploreStub.inflate();
-        }
-
-        // Apply negative margin to the top of the N logo (which would otherwise be the height of
-        // the top toolbar) when Duet is enabled to remove some of the empty space.
-        if (FeatureUtilities.isBottomToolbarEnabled()) {
-            ((MarginLayoutParams) mSearchProviderLogoView.getLayoutParams()).topMargin =
-                    -getResources().getDimensionPixelSize(R.dimen.duet_ntp_logo_top_margin);
         }
     }
 
@@ -239,7 +233,8 @@ public class NewTabPageLayout extends LinearLayout implements TileGroup.Observer
         mSiteSectionViewHolder.bindDataSource(mTileGroup, tileRenderer);
 
         int variation = ExploreSitesBridge.getVariation();
-        if (ExploreSitesBridge.isEnabled(variation)) {
+        if (ExploreSitesBridge.isEnabled(variation)
+                && !ExploreSitesBridge.isIntegratedWithMostLikely(variation)) {
             mExploreSection = new ExploreSitesSection(mExploreSectionView, profile,
                     mManager.getNavigationDelegate(), SuggestionsConfig.getTileStyle(mUiConfig));
         } else if (ExploreSitesBridge.isExperimental(variation)) {
@@ -269,20 +264,19 @@ public class NewTabPageLayout extends LinearLayout implements TileGroup.Observer
         VrModuleProvider.registerVrModeObserver(this);
         if (VrModuleProvider.getDelegate().isInVr()) onEnterVr();
 
-        LayoutManager layoutManager =
-                tab.getActivity().getCompositorViewHolder().getLayoutManager();
-        if (layoutManager instanceof LayoutManagerChrome) {
-            final LayoutManagerChrome chromeLayoutManager = (LayoutManagerChrome) layoutManager;
-            if (chromeLayoutManager.overviewVisible()) {
+        if (tab.getActivity() instanceof ChromeTabbedActivity) {
+            OverviewModeBehavior overviewModeBehavior =
+                    ((ChromeTabbedActivity) tab.getActivity()).getOverviewModeBehavior();
+            if (overviewModeBehavior.overviewVisible()) {
                 mOverviewObserver = new EmptyOverviewModeObserver() {
                     @Override
                     public void onOverviewModeFinishedHiding() {
                         maybeShowIPHOnHomepageTile();
-                        chromeLayoutManager.removeOverviewModeObserver(mOverviewObserver);
+                        overviewModeBehavior.removeOverviewModeObserver(mOverviewObserver);
                         mOverviewObserver = null;
                     }
                 };
-                chromeLayoutManager.addOverviewModeObserver(mOverviewObserver);
+                overviewModeBehavior.addOverviewModeObserver(mOverviewObserver);
             }
         }
 
@@ -448,8 +442,10 @@ public class NewTabPageLayout extends LinearLayout implements TileGroup.Observer
         mSiteSectionView = SiteSection.inflateSiteSection(this);
         ViewGroup.LayoutParams layoutParams = mSiteSectionView.getLayoutParams();
         layoutParams.width = ViewGroup.LayoutParams.WRAP_CONTENT;
-        // If the explore sites section exists, then space it more closely.
-        if (ExploreSitesBridge.isEnabled(ExploreSitesBridge.getVariation())) {
+        // If the explore sites section exists as its own section, then space it more closely.
+        int variation = ExploreSitesBridge.getVariation();
+        if (ExploreSitesBridge.isEnabled(variation)
+                && !ExploreSitesBridge.isIntegratedWithMostLikely(variation)) {
             ((MarginLayoutParams) layoutParams).bottomMargin =
                     getResources().getDimensionPixelOffset(
                             R.dimen.tile_grid_layout_vertical_spacing);
@@ -731,6 +727,9 @@ public class NewTabPageLayout extends LinearLayout implements TileGroup.Observer
         }
     }
 
+    void setSearchProviderTopMargin(int topMargin) {
+        ((MarginLayoutParams) mSearchProviderLogoView.getLayoutParams()).topMargin = topMargin;
+    }
     /**
      * @return Whether the search box view is scrolled off the screen.
      */
@@ -909,9 +908,9 @@ public class NewTabPageLayout extends LinearLayout implements TileGroup.Observer
         VrModuleProvider.unregisterVrModeObserver(this);
         // Need to null-check compositor view holder and layout manager since they might've
         // been cleared by now.
-        if (mOverviewObserver != null && mTab.getActivity().getCompositorViewHolder() != null
-                && mTab.getActivity().getCompositorViewHolder().getLayoutManager() != null) {
-            ((LayoutManagerChrome) mTab.getActivity().getCompositorViewHolder().getLayoutManager())
+        if (mOverviewObserver != null && mTab.getActivity() instanceof ChromeTabbedActivity) {
+            ((ChromeTabbedActivity) mTab.getActivity())
+                    .getOverviewModeBehavior()
                     .removeOverviewModeObserver(mOverviewObserver);
             mOverviewObserver = null;
         }

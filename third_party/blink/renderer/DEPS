@@ -1,5 +1,7 @@
 include_rules = [
     "+base/auto_reset.h",
+    "+base/bind.h",
+    "+base/bind_helpers.h",
     "+base/bit_cast.h",
     "+base/callback.h",
     "+base/callback_forward.h",
@@ -8,6 +10,7 @@ include_rules = [
     "+base/feature_list.h",
     "+base/format_macros.h",
     "+base/gtest_prod_util.h",
+    "+base/hash/hash.h",
     "+base/location.h",
     "+base/logging.h",
     "+base/macros.h",
@@ -18,6 +21,7 @@ include_rules = [
     "+base/metrics/field_trial_params.h",
     "+base/metrics/single_sample_metrics.h",
     "+base/numerics/checked_math.h",
+    "+base/numerics/clamped_math.h",
     "+base/numerics/safe_conversions.h",
     "+base/optional.h",
     "+base/rand_util.h",
@@ -34,9 +38,15 @@ include_rules = [
     "+base/test/test_simple_task_runner.h",
     "+base/thread_annotations.h",
     "+base/threading/thread_checker.h",
+    "+base/time/default_tick_clock.h",
     "+base/time/time.h",
     "+base/timer/elapsed_timer.h",
+    "+base/trace_event/memory_dump_manager.h",
+    "+base/trace_event/memory_dump_provider.h",
+    "+base/trace_event/trace_event.h",
+    "+base/timer/timer.h",
     "+build",
+    "+components/crash/core/common/crash_key.h",
     "+services/network/public/mojom",
     "+services/service_manager/public/cpp/connector.h",
     "+services/service_manager/public/cpp/interface_provider.h",
@@ -44,11 +54,8 @@ include_rules = [
     "+testing/gtest/include/gtest",
     "+third_party/blink/public/platform",
     "+third_party/blink/renderer/platform",
+    "+ui/events/keycodes/dom",
     "+v8",
-
-    # We are moving from WTF_MAKE_NONCOPYABLE to DISALLOW_COPY_AND_ASSIGN. Stop
-    # new dependencies on WTF_MAKE_NONCOPYABLE.
-    "!third_party/blink/renderer/platform/wtf/noncopyable.h",
 ]
 
 skip_child_includes = [

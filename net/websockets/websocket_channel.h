@@ -33,6 +33,7 @@ namespace net {
 
 class HttpRequestHeaders;
 class IOBuffer;
+class IPEndPoint;
 class NetLogWithSource;
 class URLRequest;
 class URLRequestContext;
@@ -102,7 +103,7 @@ class NET_EXPORT WebSocketChannel {
   // Calling this function may result in synchronous calls to |event_interface_|
   // which may result in this object being deleted. In that case, the return
   // value will be CHANNEL_DELETED.
-  ChannelState SendFlowControl(int64_t quota) WARN_UNUSED_RESULT;
+  ChannelState AddReceiveFlowControlQuota(int64_t quota) WARN_UNUSED_RESULT;
 
   // Starts the closing handshake for a client-initiated shutdown of the
   // connection. There is no API to close the connection without a closing
@@ -207,14 +208,15 @@ class NET_EXPORT WebSocketChannel {
   void OnSSLCertificateError(
       std::unique_ptr<WebSocketEventInterface::SSLErrorCallbacks>
           ssl_error_callbacks,
+      int net_error,
       const SSLInfo& ssl_info,
       bool fatal);
 
   // Authentication request from WebSocketStream::CreateAndConnectStream().
   // Forwards the request to the event interface.
-  int OnAuthRequired(scoped_refptr<AuthChallengeInfo> auth_info,
+  int OnAuthRequired(const AuthChallengeInfo& auth_info,
                      scoped_refptr<HttpResponseHeaders> response_headers,
-                     const HostPortPair& host_port_pair,
+                     const IPEndPoint& remote_endpoint,
                      base::OnceCallback<void(const AuthCredentials*)> callback,
                      base::Optional<AuthCredentials>* credentials);
 

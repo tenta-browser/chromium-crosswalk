@@ -10,8 +10,8 @@
 #include "base/callback_forward.h"
 #include "chrome/browser/download/download_confirmation_reason.h"
 #include "chrome/browser/download/download_confirmation_result.h"
-#include "chrome/browser/download/download_path_reservation_tracker.h"
 #include "components/download/public/common/download_danger_type.h"
+#include "components/download/public/common/download_path_reservation_tracker.h"
 
 namespace base {
 class FilePath;
@@ -25,6 +25,10 @@ class DownloadItem;
 // DownloadTargetDeterminer and is expected to outlive it.
 class DownloadTargetDeterminerDelegate {
  public:
+  // Callback to be invoked after ShouldBlockDownload() completes. The
+  // |should_block| bool represents whether the download should be aborted.
+  typedef base::Callback<void(bool should_block)> ShouldBlockDownloadCallback;
+
   // Callback to be invoked after NotifyExtensions() completes. The
   // |new_virtual_path| should be set to a new path if an extension wishes to
   // override the download path. |conflict_action| should be set to the action
@@ -33,12 +37,13 @@ class DownloadTargetDeterminerDelegate {
   // ignored.
   typedef base::Callback<void(
       const base::FilePath& new_virtual_path,
-      DownloadPathReservationTracker::FilenameConflictAction conflict_action)>
-  NotifyExtensionsCallback;
+      download::DownloadPathReservationTracker::FilenameConflictAction
+          conflict_action)>
+      NotifyExtensionsCallback;
 
   // Callback to be invoked when ReserveVirtualPath() completes.
   using ReservedPathCallback =
-      DownloadPathReservationTracker::ReservedPathCallback;
+      download::DownloadPathReservationTracker::ReservedPathCallback;
 
   // Callback to be invoked when RequestConfirmation() completes.
   // |virtual_path|: The path chosen by the user. If the user cancels the file
@@ -66,6 +71,14 @@ class DownloadTargetDeterminerDelegate {
   // determined, it should be set to the empty string.
   typedef base::Callback<void(const std::string&)> GetFileMimeTypeCallback;
 
+  // Checks whether the download should be blocked based on data available
+  // such as filename. Functionality used for active content blocking, not Safe
+  // Browsing.
+  virtual void ShouldBlockDownload(
+      download::DownloadItem* download,
+      const base::FilePath& virtual_path,
+      const ShouldBlockDownloadCallback& callback) = 0;
+
   // Notifies extensions of the impending filename determination. |virtual_path|
   // is the current suggested virtual path. The |callback| should be invoked to
   // indicate whether any extensions wish to override the path.
@@ -90,7 +103,8 @@ class DownloadTargetDeterminerDelegate {
       download::DownloadItem* download,
       const base::FilePath& virtual_path,
       bool create_directory,
-      DownloadPathReservationTracker::FilenameConflictAction conflict_action,
+      download::DownloadPathReservationTracker::FilenameConflictAction
+          conflict_action,
       const ReservedPathCallback& callback) = 0;
 
   // Display a prompt to the user requesting that a download target be chosen.

@@ -11,10 +11,9 @@ import android.support.annotation.Nullable;
 import android.view.View;
 import android.view.ViewGroup;
 
-import org.chromium.base.ThreadUtils;
-import org.chromium.chrome.R;
 import org.chromium.chrome.browser.widget.bottomsheet.BottomSheet.BottomSheetContent;
 import org.chromium.chrome.browser.widget.bottomsheet.BottomSheet.ContentPriority;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 /** A simple sheet content to test with. This only displays two empty white views. */
 public class TestBottomSheetContent implements BottomSheetContent {
@@ -27,13 +26,19 @@ public class TestBottomSheetContent implements BottomSheetContent {
     /** This content's priority. */
     private @ContentPriority int mPriority;
 
+    /** Whether this content is browser specific. */
+    private boolean mHasCustomLifecycle;
+
     /**
      * @param context A context to inflate views with.
      * @param priority The content's priority.
+     * @param hasCustomLifecycle Whether the content is browser specific.
      */
-    public TestBottomSheetContent(Context context, @ContentPriority int priority) {
+    public TestBottomSheetContent(
+            Context context, @ContentPriority int priority, boolean hasCustomLifecycle) {
         mPriority = priority;
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        mHasCustomLifecycle = hasCustomLifecycle;
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             mToolbarView = new View(context);
             ViewGroup.LayoutParams params =
                     new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 100);
@@ -83,22 +88,32 @@ public class TestBottomSheetContent implements BottomSheetContent {
     }
 
     @Override
+    public boolean hasCustomLifecycle() {
+        return mHasCustomLifecycle;
+    }
+
+    @Override
+    public boolean setContentSizeListener(@Nullable BottomSheet.ContentSizeListener listener) {
+        return false;
+    }
+
+    @Override
     public int getSheetContentDescriptionStringId() {
-        return R.string.contextual_suggestions_button_description;
+        return android.R.string.copy;
     }
 
     @Override
     public int getSheetHalfHeightAccessibilityStringId() {
-        return R.string.contextual_suggestions_sheet_opened_half;
+        return android.R.string.copy;
     }
 
     @Override
     public int getSheetFullHeightAccessibilityStringId() {
-        return R.string.contextual_suggestions_sheet_opened_full;
+        return android.R.string.copy;
     }
 
     @Override
     public int getSheetClosedAccessibilityStringId() {
-        return R.string.contextual_suggestions_sheet_closed;
+        return android.R.string.copy;
     }
 }

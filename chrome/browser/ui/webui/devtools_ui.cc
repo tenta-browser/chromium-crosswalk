@@ -7,6 +7,7 @@
 #include <list>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
@@ -40,8 +41,7 @@ using content::WebContents;
 namespace {
 
 std::string PathWithoutParams(const std::string& path) {
-  return GURL(std::string("chrome-devtools://devtools/") + path)
-      .path().substr(1);
+  return GURL(std::string("devtools://devtools/") + path).path().substr(1);
 }
 
 scoped_refptr<base::RefCountedMemory> CreateNotFoundResponse() {
@@ -78,7 +78,7 @@ std::string GetMimeTypeForPath(const std::string& path) {
   return "text/html";
 }
 
-// An URLDataSource implementation that handles chrome-devtools://devtools/
+// An URLDataSource implementation that handles devtools://devtools/
 // requests. Three types of requests could be handled based on the URL path:
 // 1. /bundled/: bundled DevTools frontend is served.
 // 2. /remote/: remote DevTools frontend is served from App Engine.

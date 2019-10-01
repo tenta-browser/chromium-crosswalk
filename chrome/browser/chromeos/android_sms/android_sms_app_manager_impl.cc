@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "chrome/browser/chromeos/android_sms/android_sms_app_setup_controller.h"
 #include "chrome/browser/chromeos/android_sms/android_sms_urls.h"
@@ -158,11 +159,8 @@ void AndroidSmsAppManagerImpl::OnSetUpNewAppResult(
   const extensions::Extension* new_pwa = setup_controller_->GetPwa(
       GetAndroidMessagesURL(true /* use_install_url */));
 
-  // If the installation succeeded, a PWA should exist at the new URL.
-  DCHECK_EQ(success, new_pwa != nullptr);
-
-  // If the app failed to install, it should no longer be launched.
-  if (!success) {
+  // If the app failed to install or the PWA does not exist, do not launch.
+  if (!success || !new_pwa) {
     is_app_launch_pending_ = false;
     return;
   }

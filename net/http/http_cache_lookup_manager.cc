@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/values.h"
 #include "net/base/load_flags.h"
 
@@ -13,13 +14,13 @@ namespace net {
 
 // Returns parameters associated with the start of a server push lookup
 // transaction.
-std::unique_ptr<base::Value> NetLogPushLookupTransactionCallback(
+base::Value NetLogPushLookupTransactionCallback(
     const NetLogSource& net_log,
     const ServerPushDelegate::ServerPushHelper* push_helper,
     NetLogCaptureMode /* capture_mode */) {
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-  net_log.AddToEventParameters(dict.get());
-  dict->SetString("push_url", push_helper->GetURL().possibly_invalid_spec());
+  base::DictionaryValue dict;
+  net_log.AddToEventParameters(&dict);
+  dict.SetString("push_url", push_helper->GetURL().possibly_invalid_spec());
   return std::move(dict);
 }
 

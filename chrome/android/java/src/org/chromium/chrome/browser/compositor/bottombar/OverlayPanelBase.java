@@ -5,6 +5,9 @@
 package org.chromium.chrome.browser.compositor.bottombar;
 
 import android.content.Context;
+import android.content.res.Resources;
+import android.graphics.drawable.Drawable;
+import android.support.annotation.ColorInt;
 import android.support.annotation.Nullable;
 import android.view.ViewGroup;
 
@@ -18,16 +21,15 @@ import org.chromium.chrome.browser.util.MathUtils;
 import org.chromium.ui.base.LocalizationUtils;
 import org.chromium.ui.resources.dynamics.DynamicResourceLoader;
 
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
-
 /**
  * Base abstract class for the Overlay Panel.
  */
 abstract class OverlayPanelBase {
     /** The side padding of Bar icons in dps. */
     private static final float BAR_ICON_SIDE_PADDING_DP = 12.f;
+
+    /** The top padding of Bar icons in dps. */
+    private static final float BAR_ICON_TOP_PADDING_DP = 10.f;
 
     /** The height of the Bar's border in dps. */
     private static final float BAR_BORDER_HEIGHT_DP = 1.f;
@@ -106,6 +108,15 @@ abstract class OverlayPanelBase {
     /** The height of the Bar when the Panel is maximized, in dps. */
     private final float mBarHeightMaximized;
 
+    /** The background color of the Bar. */
+    private final @ColorInt int mBarBackgroundColor;
+
+    /** The tint used for icons (e.g. arrow icon, close icon). */
+    private final @ColorInt int mIconColor;
+
+    /** The tint used for drag handlebar. */
+    private final @ColorInt int mDragHandlebarColor;
+
     /**
      * The Y coordinate to apply to the Base Page in order to keep the selection
      * in view when the Overlay Panel is in its EXPANDED state.
@@ -116,20 +127,7 @@ abstract class OverlayPanelBase {
     protected final Context mContext;
 
     /** The current state of the Overlay Panel. */
-    private PanelState mPanelState = PanelState.UNDEFINED;
-
-    /**
-     * Valid previous states for the Panel.
-     */
-    protected static final Map<PanelState, PanelState> PREVIOUS_STATES;
-    static {
-        Map<PanelState, PanelState> states = new HashMap<>();
-        // Pairs are of the form <Current, Previous>.
-        states.put(PanelState.PEEKED, PanelState.CLOSED);
-        states.put(PanelState.EXPANDED, PanelState.PEEKED);
-        states.put(PanelState.MAXIMIZED, PanelState.EXPANDED);
-        PREVIOUS_STATES = Collections.unmodifiableMap(states);
-    }
+    private @PanelState int mPanelState = PanelState.UNDEFINED;
 
     // ============================================================================================
     // Constructor
@@ -149,10 +147,18 @@ abstract class OverlayPanelBase {
         mBarHeightExpanded = Math.round((mBarHeightPeeking + mBarHeightMaximized) / 2.f);
 
         mBarMarginSide = BAR_ICON_SIDE_PADDING_DP;
+        mBarMarginTop = BAR_ICON_TOP_PADDING_DP;
         mProgressBarHeight = PROGRESS_BAR_HEIGHT_DP;
         mBarBorderHeight = BAR_BORDER_HEIGHT_DP;
 
         mBarHeight = mBarHeightPeeking;
+
+        final Resources resources = mContext.getResources();
+        mBarBackgroundColor = ApiCompatibilityUtils.getColor(
+                resources, R.color.overlay_panel_bar_background_color);
+        mIconColor = ApiCompatibilityUtils.getColor(resources, R.color.default_icon_color);
+        mDragHandlebarColor =
+                ApiCompatibilityUtils.getColor(resources, R.color.drag_handlebar_color);
     }
 
     // ============================================================================================
@@ -166,6 +172,9 @@ abstract class OverlayPanelBase {
         return mContext;
     }
 
+    /** Tracks whether the panel has been hidden. {@See #showPanel, #hidePanel}.  */
+    protected boolean mPanelHidden;
+
     /**
      * Animates the Overlay Panel to its closed state.
      * @param reason The reason for the change of panel state.
@@ -178,6 +187,12 @@ abstract class OverlayPanelBase {
      * @param reason The reason the panel is closing.
      */
     protected abstract void onClosed(@StateChangeReason int reason);
+
+    /** Temporarily hides a peeking panel for the given reason.  Does nothing if not peeking. */
+    public abstract void hidePanel(@StateChangeReason int reason);
+
+    /** Shows a previously hidden panel again.  {@See #hidePanel}. */
+    public abstract void showPanel(@StateChangeReason int reason);
 
     /**
      * TODO(mdjones): This method should be removed from this class.
@@ -391,6 +406,7 @@ abstract class OverlayPanelBase {
     // Panel Bar states
     // --------------------------------------------------------------------------------------------
     private float mBarMarginSide;
+    private float mBarMarginTop;
     private float mBarHeight;
     private boolean mIsBarBorderVisible;
     private float mBarBorderHeight;
@@ -403,11 +419,20 @@ abstract class OverlayPanelBase {
     private float mCloseIconOpacity;
     private float mCloseIconWidth;
 
+    private float mOpenTabIconWidth;
+
     /**
      * @return The side margin of the Bar.
      */
     public float getBarMarginSide() {
         return mBarMarginSide;
+    }
+
+    /**
+     * @return The top margin of the Bar.
+     */
+    public float getBarMarginTop() {
+        return mBarMarginTop;
     }
 
     /**
@@ -443,6 +468,27 @@ abstract class OverlayPanelBase {
      */
     public float getBarShadowOpacity() {
         return mBarShadowOpacity;
+    }
+
+    /**
+     * @return The background color of the Bar.
+     */
+    public int getBarBackgroundColor() {
+        return mBarBackgroundColor;
+    }
+
+    /**
+     * @return The tint used for icons.
+     */
+    public int getIconColor() {
+        return mIconColor;
+    }
+
+    /**
+     * @return The tint used for drag handlebar.
+     */
+    public int getDragHandlebarColor() {
+        return mDragHandlebarColor;
     }
 
     /**
@@ -485,6 +531,30 @@ abstract class OverlayPanelBase {
             return getOffsetX() + getBarMarginSide();
         } else {
             return getOffsetX() + getWidth() - getBarMarginSide() - getCloseIconDimension();
+        }
+    }
+
+    /**
+     * @return The width/height of the open tab icon.
+     */
+    public float getOpenTabIconDimension() {
+        if (mOpenTabIconWidth == 0) {
+            Drawable icon = ApiCompatibilityUtils.getDrawable(
+                    mContext.getResources(), R.drawable.open_in_new_tab);
+            mOpenTabIconWidth = icon.getIntrinsicWidth() * mPxToDp;
+        }
+        return mOpenTabIconWidth;
+    }
+
+    /**
+     * @return The left X coordinate of the open new tab icon.
+     */
+    public float getOpenTabIconX() {
+        float offset = getCloseIconDimension() + getBarMarginSide();
+        if (LocalizationUtils.isLayoutRtl()) {
+            return getCloseIconX() + offset;
+        } else {
+            return getCloseIconX() - offset;
         }
     }
 
@@ -567,7 +637,7 @@ abstract class OverlayPanelBase {
     /**
      * @return The panel's state.
      */
-    public PanelState getPanelState() {
+    public @PanelState int getPanelState() {
         return mPanelState;
     }
 
@@ -576,7 +646,9 @@ abstract class OverlayPanelBase {
      * @param state The panel state to transition to.
      * @param reason The reason for a change in the panel's state.
      */
-    protected void setPanelState(PanelState state, @StateChangeReason int reason) {
+    protected void setPanelState(@PanelState int state, @StateChangeReason int reason) {
+        if (mPanelHidden) return;
+
         if (state == PanelState.CLOSED) {
             mHeight = 0;
             onClosed(reason);
@@ -596,7 +668,7 @@ abstract class OverlayPanelBase {
      * @param state A given state.
      * @return Whether the panel supports a given state.
      */
-    protected boolean isSupportedState(PanelState state) {
+    protected boolean isSupportedState(@PanelState int state) {
         return true;
     }
 
@@ -606,7 +678,7 @@ abstract class OverlayPanelBase {
      * @param state The given state.
      * @return Whether the state is valid.
      */
-    private boolean isValidUiState(PanelState state) {
+    private boolean isValidUiState(@PanelState int state) {
         // TODO(pedrosimonetti): consider removing the UNDEFINED state
         // which would allow removing this method.
         return isSupportedState(state) && state != PanelState.UNDEFINED;
@@ -615,7 +687,7 @@ abstract class OverlayPanelBase {
     /**
      * @return The maximum state supported by the panel.
      */
-    private PanelState getMaximumSupportedState() {
+    private @PanelState int getMaximumSupportedState() {
         if (isSupportedState(PanelState.MAXIMIZED)) {
             return PanelState.MAXIMIZED;
         } else if (isSupportedState(PanelState.EXPANDED)) {
@@ -626,12 +698,19 @@ abstract class OverlayPanelBase {
     }
 
     /**
-     * @return The {@code PanelState} that is before the |state| in the order of states.
+     * Gets the panel's state that is before the given {@code PanelState} in the order of states.
+     * @param state The given state.
+     * @return The previous state.
      */
-    private PanelState getPreviousPanelState(PanelState state) {
-        PanelState prevState = PREVIOUS_STATES.get(state);
-        if (!isSupportedState(PanelState.EXPANDED)) {
-            prevState = PREVIOUS_STATES.get(prevState);
+    private @PanelState int getPreviousPanelState(@PanelState int state) {
+        @Nullable
+        @PanelState
+        Integer prevState =
+                state >= PanelState.PEEKED && state <= PanelState.MAXIMIZED ? state - 1 : null;
+        if (prevState != null && !isSupportedState(PanelState.EXPANDED)) {
+            prevState = prevState >= PanelState.PEEKED && prevState <= PanelState.MAXIMIZED
+                    ? prevState - 1
+                    : null;
         }
         return prevState != null ? prevState : PanelState.UNDEFINED;
     }
@@ -646,8 +725,10 @@ abstract class OverlayPanelBase {
      * @param state The state whose height will be calculated.
      * @return The height of the Overlay Panel in dps for a given |state|.
      */
-    public float getPanelHeightFromState(@Nullable PanelState state) {
-        if (state == PanelState.PEEKED) {
+    public float getPanelHeightFromState(@Nullable @PanelState Integer state) {
+        if (state == null) {
+            return 0;
+        } else if (state == PanelState.PEEKED) {
             return getPeekedHeight();
         } else if (state == PanelState.EXPANDED) {
             return getExpandedHeight();
@@ -712,14 +793,17 @@ abstract class OverlayPanelBase {
      * @param velocity The velocity of the swipe if applicable. The swipe is upward if less than 0.
      * @return The nearest panel state.
      */
-    protected PanelState findNearestPanelStateFromHeight(float desiredPanelHeight, float velocity) {
+    protected @PanelState int findNearestPanelStateFromHeight(
+            float desiredPanelHeight, float velocity) {
         // If the panel was flung hard enough to make the desired height negative, it's closed.
         if (desiredPanelHeight < 0) return PanelState.CLOSED;
 
         // First, find the two states that the desired panel height is between.
-        PanelState nextState = PanelState.values()[0];
-        PanelState prevState = nextState;
-        for (PanelState state : PanelState.values()) {
+        @PanelState
+        int nextState = PanelState.UNDEFINED;
+        @PanelState
+        int prevState = nextState;
+        for (@PanelState int state = 0; state < PanelState.NUM_ENTRIES; state++) {
             if (!isValidUiState(state)) continue;
             prevState = nextState;
             nextState = state;
@@ -769,7 +853,7 @@ abstract class OverlayPanelBase {
      * @param state The Panel state.
      * @return Whether the Panel height matches the one from the given state.
      */
-    protected boolean doesPanelHeightMatchState(PanelState state) {
+    protected boolean doesPanelHeightMatchState(@PanelState int state) {
         return state == getPanelState()
                 && MathUtils.areFloatsEqual(getHeight(), getPanelHeightFromState(state));
     }
@@ -784,8 +868,10 @@ abstract class OverlayPanelBase {
      * @param height The Overlay Panel height.
      */
     private void updatePanelForHeight(float height) {
-        PanelState endState = findLargestPanelStateFromHeight(height);
-        PanelState startState = getPreviousPanelState(endState);
+        @PanelState
+        int endState = findLargestPanelStateFromHeight(height);
+        @PanelState
+        int startState = getPreviousPanelState(endState);
         float percentage = getStateCompletion(height, startState, endState);
 
         updatePanelSize(height);
@@ -825,12 +911,13 @@ abstract class OverlayPanelBase {
      * @param panelHeight The height to compare to.
      * @return The panel state which is being transitioned to/from.
      */
-    private PanelState findLargestPanelStateFromHeight(float panelHeight) {
-        PanelState stateFound = PanelState.CLOSED;
+    private @PanelState int findLargestPanelStateFromHeight(float panelHeight) {
+        @PanelState
+        int stateFound = PanelState.CLOSED;
 
         // Iterate over all states and find the largest one which is being
         // transitioned to/from.
-        for (PanelState state : PanelState.values()) {
+        for (@PanelState int state = 0; state < PanelState.NUM_ENTRIES; state++) {
             if (!isValidUiState(state)) continue;
             if (panelHeight <= getPanelHeightFromState(state)) {
                 stateFound = state;
@@ -851,7 +938,8 @@ abstract class OverlayPanelBase {
      * @param endState The final state of the Panel.
      * @return The completion percentage.
      */
-    private float getStateCompletion(float height, PanelState startState, PanelState endState) {
+    private float getStateCompletion(
+            float height, @PanelState int startState, @PanelState int endState) {
         float startSize = getPanelHeightFromState(startState);
         float endSize = getPanelHeightFromState(endState);
         // NOTE(pedrosimonetti): Handle special case from PanelState.UNDEFINED

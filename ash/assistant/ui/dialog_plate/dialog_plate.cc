@@ -8,6 +8,7 @@
 #include "ash/assistant/ui/assistant_ui_constants.h"
 #include "ash/assistant/ui/assistant_view_delegate.h"
 #include "ash/assistant/ui/base/assistant_button.h"
+#include "ash/assistant/ui/dialog_plate/mic_view.h"
 #include "ash/assistant/util/animation_util.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/strings/grit/ash_strings.h"
@@ -73,14 +74,6 @@ DialogPlate::~DialogPlate() {
   delegate_->RemoveInteractionModelObserver(this);
 }
 
-void DialogPlate::AddObserver(DialogPlateObserver* observer) {
-  observers_.AddObserver(observer);
-}
-
-void DialogPlate::RemoveObserver(DialogPlateObserver* observer) {
-  observers_.RemoveObserver(observer);
-}
-
 const char* DialogPlate::GetClassName() const {
   return "DialogPlate";
 }
@@ -94,7 +87,7 @@ int DialogPlate::GetHeightForWidth(int width) const {
 }
 
 void DialogPlate::ButtonPressed(views::Button* sender, const ui::Event& event) {
-  OnButtonPressed(static_cast<AssistantButtonId>(sender->id()));
+  OnButtonPressed(static_cast<AssistantButtonId>(sender->GetID()));
 }
 
 bool DialogPlate::HandleKeyEvent(views::Textfield* textfield,
@@ -115,9 +108,8 @@ bool DialogPlate::HandleKeyEvent(views::Textfield* textfield,
       // Only non-empty trimmed text is consider a valid contents commit.
       // Anything else will simply result in the DialogPlate being cleared.
       if (!trimmed_text.empty()) {
-        for (DialogPlateObserver& observer : observers_)
-          observer.OnDialogPlateContentsCommitted(
-              base::UTF16ToUTF8(trimmed_text));
+        delegate_->OnDialogPlateContentsCommitted(
+            base::UTF16ToUTF8(trimmed_text));
       }
 
       textfield_->SetText(base::string16());
@@ -268,7 +260,7 @@ void DialogPlate::InitLayout() {
           gfx::Insets(0, 0, 0, kRightPaddingDip)));
 
   layout_manager->set_cross_axis_alignment(
-      views::BoxLayout::CrossAxisAlignment::CROSS_AXIS_ALIGNMENT_CENTER);
+      views::BoxLayout::CrossAxisAlignment::kCenter);
 
   // Input modality layout container.
   input_modality_layout_container_ = new views::View();
@@ -310,7 +302,7 @@ void DialogPlate::InitKeyboardLayoutContainer() {
               gfx::Insets(0, kHorizontalPaddingDip)));
 
   layout_manager->set_cross_axis_alignment(
-      views::BoxLayout::CrossAxisAlignment::CROSS_AXIS_ALIGNMENT_CENTER);
+      views::BoxLayout::CrossAxisAlignment::kCenter);
 
   gfx::FontList font_list =
       assistant::ui::GetDefaultFontList().DeriveWithSizeDelta(2);
@@ -327,7 +319,7 @@ void DialogPlate::InitKeyboardLayoutContainer() {
       l10n_util::GetStringUTF16(IDS_ASH_ASSISTANT_DIALOG_PLATE_HINT);
   textfield_->set_placeholder_text(textfield_hint);
   textfield_->SetAccessibleName(textfield_hint);
-  textfield_->set_placeholder_text_color(kTextColorHint);
+  textfield_->set_placeholder_text_color(kTextColorSecondary);
   textfield_->SetTextColor(kTextColorPrimary);
   keyboard_layout_container_->AddChildView(textfield_);
 
@@ -356,7 +348,7 @@ void DialogPlate::InitVoiceLayoutContainer() {
           gfx::Insets(0, kLeftPaddingDip, 0, 0)));
 
   layout_manager->set_cross_axis_alignment(
-      views::BoxLayout::CrossAxisAlignment::CROSS_AXIS_ALIGNMENT_CENTER);
+      views::BoxLayout::CrossAxisAlignment::kCenter);
 
   // Keyboard input toggle.
   keyboard_input_toggle_ =
@@ -373,7 +365,7 @@ void DialogPlate::InitVoiceLayoutContainer() {
 
   // Animated voice input toggle.
   animated_voice_input_toggle_ =
-      new ActionView(this, delegate_, AssistantButtonId::kVoiceInputToggle);
+      new MicView(this, delegate_, AssistantButtonId::kVoiceInputToggle);
   animated_voice_input_toggle_->SetAccessibleName(
       l10n_util::GetStringUTF16(IDS_ASH_ASSISTANT_DIALOG_PLATE_MIC_ACCNAME));
   voice_layout_container_->AddChildView(animated_voice_input_toggle_);
@@ -388,9 +380,7 @@ void DialogPlate::InitVoiceLayoutContainer() {
 }
 
 void DialogPlate::OnButtonPressed(AssistantButtonId id) {
-  for (DialogPlateObserver& observer : observers_)
-    observer.OnDialogPlateButtonPressed(id);
-
+  delegate_->OnDialogPlateButtonPressed(id);
   textfield_->SetText(base::string16());
 }
 
@@ -419,7 +409,10 @@ bool DialogPlate::OnAnimationEnded(
       break;
   }
 
-  SetFocus(input_modality);
+  // Only set focus if Assistant UI is visible. Otherwise we may accidentally
+  // steal focus from another window. (See crbug/969983).
+  if (delegate_->GetUiModel()->visibility() == AssistantVisibility::kVisible)
+    SetFocus(input_modality);
 
   // We return false so that the animation observer will not destroy itself.
   return false;

@@ -13,7 +13,7 @@ namespace {
 
 TaskQueue::QueuePriority ToTaskQueuePriority(
     SequenceManagerTestDescription::QueuePriority priority) {
-  static_assert(TaskQueue::kQueuePriorityCount == 6,
+  static_assert(TaskQueue::kQueuePriorityCount == 7,
                 "Number of task queue priorities has changed in "
                 "TaskQueue::QueuePriority.");
 
@@ -27,6 +27,8 @@ TaskQueue::QueuePriority ToTaskQueuePriority(
       return TaskQueue::kNormalPriority;
     case SequenceManagerTestDescription::HIGH:
       return TaskQueue::kHighPriority;
+    case SequenceManagerTestDescription::VERY_HIGH:
+      return TaskQueue::kVeryHighPriority;
     case SequenceManagerTestDescription::HIGHEST:
       return TaskQueue::kHighestPriority;
     case SequenceManagerTestDescription::CONTROL:
@@ -246,7 +248,7 @@ void ThreadManager::ExecuteSetQueueEnabledAction(
   }
 
   size_t voter_index = action.voter_id() % chosen_task_queue->voters.size();
-  chosen_task_queue->voters[voter_index]->SetQueueEnabled(action.enabled());
+  chosen_task_queue->voters[voter_index]->SetVoteToEnable(action.enabled());
 }
 
 void ThreadManager::ExecuteCreateQueueVoterAction(

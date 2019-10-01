@@ -51,7 +51,8 @@ InspectorEmulationAgent::InspectorEmulationAgent(
       virtual_time_policy_(&agent_state_, /*default_value=*/WTF::String()),
       virtual_time_task_starvation_count_(&agent_state_, /*default_value=*/0),
       wait_for_navigation_(&agent_state_, /*default_value=*/false),
-      emulate_focus_(&agent_state_, /*default_value=*/false) {}
+      emulate_focus_(&agent_state_, /*default_value=*/false),
+      timezone_id_override_(&agent_state_, /*default_value=*/WTF::String()) {}
 
 InspectorEmulationAgent::~InspectorEmulationAgent() = default;
 
@@ -89,6 +90,9 @@ void InspectorEmulationAgent::Restore() {
     }
   }
   setFocusEmulationEnabled(emulate_focus_.Get());
+
+  if (!timezone_id_override_.Get().IsNull())
+    setTimezoneOverride(timezone_id_override_.Get());
 
   if (virtual_time_policy_.Get().IsNull())
     return;
@@ -128,7 +132,7 @@ void InspectorEmulationAgent::Restore() {
 
 Response InspectorEmulationAgent::disable() {
   if (enabled_)
-    instrumenting_agents_->removeInspectorEmulationAgent(this);
+    instrumenting_agents_->RemoveInspectorEmulationAgent(this);
   setUserAgentOverride(String(), protocol::Maybe<String>(),
                        protocol::Maybe<String>());
   if (!web_local_frame_)
@@ -141,11 +145,6 @@ Response InspectorEmulationAgent::disable() {
   setCPUThrottlingRate(1);
   setFocusEmulationEnabled(false);
   setDefaultBackgroundColorOverride(Maybe<protocol::DOM::RGBA>());
-  if (virtual_time_setup_) {
-    DCHECK(web_local_frame_);
-    web_local_frame_->View()->Scheduler()->RemoveVirtualTimeObserver(this);
-    virtual_time_setup_ = false;
-  }
   return Response::OK();
 }
 
@@ -206,9 +205,9 @@ Response InspectorEmulationAgent::setTouchEmulationEnabled(
     return response;
   int max_points = max_touch_points.fromMaybe(1);
   if (max_points < 1 || max_points > WebTouchEvent::kTouchesLengthCap) {
-    return Response::InvalidParams(
-        "Touch points must be between 1 and " +
-        String::Number(WebTouchEvent::kTouchesLengthCap));
+    return Response::InvalidParams("Touch points must be between 1 and " +
+                                   String::Number(static_cast<uint16_t>(
+                                       WebTouchEvent::kTouchesLengthCap)));
   }
   touch_event_emulation_enabled_.Set(enabled);
   max_touch_points_.Set(max_points);
@@ -299,10 +298,6 @@ Response InspectorEmulationAgent::setVirtualTimePolicy(
   }
 
   InnerEnable();
-  if (!virtual_time_setup_) {
-    web_local_frame_->View()->Scheduler()->AddVirtualTimeObserver(this);
-    virtual_time_setup_ = true;
-  }
 
   // This needs to happen before we apply virtual time.
   if (initial_virtual_time.isJust()) {
@@ -359,17 +354,14 @@ void InspectorEmulationAgent::FrameStartedLoading(LocalFrame*) {
   }
 }
 
-void InspectorEmulationAgent::WillSendRequest(
-    ExecutionContext* execution_context,
-    unsigned long identifier,
+void InspectorEmulationAgent::PrepareRequest(
     DocumentLoader* loader,
     ResourceRequest& request,
-    const ResourceResponse& redirect_response,
     const FetchInitiatorInfo& initiator_info,
     ResourceType resource_type) {
   if (!accept_language_override_.Get().IsEmpty() &&
       request.HttpHeaderField("Accept-Language").IsEmpty()) {
-    request.SetHTTPHeaderField(
+    request.SetHttpHeaderField(
         "Accept-Language",
         AtomicString(network_utils::GenerateAcceptLanguageHeader(
             accept_language_override_.Get())));
@@ -390,26 +382,13 @@ Response InspectorEmulationAgent::setNavigatorOverrides(
 void InspectorEmulationAgent::VirtualTimeBudgetExpired() {
   TRACE_EVENT_ASYNC_END0("renderer.scheduler", "VirtualTimeBudget", this);
   WebView* view = web_local_frame_->View();
-  if (!view) {
-    DCHECK_EQ(false, virtual_time_setup_);
+  if (!view)
     return;
-  }
+
   view->Scheduler()->SetVirtualTimePolicy(
       PageScheduler::VirtualTimePolicy::kPause);
   virtual_time_policy_.Set(protocol::Emulation::VirtualTimePolicyEnum::Pause);
   GetFrontend()->virtualTimeBudgetExpired();
-}
-
-void InspectorEmulationAgent::OnVirtualTimeAdvanced(
-    WTF::TimeDelta virtual_time_offset) {
-  virtual_time_offset_.Set(virtual_time_offset.InMillisecondsF());
-  GetFrontend()->virtualTimeAdvanced(virtual_time_offset.InMillisecondsF());
-}
-
-void InspectorEmulationAgent::OnVirtualTimePaused(
-    WTF::TimeDelta virtual_time_offset) {
-  virtual_time_offset_.Set(virtual_time_offset.InMillisecondsF());
-  GetFrontend()->virtualTimePaused(virtual_time_offset.InMillisecondsF());
 }
 
 Response InspectorEmulationAgent::setDefaultBackgroundColorOverride(
@@ -425,8 +404,7 @@ Response InspectorEmulationAgent::setDefaultBackgroundColorOverride(
   }
 
   blink::protocol::DOM::RGBA* rgba = color.fromJust();
-  default_background_color_override_rgba_.Set(
-      rgba->toValue()->serialize());
+  default_background_color_override_rgba_.Set(rgba->toJSON());
   // Clamping of values is done by Color() constructor.
   int alpha = static_cast<int>(lroundf(255.0f * rgba->getA(1.0f)));
   GetWebViewImpl()->SetBaseBackgroundColorOverride(
@@ -476,6 +454,20 @@ Response InspectorEmulationAgent::setUserAgentOverride(
   return Response::OK();
 }
 
+Response InspectorEmulationAgent::setTimezoneOverride(
+    const String& timezone_id) {
+  timezone_override_.reset();
+  if (!timezone_id.IsEmpty()) {
+    timezone_override_ = TimeZoneController::SetTimeZoneOverride(timezone_id);
+    if (!timezone_override_)
+      return Response::Error("Timezone override is already in effect");
+  }
+
+  timezone_id_override_.Set(timezone_id);
+
+  return Response::OK();
+}
+
 void InspectorEmulationAgent::ApplyAcceptLanguageOverride(String* accept_lang) {
   if (!accept_language_override_.Get().IsEmpty())
     *accept_lang = accept_language_override_.Get();
@@ -490,7 +482,7 @@ void InspectorEmulationAgent::InnerEnable() {
   if (enabled_)
     return;
   enabled_ = true;
-  instrumenting_agents_->addInspectorEmulationAgent(this);
+  instrumenting_agents_->AddInspectorEmulationAgent(this);
 }
 
 Response InspectorEmulationAgent::AssertPage() {

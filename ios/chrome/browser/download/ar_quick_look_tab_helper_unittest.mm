@@ -36,11 +36,13 @@ const char kHistogramName[] = "Download.IOSDownloadARModelState.USDZ";
 const char kUrl[] = "https://test.test/";
 
 NSString* const kTestSuggestedFileName = @"important_file.zip";
+NSString* const kTestUsdzFileName = @"important_file.usdz";
 
 }  // namespace
 
 // Test fixture for testing ARQuickLookTabHelper class.
-class ARQuickLookTabHelperTest : public PlatformTest {
+class ARQuickLookTabHelperTest : public PlatformTest,
+                                 public ::testing::WithParamInterface<char*> {
  protected:
   ARQuickLookTabHelperTest()
       : delegate_([[FakeARQuickLookTabHelperDelegate alloc] init]) {
@@ -63,10 +65,47 @@ class ARQuickLookTabHelperTest : public PlatformTest {
   base::HistogramTester histogram_tester_;
 };
 
-// Tests successfully downloading a USDZ file.
-TEST_F(ARQuickLookTabHelperTest, Success) {
-  auto task =
-      std::make_unique<web::FakeDownloadTask>(GURL(kUrl), kUsdzMimeType);
+// Tests successfully downloading a USDZ file with the appropriate extension.
+TEST_F(ARQuickLookTabHelperTest, SuccessFileExtention) {
+  auto task = std::make_unique<web::FakeDownloadTask>(GURL(kUrl), "other");
+  task->SetSuggestedFilename(base::SysNSStringToUTF16(kTestUsdzFileName));
+  web::FakeDownloadTask* task_ptr = task.get();
+  tab_helper()->Download(std::move(task));
+  ASSERT_TRUE(WaitUntilConditionOrTimeout(kWaitForDownloadTimeout, ^{
+    base::RunLoop().RunUntilIdle();
+    return task_ptr->GetState() == web::DownloadTask::State::kInProgress;
+  }));
+  task_ptr->SetDone(true);
+  EXPECT_EQ(1U, delegate().fileURLs.count);
+  EXPECT_TRUE([delegate().fileURLs.firstObject isKindOfClass:[NSURL class]]);
+
+  // Downloaded file should be located in download directory.
+  base::FilePath file =
+      task_ptr->GetResponseWriter()->AsFileWriter()->file_path();
+  base::FilePath download_dir;
+  ASSERT_TRUE(GetDownloadsDirectory(&download_dir));
+  EXPECT_TRUE(download_dir.IsParent(file));
+
+  histogram_tester()->ExpectBucketCount(
+      kHistogramName,
+      static_cast<base::HistogramBase::Sample>(
+          IOSDownloadARModelState::kCreated),
+      1);
+  histogram_tester()->ExpectBucketCount(
+      kHistogramName,
+      static_cast<base::HistogramBase::Sample>(
+          IOSDownloadARModelState::kStarted),
+      1);
+  histogram_tester()->ExpectBucketCount(
+      kHistogramName,
+      static_cast<base::HistogramBase::Sample>(
+          IOSDownloadARModelState::kSuccessful),
+      1);
+}
+
+// Tests successfully downloading a USDZ file with the appropriate content-type.
+TEST_P(ARQuickLookTabHelperTest, SuccessContentType) {
+  auto task = std::make_unique<web::FakeDownloadTask>(GURL(kUrl), GetParam());
   task->SetSuggestedFilename(base::SysNSStringToUTF16(kTestSuggestedFileName));
   web::FakeDownloadTask* task_ptr = task.get();
   tab_helper()->Download(std::move(task));
@@ -103,14 +142,12 @@ TEST_F(ARQuickLookTabHelperTest, Success) {
 }
 
 // Tests replacing the download task brefore it's started.
-TEST_F(ARQuickLookTabHelperTest, ReplaceUnstartedDownload) {
-  auto task =
-      std::make_unique<web::FakeDownloadTask>(GURL(kUrl), kUsdzMimeType);
+TEST_P(ARQuickLookTabHelperTest, ReplaceUnstartedDownload) {
+  auto task = std::make_unique<web::FakeDownloadTask>(GURL(kUrl), GetParam());
   task->SetSuggestedFilename(base::SysNSStringToUTF16(kTestSuggestedFileName));
   tab_helper()->Download(std::move(task));
 
-  auto task2 =
-      std::make_unique<web::FakeDownloadTask>(GURL(kUrl), kUsdzMimeType);
+  auto task2 = std::make_unique<web::FakeDownloadTask>(GURL(kUrl), GetParam());
   task2->SetSuggestedFilename(base::SysNSStringToUTF16(kTestSuggestedFileName));
   web::FakeDownloadTask* task_ptr2 = task2.get();
   tab_helper()->Download(std::move(task2));
@@ -140,9 +177,8 @@ TEST_F(ARQuickLookTabHelperTest, ReplaceUnstartedDownload) {
 }
 
 // Tests replacing the download task while it's in progress.
-TEST_F(ARQuickLookTabHelperTest, ReplaceInProgressDownload) {
-  auto task =
-      std::make_unique<web::FakeDownloadTask>(GURL(kUrl), kUsdzMimeType);
+TEST_P(ARQuickLookTabHelperTest, ReplaceInProgressDownload) {
+  auto task = std::make_unique<web::FakeDownloadTask>(GURL(kUrl), GetParam());
   task->SetSuggestedFilename(base::SysNSStringToUTF16(kTestSuggestedFileName));
   web::FakeDownloadTask* task_ptr = task.get();
   tab_helper()->Download(std::move(task));
@@ -151,8 +187,7 @@ TEST_F(ARQuickLookTabHelperTest, ReplaceInProgressDownload) {
     return task_ptr->GetState() == web::DownloadTask::State::kInProgress;
   }));
 
-  auto task2 =
-      std::make_unique<web::FakeDownloadTask>(GURL(kUrl), kUsdzMimeType);
+  auto task2 = std::make_unique<web::FakeDownloadTask>(GURL(kUrl), GetParam());
   task2->SetSuggestedFilename(base::SysNSStringToUTF16(kTestSuggestedFileName));
   web::FakeDownloadTask* task_ptr2 = task2.get();
   tab_helper()->Download(std::move(task2));
@@ -183,9 +218,8 @@ TEST_F(ARQuickLookTabHelperTest, ReplaceInProgressDownload) {
 
 // Tests the change of MIME type during the download. Can happen if the second
 // response returned authentication page.
-TEST_F(ARQuickLookTabHelperTest, MimeTypeChange) {
-  auto task =
-      std::make_unique<web::FakeDownloadTask>(GURL(kUrl), kUsdzMimeType);
+TEST_P(ARQuickLookTabHelperTest, MimeTypeChange) {
+  auto task = std::make_unique<web::FakeDownloadTask>(GURL(kUrl), GetParam());
   task->SetSuggestedFilename(base::SysNSStringToUTF16(kTestSuggestedFileName));
   web::FakeDownloadTask* task_ptr = task.get();
   tab_helper()->Download(std::move(task));
@@ -215,9 +249,8 @@ TEST_F(ARQuickLookTabHelperTest, MimeTypeChange) {
 }
 
 // Tests the download failing with an error.
-TEST_F(ARQuickLookTabHelperTest, DownloadError) {
-  auto task =
-      std::make_unique<web::FakeDownloadTask>(GURL(kUrl), kUsdzMimeType);
+TEST_P(ARQuickLookTabHelperTest, DownloadError) {
+  auto task = std::make_unique<web::FakeDownloadTask>(GURL(kUrl), GetParam());
   task->SetSuggestedFilename(base::SysNSStringToUTF16(kTestSuggestedFileName));
   web::FakeDownloadTask* task_ptr = task.get();
   tab_helper()->Download(std::move(task));
@@ -247,9 +280,8 @@ TEST_F(ARQuickLookTabHelperTest, DownloadError) {
 }
 
 // Tests download HTTP response code of 401.
-TEST_F(ARQuickLookTabHelperTest, UnauthorizedHttpResponse) {
-  auto task =
-      std::make_unique<web::FakeDownloadTask>(GURL(kUrl), kUsdzMimeType);
+TEST_P(ARQuickLookTabHelperTest, UnauthorizedHttpResponse) {
+  auto task = std::make_unique<web::FakeDownloadTask>(GURL(kUrl), GetParam());
   task->SetSuggestedFilename(base::SysNSStringToUTF16(kTestSuggestedFileName));
   web::FakeDownloadTask* task_ptr = task.get();
   tab_helper()->Download(std::move(task));
@@ -279,9 +311,8 @@ TEST_F(ARQuickLookTabHelperTest, UnauthorizedHttpResponse) {
 }
 
 // Tests download HTTP response code of 403.
-TEST_F(ARQuickLookTabHelperTest, ForbiddenHttpResponse) {
-  auto task =
-      std::make_unique<web::FakeDownloadTask>(GURL(kUrl), kUsdzMimeType);
+TEST_P(ARQuickLookTabHelperTest, ForbiddenHttpResponse) {
+  auto task = std::make_unique<web::FakeDownloadTask>(GURL(kUrl), GetParam());
   task->SetSuggestedFilename(base::SysNSStringToUTF16(kTestSuggestedFileName));
   web::FakeDownloadTask* task_ptr = task.get();
   tab_helper()->Download(std::move(task));
@@ -309,3 +340,9 @@ TEST_F(ARQuickLookTabHelperTest, ForbiddenHttpResponse) {
           IOSDownloadARModelState::kUnauthorizedFailure),
       1);
 }
+
+INSTANTIATE_TEST_SUITE_P(,
+                         ARQuickLookTabHelperTest,
+                         ::testing::Values(kUsdzMimeType,
+                                           kLegacyUsdzMimeType,
+                                           kLegacyPixarUsdzMimeType));

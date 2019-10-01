@@ -29,10 +29,22 @@ enum class FidoReturnCode : uint8_t {
   kUserConsentButCredentialNotRecognized,
   // The user explicitly refused to provide consent.
   kUserConsentDenied,
+  kAuthenticatorRemovedDuringPINEntry,
+  kSoftPINBlock,
+  kHardPINBlock,
+  kAuthenticatorMissingResidentKeys,
+  kAuthenticatorMissingCredentialManagement,
+  // TODO(agl): kAuthenticatorMissingUserVerification can also be returned when
+  // the authenticator supports UV, but there's no UI support for collecting
+  // a PIN. This could be clearer.
+  kAuthenticatorMissingUserVerification,
+  // kStorageFull indicates that a resident credential could not be created
+  // because the authenticator has insufficient storage.
+  kStorageFull,
 };
 
 enum class ProtocolVersion {
-  kCtap,
+  kCtap2,
   kU2f,
   kUnknown,
 };
@@ -105,7 +117,7 @@ enum class CtapDeviceResponseCode : uint8_t {
   kCtap2ErrUserActionPending = 0x23,
   kCtap2ErrOperationPending = 0x24,
   kCtap2ErrNoOperations = 0x25,
-  kCtap2ErrUnsupportedAlgorithms = 0x26,
+  kCtap2ErrUnsupportedAlgorithm = 0x26,
   kCtap2ErrOperationDenied = 0x27,
   kCtap2ErrKeyStoreFull = 0x28,
   kCtap2ErrNotBusy = 0x29,
@@ -156,7 +168,7 @@ constexpr std::array<CtapDeviceResponseCode, 51> GetCtapResponseCodeList() {
           CtapDeviceResponseCode::kCtap2ErrUserActionPending,
           CtapDeviceResponseCode::kCtap2ErrOperationPending,
           CtapDeviceResponseCode::kCtap2ErrNoOperations,
-          CtapDeviceResponseCode::kCtap2ErrUnsupportedAlgorithms,
+          CtapDeviceResponseCode::kCtap2ErrUnsupportedAlgorithm,
           CtapDeviceResponseCode::kCtap2ErrOperationDenied,
           CtapDeviceResponseCode::kCtap2ErrKeyStoreFull,
           CtapDeviceResponseCode::kCtap2ErrNotBusy,
@@ -239,6 +251,9 @@ enum class CtapRequestCommand : uint8_t {
   kAuthenticatorGetInfo = 0x04,
   kAuthenticatorClientPin = 0x06,
   kAuthenticatorReset = 0x07,
+  kAuthenticatorBioEnrollmentPreview = 0x40,
+  kAuthenticatorCredentialManagement = 0x0a,
+  kAuthenticatorCredentialManagementPreview = 0x41,
 };
 
 enum class CoseAlgorithmIdentifier : int { kCoseEs256 = -7 };
@@ -306,6 +321,10 @@ COMPONENT_EXPORT(DEVICE_FIDO) extern const char kDisplayNameMapKey[];
 COMPONENT_EXPORT(DEVICE_FIDO) extern const char kIconUrlMapKey[];
 COMPONENT_EXPORT(DEVICE_FIDO) extern const char kCredentialTypeMapKey[];
 COMPONENT_EXPORT(DEVICE_FIDO) extern const char kCredentialAlgorithmMapKey[];
+COMPONENT_EXPORT(DEVICE_FIDO) extern const char kCredentialManagementMapKey[];
+COMPONENT_EXPORT(DEVICE_FIDO)
+extern const char kCredentialManagementPreviewMapKey[];
+COMPONENT_EXPORT(DEVICE_FIDO) extern const char kBioEnrollmentPreviewMapKey[];
 
 // HID transport specific constants.
 constexpr uint32_t kHidBroadcastChannel = 0xffffffff;
@@ -344,11 +363,6 @@ COMPONENT_EXPORT(DEVICE_FIDO) extern const base::TimeDelta kDeviceTimeout;
 // device times out waiting for user presence.
 COMPONENT_EXPORT(DEVICE_FIDO) extern const base::TimeDelta kU2fRetryDelay;
 
-// Interval wait time before retrying reading on HID connection when
-// CTAPHID_KEEPALIVE message has been received.
-// https://fidoalliance.org/specs/fido-v2.0-rd-20170927/fido-client-to-authenticator-protocol-v2.0-rd-20170927.html#ctaphid_keepalive-0x3b
-COMPONENT_EXPORT(DEVICE_FIDO) extern const base::TimeDelta kHidKeepAliveDelay;
-
 // String key values for attestation object as a response to MakeCredential
 // request.
 COMPONENT_EXPORT(DEVICE_FIDO) extern const char kFormatKey[];
@@ -376,6 +390,7 @@ COMPONENT_EXPORT(DEVICE_FIDO) extern const char kCtap2Version[];
 COMPONENT_EXPORT(DEVICE_FIDO) extern const char kU2fVersion[];
 
 COMPONENT_EXPORT(DEVICE_FIDO) extern const char kExtensionHmacSecret[];
+COMPONENT_EXPORT(DEVICE_FIDO) extern const char kExtensionCredProtect[];
 
 // Maximum number of seconds the browser waits for Bluetooth authenticator to
 // send packets that advertises that the device is in pairing mode before
@@ -394,6 +409,13 @@ enum class AttestationConveyancePreference : uint8_t {
   // Non-standard value for individual attestation that we hope to end up in
   // the standard eventually.
   ENTERPRISE,
+};
+
+// CredProtect enumerates the levels of credential protection specified by the
+// `credProtect` CTAP2 extension.
+enum class CredProtect : uint8_t {
+  kUVOrCredIDRequired = 2,
+  kUVRequired = 3,
 };
 
 }  // namespace device

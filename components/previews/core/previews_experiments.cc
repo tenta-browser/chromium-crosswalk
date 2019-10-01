@@ -15,6 +15,7 @@
 #include "base/strings/string_util.h"
 #include "components/previews/core/previews_features.h"
 #include "components/previews/core/previews_switches.h"
+#include "google_apis/google_api_keys.h"
 
 namespace previews {
 
@@ -45,6 +46,8 @@ const char kSessionMaxECTTrigger[] = "session_max_ect_trigger";
 // Inflation parameters for estimating NoScript data savings.
 const char kNoScriptInflationPercent[] = "NoScriptInflationPercent";
 const char kNoScriptInflationBytes[] = "NoScriptInflationBytes";
+
+const char kOptimizationGuideServiceURL[] = "";
 
 // Inflation parameters for estimating ResourceLoadingHints data savings.
 const char kResourceLoadingHintsInflationPercent[] =
@@ -111,6 +114,18 @@ size_t MaxInMemoryHostsInBlackList() {
                               "max_hosts_in_blacklist", 100);
 }
 
+size_t MaxHostsForOptimizationGuideServiceHintsFetch() {
+  return GetFieldTrialParamByFeatureAsInt(
+      features::kOptimizationHintsFetching,
+      "max_hosts_for_optimization_guide_service_hints_fetch", 30);
+}
+
+base::TimeDelta StoredFetchedHintsFreshnessDuration() {
+  return base::TimeDelta::FromDays(GetFieldTrialParamByFeatureAsInt(
+      features::kOptimizationHintsFetching,
+      "max_store_duration_for_featured_hints_in_days", 7));
+}
+
 int PerHostBlackListOptOutThreshold() {
   return GetParamValueAsInt(kClientSidePreviewsFieldTrial,
                             "per_host_opt_out_threshold", 2);
@@ -158,15 +173,6 @@ base::TimeDelta LitePagePreviewsNavigationTimeoutDuration() {
                                              30 * 1000));
 }
 
-std::vector<std::string> LitePagePreviewsBlacklistedPathSuffixes() {
-  const std::string csv = base::GetFieldTrialParamValueByFeature(
-      features::kLitePageServerPreviews, "blacklisted_path_suffixes");
-  if (csv == "")
-    return {};
-  return base::SplitString(csv, ",", base::TRIM_WHITESPACE,
-                           base::SPLIT_WANT_NONEMPTY);
-}
-
 int LitePageRedirectPreviewMaxServerBlacklistByteSize() {
   return base::GetFieldTrialParamByFeatureAsInt(
       features::kLitePageServerPreviews, "max_blacklist_byte_size",
@@ -190,6 +196,10 @@ bool LitePagePreviewsTriggerOnLocalhost() {
 }
 
 bool LitePagePreviewsOverridePageHints() {
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kLitePageRedirectOverridesPageHints)) {
+    return true;
+  }
   return base::GetFieldTrialParamByFeatureAsBool(
       features::kLitePageServerPreviews, "override_pagehints", false);
 }
@@ -219,9 +229,32 @@ GURL GetLitePagePreviewsDomainURL() {
   return GURL("https://litepages.googlezip.net/");
 }
 
-std::string LitePageRedirectPreviewExperiment() {
-  return GetFieldTrialParamValueByFeature(features::kLitePageServerPreviews,
-                                          "lite_page_preview_experiment");
+std::string GetOptimizationGuideServiceAPIKey() {
+  // Command line override takes priority.
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  if (command_line->HasSwitch(switches::kOptimizationGuideServiceAPIKey)) {
+    return command_line->GetSwitchValueASCII(
+        switches::kOptimizationGuideServiceAPIKey);
+  }
+
+  return google_apis::GetAPIKey();
+}
+
+GURL GetOptimizationGuideServiceURL() {
+  // Command line override takes priority.
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  if (command_line->HasSwitch(switches::kOptimizationGuideServiceURL)) {
+    // Assume the command line switch is correct and return it.
+    return GURL(command_line->GetSwitchValueASCII(
+        switches::kOptimizationGuideServiceURL));
+  }
+
+  std::string url = base::GetFieldTrialParamValueByFeature(
+      features::kOptimizationHintsFetching, "optimization_guide_service_url");
+  if (url.empty())
+    return GURL(kOptimizationGuideServiceURL);
+
+  return GURL(url);
 }
 
 bool IsInLitePageRedirectControl() {
@@ -251,6 +284,10 @@ net::EffectiveConnectionType GetECTThresholdForPreview(
       return GetParamValueAsECTByFeature(features::kResourceLoadingHints,
                                          kEffectiveConnectionTypeThreshold,
                                          net::EFFECTIVE_CONNECTION_TYPE_2G);
+    case PreviewsType::DEFER_ALL_SCRIPT:
+      return GetParamValueAsECTByFeature(features::kDeferAllScriptPreviews,
+                                         kEffectiveConnectionTypeThreshold,
+                                         net::EFFECTIVE_CONNECTION_TYPE_2G);
     case PreviewsType::DEPRECATED_AMP_REDIRECTION:
     case PreviewsType::LAST:
       break;
@@ -267,10 +304,6 @@ net::EffectiveConnectionType GetSessionMaxECTThreshold() {
 
 bool ArePreviewsAllowed() {
   return base::FeatureList::IsEnabled(features::kPreviews);
-}
-
-bool IsPreviewsOmniboxUiEnabled() {
-  return base::FeatureList::IsEnabled(features::kAndroidOmniboxPreviewsBadge);
 }
 
 bool IsOfflinePreviewsEnabled() {
@@ -291,6 +324,10 @@ bool IsResourceLoadingHintsEnabled() {
 
 bool IsLitePageServerPreviewsEnabled() {
   return base::FeatureList::IsEnabled(features::kLitePageServerPreviews);
+}
+
+bool IsDeferAllScriptPreviewsEnabled() {
+  return base::FeatureList::IsEnabled(features::kDeferAllScriptPreviews);
 }
 
 int OfflinePreviewsVersion() {
@@ -317,6 +354,11 @@ int ResourceLoadingHintsVersion() {
                                           kVersion, 0);
 }
 
+int DeferAllScriptPreviewsVersion() {
+  return GetFieldTrialParamByFeatureAsInt(features::kDeferAllScriptPreviews,
+                                          kVersion, 0);
+}
+
 size_t GetMaxPageHintsInMemoryThreshhold() {
   return GetFieldTrialParamByFeatureAsInt(features::kResourceLoadingHints,
                                           "max_page_hints_in_memory_threshold",
@@ -325,6 +367,10 @@ size_t GetMaxPageHintsInMemoryThreshhold() {
 
 bool IsOptimizationHintsEnabled() {
   return base::FeatureList::IsEnabled(features::kOptimizationHints);
+}
+
+bool IsHintsFetchingEnabled() {
+  return base::FeatureList::IsEnabled(features::kOptimizationHintsFetching);
 }
 
 int NoScriptPreviewsInflationPercent() {
@@ -351,6 +397,46 @@ int ResourceLoadingHintsPreviewsInflationBytes() {
       features::kResourceLoadingHints, kResourceLoadingHintsInflationBytes, 0);
 }
 
+size_t OfflinePreviewsHelperMaxPrefSize() {
+  return GetFieldTrialParamByFeatureAsInt(
+      features::kOfflinePreviewsFalsePositivePrevention, "max_pref_entries",
+      100);
+}
+
+bool ShouldOverrideNavigationCoinFlipToHoldback() {
+  return base::GetFieldTrialParamByFeatureAsBool(
+      features::kCoinFlipHoldback, "force_coin_flip_always_holdback", false);
+}
+
+bool ShouldOverrideNavigationCoinFlipToAllowed() {
+  return base::GetFieldTrialParamByFeatureAsBool(
+      features::kCoinFlipHoldback, "force_coin_flip_always_allow", false);
+}
+
+bool ShouldExcludeMediaSuffix(const GURL& url) {
+  if (!base::FeatureList::IsEnabled(features::kExcludedMediaSuffixes))
+    return false;
+
+  std::vector<std::string> suffixes = {
+      ".apk", ".avi",  ".gif", ".gifv", ".jpeg", ".jpg", ".mp3",
+      ".mp4", ".mpeg", ".pdf", ".png",  ".webm", ".webp"};
+
+  std::string csv = base::GetFieldTrialParamValueByFeature(
+      features::kExcludedMediaSuffixes, "excluded_path_suffixes");
+  if (csv != "") {
+    suffixes = base::SplitString(csv, ",", base::TRIM_WHITESPACE,
+                                 base::SPLIT_WANT_NONEMPTY);
+  }
+
+  for (const std::string& suffix : suffixes) {
+    if (base::EndsWith(url.path(), suffix,
+                       base::CompareCase::INSENSITIVE_ASCII)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace params
 
 std::string GetStringNameForType(PreviewsType type) {
@@ -373,6 +459,8 @@ std::string GetStringNameForType(PreviewsType type) {
       return "Unspecified";
     case PreviewsType::RESOURCE_LOADING_HINTS:
       return "ResourceLoadingHints";
+    case PreviewsType::DEFER_ALL_SCRIPT:
+      return "DeferAllScript";
     case PreviewsType::DEPRECATED_AMP_REDIRECTION:
     case PreviewsType::LAST:
       break;

@@ -6,8 +6,10 @@ cr.define('print_preview', function() {
   /**
    * Test version of the PluginProxy.
    */
-  class PDFPluginStub {
+  class PDFPluginStub extends TestBrowserProxy {
     constructor() {
+      super(['loadPreviewPage']);
+
       /** @type {?Function} The callback to call on load. */
       this.loadCallback_ = null;
 
@@ -45,7 +47,7 @@ cr.define('print_preview', function() {
      * Sets the load callback to imitate the plugin.
      * @param {number} previewUid The unique ID of the preview UI.
      * @param {number} index The preview index to load.
-     * @return {?print_preview_new.PDFPlugin}
+     * @return {?print_preview.PDFPlugin}
      */
     createPlugin(previewUid, index) {
       return null;
@@ -69,6 +71,8 @@ cr.define('print_preview', function() {
     /** @param {!KeyEvent} e Keyboard event to forward to the plugin. */
     sendKeyEvent(e) {}
 
+    hideToolbars() {}
+
     /**
      * @param {boolean} eventsOn Whether pointer events should be captured by
      *     the plugin.
@@ -83,10 +87,15 @@ cr.define('print_preview', function() {
      * @param {number} index The preview index.
      */
     loadPreviewPage(previewUid, pageIndex, index) {
+      this.methodCalled(
+          'loadPreviewPage',
+          {previewUid: previewUid, pageIndex: pageIndex, index: index});
       if (this.loadCallback_) {
         this.loadCallback_(true);
       }
     }
+
+    darkModeChanged(darkMode) {}
   }
 
   return {PDFPluginStub: PDFPluginStub};

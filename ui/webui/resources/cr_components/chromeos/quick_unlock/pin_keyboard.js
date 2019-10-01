@@ -58,7 +58,6 @@ Polymer({
     /**
      * Whether or not the keyboard's input element should be numerical
      * or password.
-     * @private
      */
     enablePassword: {
       type: Boolean,
@@ -71,7 +70,6 @@ Polymer({
      * The password element the pin keyboard is associated with. If this is not
      * set, then a default input element is shown and used.
      * @type {?HTMLElement}
-     * @private
      */
     passwordElement: Object,
 
@@ -95,7 +93,6 @@ Polymer({
 
     /**
      * The value stored in the keyboard's input element.
-     * @private
      */
     value: {
       type: String,
@@ -413,11 +410,10 @@ Polymer({
 
   /**
    * Disables the backspace button if nothing is entered.
-   * @param {string} value
    * @private
    */
-  hasInput_: function(value) {
-    return value.length > 0 && this.selectionStart_ > 0;
+  hasInput_: function() {
+    return this.value.length > 0;
   },
 
   /**

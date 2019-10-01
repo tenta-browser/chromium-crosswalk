@@ -23,6 +23,8 @@ class MockAssistant : public mojom::Assistant {
 
   MOCK_METHOD0(StartCachedScreenContextInteraction, void());
 
+  MOCK_METHOD1(StartEditReminderInteraction, void(const std::string&));
+
   MOCK_METHOD1(StartMetalayerInteraction, void(const gfx::Rect&));
 
   MOCK_METHOD2(StartTextInteraction, void(const std::string&, bool));
@@ -59,6 +61,9 @@ class MockAssistant : public mojom::Assistant {
 
   MOCK_METHOD1(SendAssistantFeedback,
                void(chromeos::assistant::mojom::AssistantFeedbackPtr));
+
+  MOCK_METHOD0(StopAlarmTimerRinging, void());
+  MOCK_METHOD1(CreateTimer, void(base::TimeDelta));
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockAssistant);

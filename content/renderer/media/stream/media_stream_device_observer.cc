@@ -8,6 +8,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/logging.h"
 #include "content/child/child_thread_impl.h"
@@ -44,7 +45,7 @@ struct MediaStreamDeviceObserver::Stream {
 
 MediaStreamDeviceObserver::MediaStreamDeviceObserver(RenderFrame* render_frame)
     : RenderFrameObserver(render_frame), binding_(this) {
-  registry_.AddInterface(base::Bind(
+  registry_.AddInterface(base::BindRepeating(
       &MediaStreamDeviceObserver::BindMediaStreamDeviceObserverRequest,
       base::Unretained(this)));
 }

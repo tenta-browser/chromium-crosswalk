@@ -86,6 +86,11 @@ base::Optional<cricket::VideoCodec> VEAToWebRTCCodec(
       codec.SetParam(cricket::kH264FmtpPacketizationMode, "1");
       return base::Optional<cricket::VideoCodec>(codec);
     }
+  } else if (profile.profile >= media::VP9PROFILE_MIN &&
+             profile.profile <= media::VP9PROFILE_MAX) {
+    if (base::FeatureList::IsEnabled(features::kWebRtcHWVP9Encoding)) {
+      return webrtc::SdpVideoFormat("VP9");
+    }
   }
   return base::Optional<cricket::VideoCodec>();
 }

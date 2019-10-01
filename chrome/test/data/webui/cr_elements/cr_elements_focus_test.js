@@ -4,19 +4,13 @@
 
 /** @fileoverview Tests for shared Polymer elements which rely on focus. */
 
-/** @const {string} Path to source root. */
-const ROOT_PATH = '../../../../../';
-
 // Polymer BrowserTest fixture.
-GEN_INCLUDE(
-    [ROOT_PATH + 'chrome/test/data/webui/polymer_interactive_ui_test.js']);
+GEN_INCLUDE(['//chrome/test/data/webui/polymer_interactive_ui_test.js']);
 
 function CrElementsFocusTest() {}
 
 CrElementsFocusTest.prototype = {
   __proto__: PolymerInteractiveUITest.prototype,
-
-  extraLibraries: PolymerTest.getLibraries(ROOT_PATH),
 };
 
 function CrElementsActionMenuTest() {}
@@ -124,5 +118,78 @@ CrElementsInputTest.prototype = {
 };
 
 TEST_F('CrElementsInputTest', 'All', function() {
+  mocha.run();
+});
+
+/**
+ * @constructor
+ * @extends {CrElementsFocusTest}
+ */
+function CrElementsIconButtonFocusTest() {}
+
+CrElementsIconButtonFocusTest.prototype = {
+  __proto__: CrElementsFocusTest.prototype,
+
+  /** @override */
+  browsePreload:
+      'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.html',
+
+  /** @override */
+  extraLibraries: CrElementsFocusTest.prototype.extraLibraries.concat([
+    'cr_icon_button_focus_tests.js',
+  ]),
+};
+
+TEST_F('CrElementsIconButtonFocusTest', 'All', function() {
+  mocha.run();
+});
+
+
+/**
+ * @constructor
+ * @extends {CrElementsFocusTest}
+ */
+function CrElementsExpandButtonTest() {}
+
+CrElementsExpandButtonTest.prototype = {
+  __proto__: CrElementsFocusTest.prototype,
+
+  /** @override */
+  browsePreload:
+      'chrome://resources/cr_elements/cr_expand_button/cr_expand_button.html',
+
+  /** @override */
+  extraLibraries: CrElementsFocusTest.prototype.extraLibraries.concat([
+    '//ui/webui/resources/js/util.js',
+    '../settings/test_util.js',
+    'cr_expand_button_focus_tests.js',
+  ]),
+};
+
+TEST_F('CrElementsExpandButtonTest', 'All', function() {
+  mocha.run();
+});
+
+/**
+ * @constructor
+ * @extends {CrElementsBrowserTest}
+ */
+function CrElementsTabsTest() {}
+
+CrElementsTabsTest.prototype = {
+  __proto__: CrElementsFocusTest.prototype,
+
+  /** @override */
+  browsePreload: 'chrome://resources/cr_elements/cr_tabs/cr_tabs.html',
+
+  /** @override */
+  extraLibraries: CrElementsFocusTest.prototype.extraLibraries.concat([
+    '//ui/webui/resources/js/util.js',
+    '../settings/test_util.js',
+    'cr_tabs_test.js',
+  ]),
+};
+
+TEST_F('CrElementsTabsTest', 'All', function() {
   mocha.run();
 });

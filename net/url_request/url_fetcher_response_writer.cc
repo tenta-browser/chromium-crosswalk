@@ -6,7 +6,7 @@
 
 #include <utility>
 
-#include "base/callback_helpers.h"
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/sequenced_task_runner.h"
@@ -18,11 +18,11 @@
 namespace net {
 
 URLFetcherStringWriter* URLFetcherResponseWriter::AsStringWriter() {
-  return NULL;
+  return nullptr;
 }
 
 URLFetcherFileWriter* URLFetcherResponseWriter::AsFileWriter() {
-  return NULL;
+  return nullptr;
 }
 
 URLFetcherStringWriter::URLFetcherStringWriter() = default;
@@ -165,10 +165,9 @@ void URLFetcherFileWriter::CloseAndDeleteFile() {
 
   file_stream_.reset();
   DisownFile();
-  file_task_runner_->PostTask(FROM_HERE,
-                              base::Bind(base::IgnoreResult(&base::DeleteFile),
-                                         file_path_,
-                                         false /* recursive */));
+  file_task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(base::IgnoreResult(&base::DeleteFile),
+                                file_path_, false /* recursive */));
 }
 
 void URLFetcherFileWriter::DidCreateTempFile(base::FilePath* temp_file_path,
@@ -192,14 +191,14 @@ void URLFetcherFileWriter::OnIOCompleted(int result) {
     CloseAndDeleteFile();
 
   if (!callback_.is_null())
-    base::ResetAndReturn(&callback_).Run(result);
+    std::move(callback_).Run(result);
 }
 
 void URLFetcherFileWriter::CloseComplete(int result) {
   // Destroy |file_stream_| whether or not the close succeeded.
   file_stream_.reset();
   if (!callback_.is_null())
-    base::ResetAndReturn(&callback_).Run(result);
+    std::move(callback_).Run(result);
 }
 
 }  // namespace net

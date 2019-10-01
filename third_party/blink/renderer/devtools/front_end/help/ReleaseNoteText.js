@@ -13,6 +13,102 @@ const commandMenuShortcut = Host.isMac() ? 'Command + Shift + P' : 'Control + Sh
 /** @type {!Array<!Help.ReleaseNote>} */
 Help.releaseNoteText = [
   {
+    version: 18,
+    header: 'Highlights from the Chrome 76 update',
+    highlights: [
+      {
+        title: 'Autocomplete with CSS keyword values',
+        subtitle: 'Typing a keyword value like "bold" in the Styles pane now autocompletes to "font-weight: bold".',
+        link: 'https://developers.google.com/web/updates/2019/05/devtools#values',
+      },
+      {
+        title: 'A new UI for network settings',
+        subtitle:
+            'The "Use large request rows", "Group by frame", "Show overview", and "Capture screenshots" options have moved to the new Network Settings pane.',
+        link: 'https://developers.google.com/web/updates/2019/05/devtools#settings',
+      },
+      {
+        title: 'WebSocket messages in HAR exports',
+        subtitle: 'Network logs downloaded from the Network panel now include WebSocket messages.',
+        link: 'https://developers.google.com/web/updates/2019/05/devtools#websocket',
+      },
+    ],
+    link: 'https://developers.google.com/web/updates/2019/05/devtools',
+  },
+  {
+    version: 17,
+    header: 'Highlights from the Chrome 75 update',
+    highlights: [
+      {
+        title: 'Meaningful preset values when autocompleting CSS functions',
+        subtitle:
+            'Properties like "filter" that take functions for values now autocomplete to previewable values in the Styles pane.',
+        link: 'https://developers.google.com/web/updates/2019/04/devtools#presets',
+      },
+      {
+        title: 'Clear site data from the Command Menu',
+        subtitle:
+            `Press ${commandMenuShortcut} and run the "Clear Site Data" command to clear cookies, storage, and more.`,
+        link: 'https://developers.google.com/web/updates/2019/04/devtools#clear',
+      },
+      {
+        title: 'View all IndexedDB databases',
+        subtitle: 'The IndexedDB pane now shows databases for all origins rather than just the main origin.',
+        link: 'https://developers.google.com/web/updates/2019/04/devtools#indexeddb',
+      },
+      {
+        title: 'View a resource\'s uncompressed size on hover',
+        subtitle: 'Hover over the Size column in the Network panel to view a resource\'s full size.',
+        link: 'https://developers.google.com/web/updates/2019/04/devtools#uncompressed',
+      },
+      {
+        title: 'Inline breakpoints in the Breakpoints pane',
+        subtitle:
+            'When you\'ve got multiple breakpoints on a single line of code, the Breakpoints pane now lets you manage each one independently.',
+        link: 'https://developers.google.com/web/updates/2019/04/devtools#inline',
+      },
+    ],
+    link: 'https://developers.google.com/web/updates/2019/04/devtools',
+  },
+  {
+    version: 16,
+    header: 'Highlights from the Chrome 74 update',
+    highlights: [
+      {
+        title: 'Highlight all nodes affected by CSS property',
+        subtitle:
+            'Hover over a CSS property like padding or margin in the Styles pane to highlight all nodes affected by that declaration.',
+        link: 'https://developers.google.com/web/updates/2019/03/devtools#highlight',
+      },
+
+      {
+        title: 'Lighthouse v4 in the Audits panel',
+        subtitle:
+            'Featuring a new "tap targets" audit for checking that mobile links and buttons are properly sized, and a new UI for PWA reports.',
+        link: 'https://developers.google.com/web/updates/2019/03/devtools#lighthouse',
+      },
+      {
+        title: 'WebSocket binary message viewer',
+        subtitle:
+            'Click a WebSocket connection in the Network Log, go to the Messages tab, then click a binary message to view its contents.',
+        link: 'https://developers.google.com/web/updates/2019/03/devtools#binary',
+      },
+      {
+        title: 'Capture area screenshot in the Command Menu',
+        subtitle: 'Press ' + commandMenuShortcut +
+            ', run the "Capture area screenshot" command, and then drag your mouse to take a screenshot of part of the viewport.',
+        link: 'https://developers.google.com/web/updates/2019/03/devtools#screenshot',
+      },
+      {
+        title: 'Service worker filters in the Network panel',
+        subtitle:
+            'Type "is:service-worker-initiated" or "is:service-worker-intercepted" to only show service worker activity.',
+        link: 'https://developers.google.com/web/updates/2019/03/devtools#swfilters',
+      },
+    ],
+    link: 'https://developers.google.com/web/updates/2019/03/devtools',
+  },
+  {
     version: 15,
     header: 'Highlights from the Chrome 73 update',
     highlights: [

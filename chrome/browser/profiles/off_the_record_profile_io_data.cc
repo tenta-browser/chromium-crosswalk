@@ -39,8 +39,6 @@
 #include "net/http/http_network_session.h"
 #include "net/http/http_server_properties_impl.h"
 #include "net/net_buildflags.h"
-#include "net/ssl/channel_id_service.h"
-#include "net/ssl/default_channel_id_store.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_builder.h"
 #include "net/url_request/url_request_job_factory_impl.h"
@@ -49,13 +47,6 @@
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "extensions/common/extension.h"
 #endif
-
-#if BUILDFLAG(ENABLE_REPORTING)
-#include "net/network_error_logging/network_error_logging_delegate.h"
-#include "net/network_error_logging/network_error_logging_service.h"
-#include "net/reporting/reporting_policy.h"
-#include "net/reporting/reporting_service.h"
-#endif  // BUILDFLAG(ENABLE_REPORTING)
 
 using content::BrowserThread;
 
@@ -211,11 +202,6 @@ void OffTheRecordProfileIOData::InitializeInternal(
     ProfileParams* profile_params,
     content::ProtocolHandlerMap* protocol_handlers,
     content::URLRequestInterceptorScopedVector request_interceptors) const {
-  // For incognito, we use a non-persistent channel ID store.
-  std::unique_ptr<net::ChannelIDService> channel_id_service(
-      std::make_unique<net::ChannelIDService>(
-          new net::DefaultChannelIDStore(nullptr)));
-
   AddProtocolHandlersToBuilder(builder, protocol_handlers);
   SetUpJobFactoryDefaultsForBuilder(
       builder, std::move(request_interceptors),

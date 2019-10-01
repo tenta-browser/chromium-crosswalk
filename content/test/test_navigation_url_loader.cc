@@ -7,7 +7,7 @@
 #include <utility>
 
 #include "content/browser/loader/navigation_url_loader_delegate.h"
-#include "content/common/navigation_subresource_loader_params.h"
+#include "content/browser/navigation_subresource_loader_params.h"
 #include "content/public/browser/global_request_id.h"
 #include "content/public/browser/navigation_data.h"
 #include "content/public/browser/render_frame_host.h"
@@ -53,7 +53,12 @@ void TestNavigationURLLoader::SimulateServerRedirect(const GURL& redirect_url) {
 }
 
 void TestNavigationURLLoader::SimulateError(int error_code) {
-  delegate_->OnRequestFailed(network::URLLoaderCompletionStatus(error_code));
+  SimulateErrorWithStatus(network::URLLoaderCompletionStatus(error_code));
+}
+
+void TestNavigationURLLoader::SimulateErrorWithStatus(
+    const network::URLLoaderCompletionStatus& status) {
+  delegate_->OnRequestFailed(status);
 }
 
 void TestNavigationURLLoader::CallOnRequestRedirected(
@@ -90,7 +95,7 @@ void TestNavigationURLLoader::CallOnResponseStarted(
 
   delegate_->OnResponseStarted(response, std::move(url_loader_client_endpoints),
                                std::move(navigation_data), global_id, false,
-                               NavigationDownloadPolicy::kAllow, false,
+                               NavigationDownloadPolicy(), false,
                                base::nullopt);
 }
 

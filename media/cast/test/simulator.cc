@@ -42,6 +42,7 @@
 
 #include "base/at_exit.h"
 #include "base/base_paths.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/containers/queue.h"
 #include "base/files/file_path.h"
@@ -144,18 +145,18 @@ class TransportClient : public CastTransport::Client {
 
   void OnStatusChanged(CastTransportStatus status) final {
     LOG(INFO) << "Cast transport status: " << status;
-  };
+  }
   void OnLoggingEventsReceived(
       std::unique_ptr<std::vector<FrameEvent>> frame_events,
       std::unique_ptr<std::vector<PacketEvent>> packet_events) final {
     DCHECK(log_event_dispatcher_);
     log_event_dispatcher_->DispatchBatchOfEvents(std::move(frame_events),
                                                  std::move(packet_events));
-  };
+  }
   void ProcessRtpPacket(std::unique_ptr<Packet> packet) final {
     if (packet_proxy_)
       packet_proxy_->ReceivePacket(std::move(packet));
-  };
+  }
 
  private:
   LogEventDispatcher* const log_event_dispatcher_;  // Not owned by this class.
@@ -251,14 +252,13 @@ struct GotVideoFrameOutput {
   std::vector<double> ssim;
 };
 
-void GotVideoFrame(
-    GotVideoFrameOutput* metrics_output,
-    const base::FilePath& yuv_output,
-    EncodedVideoFrameTracker* video_frame_tracker,
-    CastReceiver* cast_receiver,
-    const scoped_refptr<media::VideoFrame>& video_frame,
-    const base::TimeTicks& render_time,
-    bool continuous) {
+void GotVideoFrame(GotVideoFrameOutput* metrics_output,
+                   const base::FilePath& yuv_output,
+                   EncodedVideoFrameTracker* video_frame_tracker,
+                   CastReceiver* cast_receiver,
+                   scoped_refptr<media::VideoFrame> video_frame,
+                   base::TimeTicks render_time,
+                   bool continuous) {
   ++metrics_output->counter;
   cast_receiver->RequestDecodedVideoFrame(
       base::Bind(&GotVideoFrame, metrics_output, yuv_output,
@@ -269,19 +269,19 @@ void GotVideoFrame(
   if (video_frame_tracker) {
     scoped_refptr<media::VideoFrame> src_frame =
         video_frame_tracker->PopOldestEncodedFrame();
-    metrics_output->psnr.push_back(I420PSNR(src_frame, video_frame));
-    metrics_output->ssim.push_back(I420SSIM(src_frame, video_frame));
+    metrics_output->psnr.push_back(I420PSNR(*src_frame, *video_frame));
+    metrics_output->ssim.push_back(I420SSIM(*src_frame, *video_frame));
   }
 
   if (!yuv_output.empty()) {
-    AppendYuvToFile(yuv_output, video_frame);
+    AppendYuvToFile(yuv_output, std::move(video_frame));
   }
 }
 
 void GotAudioFrame(int* counter,
                    CastReceiver* cast_receiver,
                    std::unique_ptr<AudioBus> audio_bus,
-                   const base::TimeTicks& playout_time,
+                   base::TimeTicks playout_time,
                    bool is_continuous) {
   ++*counter;
   cast_receiver->RequestDecodedAudioFrame(

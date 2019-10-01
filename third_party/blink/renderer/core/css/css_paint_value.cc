@@ -6,6 +6,8 @@
 
 #include "third_party/blink/renderer/core/css/css_custom_ident_value.h"
 #include "third_party/blink/renderer/core/css/css_syntax_descriptor.h"
+#include "third_party/blink/renderer/core/css/cssom/paint_worklet_deferred_image.h"
+#include "third_party/blink/renderer/core/css/cssom/paint_worklet_input.h"
 #include "third_party/blink/renderer/core/css/cssom/style_value_factory.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/platform/graphics/image.h"
@@ -56,6 +58,35 @@ scoped_refptr<Image> CSSPaintValue::GetImage(
   if (!generator_) {
     generator_ = CSSPaintImageGenerator::Create(
         GetName(), document, paint_image_generator_observer_);
+  }
+
+  // For Off-Thread PaintWorklet, we just collect the necessary inputs together
+  // and defer the actual JavaScript call until much later (during cc Raster).
+  if (RuntimeEnabledFeatures::OffMainThreadCSSPaintEnabled()) {
+    // If the main-thread does not yet know about this painter, there is no
+    // point sending it to cc - they won't be able to paint it. Once (or if) a
+    // matching painter is registered the |paint_image_generator_observer_| will
+    // cause us to be repainted.
+    if (!generator_->IsImageGeneratorReady())
+      return nullptr;
+
+    // TODO(crbug.com/946515): Break dependency on LayoutObject.
+    const LayoutObject& layout_object =
+        static_cast<const LayoutObject&>(client);
+    Vector<CSSPropertyID> native_properties =
+        generator_->NativeInvalidationProperties();
+    Vector<AtomicString> custom_properties =
+        generator_->CustomInvalidationProperties();
+    float zoom = layout_object.StyleRef().EffectiveZoom();
+    PaintWorkletStylePropertyMap::CrossThreadData style_data =
+        PaintWorkletStylePropertyMap::BuildCrossThreadData(
+            document, style, layout_object.GetNode(), native_properties,
+            custom_properties);
+    scoped_refptr<PaintWorkletInput> input =
+        base::MakeRefCounted<PaintWorkletInput>(GetName(), target_size, zoom,
+                                                generator_->WorkletId(),
+                                                std::move(style_data));
+    return PaintWorkletDeferredImage::Create(std::move(input), target_size);
   }
 
   if (!ParseInputArguments(document))

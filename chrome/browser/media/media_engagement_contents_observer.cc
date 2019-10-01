@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/sequenced_task_runner.h"
@@ -19,7 +20,7 @@
 #include "content/public/browser/web_contents.h"
 #include "media/base/media_switches.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
-#include "third_party/blink/public/platform/autoplay.mojom.h"
+#include "third_party/blink/public/mojom/autoplay/autoplay.mojom.h"
 
 #if !defined(OS_ANDROID)
 #include "chrome/browser/ui/browser.h"
@@ -166,6 +167,7 @@ void MediaEngagementContentsObserver::DidFinishNavigation(
     return;
 
   // Only get the opener if the navigation originated from a link.
+  // This is done outside of `GetOrCreateSession()` to simplify unit testing.
   content::WebContents* opener = nullptr;
   if (ui::PageTransitionCoreTypeIs(navigation_handle->GetPageTransition(),
                                    ui::PAGE_TRANSITION_LINK) ||
@@ -174,9 +176,7 @@ void MediaEngagementContentsObserver::DidFinishNavigation(
     opener = GetOpener();
   }
 
-  bool was_restored =
-      navigation_handle->GetRestoreType() != content::RestoreType::NONE;
-  session_ = GetOrCreateSession(new_origin, opener, was_restored);
+  session_ = GetOrCreateSession(navigation_handle, opener);
 }
 
 MediaEngagementContentsObserver::PlayerState::PlayerState(base::Clock* clock)
@@ -188,7 +188,8 @@ MediaEngagementContentsObserver::PlayerState::PlayerState(PlayerState&&) =
     default;
 
 MediaEngagementContentsObserver::PlayerState&
-MediaEngagementContentsObserver::GetPlayerState(const MediaPlayerId& id) {
+MediaEngagementContentsObserver::GetPlayerState(
+    const content::MediaPlayerId& id) {
   auto state = player_states_.find(id);
   if (state != player_states_.end())
     return state->second;
@@ -200,7 +201,7 @@ MediaEngagementContentsObserver::GetPlayerState(const MediaPlayerId& id) {
 
 void MediaEngagementContentsObserver::MediaStartedPlaying(
     const MediaPlayerInfo& media_player_info,
-    const MediaPlayerId& media_player_id) {
+    const content::MediaPlayerId& media_player_id) {
   PlayerState& state = GetPlayerState(media_player_id);
   state.playing = true;
   state.has_audio = media_player_info.has_audio;
@@ -219,7 +220,8 @@ void MediaEngagementContentsObserver::MediaStartedPlaying(
 }
 
 void MediaEngagementContentsObserver::
-    RecordEngagementScoreToHistogramAtPlayback(const MediaPlayerId& id) {
+    RecordEngagementScoreToHistogramAtPlayback(
+        const content::MediaPlayerId& id) {
   if (!session_)
     return;
 
@@ -231,7 +233,7 @@ void MediaEngagementContentsObserver::
   }
 
   int percentage =
-      round(service_->GetEngagementScore(session_->origin().GetURL()) * 100);
+      round(service_->GetEngagementScore(session_->origin()) * 100);
   UMA_HISTOGRAM_PERCENTAGE(
       MediaEngagementContentsObserver::kHistogramScoreAtPlaybackName,
       percentage);
@@ -239,7 +241,7 @@ void MediaEngagementContentsObserver::
 }
 
 void MediaEngagementContentsObserver::MediaMutedStatusChanged(
-    const MediaPlayerId& id,
+    const content::MediaPlayerId& id,
     bool muted) {
   GetPlayerState(id).muted = muted;
   MaybeInsertRemoveSignificantPlayer(id);
@@ -247,8 +249,9 @@ void MediaEngagementContentsObserver::MediaMutedStatusChanged(
   RecordEngagementScoreToHistogramAtPlayback(id);
 }
 
-void MediaEngagementContentsObserver::MediaResized(const gfx::Size& size,
-                                                   const MediaPlayerId& id) {
+void MediaEngagementContentsObserver::MediaResized(
+    const gfx::Size& size,
+    const content::MediaPlayerId& id) {
   GetPlayerState(id).significant_size =
       (size.width() >= kSignificantSize.width() &&
        size.height() >= kSignificantSize.height());
@@ -258,7 +261,7 @@ void MediaEngagementContentsObserver::MediaResized(const gfx::Size& size,
 
 void MediaEngagementContentsObserver::MediaStoppedPlaying(
     const MediaPlayerInfo& media_player_info,
-    const MediaPlayerId& media_player_id,
+    const content::MediaPlayerId& media_player_id,
     WebContentsObserver::MediaStoppedReason reason) {
   PlayerState& state = GetPlayerState(media_player_id);
   state.playing = false;
@@ -328,7 +331,7 @@ bool MediaEngagementContentsObserver::IsPlayerStateComplete(
 }
 
 void MediaEngagementContentsObserver::OnSignificantMediaPlaybackTimeForPlayer(
-    const MediaPlayerId& id) {
+    const content::MediaPlayerId& id) {
   // Clear the timer.
   auto audible_row = audible_players_.find(id);
   audible_row->second.second = nullptr;
@@ -416,7 +419,7 @@ void MediaEngagementContentsObserver::RecordInsignificantReasons(
 }
 
 void MediaEngagementContentsObserver::MaybeInsertRemoveSignificantPlayer(
-    const MediaPlayerId& id) {
+    const content::MediaPlayerId& id) {
   // If we have not received the whole player state yet then we can't be
   // significant and therefore we don't want to make a decision yet.
   PlayerState& state = GetPlayerState(id);
@@ -466,7 +469,7 @@ void MediaEngagementContentsObserver::MaybeInsertRemoveSignificantPlayer(
 }
 
 void MediaEngagementContentsObserver::UpdatePlayerTimer(
-    const MediaPlayerId& id) {
+    const content::MediaPlayerId& id) {
   UpdatePageTimer();
 
   // The player should be considered audible.
@@ -567,15 +570,18 @@ void MediaEngagementContentsObserver::SetTaskRunnerForTest(
 
 void MediaEngagementContentsObserver::ReadyToCommitNavigation(
     content::NavigationHandle* handle) {
-  // TODO(beccahughes): Convert MEI API to using origin.
   // If the navigation is occuring in the main frame we should use the URL
   // provided by |handle| as the navigation has not committed yet. If the
   // navigation is in a sub frame then use the URL from the main frame.
-  GURL url = handle->IsInMainFrame()
-                 ? handle->GetURL()
-                 : handle->GetWebContents()->GetLastCommittedURL();
-  MediaEngagementScore score = service_->CreateEngagementScore(url);
+  url::Origin origin = url::Origin::Create(
+      handle->IsInMainFrame()
+          ? handle->GetURL()
+          : handle->GetWebContents()->GetLastCommittedURL());
+  MediaEngagementScore score = service_->CreateEngagementScore(origin);
   bool has_high_engagement = score.high_score();
+
+  if (base::FeatureList::IsEnabled(media::kMediaEngagementHTTPSOnly))
+    DCHECK(!has_high_engagement || (origin.scheme() == url::kHttpsScheme));
 
   // If the preloaded feature flag is enabled and the number of visits is less
   // than the number of visits required to have an MEI score we should check the
@@ -585,7 +591,7 @@ void MediaEngagementContentsObserver::ReadyToCommitNavigation(
       base::FeatureList::IsEnabled(media::kPreloadMediaEngagementData)) {
     has_high_engagement =
         MediaEngagementPreloadedList::GetInstance()->CheckOriginIsPresent(
-            url::Origin::Create(url));
+            origin);
   }
 
   // If we have high media engagement then we should send that to Blink.
@@ -598,11 +604,8 @@ void MediaEngagementContentsObserver::ReadyToCommitNavigation(
 content::WebContents* MediaEngagementContentsObserver::GetOpener() const {
 #if !defined(OS_ANDROID)
   for (auto* browser : *BrowserList::GetInstance()) {
-    if (!browser->profile()->IsSameProfile(service_->profile()) ||
-        browser->profile()->GetProfileType() !=
-            service_->profile()->GetProfileType()) {
+    if (!browser->profile()->IsSameProfileAndType(service_->profile()))
       continue;
-    }
 
     int index =
         browser->tab_strip_model()->GetIndexOfWebContents(web_contents());
@@ -619,14 +622,14 @@ content::WebContents* MediaEngagementContentsObserver::GetOpener() const {
 
 scoped_refptr<MediaEngagementSession>
 MediaEngagementContentsObserver::GetOrCreateSession(
-    const url::Origin& origin,
-    content::WebContents* opener,
-    bool was_restored) const {
-  GURL url = origin.GetURL();
-  if (!url.is_valid())
+    content::NavigationHandle* navigation_handle,
+    content::WebContents* opener) const {
+  url::Origin origin = url::Origin::Create(navigation_handle->GetURL());
+
+  if (origin.opaque())
     return nullptr;
 
-  if (!service_->ShouldRecordEngagement(url))
+  if (!service_->ShouldRecordEngagement(origin))
     return nullptr;
 
   MediaEngagementContentsObserver* opener_observer =
@@ -637,8 +640,13 @@ MediaEngagementContentsObserver::GetOrCreateSession(
     return opener_observer->session_;
   }
 
+  MediaEngagementSession::RestoreType restore_type =
+      navigation_handle->GetRestoreType() == content::RestoreType::NONE
+          ? MediaEngagementSession::RestoreType::kNotRestored
+          : MediaEngagementSession::RestoreType::kRestored;
+
   return new MediaEngagementSession(
-      service_, origin,
-      was_restored ? MediaEngagementSession::RestoreType::kRestored
-                   : MediaEngagementSession::RestoreType::kNotRestored);
+      service_, origin, restore_type,
+      ukm::ConvertToSourceId(navigation_handle->GetNavigationId(),
+                             ukm::SourceIdType::NAVIGATION_ID));
 }

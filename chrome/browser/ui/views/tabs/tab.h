@@ -12,7 +12,8 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "chrome/browser/ui/views/tabs/glow_hover_controller.h"
+#include "base/optional.h"
+#include "chrome/browser/ui/tabs/tab_group_id.h"
 #include "chrome/browser/ui/views/tabs/tab_renderer_data.h"
 #include "ui/base/layout.h"
 #include "ui/gfx/animation/animation_delegate.h"
@@ -29,12 +30,12 @@ class AlertIndicator;
 class TabCloseButton;
 class TabController;
 class TabIcon;
-class TabStyle;
+class TabStyleViews;
 
 namespace gfx {
 class Animation;
 class LinearAnimation;
-}
+}  // namespace gfx
 namespace views {
 class Label;
 }
@@ -48,7 +49,8 @@ class Tab : public gfx::AnimationDelegate,
             public views::ButtonListener,
             public views::ContextMenuController,
             public views::MaskedTargeterDelegate,
-            public views::View {
+            public views::View,
+            public views::ViewObserver {
  public:
   // The Tab's class name.
   static const char kViewClassName[];
@@ -65,15 +67,14 @@ class Tab : public gfx::AnimationDelegate,
   // gfx::AnimationDelegate:
   void AnimationEnded(const gfx::Animation* animation) override;
   void AnimationProgressed(const gfx::Animation* animation) override;
-  void AnimationCanceled(const gfx::Animation* animation) override;
 
   // views::ButtonListener:
   void ButtonPressed(views::Button* sender, const ui::Event& event) override;
 
   // views::ContextMenuController:
-  void ShowContextMenuForView(views::View* source,
-                              const gfx::Point& point,
-                              ui::MenuSourceType source_type) override;
+  void ShowContextMenuForViewImpl(views::View* source,
+                                  const gfx::Point& point,
+                                  ui::MenuSourceType source_type) override;
 
   // views::MaskedTargeterDelegate:
   bool GetHitTestMask(SkPath* mask) const override;
@@ -91,15 +92,14 @@ class Tab : public gfx::AnimationDelegate,
   void OnMouseEntered(const ui::MouseEvent& event) override;
   void OnMouseExited(const ui::MouseEvent& event) override;
   void OnGestureEvent(ui::GestureEvent* event) override;
-  bool GetTooltipText(const gfx::Point& p,
-                      base::string16* tooltip) const override;
-  bool GetTooltipTextOrigin(const gfx::Point& p,
-                            gfx::Point* origin) const override;
+  base::string16 GetTooltipText(const gfx::Point& p) const override;
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   gfx::Size CalculatePreferredSize() const override;
   void PaintChildren(const views::PaintInfo& info) override;
   void OnPaint(gfx::Canvas* canvas) override;
   void AddedToWidget() override;
+  void OnFocus() override;
+  void OnBlur() override;
   void OnThemeChanged() override;
 
   TabController* controller() const { return controller_; }
@@ -116,6 +116,11 @@ class Tab : public gfx::AnimationDelegate,
   // tab should be invisibly closed.  This is irreversible.
   void set_detached() { detached_ = true; }
   bool detached() const { return detached_; }
+
+  void SetGroup(base::Optional<TabGroupId> group);
+
+  // Returns the color for the tab's group, if any.
+  base::Optional<SkColor> GetGroupColor() const;
 
   // Returns the color used for the alert indicator icon.
   SkColor GetAlertIndicatorColor(TabAlertState state) const;
@@ -168,20 +173,11 @@ class Tab : public gfx::AnimationDelegate,
     return tab_activated_with_last_tap_down_;
   }
 
-  GlowHoverController* hover_controller() { return hover_controller_.get(); }
-  const GlowHoverController* hover_controller() const {
-    return hover_controller_.get();
-  }
-
   bool mouse_hovered() const { return mouse_hovered_; }
 
-  // Gets the throb value for the tab. When a tab is not selected the active
-  // background is drawn at GetThrobValue() * 100%. This is used for hover, mini
-  // tab title change and pulsing.
-  float GetThrobValue() const;
-
   // Returns the TabStyle associated with this tab.
-  const TabStyle* tab_style() const { return tab_style_.get(); }
+  TabStyleViews* tab_style() { return tab_style_.get(); }
+  const TabStyleViews* tab_style() const { return tab_style_.get(); }
 
   // Returns the text to show in a tab's tooltip: The contents |title|, followed
   // by a break, followed by a localized string describing the |alert_state|.
@@ -190,6 +186,7 @@ class Tab : public gfx::AnimationDelegate,
                                        TabAlertState alert_state);
 
  private:
+  class TabCloseButtonObserver;
   friend class AlertIndicatorTest;
   friend class TabTest;
   friend class TabStripTest;
@@ -197,6 +194,8 @@ class Tab : public gfx::AnimationDelegate,
   FRIEND_TEST_ALL_PREFIXES(TabStripTest,
                            TabCloseButtonVisibilityWhenNotStacked);
   FRIEND_TEST_ALL_PREFIXES(TabTest, TitleTextHasSufficientContrast);
+  FRIEND_TEST_ALL_PREFIXES(TabHoverCardBubbleViewBrowserTest,
+                           WidgetVisibleOnTabCloseButtonFocusAfterTabFocus);
 
   // Invoked from Layout to adjust the position of the favicon or alert
   // indicator for pinned tabs. The visual_width parameter is how wide the
@@ -211,9 +210,6 @@ class Tab : public gfx::AnimationDelegate,
   // pinned tab.
   bool ShouldRenderAsNormalTab() const;
 
-  // Returns the final hover opacity for this tab (considers tab width).
-  float GetHoverOpacity() const;
-
   // Updates the blocked attention state of the |icon_|. This only updates
   // state; it is the responsibility of the caller to request a paint.
   void UpdateTabIconNeedsAttentionBlocked();
@@ -223,12 +219,16 @@ class Tab : public gfx::AnimationDelegate,
   // and alert icon.
   void UpdateForegroundColors();
 
-  // The controller, never NULL.
+  // Considers switching to hovered mode or [re-]showing the hover card based on
+  // the mouse moving over the tab.
+  void MaybeUpdateHoverStatus(const ui::MouseEvent& event);
+
+  // The controller, never nullptr.
   TabController* const controller_;
 
   TabRendererData data_;
 
-  std::unique_ptr<TabStyle> tab_style_;
+  std::unique_ptr<TabStyleViews> tab_style_;
 
   // True if the tab is being animated closed.
   bool closing_ = false;
@@ -238,6 +238,9 @@ class Tab : public gfx::AnimationDelegate,
 
   // True if the tab has been detached.
   bool detached_ = false;
+
+  // Defined when the tab is part of a group.
+  base::Optional<TabGroupId> group_;
 
   TabIcon* icon_ = nullptr;
   AlertIndicator* alert_indicator_ = nullptr;
@@ -251,8 +254,6 @@ class Tab : public gfx::AnimationDelegate,
   gfx::LinearAnimation title_animation_;
 
   bool tab_activated_with_last_tap_down_ = false;
-
-  std::unique_ptr<GlowHoverController> hover_controller_;
 
   // The offset used to paint the inactive background image.
   int background_offset_;
@@ -292,6 +293,8 @@ class Tab : public gfx::AnimationDelegate,
   // different from View::IsMouseHovered() which does a naive intersection with
   // the view bounds.
   bool mouse_hovered_ = false;
+
+  std::unique_ptr<TabCloseButtonObserver> tab_close_button_observer_;
 
   // Focus ring for accessibility.
   std::unique_ptr<views::FocusRing> focus_ring_;

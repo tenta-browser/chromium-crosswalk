@@ -4,7 +4,6 @@
 
 package org.chromium.chrome.browser.preferences.website;
 
-import android.os.Build;
 import android.os.Bundle;
 import android.preference.Preference;
 import android.preference.Preference.OnPreferenceClickListener;
@@ -17,6 +16,7 @@ import org.chromium.chrome.browser.preferences.LocationSettings;
 import org.chromium.chrome.browser.preferences.PrefServiceBridge;
 import org.chromium.chrome.browser.preferences.PreferenceUtils;
 import org.chromium.chrome.browser.preferences.website.SiteSettingsCategory.Type;
+import org.chromium.chrome.browser.util.FeatureUtilities;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -27,10 +27,9 @@ import java.util.List;
  * permissions that have been granted to websites, as well as enable or disable permissions
  * browser-wide.
  *
- * Depending on version and which experiment is running, this class also handles showing the Media
- * sub-menu, which contains Autoplay and Protected Content. To avoid the Media sub-menu having only
- * one sub-item, when either Autoplay or Protected Content should not be visible the other is shown
- * in the main setting instead (as opposed to under Media).
+ * TODO(chouinard): The media sub-menu no longer needs to be modified programmatically based on
+ * version/experiment so the organization of this menu should be simplified, probably by moving
+ * Media to its own dedicated PreferenceFragment rather than sharing this one.
  */
 public class SiteSettingsPreferences extends PreferenceFragment
         implements OnPreferenceClickListener {
@@ -40,9 +39,6 @@ public class SiteSettingsPreferences extends PreferenceFragment
     static final String MEDIA_KEY = "media";
     static final String TRANSLATE_KEY = "translate";
 
-    // Whether the Protected Content menu is available for display.
-    boolean mProtectedContentMenuAvailable;
-
     // Whether this class is handling showing the Media sub-menu (and not the main menu).
     boolean mMediaSubMenu;
 
@@ -51,8 +47,6 @@ public class SiteSettingsPreferences extends PreferenceFragment
         super.onCreate(savedInstanceState);
         PreferenceUtils.addPreferencesFromResource(this, R.xml.site_settings_preferences);
         getActivity().setTitle(R.string.prefs_site_settings);
-
-        mProtectedContentMenuAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT;
 
         if (getArguments() != null) {
             String category =
@@ -88,33 +82,22 @@ public class SiteSettingsPreferences extends PreferenceFragment
             getPreferenceScreen().removePreference(findPreference(MEDIA_KEY));
             getPreferenceScreen().removePreference(findPreference(TRANSLATE_KEY));
         } else {
-            // If both Autoplay and Protected Content menus are available, they'll be tucked under
-            // the Media key. Otherwise, we can remove the Media menu entry.
-            if (!mProtectedContentMenuAvailable) {
-                getPreferenceScreen().removePreference(findPreference(MEDIA_KEY));
-            } else {
-                // This will be tucked under the Media subkey, so no reason to show them now.
-                getPreferenceScreen().removePreference(findPreference(Type.AUTOPLAY));
-            }
+            // These will be tucked under the Media subkey, so don't show them on the main menu.
+            getPreferenceScreen().removePreference(findPreference(Type.AUTOPLAY));
             getPreferenceScreen().removePreference(findPreference(Type.PROTECTED_MEDIA));
+
             // TODO(csharrison): Remove this condition once the experimental UI lands. It is not
             // great to dynamically remove the preference in this way.
             if (!SiteSettingsCategory.adsCategoryEnabled()) {
                 getPreferenceScreen().removePreference(findPreference(Type.ADS));
             }
-            if (!ChromeFeatureList.isEnabled(ChromeFeatureList.SOUND_CONTENT_SETTING)) {
-                getPreferenceScreen().removePreference(findPreference(Type.SOUND));
-            }
-            if (!ChromeFeatureList.isEnabled(ChromeFeatureList.CLIPBOARD_CONTENT_SETTING)) {
-                getPreferenceScreen().removePreference(findPreference(Type.CLIPBOARD));
-            }
-            // The new Languages Preference *feature* is an advanced version of this translate
-            // preference. Once Languages Preference is enabled, remove this setting.
-            if (ChromeFeatureList.isEnabled(ChromeFeatureList.LANGUAGES_PREFERENCE)) {
-                getPreferenceScreen().removePreference(findPreference(TRANSLATE_KEY));
-            }
-            if (!ChromeFeatureList.isEnabled(ChromeFeatureList.GENERIC_SENSOR_EXTRA_CLASSES)) {
+            getPreferenceScreen().removePreference(findPreference(TRANSLATE_KEY));
+            if (!ChromeFeatureList.isEnabled(ChromeFeatureList.SENSOR_CONTENT_SETTING)) {
                 getPreferenceScreen().removePreference(findPreference(Type.SENSORS));
+            }
+            // We don't have clipboard support in touchless mode (crbug/963515).
+            if (FeatureUtilities.isNoTouchModeEnabled()) {
+                getPreferenceScreen().removePreference(findPreference(Type.CLIPBOARD));
             }
         }
     }
@@ -136,15 +119,9 @@ public class SiteSettingsPreferences extends PreferenceFragment
                 websitePrefs.add(Type.ADS);
             }
             websitePrefs.add(Type.AUTOMATIC_DOWNLOADS);
-
-            // When showing the main menu, if Protected Content is not available, only Autoplay
-            // will be visible.
-            if (!mProtectedContentMenuAvailable) {
-                websitePrefs.add(Type.AUTOPLAY);
-            }
             websitePrefs.add(Type.BACKGROUND_SYNC);
             websitePrefs.add(Type.CAMERA);
-            if (ChromeFeatureList.isEnabled(ChromeFeatureList.CLIPBOARD_CONTENT_SETTING)) {
+            if (!FeatureUtilities.isNoTouchModeEnabled()) {
                 websitePrefs.add(Type.CLIPBOARD);
             }
             websitePrefs.add(Type.COOKIES);
@@ -153,12 +130,10 @@ public class SiteSettingsPreferences extends PreferenceFragment
             websitePrefs.add(Type.MICROPHONE);
             websitePrefs.add(Type.NOTIFICATIONS);
             websitePrefs.add(Type.POPUPS);
-            if (ChromeFeatureList.isEnabled(ChromeFeatureList.GENERIC_SENSOR_EXTRA_CLASSES)) {
+            if (ChromeFeatureList.isEnabled(ChromeFeatureList.SENSOR_CONTENT_SETTING)) {
                 websitePrefs.add(Type.SENSORS);
             }
-            if (ChromeFeatureList.isEnabled(ChromeFeatureList.SOUND_CONTENT_SETTING)) {
-                websitePrefs.add(Type.SOUND);
-            }
+            websitePrefs.add(Type.SOUND);
             websitePrefs.add(Type.USB);
         }
 
@@ -185,7 +160,8 @@ public class SiteSettingsPreferences extends PreferenceFragment
             p.setTitle(ContentSettingsResources.getTitle(contentType));
             p.setOnPreferenceClickListener(this);
 
-            if ((Type.CAMERA == prefCategory || Type.MICROPHONE == prefCategory)
+            if ((Type.CAMERA == prefCategory || Type.MICROPHONE == prefCategory
+                        || Type.NOTIFICATIONS == prefCategory)
                     && SiteSettingsCategory.createFromType(prefCategory)
                                .showPermissionBlockedMessage(getActivity())) {
                 // Show 'disabled' message when permission is not granted in Android.

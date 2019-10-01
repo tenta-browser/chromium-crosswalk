@@ -35,6 +35,14 @@ class CONTENT_EXPORT URLDataSource {
   static void Add(BrowserContext* browser_context,
                   std::unique_ptr<URLDataSource> source);
 
+  // Gets a reference to the URL data source for |url| and runs |callback| with
+  // it as an argument.
+  // TODO (rbpotter): Remove this function when the OOBE page Polymer 2
+  // migration is complete.
+  static void GetSourceForURL(BrowserContext* browser_context,
+                              const GURL& url,
+                              base::OnceCallback<void(URLDataSource*)>);
+
   virtual ~URLDataSource() {}
 
   // The name of this source.
@@ -126,7 +134,7 @@ class CONTENT_EXPORT URLDataSource {
   // happening, return false. It is OK to return false as needed.
   virtual bool ShouldDenyXFrameOptions() const;
 
-  // By default, only chrome: and chrome-devtools: requests are allowed.
+  // By default, only chrome: and devtools: requests are allowed.
   // Override in specific WebUI data sources to enable for additional schemes or
   // to implement fancier access control.  Typically used in concert with
   // ContentBrowserClient::GetAdditionalWebUISchemes() to permit additional
@@ -139,7 +147,7 @@ class CONTENT_EXPORT URLDataSource {
   // To start sending mime type returned by GetMimeType in HTTP headers,
   // return true. It is useful when tunneling response served from this data
   // source programmatically. Or when AppCache is enabled for this source as it
-  // is for chrome-devtools.
+  // is for devtools.
   virtual bool ShouldServeMimeTypeAsContentTypeHeader() const;
 
   // This method is called when the request contains "Origin:" header. The value
@@ -153,6 +161,13 @@ class CONTENT_EXPORT URLDataSource {
 
   // Whether |path| is gzipped (and should be transmitted gzipped).
   virtual bool IsGzipped(const std::string& path) const;
+
+  // Called on the UI thread. For the shared resource, disables using Polymer 2
+  // for requests from |host|, even if WebUIPolymer2 is enabled. Assumes this
+  // method is only called from one host.
+  // TODO (rbpotter): Remove this function when the OOBE page Polymer 2
+  // migration is complete.
+  virtual void DisablePolymer2ForHost(const std::string& host);
 };
 
 }  // namespace content

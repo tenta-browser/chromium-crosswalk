@@ -16,8 +16,8 @@
 #include "base/values.h"
 #include "chrome/browser/chromeos/accessibility/accessibility_manager.h"
 #include "chrome/browser/chromeos/login/demo_mode/demo_mode_detector.h"
+#include "chrome/browser/chromeos/login/help_app_launcher.h"
 #include "chrome/browser/chromeos/login/oobe_configuration.h"
-#include "chrome/browser/chromeos/login/screens/core_oobe_view.h"
 #include "chrome/browser/chromeos/login/version_info_updater.h"
 #include "chrome/browser/ui/ash/tablet_mode_client_observer.h"
 #include "chrome/browser/ui/webui/chromeos/login/base_webui_handler.h"
@@ -34,8 +34,36 @@ class EventSink;
 
 namespace chromeos {
 
-class HelpAppLauncher;
-class OobeUI;
+class CoreOobeView {
+ public:
+  virtual ~CoreOobeView() {}
+
+  virtual void ShowSignInError(int login_attempts,
+                               const std::string& error_text,
+                               const std::string& help_link_text,
+                               HelpAppLauncher::HelpTopic help_topic_id) = 0;
+  virtual void ShowTpmError() = 0;
+  virtual void ShowSignInUI(const std::string& email) = 0;
+  virtual void ResetSignInUI(bool force_online) = 0;
+  virtual void ClearUserPodPassword() = 0;
+  virtual void RefocusCurrentPod() = 0;
+  virtual void ShowPasswordChangedScreen(bool show_password_error,
+                                         const std::string& email) = 0;
+  virtual void SetUsageStats(bool checked) = 0;
+  virtual void SetTpmPassword(const std::string& tmp_password) = 0;
+  virtual void ClearErrors() = 0;
+  virtual void ReloadContent(const base::DictionaryValue& dictionary) = 0;
+  virtual void ReloadEulaContent(const base::DictionaryValue& dictionary) = 0;
+  virtual void SetVirtualKeyboardShown(bool shown) = 0;
+  virtual void SetClientAreaSize(int width, int height) = 0;
+  virtual void ShowDeviceResetScreen() = 0;
+  virtual void ShowEnableDebuggingScreen() = 0;
+  virtual void InitDemoModeDetection() = 0;
+  virtual void StopDemoModeDetection() = 0;
+  virtual void UpdateKeyboardState() = 0;
+  virtual void ShowActiveDirectoryPasswordChangeScreen(
+      const std::string& username) = 0;
+};
 
 // The core handler for Javascript messages related to the "oobe" view.
 class CoreOobeHandler : public BaseWebUIHandler,
@@ -45,8 +73,7 @@ class CoreOobeHandler : public BaseWebUIHandler,
                         public TabletModeClientObserver,
                         public OobeConfiguration::Observer {
  public:
-  explicit CoreOobeHandler(OobeUI* oobe_ui,
-                           JSCallsContainer* js_calls_container);
+  explicit CoreOobeHandler(JSCallsContainer* js_calls_container);
   ~CoreOobeHandler() override;
 
   // BaseScreenHandler implementation:
@@ -106,7 +133,6 @@ class CoreOobeHandler : public BaseWebUIHandler,
   void ClearErrors() override;
   void ReloadContent(const base::DictionaryValue& dictionary) override;
   void ReloadEulaContent(const base::DictionaryValue& dictionary) override;
-  void ShowControlBar(bool show) override;
   void SetVirtualKeyboardShown(bool displayed) override;
   void SetClientAreaSize(int width, int height) override;
   void ShowDeviceResetScreen() override;
@@ -136,13 +162,11 @@ class CoreOobeHandler : public BaseWebUIHandler,
   void HandleSkipUpdateEnrollAfterEula();
   void HandleUpdateCurrentScreen(const std::string& screen);
   void HandleSetDeviceRequisition(const std::string& requisition);
-  void HandleScreenAssetsLoaded(const std::string& screen_async_load_id);
   void HandleSkipToLoginForTesting(const base::ListValue* args);
   void HandleSkipToUpdateForTesting();
   void HandleLaunchHelpApp(double help_topic_id);
   void HandleToggleResetScreen();
   void HandleEnableDebuggingScreen();
-  void HandleHeaderBarVisible();
   void HandleSetOobeBootstrappingSlave();
   void HandleGetPrimaryDisplayNameForTesting(const base::ListValue* args);
   void GetPrimaryDisplayNameCallback(
@@ -175,9 +199,6 @@ class CoreOobeHandler : public BaseWebUIHandler,
   // Notification of a change in the accessibility settings.
   void OnAccessibilityStatusChanged(
       const AccessibilityStatusEventDetails& details);
-
-  // Owner of this handler.
-  OobeUI* oobe_ui_ = nullptr;
 
   // True if we should show OOBE instead of login.
   bool show_oobe_ui_ = false;

@@ -6,13 +6,14 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_WEB_THREAD_SUPPORTING_GC_H_
 
 #include <memory>
+
+#include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/platform/heap/gc_task_runner.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 #include "third_party/blink/renderer/platform/wtf/allocator.h"
-#include "third_party/blink/renderer/platform/wtf/noncopyable.h"
 #include "third_party/blink/renderer/platform/wtf/time.h"
 
 namespace blink {
@@ -28,33 +29,12 @@ namespace blink {
 // WebThreadSupportingGC internally creates and owns Thread.
 class PLATFORM_EXPORT WebThreadSupportingGC final {
   USING_FAST_MALLOC(WebThreadSupportingGC);
-  WTF_MAKE_NONCOPYABLE(WebThreadSupportingGC);
 
  public:
-  static std::unique_ptr<WebThreadSupportingGC> Create(
-      const ThreadCreationParams&);
+  explicit WebThreadSupportingGC(const ThreadCreationParams&);
   ~WebThreadSupportingGC();
 
-  void PostTask(const base::Location& location, base::OnceClosure task) {
-    thread_->GetTaskRunner()->PostTask(location, std::move(task));
-  }
-
-  void PostDelayedTask(const base::Location& location,
-                       base::OnceClosure task,
-                       TimeDelta delay) {
-    thread_->GetTaskRunner()->PostDelayedTask(location, std::move(task), delay);
-  }
-
-  void PostTask(const base::Location& location, CrossThreadClosure task) {
-    PostCrossThreadTask(*thread_->GetTaskRunner(), location, std::move(task));
-  }
-
-  void PostDelayedTask(const base::Location& location,
-                       CrossThreadClosure task,
-                       TimeDelta delay) {
-    PostDelayedCrossThreadTask(*thread_->GetTaskRunner(), location,
-                               std::move(task), delay);
-  }
+  scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner() const;
 
   bool IsCurrentThread() const { return thread_->IsCurrentThread(); }
 
@@ -76,13 +56,13 @@ class PLATFORM_EXPORT WebThreadSupportingGC final {
   }
 
  private:
-  WebThreadSupportingGC(const ThreadCreationParams&);
-
   std::unique_ptr<GCTaskRunner> gc_task_runner_;
 
   std::unique_ptr<Thread> thread_;
 
   THREAD_CHECKER(thread_checker_);
+
+  DISALLOW_COPY_AND_ASSIGN(WebThreadSupportingGC);
 };
 
 }  // namespace blink

@@ -31,12 +31,6 @@ class WallpaperPrivateGetStringsFunction : public UIThreadExtensionFunction {
 
   // ExtensionFunction:
   ResponseAction Run() override;
-
- private:
-  // Responds with the dictionary after getting the wallpaper info.
-  void OnWallpaperInfoReturned(std::unique_ptr<base::DictionaryValue> dict,
-                               const std::string& location,
-                               ash::WallpaperLayout layout);
 };
 
 // Check if sync themes setting is enabled.
@@ -53,9 +47,9 @@ class WallpaperPrivateGetSyncSettingFunction
   ResponseAction Run() override;
 
  private:
-  // Periodically check the profile sync service status until the profile sync
-  // service has configured successfully or hit the retry limit.
-  void CheckProfileSyncServiceStatus();
+  // Periodically check the sync service status until the sync service has
+  // configured successfully or hit the retry limit.
+  void CheckSyncServiceStatus();
 
   // The retry number to check to profile sync service status.
   int retry_number_ = 0;
@@ -417,10 +411,6 @@ class WallpaperPrivateGetCurrentWallpaperThumbnailFunction
   ResponseAction Run() override;
 
  private:
-  // Responds with the thumbnail data.
-  void OnWallpaperImageReturned(const gfx::Size& thumbnail_size,
-                                const gfx::ImageSkia& image);
-
   // WallpaperFunctionBase:
   void OnWallpaperDecoded(const gfx::ImageSkia& wallpaper) override;
 

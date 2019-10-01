@@ -10,11 +10,13 @@
 #include "ash/accessibility/accessibility_controller.h"
 #include "ash/accessibility/accessibility_focus_ring_controller.h"
 #include "ash/accessibility/touch_exploration_controller.h"
+#include "ash/keyboard/ui/keyboard_controller.h"
 #include "ash/public/cpp/app_types.h"
 #include "ash/public/interfaces/accessibility_focus_ring_controller.mojom.h"
 #include "ash/root_window_controller.h"
 #include "ash/shell.h"
 #include "ash/wm/window_util.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "chromeos/audio/chromeos_sounds.h"
 #include "chromeos/audio/cras_audio_handler.h"
@@ -22,7 +24,6 @@
 #include "extensions/common/constants.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/keyboard/keyboard_controller.h"
 #include "ui/wm/public/activation_client.h"
 
 namespace ash {
@@ -229,9 +230,7 @@ void TouchExplorationManager::UpdateTouchExplorationState() {
       SilenceSpokenFeedback();
       // Clear the focus highlight.
       Shell::Get()->accessibility_focus_ring_controller()->SetFocusRing(
-          std::vector<gfx::Rect>(),
-          mojom::FocusRingBehavior::PERSIST_FOCUS_RING,
-          extension_misc::kChromeVoxExtensionId);
+          extension_misc::kChromeVoxExtensionId, mojom::FocusRing::New());
     } else {
       touch_exploration_controller_->SetExcludeBounds(gfx::Rect());
     }
@@ -240,7 +239,7 @@ void TouchExplorationManager::UpdateTouchExplorationState() {
     auto* keyboard_controller = keyboard::KeyboardController::Get();
     if (keyboard_controller->IsEnabled()) {
       touch_exploration_controller_->SetLiftActivationBounds(
-          keyboard_controller->visual_bounds_in_screen());
+          keyboard_controller->GetVisualBoundsInScreen());
     }
   } else {
     touch_exploration_controller_.reset();

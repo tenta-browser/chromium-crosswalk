@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
@@ -103,6 +104,8 @@ class SigninPartitionManagerTest : public ChromeRenderViewHostTestHarness {
   }
 
   void TearDown() override {
+    system_network_context_.reset();
+
     signin_ui_web_contents_.reset();
 
     signin_browser_context_.reset();

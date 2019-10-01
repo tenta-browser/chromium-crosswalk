@@ -5,11 +5,19 @@
 #ifndef CHROME_BROWSER_VR_TEST_WEBVR_BROWSER_TEST_H_
 #define CHROME_BROWSER_VR_TEST_WEBVR_BROWSER_TEST_H_
 
+#include "build/build_config.h"
+#include "chrome/browser/vr/test/conditional_skipping.h"
 #include "chrome/browser/vr/test/webxr_vr_browser_test.h"
 #include "chrome/common/chrome_features.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
+#include "device/vr/buildflags/buildflags.h"
+
+#if defined(OS_WIN)
+#include "chrome/browser/vr/test/mock_xr_session_request_consent_manager.h"
+#include "services/service_manager/sandbox/features.h"
+#endif
 
 namespace vr {
 
@@ -32,30 +40,47 @@ class WebVrBrowserTestBase : public WebXrVrBrowserTestBase {
   using WebXrBrowserTestBase::EndSessionOrFail;
 };
 
-// Test class with standard features enabled: WebVR and OpenVR support.
-class WebVrBrowserTestStandard : public WebVrBrowserTestBase {
+// Test class with OpenVR support disabled.
+class WebVrRuntimelessBrowserTest : public WebVrBrowserTestBase {
  public:
-  WebVrBrowserTestStandard() {
+  WebVrRuntimelessBrowserTest() {
+    append_switches_.push_back(switches::kEnableWebVR);
+
+#if BUILDFLAG(ENABLE_WINDOWS_MR)
+    disable_features_.push_back(features::kWindowsMixedReality);
+#endif
+  }
+};
+
+// OpenVR feature only defined on Windows.
+#ifdef OS_WIN
+// Test class with standard features enabled: WebVR and OpenVR support.
+class WebVrOpenVrBrowserTest : public WebVrBrowserTestBase {
+ public:
+  WebVrOpenVrBrowserTest() {
     append_switches_.push_back(switches::kEnableWebVR);
     enable_features_.push_back(features::kOpenVR);
+
+    runtime_requirements_.push_back(XrTestRequirement::DIRECTX_11_1);
+
+#if BUILDFLAG(ENABLE_WINDOWS_MR)
+    disable_features_.push_back(features::kWindowsMixedReality);
+#endif
   }
 };
 
 // Test class with WebVR disabled.
-class WebVrBrowserTestWebVrDisabled : public WebVrBrowserTestBase {
+class WebVrOpenVrBrowserTestWebVrDisabled : public WebVrBrowserTestBase {
  public:
-  WebVrBrowserTestWebVrDisabled() {
+  WebVrOpenVrBrowserTestWebVrDisabled() {
     enable_features_.push_back(features::kOpenVR);
-  }
-};
 
-// Test class with OpenVR support disabled.
-class WebVrBrowserTestOpenVrDisabled : public WebVrBrowserTestBase {
- public:
-  WebVrBrowserTestOpenVrDisabled() {
-    append_switches_.push_back(switches::kEnableWebVR);
+#if BUILDFLAG(ENABLE_WINDOWS_MR)
+    disable_features_.push_back(features::kWindowsMixedReality);
+#endif
   }
 };
+#endif  // OS_WIN
 
 }  // namespace vr
 

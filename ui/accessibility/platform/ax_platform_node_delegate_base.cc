@@ -4,8 +4,13 @@
 
 #include "ui/accessibility/platform/ax_platform_node_delegate_base.h"
 
+#include <vector>
+
 #include "base/no_destructor.h"
+#include "ui/accessibility/ax_action_data.h"
+#include "ui/accessibility/ax_constants.mojom.h"
 #include "ui/accessibility/ax_node_data.h"
+#include "ui/accessibility/ax_role_properties.h"
 #include "ui/accessibility/ax_tree_data.h"
 
 namespace ui {
@@ -24,6 +29,13 @@ const AXTreeData& AXPlatformNodeDelegateBase::GetTreeData() const {
   return *empty_data;
 }
 
+AXNodePosition::AXPositionInstance
+AXPlatformNodeDelegateBase::CreateTextPositionAt(
+    int offset,
+    ax::mojom::TextAffinity affinity) const {
+  return AXNodePosition::CreateNullPosition();
+}
+
 gfx::NativeViewAccessible AXPlatformNodeDelegateBase::GetNSWindow() {
   return nullptr;
 }
@@ -40,12 +52,59 @@ gfx::NativeViewAccessible AXPlatformNodeDelegateBase::ChildAtIndex(int index) {
   return nullptr;
 }
 
-gfx::Rect AXPlatformNodeDelegateBase::GetClippedScreenBoundsRect() const {
+base::string16 AXPlatformNodeDelegateBase::GetHypertext() const {
+  return base::string16();
+}
+
+bool AXPlatformNodeDelegateBase::SetHypertextSelection(int start_offset,
+                                                       int end_offset) {
+  AXActionData action_data;
+  action_data.action = ax::mojom::Action::kSetSelection;
+  action_data.anchor_node_id = action_data.focus_node_id = GetData().id;
+  action_data.anchor_offset = start_offset;
+  action_data.focus_offset = end_offset;
+  return AccessibilityPerformAction(action_data);
+}
+
+base::string16 AXPlatformNodeDelegateBase::GetInnerText() const {
+  return base::string16();
+}
+
+gfx::Rect AXPlatformNodeDelegateBase::GetBoundsRect(
+    const AXCoordinateSystem coordinate_system,
+    const AXClippingBehavior clipping_behavior,
+    AXOffscreenResult* offscreen_result) const {
   return gfx::Rect();
 }
 
-gfx::Rect AXPlatformNodeDelegateBase::GetUnclippedScreenBoundsRect() const {
+gfx::Rect AXPlatformNodeDelegateBase::GetHypertextRangeBoundsRect(
+    const int start_offset,
+    const int end_offset,
+    const AXCoordinateSystem coordinate_system,
+    const AXClippingBehavior clipping_behavior,
+    AXOffscreenResult* offscreen_result) const {
   return gfx::Rect();
+}
+
+gfx::Rect AXPlatformNodeDelegateBase::GetInnerTextRangeBoundsRect(
+    const int start_offset,
+    const int end_offset,
+    const AXCoordinateSystem coordinate_system,
+    const AXClippingBehavior clipping_behavior,
+    AXOffscreenResult* offscreen_result = nullptr) const {
+  return gfx::Rect();
+}
+
+gfx::Rect AXPlatformNodeDelegateBase::GetClippedScreenBoundsRect(
+    AXOffscreenResult* offscreen_result) const {
+  return GetBoundsRect(AXCoordinateSystem::kScreen,
+                       AXClippingBehavior::kClipped, offscreen_result);
+}
+
+gfx::Rect AXPlatformNodeDelegateBase::GetUnclippedScreenBoundsRect(
+    AXOffscreenResult* offscreen_result) const {
+  return GetBoundsRect(AXCoordinateSystem::kScreen,
+                       AXClippingBehavior::kUnclipped, offscreen_result);
 }
 
 gfx::NativeViewAccessible AXPlatformNodeDelegateBase::HitTestSync(int x,
@@ -71,23 +130,33 @@ AXPlatformNodeDelegateBase::GetTargetForNativeAccessibilityEvent() {
 }
 
 bool AXPlatformNodeDelegateBase::IsTable() const {
-  return false;
+  return ui::IsTableLike(GetData().role);
 }
 
 int AXPlatformNodeDelegateBase::GetTableRowCount() const {
-  return 0;
+  return GetData().GetIntAttribute(ax::mojom::IntAttribute::kTableRowCount);
 }
 
 int AXPlatformNodeDelegateBase::GetTableColCount() const {
-  return 0;
+  return GetData().GetIntAttribute(ax::mojom::IntAttribute::kTableColumnCount);
 }
 
-int32_t AXPlatformNodeDelegateBase::GetTableAriaColCount() const {
-  return 0;
+base::Optional<int32_t> AXPlatformNodeDelegateBase::GetTableAriaColCount()
+    const {
+  int32_t aria_column_count =
+      GetData().GetIntAttribute(ax::mojom::IntAttribute::kAriaColumnCount);
+  if (aria_column_count == ax::mojom::kUnknownAriaColumnOrRowCount)
+    return base::nullopt;
+  return aria_column_count;
 }
 
-int32_t AXPlatformNodeDelegateBase::GetTableAriaRowCount() const {
-  return 0;
+base::Optional<int32_t> AXPlatformNodeDelegateBase::GetTableAriaRowCount()
+    const {
+  int32_t aria_row_count =
+      GetData().GetIntAttribute(ax::mojom::IntAttribute::kAriaRowCount);
+  if (aria_row_count == ax::mojom::kUnknownAriaColumnOrRowCount)
+    return base::nullopt;
+  return aria_row_count;
 }
 
 int32_t AXPlatformNodeDelegateBase::GetTableCellCount() const {
@@ -96,58 +165,65 @@ int32_t AXPlatformNodeDelegateBase::GetTableCellCount() const {
 
 const std::vector<int32_t> AXPlatformNodeDelegateBase::GetColHeaderNodeIds()
     const {
-  return std::vector<int32_t>();
+  return {};
 }
 
 const std::vector<int32_t> AXPlatformNodeDelegateBase::GetColHeaderNodeIds(
     int32_t col_index) const {
-  return std::vector<int32_t>();
+  return {};
 }
 
 const std::vector<int32_t> AXPlatformNodeDelegateBase::GetRowHeaderNodeIds()
     const {
-  return std::vector<int32_t>();
+  return {};
 }
 
 const std::vector<int32_t> AXPlatformNodeDelegateBase::GetRowHeaderNodeIds(
     int32_t row_index) const {
-  return std::vector<int32_t>();
+  return {};
+}
+
+AXPlatformNode* AXPlatformNodeDelegateBase::GetTableCaption() {
+  return nullptr;
 }
 
 bool AXPlatformNodeDelegateBase::IsTableRow() const {
-  return false;
+  return ui::IsTableRow(GetData().role);
 }
 
 int32_t AXPlatformNodeDelegateBase::GetTableRowRowIndex() const {
-  return 0;
+  return GetData().GetIntAttribute(ax::mojom::IntAttribute::kTableRowIndex);
 }
 
 bool AXPlatformNodeDelegateBase::IsTableCellOrHeader() const {
-  return false;
+  return ui::IsCellOrTableHeader(GetData().role);
 }
 
 int32_t AXPlatformNodeDelegateBase::GetTableCellColIndex() const {
-  return 0;
+  return GetData().GetIntAttribute(
+      ax::mojom::IntAttribute::kTableCellColumnIndex);
 }
 
 int32_t AXPlatformNodeDelegateBase::GetTableCellRowIndex() const {
-  return 0;
+  return GetData().GetIntAttribute(ax::mojom::IntAttribute::kTableCellRowIndex);
 }
 
 int32_t AXPlatformNodeDelegateBase::GetTableCellColSpan() const {
-  return 0;
+  return GetData().GetIntAttribute(
+      ax::mojom::IntAttribute::kTableCellColumnSpan);
 }
 
 int32_t AXPlatformNodeDelegateBase::GetTableCellRowSpan() const {
-  return 0;
+  return GetData().GetIntAttribute(ax::mojom::IntAttribute::kTableCellRowSpan);
 }
 
 int32_t AXPlatformNodeDelegateBase::GetTableCellAriaColIndex() const {
-  return 0;
+  return GetData().GetIntAttribute(
+      ax::mojom::IntAttribute::kAriaCellColumnIndex);
 }
 
 int32_t AXPlatformNodeDelegateBase::GetTableCellAriaRowIndex() const {
-  return 0;
+  return GetData().GetIntAttribute(ax::mojom::IntAttribute::kAriaCellRowIndex);
 }
 
 int32_t AXPlatformNodeDelegateBase::GetCellId(int32_t row_index,
@@ -163,9 +239,39 @@ int32_t AXPlatformNodeDelegateBase::CellIndexToId(int32_t cell_index) const {
   return -1;
 }
 
+bool AXPlatformNodeDelegateBase::IsCellOrHeaderOfARIATable() const {
+  return false;
+}
+
+bool AXPlatformNodeDelegateBase::IsCellOrHeaderOfARIAGrid() const {
+  return false;
+}
+
 bool AXPlatformNodeDelegateBase::AccessibilityPerformAction(
     const ui::AXActionData& data) {
   return false;
+}
+
+base::string16
+AXPlatformNodeDelegateBase::GetLocalizedStringForImageAnnotationStatus(
+    ax::mojom::ImageAnnotationStatus status) const {
+  return base::string16();
+}
+
+base::string16
+AXPlatformNodeDelegateBase::GetLocalizedRoleDescriptionForUnlabeledImage()
+    const {
+  return base::string16();
+}
+
+base::string16 AXPlatformNodeDelegateBase::GetLocalizedStringForLandmarkType()
+    const {
+  return base::string16();
+}
+
+base::string16
+AXPlatformNodeDelegateBase::GetStyleNameAttributeAsLocalizedString() const {
+  return base::string16();
 }
 
 bool AXPlatformNodeDelegateBase::ShouldIgnoreHoveredStateForTesting() {
@@ -176,21 +282,73 @@ bool AXPlatformNodeDelegateBase::IsOffscreen() const {
   return false;
 }
 
-std::set<int32_t> AXPlatformNodeDelegateBase::GetReverseRelations(
-    ax::mojom::IntAttribute attr,
-    int32_t dst_id) {
-  return std::set<int32_t>();
+bool AXPlatformNodeDelegateBase::IsWebContent() const {
+  return false;
 }
 
-std::set<int32_t> AXPlatformNodeDelegateBase::GetReverseRelations(
-    ax::mojom::IntListAttribute attr,
-    int32_t dst_id) {
-  return std::set<int32_t>();
+AXPlatformNode* AXPlatformNodeDelegateBase::GetTargetNodeForRelation(
+    ax::mojom::IntAttribute attr) {
+  DCHECK(IsNodeIdIntAttribute(attr));
+
+  int target_id;
+  if (!GetData().GetIntAttribute(attr, &target_id))
+    return nullptr;
+
+  return GetFromNodeID(target_id);
+}
+
+std::set<AXPlatformNode*> AXPlatformNodeDelegateBase::GetNodesForNodeIds(
+    const std::set<int32_t>& ids) {
+  std::set<AXPlatformNode*> nodes;
+  for (int32_t node_id : ids) {
+    if (AXPlatformNode* node = GetFromNodeID(node_id)) {
+      nodes.insert(node);
+    }
+  }
+  return nodes;
+}
+
+std::set<AXPlatformNode*> AXPlatformNodeDelegateBase::GetTargetNodesForRelation(
+    ax::mojom::IntListAttribute attr) {
+  DCHECK(IsNodeIdIntListAttribute(attr));
+  std::vector<int32_t> target_ids;
+  if (!GetData().GetIntListAttribute(attr, &target_ids))
+    return std::set<AXPlatformNode*>();
+
+  std::set<int32_t> target_id_set(target_ids.begin(), target_ids.end());
+  return GetNodesForNodeIds(target_id_set);
+}
+
+std::set<AXPlatformNode*> AXPlatformNodeDelegateBase::GetReverseRelations(
+    ax::mojom::IntAttribute attr) {
+  return std::set<AXPlatformNode*>();
+}
+
+std::set<AXPlatformNode*> AXPlatformNodeDelegateBase::GetReverseRelations(
+    ax::mojom::IntListAttribute attr) {
+  return std::set<AXPlatformNode*>();
+}
+
+base::string16 AXPlatformNodeDelegateBase::GetAuthorUniqueId() const {
+  return base::string16();
 }
 
 const AXUniqueId& AXPlatformNodeDelegateBase::GetUniqueId() const {
   static base::NoDestructor<AXUniqueId> dummy_unique_id;
   return *dummy_unique_id;
+}
+
+base::Optional<int> AXPlatformNodeDelegateBase::FindTextBoundary(
+    AXTextBoundary boundary,
+    int offset,
+    TextBoundaryDirection direction,
+    ax::mojom::TextAffinity affinity) const {
+  return base::nullopt;
+}
+
+const std::vector<gfx::NativeViewAccessible>
+AXPlatformNodeDelegateBase::GetDescendants() const {
+  return {};
 }
 
 bool AXPlatformNodeDelegateBase::IsOrderedSetItem() const {

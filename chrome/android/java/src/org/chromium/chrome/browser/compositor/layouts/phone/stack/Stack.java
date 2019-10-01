@@ -6,18 +6,19 @@ package org.chromium.chrome.browser.compositor.layouts.phone.stack;
 
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
+import android.animation.AnimatorSet;
 import android.content.Context;
 import android.content.res.Resources;
 import android.graphics.RectF;
 import android.support.annotation.IntDef;
-import android.view.animation.AccelerateDecelerateInterpolator;
-import android.view.animation.Interpolator;
+import android.util.Pair;
 
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeFeatureList;
+import org.chromium.chrome.browser.compositor.animation.CompositorAnimationHandler;
 import org.chromium.chrome.browser.compositor.animation.CompositorAnimator;
-import org.chromium.chrome.browser.compositor.layouts.ChromeAnimation;
+import org.chromium.chrome.browser.compositor.animation.FloatProperty;
 import org.chromium.chrome.browser.compositor.layouts.Layout;
 import org.chromium.chrome.browser.compositor.layouts.Layout.Orientation;
 import org.chromium.chrome.browser.compositor.layouts.components.LayoutTab;
@@ -32,19 +33,15 @@ import org.chromium.ui.base.LocalizationUtils;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.util.ArrayList;
+import java.util.Iterator;
 
 /**
  * Handles all the drawing and events of a stack of stackTabs.
  *
  * @VisibleForTesting
  */
-public abstract class Stack implements ChromeAnimation.Animatable {
-    @IntDef({Property.SCROLL_OFFSET})
-    @Retention(RetentionPolicy.SOURCE)
-    public @interface Property {
-        int SCROLL_OFFSET = 0;
-    }
-
+public abstract class Stack {
     public static final int MAX_NUMBER_OF_STACKED_TABS_TOP = 3;
     public static final int MAX_NUMBER_OF_STACKED_TABS_BOTTOM = 3;
 
@@ -177,12 +174,6 @@ public abstract class Stack implements ChromeAnimation.Animatable {
     protected float mMaxUnderScroll;
     protected float mMaxOverScrollAngle; // This will be updated from values.xml
     private float mMaxOverScrollSlide;
-    private final Interpolator mOverScrollAngleInterpolator =
-            new AccelerateDecelerateInterpolator();
-    private final Interpolator mUnderScrollAngleInterpolator =
-            CompositorAnimator.DECELERATE_INTERPOLATOR;
-    private final Interpolator mOverscrollSlideInterpolator =
-            new AccelerateDecelerateInterpolator();
 
     // Drag Lock
     private @DragLock int mDragLock = DragLock.NONE;
@@ -213,7 +204,7 @@ public abstract class Stack implements ChromeAnimation.Animatable {
     private int mReferenceOrderIndex = -1;
 
     // Orientation Variables
-    protected int mCurrentMode = Orientation.PORTRAIT;
+    protected @Orientation int mCurrentMode = Orientation.PORTRAIT;
 
     // Animation Variables
     protected @OverviewAnimationType int mOverviewAnimationType = OverviewAnimationType.NONE;
@@ -221,7 +212,7 @@ public abstract class Stack implements ChromeAnimation.Animatable {
     private StackViewAnimation mViewAnimationFactory;
 
     // Running set of animations applied to tabs.
-    private ChromeAnimation<?> mTabAnimations;
+    private Pair<AnimatorSet, ArrayList<FloatProperty>> mAnimatorSetTabAnimations;
     private Animator mViewAnimations;
 
     // The parent Layout
@@ -254,6 +245,13 @@ public abstract class Stack implements ChromeAnimation.Animatable {
     public Stack(Context context, StackLayoutBase layout) {
         mLayout = layout;
         contextChanged(context);
+    }
+
+    /**
+     * @return Animation handler associated with this stack.
+     */
+    public CompositorAnimationHandler getAnimationHandler() {
+        return mLayout.getAnimationHandler();
     }
 
     /**
@@ -541,17 +539,18 @@ public abstract class Stack implements ChromeAnimation.Animatable {
                 // Build the AnimatorSet using the TabSwitcherAnimationFactory.
                 // This will give us the appropriate AnimatorSet based on the current
                 // state of the tab switcher and the OverviewAnimationType specified.
-                mTabAnimations = mAnimationFactory.createAnimatorSetForType(type, this, mStackTabs,
-                        focusIndex, sourceIndex, mSpacing, getDiscardRange());
+                mAnimatorSetTabAnimations = mAnimationFactory.createAnimatorSetForType(type, this,
+                        mStackTabs, focusIndex, sourceIndex, mSpacing, getDiscardRange());
             }
 
-            if (mTabAnimations != null) mTabAnimations.start();
+            if (mAnimatorSetTabAnimations != null) mAnimatorSetTabAnimations.first.start();
             if (mViewAnimations != null) mViewAnimations.start();
-            if (mTabAnimations != null || mViewAnimations != null) {
+            if (mAnimatorSetTabAnimations != null || mViewAnimations != null) {
                 mLayout.onStackAnimationStarted();
             }
 
-            if ((mTabAnimations == null && mViewAnimations == null) || finishImmediately) {
+            if ((mAnimatorSetTabAnimations == null && mViewAnimations == null)
+                    || finishImmediately) {
                 finishAnimation(time);
             }
         }
@@ -565,9 +564,11 @@ public abstract class Stack implements ChromeAnimation.Animatable {
      * @param time The current time of the app in ms.
      */
     protected void finishAnimation(long time) {
-        if (mTabAnimations != null) mTabAnimations.updateAndFinish();
+        if (mAnimatorSetTabAnimations != null) mAnimatorSetTabAnimations.first.end();
         if (mViewAnimations != null) mViewAnimations.end();
-        if (mTabAnimations != null || mViewAnimations != null) mLayout.onStackAnimationFinished();
+        if (mAnimatorSetTabAnimations != null || mViewAnimations != null) {
+            mLayout.onStackAnimationFinished();
+        }
 
         switch (mOverviewAnimationType) {
             case OverviewAnimationType.ENTER_STACK:
@@ -620,7 +621,7 @@ public abstract class Stack implements ChromeAnimation.Animatable {
         }
         mOverviewAnimationType = OverviewAnimationType.NONE;
 
-        mTabAnimations = null;
+        mAnimatorSetTabAnimations = null;
         mViewAnimations = null;
     }
 
@@ -685,8 +686,8 @@ public abstract class Stack implements ChromeAnimation.Animatable {
                         || mOverviewAnimationType == OverviewAnimationType.UNDISCARD
                         || mOverviewAnimationType == OverviewAnimationType.DISCARD_ALL)
                     && (type == OverviewAnimationType.DISCARD
-                               || type == OverviewAnimationType.UNDISCARD
-                               || type == OverviewAnimationType.DISCARD_ALL)) {
+                            || type == OverviewAnimationType.UNDISCARD
+                            || type == OverviewAnimationType.DISCARD_ALL)) {
                 return true;
             }
         }
@@ -701,7 +702,17 @@ public abstract class Stack implements ChromeAnimation.Animatable {
         if (mOverviewAnimationType == OverviewAnimationType.DISCARD
                 || mOverviewAnimationType == OverviewAnimationType.UNDISCARD
                 || mOverviewAnimationType == OverviewAnimationType.DISCARD_ALL) {
-            mTabAnimations.cancel(null, StackTab.Property.SCROLL_OFFSET);
+            if (mAnimatorSetTabAnimations != null) {
+                Iterator<FloatProperty> propertyIterator =
+                        mAnimatorSetTabAnimations.second.iterator();
+                Iterator<Animator> animatorIterator =
+                        mAnimatorSetTabAnimations.first.getChildAnimations().iterator();
+
+                while (animatorIterator.hasNext()) {
+                    CompositorAnimator a = (CompositorAnimator) animatorIterator.next();
+                    if (propertyIterator.next() == StackTab.SCROLL_OFFSET) a.cancel();
+                }
+            }
             return true;
         }
         return false;
@@ -731,30 +742,31 @@ public abstract class Stack implements ChromeAnimation.Animatable {
     public boolean onUpdateCompositorAnimations(long time, boolean jumpToEnd) {
         if (!jumpToEnd) updateScrollOffset(time);
 
-        boolean finished = true;
-        if (mTabAnimations != null) {
-            if (jumpToEnd) {
-                finished = mTabAnimations.finished();
-            } else {
-                finished = mTabAnimations.update(time);
-            }
-            finishAnimationsIfDone(time, jumpToEnd);
+        boolean animatorSetFinished = true;
+        if (mAnimatorSetTabAnimations != null) {
+            animatorSetFinished = jumpToEnd ? true : !mAnimatorSetTabAnimations.first.isRunning();
         }
 
+        if (mAnimatorSetTabAnimations != null) finishAnimationsIfDone(time, jumpToEnd);
         if (jumpToEnd) forceScrollStop();
-        return finished;
+
+        return animatorSetFinished;
     }
 
     private void finishAnimationsIfDone(long time, boolean jumpToEnd) {
         boolean hasViewAnimations = mViewAnimations != null;
-        boolean hasTabAnimations = mTabAnimations != null;
-        boolean hasAnimations = hasViewAnimations || hasTabAnimations;
         boolean isViewFinished = hasViewAnimations ? !mViewAnimations.isRunning() : true;
-        boolean isTabFinished = hasTabAnimations ? mTabAnimations.finished() : true;
+
+        boolean hasAnimatorSetTabAnimations = mAnimatorSetTabAnimations != null;
+        boolean isAnimatorSetTabFinished =
+                hasAnimatorSetTabAnimations ? !mAnimatorSetTabAnimations.first.isRunning() : true;
+
+        boolean hasAnimations = hasViewAnimations || hasAnimatorSetTabAnimations;
 
         boolean shouldFinish = jumpToEnd && hasAnimations;
         shouldFinish |= hasAnimations && (!hasViewAnimations || isViewFinished)
-                && (!hasTabAnimations || isTabFinished);
+                && (!hasAnimatorSetTabAnimations || isAnimatorSetTabFinished);
+
         if (shouldFinish) finishAnimation(time);
     }
 
@@ -846,9 +858,9 @@ public abstract class Stack implements ChromeAnimation.Animatable {
     private void discard(float x, float y, float amountX, float amountY) {
         if (mStackTabs == null
                 || (mOverviewAnimationType != OverviewAnimationType.NONE
-                           && mOverviewAnimationType != OverviewAnimationType.DISCARD
-                           && mOverviewAnimationType != OverviewAnimationType.DISCARD_ALL
-                           && mOverviewAnimationType != OverviewAnimationType.UNDISCARD)) {
+                        && mOverviewAnimationType != OverviewAnimationType.DISCARD
+                        && mOverviewAnimationType != OverviewAnimationType.DISCARD_ALL
+                        && mOverviewAnimationType != OverviewAnimationType.UNDISCARD)) {
             return;
         }
 
@@ -1165,7 +1177,7 @@ public abstract class Stack implements ChromeAnimation.Animatable {
      * @param height      The new height of the layout.
      * @param orientation The new orientation of the layout.
      */
-    public void notifySizeChanged(float width, float height, int orientation) {
+    public void notifySizeChanged(float width, float height, @Orientation int orientation) {
         updateCurrentMode(orientation);
 
         // Changing the orientation can change which side of the tab we want to show the close
@@ -1941,7 +1953,7 @@ public abstract class Stack implements ChromeAnimation.Animatable {
         return 1.f - Math.abs(t);
     }
 
-    protected void updateCurrentMode(int orientation) {
+    protected void updateCurrentMode(@Orientation int orientation) {
         if (ChromeFeatureList.isEnabled(ChromeFeatureList.HORIZONTAL_TAB_SWITCHER_ANDROID)) {
             mCurrentMode = Orientation.LANDSCAPE;
         } else {
@@ -1950,9 +1962,9 @@ public abstract class Stack implements ChromeAnimation.Animatable {
 
         mDiscardDirection = getDefaultDiscardDirection();
         final float opaqueTopPadding = mBorderTopPadding - mBorderTransparentTop;
-        mAnimationFactory = StackAnimation.createAnimationFactory(this, mLayout.getWidth(),
-                mLayout.getHeight(), mLayout.getTopBrowserControlsHeight(), mBorderTopPadding,
-                opaqueTopPadding, mBorderLeftPadding, mCurrentMode);
+        mAnimationFactory = new StackAnimation(this, mLayout.getWidth(), mLayout.getHeight(),
+                mLayout.getTopBrowserControlsHeight(), mBorderTopPadding, opaqueTopPadding,
+                mBorderLeftPadding, mCurrentMode);
         mViewAnimationFactory = new StackViewAnimation(mLayout.getContext().getResources());
         if (mStackTabs == null) return;
         float width = mLayout.getWidth();
@@ -2150,11 +2162,16 @@ public abstract class Stack implements ChromeAnimation.Animatable {
         onUpOrCancel(time);
     }
 
-    @Override
-    public void setProperty(@Property int prop, float val) {
-        if (prop == Property.SCROLL_OFFSET) setScrollTarget(val, true);
-    }
+    public static final FloatProperty<Stack> SCROLL_OFFSET =
+            new FloatProperty<Stack>("SCROLL_OFFSET") {
+                @Override
+                public void setValue(Stack stack, float v) {
+                    stack.setScrollTarget(v, true);
+                }
 
-    @Override
-    public void onPropertyAnimationFinished(@Property int prop) {}
+                @Override
+                public Float get(Stack stack) {
+                    return stack.getScrollOffset();
+                }
+            };
 }

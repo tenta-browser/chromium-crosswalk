@@ -26,10 +26,10 @@
 #include "chrome/browser/ui/views/payments/validating_textfield.h"
 #include "chrome/browser/ui/views/payments/view_stack.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "components/autofill/core/browser/address_combobox_model.h"
-#include "components/autofill/core/browser/autofill_profile.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
+#include "components/autofill/core/browser/ui/address_combobox_model.h"
 #include "components/network_session_configurator/common/network_switches.h"
 #include "components/payments/content/payment_request.h"
 #include "components/payments/content/payment_request_web_contents_manager.h"
@@ -148,17 +148,13 @@ void PaymentRequestBrowserTestBase::OnCanMakePaymentReturned() {
 }
 
 void PaymentRequestBrowserTestBase::OnHasEnrolledInstrumentCalled() {
-  // TODO(https://crbug.com/915907): rename enum to HAS_ENROLLED_INSTRUMENT
-  // version when new CanMakePayment behavior is implemented.
   if (event_waiter_)
-    event_waiter_->OnEvent(DialogEvent::CAN_MAKE_PAYMENT_CALLED);
+    event_waiter_->OnEvent(DialogEvent::HAS_ENROLLED_INSTRUMENT_CALLED);
 }
 
 void PaymentRequestBrowserTestBase::OnHasEnrolledInstrumentReturned() {
-  // TODO(https://crbug.com/915907): rename enum to HAS_ENROLLED_INSTRUMENT
-  // version when new CanMakePayment behavior is implemented.
   if (event_waiter_)
-    event_waiter_->OnEvent(DialogEvent::CAN_MAKE_PAYMENT_RETURNED);
+    event_waiter_->OnEvent(DialogEvent::HAS_ENROLLED_INSTRUMENT_RETURNED);
 }
 
 void PaymentRequestBrowserTestBase::OnNotSupportedError() {
@@ -299,15 +295,6 @@ void PaymentRequestBrowserTestBase::ExpectBodyContains(
         << "String \"" << expected_string
         << "\" is not present in the content \"" << contents << "\"";
   }
-}
-
-void PaymentRequestBrowserTestBase::ExpectBodyContains(
-    const std::vector<base::string16>& expected_strings) {
-  std::vector<std::string> converted(expected_strings.size());
-  std::transform(expected_strings.begin(), expected_strings.end(),
-                 converted.begin(),
-                 [](const base::string16& s) { return base::UTF16ToUTF8(s); });
-  ExpectBodyContains(converted);
 }
 
 void PaymentRequestBrowserTestBase::OpenOrderSummaryScreen() {
@@ -567,15 +554,15 @@ void PaymentRequestBrowserTestBase::ClickOnDialogViewAndWait(
 }
 
 void PaymentRequestBrowserTestBase::ClickOnChildInListViewAndWait(
-    int child_index,
-    int total_num_children,
+    size_t child_index,
+    size_t total_num_children,
     DialogViewID list_view_id,
     bool wait_for_animation) {
   views::View* list_view =
       dialog_view()->GetViewByID(static_cast<int>(list_view_id));
   EXPECT_TRUE(list_view);
-  EXPECT_EQ(total_num_children, list_view->child_count());
-  ClickOnDialogViewAndWait(list_view->child_at(child_index),
+  EXPECT_EQ(total_num_children, list_view->children().size());
+  ClickOnDialogViewAndWait(list_view->children()[child_index],
                            wait_for_animation);
 }
 
@@ -726,7 +713,7 @@ base::string16 PaymentRequestBrowserTestBase::GetComboboxValue(
       static_cast<ValidatingCombobox*>(delegate_->dialog_view()->GetViewByID(
           EditorViewController::GetInputFieldViewId(type)));
   DCHECK(combobox);
-  return combobox->model()->GetItemAt(combobox->selected_index());
+  return combobox->model()->GetItemAt(combobox->GetSelectedIndex());
 }
 
 void PaymentRequestBrowserTestBase::SetComboboxValue(
@@ -768,7 +755,7 @@ bool PaymentRequestBrowserTestBase::IsEditorComboboxInvalid(
       static_cast<ValidatingCombobox*>(delegate_->dialog_view()->GetViewByID(
           EditorViewController::GetInputFieldViewId(type)));
   DCHECK(combobox);
-  return combobox->invalid();
+  return combobox->GetInvalid();
 }
 
 bool PaymentRequestBrowserTestBase::IsPayButtonEnabled() {
@@ -776,7 +763,7 @@ bool PaymentRequestBrowserTestBase::IsPayButtonEnabled() {
       static_cast<views::Button*>(delegate_->dialog_view()->GetViewByID(
           static_cast<int>(DialogViewID::PAY_BUTTON)));
   DCHECK(button);
-  return button->enabled();
+  return button->GetEnabled();
 }
 
 void PaymentRequestBrowserTestBase::WaitForAnimation() {
@@ -847,6 +834,14 @@ void PaymentRequestBrowserTestBase::ResetEventWaiterForDialogOpened() {
 
 void PaymentRequestBrowserTestBase::WaitForObservedEvent() {
   event_waiter_->Wait();
+}
+
+void PaymentRequestBrowserTestBase::EnableSkipUIForForBasicCard() {
+  std::vector<PaymentRequest*> requests =
+      GetPaymentRequests(GetActiveWebContents());
+  ASSERT_EQ(1U, requests.size());
+  requests.front()
+      ->set_skip_ui_for_non_url_payment_method_identifiers_for_test();
 }
 
 }  // namespace payments

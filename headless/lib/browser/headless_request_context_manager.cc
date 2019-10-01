@@ -4,6 +4,7 @@
 
 #include "headless/lib/browser/headless_request_context_manager.h"
 
+#include "base/bind.h"
 #include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
@@ -22,8 +23,6 @@
 #include "net/http/http_auth_handler_factory.h"
 #include "net/http/http_auth_scheme.h"
 #include "net/http/http_transaction_factory.h"
-#include "net/ssl/channel_id_service.h"
-#include "net/ssl/default_channel_id_store.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_builder.h"
 #include "net/url_request/url_request_context_getter.h"
@@ -372,6 +371,7 @@ void HeadlessRequestContextManager::InitializeOnIO() {
           std::move(crypt_config_));
     }
 #endif
+    builder->set_file_enabled(true);
     net::URLRequestContext* url_request_context = nullptr;
     network_context_owner_ =
         content::GetNetworkServiceImpl()->CreateNetworkContextWithBuilder(
@@ -394,17 +394,12 @@ HeadlessRequestContextManager::CreateNetworkContextParams() {
 
   context_params->user_agent = user_agent_;
   context_params->accept_language = accept_language_;
-  // TODO(skyostil): Make these configurable.
-  context_params->enable_data_url_support = true;
-  context_params->enable_file_url_support = true;
   context_params->primary_network_context = is_system_context_;
 
   if (!user_data_path_.empty()) {
     context_params->enable_encrypted_cookies = cookie_encryption_enabled_;
     context_params->cookie_path =
         user_data_path_.Append(FILE_PATH_LITERAL("Cookies"));
-    context_params->channel_id_path =
-        user_data_path_.Append(FILE_PATH_LITERAL("Origin Bound Certs"));
   }
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   if (command_line->HasSwitch(switches::kDiskCacheDir)) {

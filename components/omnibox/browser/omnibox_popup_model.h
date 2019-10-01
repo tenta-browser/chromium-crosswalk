@@ -64,6 +64,7 @@ class OmniboxPopupModel {
   bool IsOpen() const;
 
   OmniboxPopupView* view() const { return view_; }
+  OmniboxEditModel* edit_model() const { return edit_model_; }
 
   // Returns the AutocompleteController used by this popup.
   AutocompleteController* autocomplete_controller() const {
@@ -112,9 +113,10 @@ class OmniboxPopupModel {
   // matches (or there is no selection).
   void SetSelectedLineState(LineState state);
 
-  // Called when the user hits shift-delete.  This should determine if the item
-  // can be removed from history, and if so, remove it and update the popup.
-  void TryDeletingCurrentItem();
+  // Tries to erase the suggestion at |line|.  This should determine if the item
+  // at |line| can be removed from history, and if so, remove it and update the
+  // popup.
+  void TryDeletingLine(size_t line);
 
   // Returns true if the destination URL of the match is bookmarked.
   bool IsStarredMatch(const AutocompleteMatch& match) const;
@@ -149,6 +151,12 @@ class OmniboxPopupModel {
   // the tab key.
   bool SelectedLineHasButton();
 
+  // If |closes| is set true, the popup will close when the omnibox is blurred.
+  bool popup_closes_on_blur() const { return popup_closes_on_blur_; }
+  void set_popup_closes_on_blur(bool closes) { popup_closes_on_blur_ = closes; }
+
+  OmniboxEditModel* edit_model() { return edit_model_; }
+
   // The token value for selected_line_ and functions dealing with a "line
   // number" that indicates "no line".
   static const size_t kNoMatch;
@@ -180,6 +188,10 @@ class OmniboxPopupModel {
 
   // The user has manually selected a match.
   bool has_selected_match_;
+
+  // True if the popup should close on omnibox blur. This defaults to true, and
+  // is only false while a bubble related to the popup contents is shown.
+  bool popup_closes_on_blur_ = true;
 
   // Observers.
   base::ObserverList<OmniboxPopupModelObserver>::Unchecked observers_;

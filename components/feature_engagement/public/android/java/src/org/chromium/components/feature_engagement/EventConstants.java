@@ -83,6 +83,11 @@ public final class EventConstants {
     public static final String DATA_SAVER_DETAIL_OPENED = "data_saver_overview_opened";
 
     /**
+     * The data saver milestone promo was used (tapped).
+     */
+    public static final String DATA_SAVER_MILESTONE_PROMO_OPENED = "data_saver_milestone_promo";
+
+    /**
      * The previews verbose status view was opened.
      */
     public static final String PREVIEWS_VERBOSE_STATUS_OPENED = "previews_verbose_status_opened";
@@ -91,11 +96,6 @@ public final class EventConstants {
      * A page load used a preview.
      */
     public static final String PREVIEWS_PAGE_LOADED = "preview_page_load";
-
-    /**
-     * The download button for a media element was displayed.
-     */
-    public static final String MEDIA_DOWNLOAD_BUTTON_DISPLAYED = "media_download_button_displayed";
 
     /**
      * Contextual Search panel was opened.
@@ -162,6 +162,21 @@ public final class EventConstants {
 
     /** The `Translate` app menu button was clicked. */
     public static final String TRANSLATE_MENU_BUTTON_CLICKED = "translate_menu_button_clicked";
+
+    /** The keyboard accessory was used to fill address data into a form. */
+    public static final String KEYBOARD_ACCESSORY_ADDRESS_AUTOFILLED =
+            "keyboard_accessory_address_suggestion_accepted";
+
+    /** The keyboard accessory was used to fill a password form. */
+    public static final String KEYBOARD_ACCESSORY_PASSWORD_AUTOFILLED =
+            "keyboard_accessory_password_suggestion_accepted";
+
+    /** The keyboard accessory was used to fill payment data into a form. */
+    public static final String KEYBOARD_ACCESSORY_PAYMENT_AUTOFILLED =
+            "keyboard_accessory_payment_suggestion_accepted";
+
+    /** The Explore Sites tile was tapped. */
+    public static final String EXPLORE_SITES_TILE_TAPPED = "explore_sites_tile_tapped";
 
     /**
      * Do not instantiate.

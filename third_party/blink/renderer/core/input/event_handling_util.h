@@ -41,7 +41,7 @@ bool IsInDocument(EventTarget*);
 ContainerNode* ParentForClickEvent(const Node&);
 
 LayoutPoint ContentPointFromRootFrame(LocalFrame*,
-                                      const IntPoint& point_in_root_frame);
+                                      const FloatPoint& point_in_root_frame);
 
 MouseEventWithHitTestResults PerformMouseEventHitTest(LocalFrame*,
                                                       const HitTestRequest&,
@@ -72,6 +72,6 @@ class PointerEventTarget {
 }  // namespace blink
 
 WTF_ALLOW_INIT_WITH_MEM_FUNCTIONS(
-    blink::event_handling_util::PointerEventTarget);
+    blink::event_handling_util::PointerEventTarget)
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_CORE_INPUT_EVENT_HANDLING_UTIL_H_

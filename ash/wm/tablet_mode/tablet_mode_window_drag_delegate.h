@@ -7,9 +7,10 @@
 
 #include <memory>
 
+#include "ash/public/cpp/presentation_time_recorder.h"
 #include "ash/public/cpp/window_properties.h"
 #include "ash/wm/splitview/split_view_controller.h"
-#include "ash/wm/wm_toplevel_window_event_handler.h"
+#include "ash/wm/toplevel_window_event_handler.h"
 #include "base/memory/weak_ptr.h"
 #include "base/optional.h"
 #include "ui/aura/window_occlusion_tracker.h"
@@ -19,6 +20,7 @@ namespace ash {
 
 enum class IndicatorState;
 class SplitViewDragIndicators;
+class PresentationTimeRecorder;
 
 // This class includes the common logic when dragging a window around, either
 // it's a browser window, or an app window. It does almost everything needs to
@@ -61,7 +63,7 @@ class TabletModeWindowDragDelegate {
                           const gfx::Rect& target_bounds = gfx::Rect());
 
   // Calls when a window ends dragging with its drag result |result|.
-  void EndWindowDrag(wm::WmToplevelWindowEventHandler::DragResult result,
+  void EndWindowDrag(ToplevelWindowEventHandler::DragResult result,
                      const gfx::Point& location_in_screen);
 
   // Calls when a window ends dragging because of fling or swipe.
@@ -79,14 +81,17 @@ class TabletModeWindowDragDelegate {
     return split_view_drag_indicators_.get();
   }
 
+  void set_drag_start_deadline_for_testing(base::Time time) {
+    drag_start_deadline_ = time;
+  }
+
  protected:
   // These four methods are used by its child class to do its special handling
   // before/during/after dragging.
   virtual void PrepareWindowDrag(const gfx::Point& location_in_screen) = 0;
   virtual void UpdateWindowDrag(const gfx::Point& location_in_screen) = 0;
-  virtual void EndingWindowDrag(
-      wm::WmToplevelWindowEventHandler::DragResult result,
-      const gfx::Point& location_in_screen) = 0;
+  virtual void EndingWindowDrag(ToplevelWindowEventHandler::DragResult result,
+                                const gfx::Point& location_in_screen) = 0;
   virtual void EndedWindowDrag(const gfx::Point& location_in_screen) = 0;
   // Calls when a fling event starts.
   virtual void StartFling(const ui::GestureEvent* event) = 0;
@@ -115,6 +120,10 @@ class TabletModeWindowDragDelegate {
   // Returns true if fling event should drop the window into overview grid.
   bool ShouldFlingIntoOverview(const ui::GestureEvent* event) const;
 
+  // Updates |is_window_considered_moved_| on current time and
+  // |y_location_in_screen|.
+  void UpdateIsWindowConsideredMoved(int y_location_in_screen);
+
   SplitViewController* const split_view_controller_;
 
   // A widget to display the drag indicators and preview window.
@@ -137,14 +146,22 @@ class TabletModeWindowDragDelegate {
   // desired window transform during dragging.
   gfx::Rect bounds_of_selected_drop_target_;
 
-  // Flag to indicate whether a window is considered as moved. A window needs to
-  // be dragged vertically a small amount of distance to be considered as moved.
-  // The drag indicators will only show up after the window has been moved. Once
-  // the window is moved, it will stay as 'moved'.
-  bool did_move_ = false;
+  // True if the |dragged_window_| has been considered as moved. Only after it
+  // has been dragged longer than kIsWindowMovedTimeoutMs on time and further
+  // than GetIndicatorsVerticalThreshold on distance, it can be considered as
+  // moved. Only change its window state or show the drag indicators if it has
+  // been 'moved'. Once it has been 'moved', it will stay as 'moved'.
+  bool is_window_considered_moved_ = false;
+
+  // Drag need to last later than the deadline here to be considered as 'moved'.
+  base::Time drag_start_deadline_;
 
   base::Optional<aura::WindowOcclusionTracker::ScopedExclude>
       occlusion_excluder_;
+
+  // Records the presentation time for app/browser/tab window dragging
+  // in tablet mode.
+  std::unique_ptr<PresentationTimeRecorder> presentation_time_recorder_;
 
   base::WeakPtrFactory<TabletModeWindowDragDelegate> weak_ptr_factory_;
 

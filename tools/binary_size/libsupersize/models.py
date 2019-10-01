@@ -350,6 +350,14 @@ class BaseSymbol(object):
   def IsStringLiteral(self):
     return self.full_name == STRING_LITERAL_NAME
 
+  # Used for diffs to know whether or not it is accurate to consider two symbols
+  # with the same name as being the same.
+  def IsNameUnique(self):
+    return not (self.IsStringLiteral() or  # "string literal"
+                self.IsOverhead() or  # "Overhead: APK File"
+                self.full_name.startswith('*') or  # "** outlined symbol"
+                '.' in self.full_name)  # ".L__unnamed_1195"
+
   def IterLeafSymbols(self):
     yield self
 
@@ -645,8 +653,10 @@ class SymbolGroup(BaseSymbol):
 
   @property
   def flags(self):
-    first = self._symbols[0].flags if self else 0
-    return first if all(s.flags == first for s in self._symbols) else 0
+    ret = 0
+    for s in self._symbols:
+      ret |= s.flags
+    return ret
 
   @property
   def object_path(self):
@@ -802,6 +812,9 @@ class SymbolGroup(BaseSymbol):
 
   def WhereIsTemplate(self):
     return self.Filter(lambda s: s.template_name is not s.name)
+
+  def WhereHasFlag(self, flag):
+    return self.Filter(lambda s: s.flags & flag)
 
   def WhereHasComponent(self):
     return self.Filter(lambda s: s.component)
@@ -974,7 +987,9 @@ class SymbolGroup(BaseSymbol):
       diff_status = None
       if symbol.IsDelta():
         diff_status = symbol.diff_status
-      return (symbol.object_path, name, diff_status)
+      if symbol.object_path or symbol.full_name.startswith('**'):
+        return (symbol.object_path, name, diff_status)
+      return (symbol.address, name, diff_status)
 
     # Use a custom factory to fill in name & template_name.
     def group_factory(token, symbols):
@@ -1121,7 +1136,7 @@ class DeltaSymbolGroup(SymbolGroup):
     ret = [0, 0, 0, 0]
     for sym in self:
       ret[sym.diff_status] += 1
-    return ret
+    return tuple(ret)
 
   def CountUniqueSymbols(self):
     """Returns (num_unique_before_symbols, num_unique_after_symbols)."""

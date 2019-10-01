@@ -7,13 +7,18 @@ package org.chromium.chrome.browser.feed;
 import android.app.Activity;
 import android.support.annotation.IntDef;
 
-import com.google.android.libraries.feed.api.lifecycle.AppLifecycleListener;
+import com.google.android.libraries.feed.api.client.lifecycle.AppLifecycleListener;
 
 import org.chromium.base.ActivityState;
 import org.chromium.base.ApplicationStatus;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
+import org.chromium.chrome.browser.DeferredStartupHandler;
 import org.chromium.chrome.browser.signin.SigninManager;
+
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 
 /**
  * Aggregation point for application lifecycle events that the Feed cares about. Events that
@@ -22,12 +27,13 @@ import org.chromium.chrome.browser.signin.SigninManager;
  */
 public class FeedAppLifecycle
         implements SigninManager.SignInStateObserver, ApplicationStatus.ActivityStateListener {
-    @IntDef({AppLifecycleEvent.ENTER_FOREGROUND, AppLifecycleEvent.ENTER_BACKGROUND,
-            AppLifecycleEvent.CLEAR_ALL, AppLifecycleEvent.INITIALIZE,
-            AppLifecycleEvent.NUM_ENTRIES})
-
     // Intdef used to assign each event a number for metrics logging purposes. This maps directly to
     // the AppLifecycleEvent enum defined in tools/metrics/enums.xml
+    @IntDef({AppLifecycleEvent.ENTER_FOREGROUND, AppLifecycleEvent.ENTER_BACKGROUND,
+            AppLifecycleEvent.CLEAR_ALL, AppLifecycleEvent.INITIALIZE, AppLifecycleEvent.SIGN_IN,
+            AppLifecycleEvent.SIGN_OUT, AppLifecycleEvent.HISTORY_DELETED,
+            AppLifecycleEvent.CACHED_DATA_CLEARED})
+    @Retention(RetentionPolicy.SOURCE)
     public @interface AppLifecycleEvent {
         int ENTER_FOREGROUND = 0;
         int ENTER_BACKGROUND = 1;
@@ -46,6 +52,7 @@ public class FeedAppLifecycle
 
     private int mTabbedActivityCount;
     private boolean mInitializeCalled;
+    private boolean mDelayedInitializeStarted;
 
     /**
      * Create a FeedAppLifecycle instance. In normal use, this should only be called by {@link
@@ -54,6 +61,7 @@ public class FeedAppLifecycle
      *        interface that we will call into.
      * @param lifecycleBridge FeedLifecycleBridge JNI bridge over which native lifecycle events are
      *        delivered.
+     * @param feedScheduler Scheduler to be notified of several events.
      */
     public FeedAppLifecycle(AppLifecycleListener appLifecycleListener,
             FeedLifecycleBridge lifecycleBridge, FeedScheduler feedScheduler) {
@@ -166,6 +174,22 @@ public class FeedAppLifecycle
     private void onEnterForeground() {
         reportEvent(AppLifecycleEvent.ENTER_FOREGROUND);
         mAppLifecycleListener.onEnterForeground();
+
+        if (!mDelayedInitializeStarted) {
+            mDelayedInitializeStarted = true;
+            boolean initFeed = ChromeFeatureList.getFieldTrialParamByFeatureAsBoolean(
+                    ChromeFeatureList.INTEREST_FEED_CONTENT_SUGGESTIONS, "init_feed_after_startup",
+                    false);
+            if (initFeed) {
+                DeferredStartupHandler.getInstance().addDeferredTask(() -> {
+                    // Since this is being run asynchronously, it's possible #destroy() is called
+                    // before the delay finishes. Must guard against this.
+                    if (mLifecycleBridge != null) {
+                        initialize();
+                    }
+                });
+            }
+        }
     }
 
     private void onEnterBackground() {

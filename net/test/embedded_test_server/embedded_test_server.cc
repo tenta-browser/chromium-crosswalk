@@ -171,6 +171,7 @@ void EmbeddedTestServer::InitializeSSLServerContext() {
 }
 
 void EmbeddedTestServer::StartAcceptingConnections() {
+  DCHECK(Started());
   DCHECK(!io_thread_.get())
       << "Server must not be started while server is running";
   base::Thread::Options thread_options;
@@ -180,8 +181,8 @@ void EmbeddedTestServer::StartAcceptingConnections() {
   CHECK(io_thread_->WaitUntilThreadStarted());
 
   io_thread_->task_runner()->PostTask(
-      FROM_HERE,
-      base::Bind(&EmbeddedTestServer::DoAcceptLoop, base::Unretained(this)));
+      FROM_HERE, base::BindOnce(&EmbeddedTestServer::DoAcceptLoop,
+                                base::Unretained(this)));
 }
 
 bool EmbeddedTestServer::ShutdownAndWaitUntilComplete() {

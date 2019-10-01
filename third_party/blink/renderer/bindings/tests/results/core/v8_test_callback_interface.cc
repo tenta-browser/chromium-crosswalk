@@ -25,7 +25,7 @@ const char* V8TestCallbackInterface::NameInHeapSnapshot() const {
   return "V8TestCallbackInterface";
 }
 
-v8::Maybe<void> V8TestCallbackInterface::voidMethod(ScriptWrappable* callback_this_value) {
+v8::Maybe<void> V8TestCallbackInterface::voidMethod(bindings::V8ValueOrScriptWrappableAdapter callback_this_value) {
   ScriptState* callback_relevant_script_state =
       CallbackRelevantScriptStateOrThrowException(
           "TestCallbackInterface",
@@ -58,6 +58,11 @@ v8::Maybe<void> V8TestCallbackInterface::voidMethod(ScriptWrappable* callback_th
   // step: Prepare to run a callback with stored settings.
   v8::Context::BackupIncumbentScope backup_incumbent_scope(
       IncumbentScriptState()->GetContext());
+
+  if (UNLIKELY(ScriptForbiddenScope::IsScriptForbidden())) {
+    ScriptForbiddenScope::ThrowScriptForbiddenException(GetIsolate());
+    return v8::Nothing<void>();
+  }
 
   v8::Local<v8::Function> function;
   if (IsCallbackObjectCallable()) {
@@ -95,11 +100,11 @@ v8::Maybe<void> V8TestCallbackInterface::voidMethod(ScriptWrappable* callback_th
     //   interface, or if !IsCallable(O) is false, set thisArg to O (overriding
     //   the provided value).
     this_arg = CallbackObject();
-  } else if (!callback_this_value) {
+  } else if (callback_this_value.IsEmpty()) {
     // step 2. If thisArg was not given, let thisArg be undefined.
     this_arg = v8::Undefined(GetIsolate());
   } else {
-    this_arg = ToV8(callback_this_value, callback_relevant_script_state);
+    this_arg = callback_this_value.V8Value(callback_relevant_script_state);
   }
 
   // step: Let esArgs be the result of converting args to an ECMAScript
@@ -128,7 +133,7 @@ v8::Maybe<void> V8TestCallbackInterface::voidMethod(ScriptWrappable* callback_th
   return v8::JustVoid();
 }
 
-v8::Maybe<bool> V8TestCallbackInterface::booleanMethod(ScriptWrappable* callback_this_value) {
+v8::Maybe<bool> V8TestCallbackInterface::booleanMethod(bindings::V8ValueOrScriptWrappableAdapter callback_this_value) {
   ScriptState* callback_relevant_script_state =
       CallbackRelevantScriptStateOrThrowException(
           "TestCallbackInterface",
@@ -161,6 +166,11 @@ v8::Maybe<bool> V8TestCallbackInterface::booleanMethod(ScriptWrappable* callback
   // step: Prepare to run a callback with stored settings.
   v8::Context::BackupIncumbentScope backup_incumbent_scope(
       IncumbentScriptState()->GetContext());
+
+  if (UNLIKELY(ScriptForbiddenScope::IsScriptForbidden())) {
+    ScriptForbiddenScope::ThrowScriptForbiddenException(GetIsolate());
+    return v8::Nothing<bool>();
+  }
 
   v8::Local<v8::Function> function;
   if (IsCallbackObjectCallable()) {
@@ -198,11 +208,11 @@ v8::Maybe<bool> V8TestCallbackInterface::booleanMethod(ScriptWrappable* callback
     //   interface, or if !IsCallable(O) is false, set thisArg to O (overriding
     //   the provided value).
     this_arg = CallbackObject();
-  } else if (!callback_this_value) {
+  } else if (callback_this_value.IsEmpty()) {
     // step 2. If thisArg was not given, let thisArg be undefined.
     this_arg = v8::Undefined(GetIsolate());
   } else {
-    this_arg = ToV8(callback_this_value, callback_relevant_script_state);
+    this_arg = callback_this_value.V8Value(callback_relevant_script_state);
   }
 
   // step: Let esArgs be the result of converting args to an ECMAScript
@@ -243,7 +253,7 @@ v8::Maybe<bool> V8TestCallbackInterface::booleanMethod(ScriptWrappable* callback
   }
 }
 
-v8::Maybe<void> V8TestCallbackInterface::voidMethodBooleanArg(ScriptWrappable* callback_this_value, bool boolArg) {
+v8::Maybe<void> V8TestCallbackInterface::voidMethodBooleanArg(bindings::V8ValueOrScriptWrappableAdapter callback_this_value, bool boolArg) {
   ScriptState* callback_relevant_script_state =
       CallbackRelevantScriptStateOrThrowException(
           "TestCallbackInterface",
@@ -276,6 +286,11 @@ v8::Maybe<void> V8TestCallbackInterface::voidMethodBooleanArg(ScriptWrappable* c
   // step: Prepare to run a callback with stored settings.
   v8::Context::BackupIncumbentScope backup_incumbent_scope(
       IncumbentScriptState()->GetContext());
+
+  if (UNLIKELY(ScriptForbiddenScope::IsScriptForbidden())) {
+    ScriptForbiddenScope::ThrowScriptForbiddenException(GetIsolate());
+    return v8::Nothing<void>();
+  }
 
   v8::Local<v8::Function> function;
   if (IsCallbackObjectCallable()) {
@@ -313,11 +328,11 @@ v8::Maybe<void> V8TestCallbackInterface::voidMethodBooleanArg(ScriptWrappable* c
     //   interface, or if !IsCallable(O) is false, set thisArg to O (overriding
     //   the provided value).
     this_arg = CallbackObject();
-  } else if (!callback_this_value) {
+  } else if (callback_this_value.IsEmpty()) {
     // step 2. If thisArg was not given, let thisArg be undefined.
     this_arg = v8::Undefined(GetIsolate());
   } else {
-    this_arg = ToV8(callback_this_value, callback_relevant_script_state);
+    this_arg = callback_this_value.V8Value(callback_relevant_script_state);
   }
 
   // step: Let esArgs be the result of converting args to an ECMAScript
@@ -351,7 +366,7 @@ v8::Maybe<void> V8TestCallbackInterface::voidMethodBooleanArg(ScriptWrappable* c
   return v8::JustVoid();
 }
 
-v8::Maybe<void> V8TestCallbackInterface::voidMethodSequenceArg(ScriptWrappable* callback_this_value, const HeapVector<Member<TestInterfaceEmpty>>& sequenceArg) {
+v8::Maybe<void> V8TestCallbackInterface::voidMethodSequenceArg(bindings::V8ValueOrScriptWrappableAdapter callback_this_value, const HeapVector<Member<TestInterfaceEmpty>>& sequenceArg) {
   ScriptState* callback_relevant_script_state =
       CallbackRelevantScriptStateOrThrowException(
           "TestCallbackInterface",
@@ -384,6 +399,11 @@ v8::Maybe<void> V8TestCallbackInterface::voidMethodSequenceArg(ScriptWrappable* 
   // step: Prepare to run a callback with stored settings.
   v8::Context::BackupIncumbentScope backup_incumbent_scope(
       IncumbentScriptState()->GetContext());
+
+  if (UNLIKELY(ScriptForbiddenScope::IsScriptForbidden())) {
+    ScriptForbiddenScope::ThrowScriptForbiddenException(GetIsolate());
+    return v8::Nothing<void>();
+  }
 
   v8::Local<v8::Function> function;
   if (IsCallbackObjectCallable()) {
@@ -421,11 +441,11 @@ v8::Maybe<void> V8TestCallbackInterface::voidMethodSequenceArg(ScriptWrappable* 
     //   interface, or if !IsCallable(O) is false, set thisArg to O (overriding
     //   the provided value).
     this_arg = CallbackObject();
-  } else if (!callback_this_value) {
+  } else if (callback_this_value.IsEmpty()) {
     // step 2. If thisArg was not given, let thisArg be undefined.
     this_arg = v8::Undefined(GetIsolate());
   } else {
-    this_arg = ToV8(callback_this_value, callback_relevant_script_state);
+    this_arg = callback_this_value.V8Value(callback_relevant_script_state);
   }
 
   // step: Let esArgs be the result of converting args to an ECMAScript
@@ -459,7 +479,7 @@ v8::Maybe<void> V8TestCallbackInterface::voidMethodSequenceArg(ScriptWrappable* 
   return v8::JustVoid();
 }
 
-v8::Maybe<void> V8TestCallbackInterface::voidMethodFloatArg(ScriptWrappable* callback_this_value, float floatArg) {
+v8::Maybe<void> V8TestCallbackInterface::voidMethodFloatArg(bindings::V8ValueOrScriptWrappableAdapter callback_this_value, float floatArg) {
   ScriptState* callback_relevant_script_state =
       CallbackRelevantScriptStateOrThrowException(
           "TestCallbackInterface",
@@ -492,6 +512,11 @@ v8::Maybe<void> V8TestCallbackInterface::voidMethodFloatArg(ScriptWrappable* cal
   // step: Prepare to run a callback with stored settings.
   v8::Context::BackupIncumbentScope backup_incumbent_scope(
       IncumbentScriptState()->GetContext());
+
+  if (UNLIKELY(ScriptForbiddenScope::IsScriptForbidden())) {
+    ScriptForbiddenScope::ThrowScriptForbiddenException(GetIsolate());
+    return v8::Nothing<void>();
+  }
 
   v8::Local<v8::Function> function;
   if (IsCallbackObjectCallable()) {
@@ -529,11 +554,11 @@ v8::Maybe<void> V8TestCallbackInterface::voidMethodFloatArg(ScriptWrappable* cal
     //   interface, or if !IsCallable(O) is false, set thisArg to O (overriding
     //   the provided value).
     this_arg = CallbackObject();
-  } else if (!callback_this_value) {
+  } else if (callback_this_value.IsEmpty()) {
     // step 2. If thisArg was not given, let thisArg be undefined.
     this_arg = v8::Undefined(GetIsolate());
   } else {
-    this_arg = ToV8(callback_this_value, callback_relevant_script_state);
+    this_arg = callback_this_value.V8Value(callback_relevant_script_state);
   }
 
   // step: Let esArgs be the result of converting args to an ECMAScript
@@ -567,7 +592,7 @@ v8::Maybe<void> V8TestCallbackInterface::voidMethodFloatArg(ScriptWrappable* cal
   return v8::JustVoid();
 }
 
-v8::Maybe<void> V8TestCallbackInterface::voidMethodTestInterfaceEmptyArg(ScriptWrappable* callback_this_value, TestInterfaceEmpty* testInterfaceEmptyArg) {
+v8::Maybe<void> V8TestCallbackInterface::voidMethodTestInterfaceEmptyArg(bindings::V8ValueOrScriptWrappableAdapter callback_this_value, TestInterfaceEmpty* testInterfaceEmptyArg) {
   ScriptState* callback_relevant_script_state =
       CallbackRelevantScriptStateOrThrowException(
           "TestCallbackInterface",
@@ -600,6 +625,11 @@ v8::Maybe<void> V8TestCallbackInterface::voidMethodTestInterfaceEmptyArg(ScriptW
   // step: Prepare to run a callback with stored settings.
   v8::Context::BackupIncumbentScope backup_incumbent_scope(
       IncumbentScriptState()->GetContext());
+
+  if (UNLIKELY(ScriptForbiddenScope::IsScriptForbidden())) {
+    ScriptForbiddenScope::ThrowScriptForbiddenException(GetIsolate());
+    return v8::Nothing<void>();
+  }
 
   v8::Local<v8::Function> function;
   if (IsCallbackObjectCallable()) {
@@ -637,11 +667,11 @@ v8::Maybe<void> V8TestCallbackInterface::voidMethodTestInterfaceEmptyArg(ScriptW
     //   interface, or if !IsCallable(O) is false, set thisArg to O (overriding
     //   the provided value).
     this_arg = CallbackObject();
-  } else if (!callback_this_value) {
+  } else if (callback_this_value.IsEmpty()) {
     // step 2. If thisArg was not given, let thisArg be undefined.
     this_arg = v8::Undefined(GetIsolate());
   } else {
-    this_arg = ToV8(callback_this_value, callback_relevant_script_state);
+    this_arg = callback_this_value.V8Value(callback_relevant_script_state);
   }
 
   // step: Let esArgs be the result of converting args to an ECMAScript
@@ -675,7 +705,7 @@ v8::Maybe<void> V8TestCallbackInterface::voidMethodTestInterfaceEmptyArg(ScriptW
   return v8::JustVoid();
 }
 
-v8::Maybe<void> V8TestCallbackInterface::voidMethodTestInterfaceEmptyStringArg(ScriptWrappable* callback_this_value, TestInterfaceEmpty* testInterfaceEmptyArg, const String& stringArg) {
+v8::Maybe<void> V8TestCallbackInterface::voidMethodTestInterfaceEmptyStringArg(bindings::V8ValueOrScriptWrappableAdapter callback_this_value, TestInterfaceEmpty* testInterfaceEmptyArg, const String& stringArg) {
   ScriptState* callback_relevant_script_state =
       CallbackRelevantScriptStateOrThrowException(
           "TestCallbackInterface",
@@ -708,6 +738,11 @@ v8::Maybe<void> V8TestCallbackInterface::voidMethodTestInterfaceEmptyStringArg(S
   // step: Prepare to run a callback with stored settings.
   v8::Context::BackupIncumbentScope backup_incumbent_scope(
       IncumbentScriptState()->GetContext());
+
+  if (UNLIKELY(ScriptForbiddenScope::IsScriptForbidden())) {
+    ScriptForbiddenScope::ThrowScriptForbiddenException(GetIsolate());
+    return v8::Nothing<void>();
+  }
 
   v8::Local<v8::Function> function;
   if (IsCallbackObjectCallable()) {
@@ -745,11 +780,11 @@ v8::Maybe<void> V8TestCallbackInterface::voidMethodTestInterfaceEmptyStringArg(S
     //   interface, or if !IsCallable(O) is false, set thisArg to O (overriding
     //   the provided value).
     this_arg = CallbackObject();
-  } else if (!callback_this_value) {
+  } else if (callback_this_value.IsEmpty()) {
     // step 2. If thisArg was not given, let thisArg be undefined.
     this_arg = v8::Undefined(GetIsolate());
   } else {
-    this_arg = ToV8(callback_this_value, callback_relevant_script_state);
+    this_arg = callback_this_value.V8Value(callback_relevant_script_state);
   }
 
   // step: Let esArgs be the result of converting args to an ECMAScript
@@ -784,7 +819,7 @@ v8::Maybe<void> V8TestCallbackInterface::voidMethodTestInterfaceEmptyStringArg(S
   return v8::JustVoid();
 }
 
-v8::Maybe<void> V8TestCallbackInterface::callbackWithThisValueVoidMethodStringArg(ScriptWrappable* callback_this_value, const String& stringArg) {
+v8::Maybe<void> V8TestCallbackInterface::callbackWithThisValueVoidMethodStringArg(bindings::V8ValueOrScriptWrappableAdapter callback_this_value, const String& stringArg) {
   ScriptState* callback_relevant_script_state =
       CallbackRelevantScriptStateOrThrowException(
           "TestCallbackInterface",
@@ -817,6 +852,11 @@ v8::Maybe<void> V8TestCallbackInterface::callbackWithThisValueVoidMethodStringAr
   // step: Prepare to run a callback with stored settings.
   v8::Context::BackupIncumbentScope backup_incumbent_scope(
       IncumbentScriptState()->GetContext());
+
+  if (UNLIKELY(ScriptForbiddenScope::IsScriptForbidden())) {
+    ScriptForbiddenScope::ThrowScriptForbiddenException(GetIsolate());
+    return v8::Nothing<void>();
+  }
 
   v8::Local<v8::Function> function;
   if (IsCallbackObjectCallable()) {
@@ -854,11 +894,11 @@ v8::Maybe<void> V8TestCallbackInterface::callbackWithThisValueVoidMethodStringAr
     //   interface, or if !IsCallable(O) is false, set thisArg to O (overriding
     //   the provided value).
     this_arg = CallbackObject();
-  } else if (!callback_this_value) {
+  } else if (callback_this_value.IsEmpty()) {
     // step 2. If thisArg was not given, let thisArg be undefined.
     this_arg = v8::Undefined(GetIsolate());
   } else {
-    this_arg = ToV8(callback_this_value, callback_relevant_script_state);
+    this_arg = callback_this_value.V8Value(callback_relevant_script_state);
   }
 
   // step: Let esArgs be the result of converting args to an ECMAScript
@@ -892,7 +932,7 @@ v8::Maybe<void> V8TestCallbackInterface::callbackWithThisValueVoidMethodStringAr
   return v8::JustVoid();
 }
 
-v8::Maybe<void> V8TestCallbackInterface::customVoidMethodTestInterfaceEmptyArg(ScriptWrappable* callback_this_value, TestInterfaceEmpty* testInterfaceEmptyArg) {
+v8::Maybe<void> V8TestCallbackInterface::customVoidMethodTestInterfaceEmptyArg(bindings::V8ValueOrScriptWrappableAdapter callback_this_value, TestInterfaceEmpty* testInterfaceEmptyArg) {
   ScriptState* callback_relevant_script_state =
       CallbackRelevantScriptStateOrThrowException(
           "TestCallbackInterface",
@@ -925,6 +965,11 @@ v8::Maybe<void> V8TestCallbackInterface::customVoidMethodTestInterfaceEmptyArg(S
   // step: Prepare to run a callback with stored settings.
   v8::Context::BackupIncumbentScope backup_incumbent_scope(
       IncumbentScriptState()->GetContext());
+
+  if (UNLIKELY(ScriptForbiddenScope::IsScriptForbidden())) {
+    ScriptForbiddenScope::ThrowScriptForbiddenException(GetIsolate());
+    return v8::Nothing<void>();
+  }
 
   v8::Local<v8::Function> function;
   if (IsCallbackObjectCallable()) {
@@ -962,11 +1007,11 @@ v8::Maybe<void> V8TestCallbackInterface::customVoidMethodTestInterfaceEmptyArg(S
     //   interface, or if !IsCallable(O) is false, set thisArg to O (overriding
     //   the provided value).
     this_arg = CallbackObject();
-  } else if (!callback_this_value) {
+  } else if (callback_this_value.IsEmpty()) {
     // step 2. If thisArg was not given, let thisArg be undefined.
     this_arg = v8::Undefined(GetIsolate());
   } else {
-    this_arg = ToV8(callback_this_value, callback_relevant_script_state);
+    this_arg = callback_this_value.V8Value(callback_relevant_script_state);
   }
 
   // step: Let esArgs be the result of converting args to an ECMAScript
@@ -1000,47 +1045,47 @@ v8::Maybe<void> V8TestCallbackInterface::customVoidMethodTestInterfaceEmptyArg(S
   return v8::JustVoid();
 }
 
-v8::Maybe<void> V8PersistentCallbackInterface<V8TestCallbackInterface>::voidMethod(ScriptWrappable* callback_this_value) {
+v8::Maybe<void> V8PersistentCallbackInterface<V8TestCallbackInterface>::voidMethod(bindings::V8ValueOrScriptWrappableAdapter callback_this_value) {
   return Proxy()->voidMethod(
       callback_this_value);
 }
 
-v8::Maybe<bool> V8PersistentCallbackInterface<V8TestCallbackInterface>::booleanMethod(ScriptWrappable* callback_this_value) {
+v8::Maybe<bool> V8PersistentCallbackInterface<V8TestCallbackInterface>::booleanMethod(bindings::V8ValueOrScriptWrappableAdapter callback_this_value) {
   return Proxy()->booleanMethod(
       callback_this_value);
 }
 
-v8::Maybe<void> V8PersistentCallbackInterface<V8TestCallbackInterface>::voidMethodBooleanArg(ScriptWrappable* callback_this_value, bool boolArg) {
+v8::Maybe<void> V8PersistentCallbackInterface<V8TestCallbackInterface>::voidMethodBooleanArg(bindings::V8ValueOrScriptWrappableAdapter callback_this_value, bool boolArg) {
   return Proxy()->voidMethodBooleanArg(
       callback_this_value, boolArg);
 }
 
-v8::Maybe<void> V8PersistentCallbackInterface<V8TestCallbackInterface>::voidMethodSequenceArg(ScriptWrappable* callback_this_value, const HeapVector<Member<TestInterfaceEmpty>>& sequenceArg) {
+v8::Maybe<void> V8PersistentCallbackInterface<V8TestCallbackInterface>::voidMethodSequenceArg(bindings::V8ValueOrScriptWrappableAdapter callback_this_value, const HeapVector<Member<TestInterfaceEmpty>>& sequenceArg) {
   return Proxy()->voidMethodSequenceArg(
       callback_this_value, sequenceArg);
 }
 
-v8::Maybe<void> V8PersistentCallbackInterface<V8TestCallbackInterface>::voidMethodFloatArg(ScriptWrappable* callback_this_value, float floatArg) {
+v8::Maybe<void> V8PersistentCallbackInterface<V8TestCallbackInterface>::voidMethodFloatArg(bindings::V8ValueOrScriptWrappableAdapter callback_this_value, float floatArg) {
   return Proxy()->voidMethodFloatArg(
       callback_this_value, floatArg);
 }
 
-v8::Maybe<void> V8PersistentCallbackInterface<V8TestCallbackInterface>::voidMethodTestInterfaceEmptyArg(ScriptWrappable* callback_this_value, TestInterfaceEmpty* testInterfaceEmptyArg) {
+v8::Maybe<void> V8PersistentCallbackInterface<V8TestCallbackInterface>::voidMethodTestInterfaceEmptyArg(bindings::V8ValueOrScriptWrappableAdapter callback_this_value, TestInterfaceEmpty* testInterfaceEmptyArg) {
   return Proxy()->voidMethodTestInterfaceEmptyArg(
       callback_this_value, testInterfaceEmptyArg);
 }
 
-v8::Maybe<void> V8PersistentCallbackInterface<V8TestCallbackInterface>::voidMethodTestInterfaceEmptyStringArg(ScriptWrappable* callback_this_value, TestInterfaceEmpty* testInterfaceEmptyArg, const String& stringArg) {
+v8::Maybe<void> V8PersistentCallbackInterface<V8TestCallbackInterface>::voidMethodTestInterfaceEmptyStringArg(bindings::V8ValueOrScriptWrappableAdapter callback_this_value, TestInterfaceEmpty* testInterfaceEmptyArg, const String& stringArg) {
   return Proxy()->voidMethodTestInterfaceEmptyStringArg(
       callback_this_value, testInterfaceEmptyArg, stringArg);
 }
 
-v8::Maybe<void> V8PersistentCallbackInterface<V8TestCallbackInterface>::callbackWithThisValueVoidMethodStringArg(ScriptWrappable* callback_this_value, const String& stringArg) {
+v8::Maybe<void> V8PersistentCallbackInterface<V8TestCallbackInterface>::callbackWithThisValueVoidMethodStringArg(bindings::V8ValueOrScriptWrappableAdapter callback_this_value, const String& stringArg) {
   return Proxy()->callbackWithThisValueVoidMethodStringArg(
       callback_this_value, stringArg);
 }
 
-v8::Maybe<void> V8PersistentCallbackInterface<V8TestCallbackInterface>::customVoidMethodTestInterfaceEmptyArg(ScriptWrappable* callback_this_value, TestInterfaceEmpty* testInterfaceEmptyArg) {
+v8::Maybe<void> V8PersistentCallbackInterface<V8TestCallbackInterface>::customVoidMethodTestInterfaceEmptyArg(bindings::V8ValueOrScriptWrappableAdapter callback_this_value, TestInterfaceEmpty* testInterfaceEmptyArg) {
   return Proxy()->customVoidMethodTestInterfaceEmptyArg(
       callback_this_value, testInterfaceEmptyArg);
 }

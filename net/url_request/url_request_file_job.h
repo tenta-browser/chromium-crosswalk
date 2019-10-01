@@ -48,11 +48,8 @@ class NET_EXPORT URLRequestFileJob : public URLRequestJob {
   void SetExtraRequestHeaders(const HttpRequestHeaders& headers) override;
   void ShouldServeMimeTypeAsContentTypeHeader() {
     serve_mime_type_as_content_type_ = true;
-  };
+  }
   void GetResponseInfo(HttpResponseInfo* info) override;
-
-  // base::PowerObserver:
-  void OnSuspend() override;
 
   // An interface for subclasses who wish to monitor read operations.
   //

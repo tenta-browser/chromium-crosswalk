@@ -34,7 +34,7 @@ const CGFloat kHorizontalErrorIconFixedSize = 25;
   if (self) {
     self.cellClass = [TableViewAccountCell class];
     self.accessibilityTraits |= UIAccessibilityTraitButton;
-    _enabled = YES;
+    _mode = TableViewAccountModeEnabled;
   }
   return self;
 }
@@ -57,8 +57,8 @@ const CGFloat kHorizontalErrorIconFixedSize = 25;
         UIColorFromRGB(kTableViewSecondaryLabelLightGrayTextColor);
   }
 
-  if (self.isEnabled) {
-    cell.userInteractionEnabled = YES;
+  cell.userInteractionEnabled = self.mode == TableViewAccountModeEnabled;
+  if (self.mode != TableViewAccountModeDisabled) {
     cell.contentView.alpha = 1;
     UIImageView* accessoryImage =
         base::mac::ObjCCastStrict<UIImageView>(cell.accessoryView);
@@ -131,7 +131,7 @@ const CGFloat kHorizontalErrorIconFixedSize = 25;
   _detailTextLabel = [[UILabel alloc] init];
   _detailTextLabel.translatesAutoresizingMaskIntoConstraints = NO;
   _detailTextLabel.font =
-      [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
+      [UIFont preferredFontForTextStyle:kTableViewSublabelFontStyle];
   _detailTextLabel.adjustsFontForContentSizeCategory = YES;
   _detailTextLabel.textColor = UIColorFromRGB(kSettingsCellsDetailTextColor);
   [contentView addSubview:_detailTextLabel];
@@ -169,10 +169,10 @@ const CGFloat kHorizontalErrorIconFixedSize = 25;
         constraintEqualToAnchor:contentView.centerYAnchor],
     [_imageView.topAnchor
         constraintGreaterThanOrEqualToAnchor:contentView.topAnchor
-                                    constant:kTableViewLargeVerticalSpacing],
+                                    constant:kTableViewVerticalSpacing],
     [_imageView.bottomAnchor
         constraintLessThanOrEqualToAnchor:contentView.bottomAnchor
-                                 constant:-kTableViewLargeVerticalSpacing],
+                                 constant:-kTableViewVerticalSpacing],
     [_textLabel.topAnchor
         constraintEqualToAnchor:verticalCenteringView.topAnchor],
     [_textLabel.bottomAnchor
@@ -185,10 +185,12 @@ const CGFloat kHorizontalErrorIconFixedSize = 25;
         constraintEqualToAnchor:contentView.centerYAnchor],
     [verticalCenteringView.topAnchor
         constraintGreaterThanOrEqualToAnchor:contentView.topAnchor
-                                    constant:kTableViewVerticalSpacing],
+                                    constant:
+                                        kTableViewTwoLabelsCellVerticalSpacing],
     [verticalCenteringView.bottomAnchor
         constraintLessThanOrEqualToAnchor:contentView.bottomAnchor
-                                 constant:kTableViewVerticalSpacing],
+                                 constant:
+                                     kTableViewTwoLabelsCellVerticalSpacing],
 
     // Set trailing anchors.
     [_errorIcon.trailingAnchor

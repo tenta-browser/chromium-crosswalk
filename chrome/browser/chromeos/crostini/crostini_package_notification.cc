@@ -10,7 +10,6 @@
 #include "chrome/browser/notifications/notification_display_service.h"
 #include "chrome/grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/base/l10n/time_format.h"
 #include "ui/message_center/public/cpp/message_center_constants.h"
 #include "ui/message_center/public/cpp/notification.h"
 #include "ui/message_center/public/cpp/notification_delegate.h"
@@ -70,6 +69,10 @@ CrostiniPackageNotification::CrostiniPackageNotification(
 }
 
 CrostiniPackageNotification::~CrostiniPackageNotification() = default;
+
+PackageOperationStatus CrostiniPackageNotification::GetOperationStatus() const {
+  return current_status_;
+}
 
 // static
 CrostiniPackageNotification::NotificationSettings
@@ -155,36 +158,21 @@ void CrostiniPackageNotification::UpdateProgress(PackageOperationStatus status,
           ash::kSystemNotificationColorCriticalWarning);
       break;
 
+    case PackageOperationStatus::WAITING_FOR_APP_REGISTRY_UPDATE:
+      // If a notification progress bar is set to a value outside of [0, 100],
+      // it becomes in infinite progress bar. Do that here because we have no
+      // way to know how long this will take or how close we are to completion.
+      progress_percent = -1;
+      FALLTHROUGH;
     case PackageOperationStatus::RUNNING:
       never_timeout = true;
       notification_type = message_center::NOTIFICATION_TYPE_PROGRESS;
       title = notification_settings_.progress_title;
-      if (notification_type_ == NotificationType::APPLICATION_UNINSTALL) {
+      if (notification_type_ == NotificationType::APPLICATION_UNINSTALL &&
+          progress_percent >= 0) {
         // Uninstalls have a time remaining instead of a fixed message.
-        base::TimeDelta time_since_started_running =
-            base::Time::Now() - running_start_time_;
+        body = GetTimeRemainingMessage(running_start_time_, progress_percent);
 
-        // Don't estimate if we don't have enough data yet. At the moment we
-        // start the uninstall, we have no idea how long it will take. Only
-        // estimate once we've spent at least 3 seconds OR gotten 10% of the
-        // way through the uninstall.
-        constexpr base::TimeDelta kMinTimeForEstimate =
-            base::TimeDelta::FromSeconds(3);
-        constexpr base::TimeDelta kTimeDeltaZero =
-            base::TimeDelta::FromSeconds(0);
-        constexpr int kMinPercentForEstimate = 10;
-        if ((time_since_started_running >= kMinTimeForEstimate &&
-             progress_percent > 0) ||
-            (progress_percent >= kMinPercentForEstimate &&
-             time_since_started_running > kTimeDeltaZero)) {
-          base::TimeDelta total_time_expected =
-              (time_since_started_running * 100) / progress_percent;
-          base::TimeDelta time_remaining =
-              total_time_expected - time_since_started_running;
-          body = ui::TimeFormat::Simple(ui::TimeFormat::FORMAT_REMAINING,
-                                        ui::TimeFormat::LENGTH_SHORT,
-                                        time_remaining);
-        }
         // else leave body blank
       } else {
         body = notification_settings_.progress_body;
@@ -247,8 +235,8 @@ void CrostiniPackageNotification::UpdateDisplayedNotification() {
 
   NotificationDisplayService* display_service =
       NotificationDisplayService::GetForProfile(profile_);
-  display_service->Display(NotificationHandler::Type::TRANSIENT,
-                           *notification_);
+  display_service->Display(NotificationHandler::Type::TRANSIENT, *notification_,
+                           /*metadata=*/nullptr);
 }
 
 }  // namespace crostini

@@ -11,6 +11,7 @@
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/style_property_shorthand.h"
 #include "third_party/blink/renderer/core/svg/svg_element.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 
@@ -38,7 +39,7 @@ MutableCSSPropertyValueSet::SetResult StringKeyframe::SetCSSPropertyValue(
     const String& value,
     SecureContextMode secure_context_mode,
     StyleSheetContents* style_sheet_contents) {
-  DCHECK_NE(property, CSSPropertyInvalid);
+  DCHECK_NE(property, CSSPropertyID::kInvalid);
   if (CSSAnimations::IsAnimationAffectingProperty(CSSProperty::Get(property))) {
     bool did_parse = true;
     bool did_change = false;
@@ -50,7 +51,7 @@ MutableCSSPropertyValueSet::SetResult StringKeyframe::SetCSSPropertyValue(
 
 void StringKeyframe::SetCSSPropertyValue(const CSSProperty& property,
                                          const CSSValue& value) {
-  DCHECK_NE(property.PropertyID(), CSSPropertyInvalid);
+  DCHECK_NE(property.PropertyID(), CSSPropertyID::kInvalid);
   DCHECK(!CSSAnimations::IsAnimationAffectingProperty(property));
   css_property_map_->SetProperty(property.PropertyID(), value, false);
 }
@@ -60,7 +61,7 @@ void StringKeyframe::SetPresentationAttributeValue(
     const String& value,
     SecureContextMode secure_context_mode,
     StyleSheetContents* style_sheet_contents) {
-  DCHECK_NE(property.PropertyID(), CSSPropertyInvalid);
+  DCHECK_NE(property.PropertyID(), CSSPropertyID::kInvalid);
   if (!CSSAnimations::IsAnimationAffectingProperty(property)) {
     presentation_attribute_map_->SetProperty(property.PropertyID(), value,
                                              false, secure_context_mode,
@@ -83,10 +84,10 @@ PropertyHandleSet StringKeyframe::Properties() const {
     const CSSProperty& property = property_reference.Property();
     DCHECK(!property.IsShorthand())
         << "Web Animations: Encountered unexpanded shorthand CSS property ("
-        << property.PropertyID() << ").";
-    if (property.IDEquals(CSSPropertyVariable)) {
+        << static_cast<int>(property.PropertyID()) << ").";
+    if (property.IDEquals(CSSPropertyID::kVariable)) {
       properties.insert(PropertyHandle(
-          ToCSSCustomPropertyDeclaration(property_reference.Value())
+          To<CSSCustomPropertyDeclaration>(property_reference.Value())
               .GetName()));
     } else {
       properties.insert(PropertyHandle(property, false));
@@ -152,29 +153,30 @@ StringKeyframe::CreatePropertySpecificKeyframe(
   EffectModel::CompositeOperation composite =
       composite_.value_or(effect_composite);
   if (property.IsCSSProperty()) {
-    return CSSPropertySpecificKeyframe::Create(
+    return MakeGarbageCollected<CSSPropertySpecificKeyframe>(
         offset, &Easing(), &CssPropertyValue(property), composite);
   }
 
   if (property.IsPresentationAttribute()) {
-    return CSSPropertySpecificKeyframe::Create(
+    return MakeGarbageCollected<CSSPropertySpecificKeyframe>(
         offset, &Easing(),
         &PresentationAttributeValue(property.PresentationAttribute()),
         composite);
   }
 
   DCHECK(property.IsSVGAttribute());
-  return SVGPropertySpecificKeyframe::Create(
+  return MakeGarbageCollected<SVGPropertySpecificKeyframe>(
       offset, &Easing(), SvgPropertyValue(property.SvgAttribute()), composite);
 }
 
-bool StringKeyframe::CSSPropertySpecificKeyframe::PopulateAnimatableValue(
-    const PropertyHandle& property,
-    Element& element,
-    const ComputedStyle& base_style,
-    const ComputedStyle* parent_style) const {
-  animatable_value_cache_ = StyleResolver::CreateAnimatableValueSnapshot(
-      element, base_style, parent_style, property, value_.Get());
+bool StringKeyframe::CSSPropertySpecificKeyframe::
+    PopulateCompositorKeyframeValue(const PropertyHandle& property,
+                                    Element& element,
+                                    const ComputedStyle& base_style,
+                                    const ComputedStyle* parent_style) const {
+  compositor_keyframe_value_cache_ =
+      StyleResolver::CreateCompositorKeyframeValueSnapshot(
+          element, base_style, parent_style, property, value_.Get());
   return true;
 }
 
@@ -182,35 +184,37 @@ Keyframe::PropertySpecificKeyframe*
 StringKeyframe::CSSPropertySpecificKeyframe::NeutralKeyframe(
     double offset,
     scoped_refptr<TimingFunction> easing) const {
-  return Create(offset, std::move(easing), nullptr, EffectModel::kCompositeAdd);
+  return MakeGarbageCollected<CSSPropertySpecificKeyframe>(
+      offset, std::move(easing), nullptr, EffectModel::kCompositeAdd);
 }
 
 void StringKeyframe::CSSPropertySpecificKeyframe::Trace(Visitor* visitor) {
   visitor->Trace(value_);
-  visitor->Trace(animatable_value_cache_);
+  visitor->Trace(compositor_keyframe_value_cache_);
   Keyframe::PropertySpecificKeyframe::Trace(visitor);
 }
 
 Keyframe::PropertySpecificKeyframe*
 StringKeyframe::CSSPropertySpecificKeyframe::CloneWithOffset(
     double offset) const {
-  CSSPropertySpecificKeyframe* clone =
-      Create(offset, easing_, value_.Get(), composite_);
-  clone->animatable_value_cache_ = animatable_value_cache_;
+  auto* clone = MakeGarbageCollected<CSSPropertySpecificKeyframe>(
+      offset, easing_, value_.Get(), composite_);
+  clone->compositor_keyframe_value_cache_ = compositor_keyframe_value_cache_;
   return clone;
 }
 
 Keyframe::PropertySpecificKeyframe*
 SVGPropertySpecificKeyframe::CloneWithOffset(double offset) const {
-  return Create(offset, easing_, value_, composite_);
+  return MakeGarbageCollected<SVGPropertySpecificKeyframe>(offset, easing_,
+                                                           value_, composite_);
 }
 
 Keyframe::PropertySpecificKeyframe*
 SVGPropertySpecificKeyframe::NeutralKeyframe(
     double offset,
     scoped_refptr<TimingFunction> easing) const {
-  return Create(offset, std::move(easing), String(),
-                EffectModel::kCompositeAdd);
+  return MakeGarbageCollected<SVGPropertySpecificKeyframe>(
+      offset, std::move(easing), String(), EffectModel::kCompositeAdd);
 }
 
 }  // namespace blink

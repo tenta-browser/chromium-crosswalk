@@ -14,18 +14,20 @@
 #import "components/autofill/ios/browser/autofill_agent.h"
 #import "components/autofill/ios/browser/js_autofill_manager.h"
 #import "components/autofill/ios/browser/js_suggestion_manager.h"
+#include "components/language/ios/browser/ios_language_detection_tab_helper.h"
 #include "google_apis/google_api_keys.h"
+#import "ios/web/public/deprecated/crw_js_injection_receiver.h"
 #include "ios/web/public/favicon_url.h"
+#import "ios/web/public/js_messaging/web_frames_manager.h"
 #import "ios/web/public/navigation_item.h"
 #import "ios/web/public/navigation_manager.h"
 #include "ios/web/public/referrer.h"
 #include "ios/web/public/reload_type.h"
+#import "ios/web/public/web_client.h"
 #import "ios/web/public/web_state/context_menu_params.h"
-#import "ios/web/public/web_state/js/crw_js_injection_receiver.h"
 #import "ios/web/public/web_state/navigation_context.h"
 #import "ios/web/public/web_state/ui/crw_web_view_proxy.h"
 #import "ios/web/public/web_state/ui/crw_web_view_scroll_view_proxy.h"
-#import "ios/web/public/web_state/web_frames_manager.h"
 #import "ios/web/public/web_state/web_state.h"
 #import "ios/web/public/web_state/web_state_delegate_bridge.h"
 #import "ios/web/public/web_state/web_state_observer_bridge.h"
@@ -38,6 +40,7 @@
 #import "ios/web_view/internal/cwv_scroll_view_internal.h"
 #import "ios/web_view/internal/cwv_ssl_status_internal.h"
 #import "ios/web_view/internal/cwv_web_view_configuration_internal.h"
+#import "ios/web_view/internal/language/web_view_url_language_histogram_factory.h"
 #import "ios/web_view/internal/translate/cwv_translation_controller_internal.h"
 #import "ios/web_view/internal/translate/web_view_translate_client.h"
 #include "ios/web_view/internal/web_view_browser_state.h"
@@ -86,8 +89,13 @@ class WebViewHolder : public web::WebStateUserData<WebViewHolder> {
   void set_web_view(CWVWebView* web_view) { web_view_ = web_view; }
 
  private:
+  friend class web::WebStateUserData<WebViewHolder>;
+
   __weak CWVWebView* web_view_ = nil;
+  WEB_STATE_USER_DATA_KEY_DECL();
 };
+
+WEB_STATE_USER_DATA_KEY_IMPL(WebViewHolder)
 }  // namespace
 
 @interface CWVWebView ()<CRWWebStateDelegate, CRWWebStateObserver> {
@@ -508,6 +516,11 @@ static NSString* gUserAgentProduct = nil;
 }
 
 - (CWVTranslationController*)newTranslationController {
+  language::IOSLanguageDetectionTabHelper::CreateForWebState(
+      _webState.get(),
+      ios_web_view::WebViewUrlLanguageHistogramFactory::GetForBrowserState(
+          ios_web_view::WebViewBrowserState::FromBrowserState(
+              _webState->GetBrowserState())));
   ios_web_view::WebViewTranslateClient::CreateForWebState(_webState.get());
   ios_web_view::WebViewTranslateClient* translateClient =
       ios_web_view::WebViewTranslateClient::FromWebState(_webState.get());
@@ -660,6 +673,12 @@ static NSString* gUserAgentProduct = nil;
   [self updateVisibleSSLStatus];
   self.loading = NO;
   self.estimatedProgress = 0.0;
+
+  // TODO(crbug.com/873729): The session will not be restored until
+  // LoadIfNecessary call. Fix the bug and remove extra call.
+  if (web::GetWebClient()->IsSlimNavigationManagerEnabled() && sessionStorage) {
+    _webState->GetNavigationManager()->LoadIfNecessary();
+  }
 }
 
 // Adds the web view provided by |_webState| as a subview unless it has already.

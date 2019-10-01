@@ -14,6 +14,7 @@
 #include "chrome/browser/search/one_google_bar/one_google_bar_data.h"
 #include "chrome/browser/search/one_google_bar/one_google_bar_loader.h"
 #include "services/identity/public/cpp/identity_test_environment.h"
+#include "services/network/test/test_url_loader_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -66,9 +67,7 @@ class OneGoogleBarServiceTest : public testing::Test {
     identity_env_.SetCookieAccounts({{account_info.email, account_info.gaia}});
   }
 
-  void SignOut() {
-    identity_env_.SetCookieAccounts({});
-  }
+  void SignOut() { identity_env_.SetCookieAccounts({}); }
 
  private:
   base::test::ScopedTaskEnvironment task_environment_;
@@ -247,4 +246,34 @@ TEST_F(OneGoogleBarServiceTest, DoesNotNotifyObserverOnSignInIfNoCachedData) {
   EXPECT_THAT(service()->one_google_bar_data(), Eq(base::nullopt));
 
   service()->RemoveObserver(&observer);
+}
+
+TEST_F(OneGoogleBarServiceTest, UpdatesLanguageCode) {
+  ASSERT_THAT(service()->one_google_bar_data(), Eq(base::nullopt));
+
+  // Request a refresh. That should arrive at the loader.
+  service()->Refresh();
+  EXPECT_THAT(loader()->GetCallbackCount(), Eq(1u));
+
+  // Fulfill it.
+  OneGoogleBarData data;
+  data.language_code = "en-US";
+  loader()->RespondToAllCallbacks(OneGoogleBarLoader::Status::OK, data);
+  EXPECT_THAT(service()->one_google_bar_data(), Eq(data));
+  EXPECT_THAT(service()->language_code(), "en-US");
+
+  // Request another refresh.
+  service()->Refresh();
+  EXPECT_THAT(loader()->GetCallbackCount(), Eq(1u));
+
+  // For now, the old data should still be there.
+  EXPECT_THAT(service()->one_google_bar_data(), Eq(data));
+  EXPECT_THAT(service()->language_code(), "en-US");
+
+  // Fulfill the second request, the language code should now be updated.
+  OneGoogleBarData other_data;
+  other_data.language_code = "en-UK";
+  loader()->RespondToAllCallbacks(OneGoogleBarLoader::Status::OK, other_data);
+  EXPECT_THAT(service()->one_google_bar_data(), Eq(other_data));
+  EXPECT_THAT(service()->language_code(), "en-UK");
 }

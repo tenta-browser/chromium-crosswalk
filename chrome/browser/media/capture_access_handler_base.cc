@@ -13,7 +13,7 @@
 #include "extensions/common/extension.h"
 
 #if defined(OS_CHROMEOS)
-#include "base/sha1.h"
+#include "base/hash/sha1.h"
 #endif  // defined(OS_CHROMEOS)
 
 using content::BrowserThread;
@@ -76,8 +76,10 @@ void CaptureAccessHandlerBase::UpdateMediaRequestState(
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if ((stream_type != blink::MEDIA_GUM_DESKTOP_VIDEO_CAPTURE) &&
       (stream_type != blink::MEDIA_GUM_TAB_VIDEO_CAPTURE) &&
-      (stream_type != blink::MEDIA_DISPLAY_VIDEO_CAPTURE))
+      (stream_type != blink::MEDIA_DISPLAY_VIDEO_CAPTURE) &&
+      (stream_type != blink::MEDIA_DISPLAY_AUDIO_CAPTURE)) {
     return;
+  }
 
   if (state == content::MEDIA_REQUEST_STATE_DONE) {
     if (FindSession(render_process_id, render_frame_id, page_request_id) ==

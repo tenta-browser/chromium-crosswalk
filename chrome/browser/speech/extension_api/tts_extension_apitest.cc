@@ -57,7 +57,7 @@ class MockTtsPlatformImpl : public content::TtsPlatform {
   bool PlatformImplAvailable() override { return true; }
 
   void WillSpeakUtteranceWithVoice(
-      const content::TtsUtterance* utterance,
+      content::TtsUtterance* utterance,
       const content::VoiceData& voice_data) override {}
 
   bool LoadBuiltInTtsEngine(content::BrowserContext* browser_context) override {
@@ -70,8 +70,29 @@ class MockTtsPlatformImpl : public content::TtsPlatform {
 
   std::string GetError() override { return error_; }
 
-  MOCK_METHOD5(Speak,
-               bool(int utterance_id,
+  // Work-around for functions that take move-only types as arguments.
+  // https://github.com/google/googlemock/blob/master/googlemock/docs/CookBook.md
+  // Delegate the Speak() method to DoSpeak(), which doesn't take any move
+  // parameters.
+  void Speak(int utterance_id,
+             const std::string& utterance,
+             const std::string& lang,
+             const content::VoiceData& voice,
+             const content::UtteranceContinuousParameters& params,
+             base::OnceCallback<void(bool)> on_speak_finished) override {
+    DoSpeak(utterance_id, utterance, lang, voice, params);
+    // Logic for PlatformSpeakError test. Needs to fail the first time, but
+    // succeed the second time.
+    if (speak_error_test_) {
+      speak_error_count_ > 0 ? std::move(on_speak_finished).Run(true)
+                             : std::move(on_speak_finished).Run(false);
+      ++speak_error_count_;
+    } else {
+      std::move(on_speak_finished).Run(true);
+    }
+  }
+  MOCK_METHOD5(DoSpeak,
+               void(int utterance_id,
                     const std::string& utterance,
                     const std::string& lang,
                     const content::VoiceData& voice,
@@ -106,9 +127,9 @@ class MockTtsPlatformImpl : public content::TtsPlatform {
   void SendEndEventOnSavedUtteranceId() {
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE,
-        base::Bind(&MockTtsPlatformImpl::SendEvent, ptr_factory_.GetWeakPtr(),
-                   false, g_saved_utterance_id, content::TTS_EVENT_END, 0,
-                   std::string()),
+        base::BindOnce(&MockTtsPlatformImpl::SendEvent,
+                       ptr_factory_.GetWeakPtr(), false, g_saved_utterance_id,
+                       content::TTS_EVENT_END, 0, 0, std::string()),
         base::TimeDelta());
   }
 
@@ -119,9 +140,10 @@ class MockTtsPlatformImpl : public content::TtsPlatform {
                     const content::UtteranceContinuousParameters& params) {
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE,
-        base::Bind(&MockTtsPlatformImpl::SendEvent, ptr_factory_.GetWeakPtr(),
-                   false, utterance_id, content::TTS_EVENT_END,
-                   utterance.size(), std::string()),
+        base::BindOnce(&MockTtsPlatformImpl::SendEvent,
+                       ptr_factory_.GetWeakPtr(), false, utterance_id,
+                       content::TTS_EVENT_END, utterance.size(), 0,
+                       std::string()),
         base::TimeDelta());
   }
 
@@ -133,9 +155,10 @@ class MockTtsPlatformImpl : public content::TtsPlatform {
       const content::UtteranceContinuousParameters& params) {
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE,
-        base::Bind(&MockTtsPlatformImpl::SendEvent, ptr_factory_.GetWeakPtr(),
-                   true, utterance_id, content::TTS_EVENT_END, utterance.size(),
-                   std::string()),
+        base::BindOnce(&MockTtsPlatformImpl::SendEvent,
+                       ptr_factory_.GetWeakPtr(), true, utterance_id,
+                       content::TTS_EVENT_END, utterance.size(), 0,
+                       std::string()),
         base::TimeDelta());
   }
 
@@ -148,9 +171,9 @@ class MockTtsPlatformImpl : public content::TtsPlatform {
       if (i == 0 || utterance[i - 1] == ' ') {
         base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
             FROM_HERE,
-            base::Bind(&MockTtsPlatformImpl::SendEvent,
-                       ptr_factory_.GetWeakPtr(), false, utterance_id,
-                       content::TTS_EVENT_WORD, i, std::string()),
+            base::BindOnce(&MockTtsPlatformImpl::SendEvent,
+                           ptr_factory_.GetWeakPtr(), false, utterance_id,
+                           content::TTS_EVENT_WORD, i, 1, std::string()),
             base::TimeDelta());
       }
     }
@@ -160,22 +183,29 @@ class MockTtsPlatformImpl : public content::TtsPlatform {
                  int utterance_id,
                  content::TtsEventType event_type,
                  int char_index,
+                 int length,
                  const std::string& message) {
     content::TtsController* tts_controller =
         content::TtsController::GetInstance();
     if (wait_for_non_empty_queue && tts_controller->QueueSize() == 0) {
       base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
           FROM_HERE,
-          base::Bind(&MockTtsPlatformImpl::SendEvent, ptr_factory_.GetWeakPtr(),
-                     true, utterance_id, event_type, char_index, message),
+          base::BindOnce(&MockTtsPlatformImpl::SendEvent,
+                         ptr_factory_.GetWeakPtr(), true, utterance_id,
+                         event_type, char_index, length, message),
           base::TimeDelta::FromMilliseconds(100));
       return;
     }
 
-    tts_controller->OnTtsEvent(utterance_id, event_type, char_index, message);
+    tts_controller->OnTtsEvent(utterance_id, event_type, char_index, length,
+                               message);
   }
 
+  void SetSpeakErrorTest(bool value) { speak_error_test_ = value; }
+
  private:
+  bool speak_error_test_ = false;
+  int speak_error_count_ = 0;
   bool should_fake_get_voices_;
   std::string error_;
   base::WeakPtrFactory<MockTtsPlatformImpl> ptr_factory_;
@@ -266,24 +296,23 @@ IN_PROC_BROWSER_TEST_F(TtsApiTest, PlatformSpeakOptionalArgs) {
   InSequence s;
   EXPECT_CALL(mock_platform_impl_, StopSpeaking())
       .WillOnce(Return(true));
-  EXPECT_CALL(mock_platform_impl_, Speak(_, "", _, _, _))
-      .WillOnce(Return(true));
+  EXPECT_CALL(mock_platform_impl_, DoSpeak(_, "", _, _, _)).WillOnce(Return());
   EXPECT_CALL(mock_platform_impl_, StopSpeaking())
       .WillOnce(Return(true));
-  EXPECT_CALL(mock_platform_impl_, Speak(_, "Alpha", _, _, _))
-      .WillOnce(Return(true));
+  EXPECT_CALL(mock_platform_impl_, DoSpeak(_, "Alpha", _, _, _))
+      .WillOnce(Return());
   EXPECT_CALL(mock_platform_impl_, StopSpeaking())
       .WillOnce(Return(true));
-  EXPECT_CALL(mock_platform_impl_, Speak(_, "Bravo", _, _, _))
-      .WillOnce(Return(true));
+  EXPECT_CALL(mock_platform_impl_, DoSpeak(_, "Bravo", _, _, _))
+      .WillOnce(Return());
   EXPECT_CALL(mock_platform_impl_, StopSpeaking())
       .WillOnce(Return(true));
-  EXPECT_CALL(mock_platform_impl_, Speak(_, "Charlie", _, _, _))
-      .WillOnce(Return(true));
+  EXPECT_CALL(mock_platform_impl_, DoSpeak(_, "Charlie", _, _, _))
+      .WillOnce(Return());
   EXPECT_CALL(mock_platform_impl_, StopSpeaking())
       .WillOnce(Return(true));
-  EXPECT_CALL(mock_platform_impl_, Speak(_, "Echo", _, _, _))
-      .WillOnce(Return(true));
+  EXPECT_CALL(mock_platform_impl_, DoSpeak(_, "Echo", _, _, _))
+      .WillOnce(Return());
   ASSERT_TRUE(RunExtensionTest("tts/optional_args")) << message_;
 }
 
@@ -292,11 +321,10 @@ IN_PROC_BROWSER_TEST_F(TtsApiTest, PlatformSpeakFinishesImmediately) {
   EXPECT_CALL(mock_platform_impl_, IsSpeaking());
   EXPECT_CALL(mock_platform_impl_, StopSpeaking())
       .WillOnce(Return(true));
-  EXPECT_CALL(mock_platform_impl_, Speak(_, _, _, _, _))
+  EXPECT_CALL(mock_platform_impl_, DoSpeak(_, _, _, _, _))
       .WillOnce(DoAll(
-          Invoke(&mock_platform_impl_,
-                 &MockTtsPlatformImpl::SendEndEvent),
-          Return(true)));
+          Invoke(&mock_platform_impl_, &MockTtsPlatformImpl::SendEndEvent),
+          Return()));
   ASSERT_TRUE(RunExtensionTest("tts/speak_once")) << message_;
 }
 
@@ -307,16 +335,15 @@ IN_PROC_BROWSER_TEST_F(TtsApiTest, PlatformSpeakInterrupt) {
   InSequence s;
   EXPECT_CALL(mock_platform_impl_, StopSpeaking())
       .WillOnce(Return(true));
-  EXPECT_CALL(mock_platform_impl_, Speak(_, "text 1", _, _, _))
-      .WillOnce(Return(true));
+  EXPECT_CALL(mock_platform_impl_, DoSpeak(_, "text 1", _, _, _))
+      .WillOnce(Return());
   // Expect the second utterance and allow it to finish.
   EXPECT_CALL(mock_platform_impl_, StopSpeaking())
       .WillOnce(Return(true));
-  EXPECT_CALL(mock_platform_impl_, Speak(_, "text 2", _, _, _))
+  EXPECT_CALL(mock_platform_impl_, DoSpeak(_, "text 2", _, _, _))
       .WillOnce(DoAll(
-          Invoke(&mock_platform_impl_,
-                 &MockTtsPlatformImpl::SendEndEvent),
-          Return(true)));
+          Invoke(&mock_platform_impl_, &MockTtsPlatformImpl::SendEndEvent),
+          Return()));
   ASSERT_TRUE(RunExtensionTest("tts/interrupt")) << message_;
 }
 
@@ -328,18 +355,17 @@ IN_PROC_BROWSER_TEST_F(TtsApiTest, PlatformSpeakQueueInterrupt) {
   InSequence s;
   EXPECT_CALL(mock_platform_impl_, StopSpeaking())
       .WillOnce(Return(true));
-  EXPECT_CALL(mock_platform_impl_, Speak(_, "text 1", _, _, _))
-      .WillOnce(Return(true));
+  EXPECT_CALL(mock_platform_impl_, DoSpeak(_, "text 1", _, _, _))
+      .WillOnce(Return());
   // Don't expect the second utterance, because it's queued up and the
   // first never finishes.
   // Expect the third utterance and allow it to finish successfully.
   EXPECT_CALL(mock_platform_impl_, StopSpeaking())
       .WillOnce(Return(true));
-  EXPECT_CALL(mock_platform_impl_, Speak(_, "text 3", _, _, _))
+  EXPECT_CALL(mock_platform_impl_, DoSpeak(_, "text 3", _, _, _))
       .WillOnce(DoAll(
-          Invoke(&mock_platform_impl_,
-                 &MockTtsPlatformImpl::SendEndEvent),
-          Return(true)));
+          Invoke(&mock_platform_impl_, &MockTtsPlatformImpl::SendEndEvent),
+          Return()));
   ASSERT_TRUE(RunExtensionTest("tts/queue_interrupt")) << message_;
 }
 
@@ -349,16 +375,15 @@ IN_PROC_BROWSER_TEST_F(TtsApiTest, PlatformSpeakEnqueue) {
   InSequence s;
   EXPECT_CALL(mock_platform_impl_, StopSpeaking())
       .WillOnce(Return(true));
-  EXPECT_CALL(mock_platform_impl_, Speak(_, "text 1", _, _, _))
+  EXPECT_CALL(mock_platform_impl_, DoSpeak(_, "text 1", _, _, _))
+      .WillOnce(
+          DoAll(Invoke(&mock_platform_impl_,
+                       &MockTtsPlatformImpl::SendEndEventWhenQueueNotEmpty),
+                Return()));
+  EXPECT_CALL(mock_platform_impl_, DoSpeak(_, "text 2", _, _, _))
       .WillOnce(DoAll(
-          Invoke(&mock_platform_impl_,
-                 &MockTtsPlatformImpl::SendEndEventWhenQueueNotEmpty),
-          Return(true)));
-  EXPECT_CALL(mock_platform_impl_, Speak(_, "text 2", _, _, _))
-      .WillOnce(DoAll(
-          Invoke(&mock_platform_impl_,
-                 &MockTtsPlatformImpl::SendEndEvent),
-          Return(true)));
+          Invoke(&mock_platform_impl_, &MockTtsPlatformImpl::SendEndEvent),
+          Return()));
   ASSERT_TRUE(RunExtensionTest("tts/enqueue")) << message_;
 }
 
@@ -366,22 +391,23 @@ IN_PROC_BROWSER_TEST_F(TtsApiTest, PlatformSpeakError) {
   EXPECT_CALL(mock_platform_impl_, IsSpeaking())
       .Times(AnyNumber());
 
+  mock_platform_impl_.SetSpeakErrorTest(true);
+
   InSequence s;
   EXPECT_CALL(mock_platform_impl_, StopSpeaking())
       .WillOnce(Return(true));
-  EXPECT_CALL(mock_platform_impl_, Speak(_, "first try", _, _, _))
-      .WillOnce(DoAll(
-          InvokeWithoutArgs(
-              CreateFunctor(&MockTtsPlatformImpl::SetErrorToEpicFail,
-                            base::Unretained(&mock_platform_impl_))),
-          Return(false)));
+  EXPECT_CALL(mock_platform_impl_, DoSpeak(_, "first try", _, _, _))
+      .WillOnce(DoAll(InvokeWithoutArgs(CreateFunctor(
+                          &MockTtsPlatformImpl::SetErrorToEpicFail,
+                          base::Unretained(&mock_platform_impl_))),
+                      Return()));
   EXPECT_CALL(mock_platform_impl_, StopSpeaking())
       .WillOnce(Return(true));
-  EXPECT_CALL(mock_platform_impl_, Speak(_, "second try", _, _, _))
+
+  EXPECT_CALL(mock_platform_impl_, DoSpeak(_, "second try", _, _, _))
       .WillOnce(DoAll(
-          Invoke(&mock_platform_impl_,
-                 &MockTtsPlatformImpl::SendEndEvent),
-          Return(true)));
+          Invoke(&mock_platform_impl_, &MockTtsPlatformImpl::SendEndEvent),
+          Return()));
   ASSERT_TRUE(RunExtensionTest("tts/speak_error")) << message_;
 }
 
@@ -391,13 +417,11 @@ IN_PROC_BROWSER_TEST_F(TtsApiTest, PlatformWordCallbacks) {
   InSequence s;
   EXPECT_CALL(mock_platform_impl_, StopSpeaking())
       .WillOnce(Return(true));
-  EXPECT_CALL(mock_platform_impl_, Speak(_, "one two three", _, _, _))
+  EXPECT_CALL(mock_platform_impl_, DoSpeak(_, "one two three", _, _, _))
       .WillOnce(DoAll(
-          Invoke(&mock_platform_impl_,
-                 &MockTtsPlatformImpl::SendWordEvents),
-          Invoke(&mock_platform_impl_,
-                 &MockTtsPlatformImpl::SendEndEvent),
-          Return(true)));
+          Invoke(&mock_platform_impl_, &MockTtsPlatformImpl::SendWordEvents),
+          Invoke(&mock_platform_impl_, &MockTtsPlatformImpl::SendEndEvent),
+          Return()));
   ASSERT_TRUE(RunExtensionTest("tts/word_callbacks")) << message_;
 }
 
@@ -406,17 +430,14 @@ IN_PROC_BROWSER_TEST_F(TtsApiTest, PlatformPauseResume) {
       .Times(AnyNumber());
 
   InSequence s;
-  EXPECT_CALL(mock_platform_impl_, Speak(_, "test 1", _, _, _))
+  EXPECT_CALL(mock_platform_impl_, DoSpeak(_, "test 1", _, _, _))
       .WillOnce(DoAll(
-          Invoke(&mock_platform_impl_,
-                 &MockTtsPlatformImpl::SendEndEvent),
-          Return(true)));
+          Invoke(&mock_platform_impl_, &MockTtsPlatformImpl::SendEndEvent),
+          Return()));
   EXPECT_CALL(mock_platform_impl_, StopSpeaking())
       .WillOnce(Return(true));
-  EXPECT_CALL(mock_platform_impl_, Speak(_, "test 2", _, _, _))
-      .WillOnce(DoAll(
-          SaveArg<0>(&g_saved_utterance_id),
-          Return(true)));
+  EXPECT_CALL(mock_platform_impl_, DoSpeak(_, "test 2", _, _, _))
+      .WillOnce(DoAll(SaveArg<0>(&g_saved_utterance_id), Return()));
   EXPECT_CALL(mock_platform_impl_, Pause());
   EXPECT_CALL(mock_platform_impl_, Resume())
       .WillOnce(
@@ -448,21 +469,18 @@ IN_PROC_BROWSER_TEST_F(TtsApiTest, RegisterEngine) {
 
   {
     InSequence s;
-    EXPECT_CALL(mock_platform_impl_, Speak(_, "native speech", _, _, _))
-      .WillOnce(DoAll(
-          Invoke(&mock_platform_impl_,
-                 &MockTtsPlatformImpl::SendEndEvent),
-          Return(true)));
-    EXPECT_CALL(mock_platform_impl_, Speak(_, "native speech 2", _, _, _))
-      .WillOnce(DoAll(
-          Invoke(&mock_platform_impl_,
-                 &MockTtsPlatformImpl::SendEndEvent),
-          Return(true)));
-    EXPECT_CALL(mock_platform_impl_, Speak(_, "native speech 3", _, _, _))
-      .WillOnce(DoAll(
-          Invoke(&mock_platform_impl_,
-                 &MockTtsPlatformImpl::SendEndEvent),
-          Return(true)));
+    EXPECT_CALL(mock_platform_impl_, DoSpeak(_, "native speech", _, _, _))
+        .WillOnce(DoAll(
+            Invoke(&mock_platform_impl_, &MockTtsPlatformImpl::SendEndEvent),
+            Return()));
+    EXPECT_CALL(mock_platform_impl_, DoSpeak(_, "native speech 2", _, _, _))
+        .WillOnce(DoAll(
+            Invoke(&mock_platform_impl_, &MockTtsPlatformImpl::SendEndEvent),
+            Return()));
+    EXPECT_CALL(mock_platform_impl_, DoSpeak(_, "native speech 3", _, _, _))
+        .WillOnce(DoAll(
+            Invoke(&mock_platform_impl_, &MockTtsPlatformImpl::SendEndEvent),
+            Return()));
   }
 
   // TODO(katie): Expect the deprecated gender warning rather than ignoring

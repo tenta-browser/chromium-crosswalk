@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "base/bind_helpers.h"
 #include "base/callback_helpers.h"
 #include "base/run_loop.h"
 #include "base/strings/string16.h"
@@ -46,10 +47,10 @@ TEST_F(ClipboardHostImplTest, SimpleImage) {
   SkBitmap bitmap;
   bitmap.allocN32Pixels(3, 2);
   bitmap.eraseARGB(255, 0, 255, 0);
-  mojo_clipboard()->WriteImage(ui::CLIPBOARD_TYPE_COPY_PASTE, bitmap);
+  mojo_clipboard()->WriteImage(bitmap);
   uint64_t sequence_number =
       system_clipboard()->GetSequenceNumber(ui::CLIPBOARD_TYPE_COPY_PASTE);
-  mojo_clipboard()->CommitWrite(ui::CLIPBOARD_TYPE_COPY_PASTE);
+  mojo_clipboard()->CommitWrite();
   base::RunLoop().RunUntilIdle();
 
   EXPECT_NE(sequence_number, system_clipboard()->GetSequenceNumber(

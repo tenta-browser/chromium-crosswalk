@@ -7,19 +7,24 @@
 #include "ash/wm/root_window_finder.h"
 #include "ash/wm/window_positioning_utils.h"
 #include "ash/wm/window_state.h"
+#include "base/bind.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/time/time.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_delegate.h"
+#include "ui/aura/window_tree_host.h"
 #include "ui/base/hit_test.h"
 #include "ui/base/ui_base_types.h"
+#include "ui/compositor/compositor.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/presentation_feedback.h"
 #include "ui/views/window/window_resize_utils.h"
 #include "ui/wm/core/coordinate_conversion.h"
 
 namespace ash {
-
 namespace {
 
 // Returns true for resize components along the right edge, where a drag in
@@ -72,6 +77,10 @@ const int WindowResizer::kBoundsChangeDirection_Vertical = 2;
 
 WindowResizer::WindowResizer(wm::WindowState* window_state)
     : window_state_(window_state) {
+  recorder_ = ash::CreatePresentationTimeHistogramRecorder(
+      GetTarget()->layer()->GetCompositor(),
+      "Ash.InteractiveWindowResize.TimeToPresent",
+      "Ash.InteractiveWindowResize.TimeToPresent.MaxLatency");
   DCHECK(window_state_->drag_details());
 }
 
@@ -254,6 +263,23 @@ gfx::Rect WindowResizer::CalculateBoundsForDrag(
 bool WindowResizer::IsBottomEdge(int window_component) {
   return window_component == HTBOTTOMLEFT || window_component == HTBOTTOM ||
          window_component == HTBOTTOMRIGHT || window_component == HTGROWBOX;
+}
+
+void WindowResizer::SetBoundsDuringResize(const gfx::Rect& bounds) {
+  aura::Window* window = GetTarget();
+  DCHECK(window);
+  auto ptr = weak_ptr_factory_.GetWeakPtr();
+  const gfx::Rect original_bounds = window->bounds();
+  window->SetBounds(bounds);
+
+  // Resizer can be destroyed when a window is attached during tab dragging.
+  // crbug.com/970911.
+  if (!ptr)
+    return;
+
+  if (bounds.size() == original_bounds.size())
+    return;
+  recorder_->RequestNext();
 }
 
 void WindowResizer::AdjustDeltaForTouchResize(int* delta_x, int* delta_y) {

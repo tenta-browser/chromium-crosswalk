@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/optional.h"
 #include "base/run_loop.h"
 #include "base/test/test_simple_task_runner.h"
@@ -160,6 +161,9 @@ class SimpleTask : public TileTask {
   SimpleTask() : TileTask(true /* supports_concurrent_execution */) {
     EXPECT_TRUE(thread_checker_.CalledOnValidThread());
   }
+  SimpleTask(const SimpleTask&) = delete;
+
+  SimpleTask& operator=(const SimpleTask&) = delete;
 
   void RunOnWorkerThread() override {
     EXPECT_FALSE(HasCompleted());
@@ -176,8 +180,6 @@ class SimpleTask : public TileTask {
 
   base::ThreadChecker thread_checker_;
   bool has_run_ = false;
-
-  DISALLOW_COPY_AND_ASSIGN(SimpleTask);
 };
 
 // A task that blocks until instructed otherwise.
@@ -187,6 +189,9 @@ class BlockingTask : public TileTask {
       : TileTask(true /* supports_concurrent_execution */), run_cv_(&lock_) {
     EXPECT_TRUE(thread_checker_.CalledOnValidThread());
   }
+  BlockingTask(const BlockingTask&) = delete;
+
+  BlockingTask& operator=(const BlockingTask&) = delete;
 
   void RunOnWorkerThread() override {
     EXPECT_FALSE(HasCompleted());
@@ -218,8 +223,6 @@ class BlockingTask : public TileTask {
   base::Lock lock_;
   base::ConditionVariable run_cv_;
   bool can_run_ = false;
-
-  DISALLOW_COPY_AND_ASSIGN(BlockingTask);
 };
 
 // For tests that exercise image controller's thread, this is the timeout value
@@ -230,7 +233,7 @@ DrawImage CreateDiscardableDrawImage(gfx::Size size) {
   return DrawImage(CreateDiscardablePaintImage(size),
                    SkIRect::MakeWH(size.width(), size.height()),
                    kNone_SkFilterQuality, SkMatrix::I(),
-                   PaintImage::kDefaultFrameIndex);
+                   PaintImage::kDefaultFrameIndex, gfx::ColorSpace());
 }
 
 DrawImage CreateBitmapDrawImage(gfx::Size size) {

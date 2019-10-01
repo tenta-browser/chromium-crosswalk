@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "services/identity/public/cpp/identity_test_environment.h"
+#include "base/bind.h"
 #include "base/test/scoped_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -13,7 +14,8 @@ class IdentityTestEnvironmentTest : public testing::Test {
   IdentityTestEnvironmentTest()
       : scoped_task_environment_(
             base::test::ScopedTaskEnvironment::MainThreadType::DEFAULT,
-            base::test::ScopedTaskEnvironment::ExecutionMode::QUEUED) {}
+            base::test::ScopedTaskEnvironment::ThreadPoolExecutionMode::
+                QUEUED) {}
 
   ~IdentityTestEnvironmentTest() override {
     scoped_task_environment_.RunUntilIdle();

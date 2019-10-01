@@ -8,6 +8,8 @@
 #include <set>
 #include <utility>
 
+#include "base/bind.h"
+#include "base/one_shot_event.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/background/background_contents_service.h"
@@ -32,7 +34,6 @@
 #include "extensions/common/extension_set.h"
 #include "extensions/common/manifest_handlers/background_info.h"
 #include "extensions/common/manifest_handlers/icons_handler.h"
-#include "extensions/common/one_shot_event.h"
 #include "extensions/common/permissions/permission_set.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "ui/base/l10n/l10n_util_collator.h"
@@ -74,7 +75,7 @@ class BackgroundApplicationListModel::Application
   void RequestIcon(extension_misc::ExtensionIcons size);
 
   const Extension* extension_;
-  std::unique_ptr<gfx::ImageSkia> icon_;
+  gfx::ImageSkia icon_;
   BackgroundApplicationListModel* model_;
 };
 
@@ -127,7 +128,7 @@ void BackgroundApplicationListModel::Application::OnImageLoaded(
     const gfx::Image& image) {
   if (image.IsEmpty())
     return;
-  icon_.reset(new gfx::ImageSkia(*image.ToImageSkia()));
+  icon_ = image.AsImageSkia();
   model_->SendApplicationDataChangedNotifications();
 }
 
@@ -158,8 +159,8 @@ BackgroundApplicationListModel::BackgroundApplicationListModel(Profile* profile)
                  content::Source<Profile>(profile));
   extensions::ExtensionSystem::Get(profile_)->ready().Post(
       FROM_HERE,
-      base::Bind(&BackgroundApplicationListModel::OnExtensionSystemReady,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindOnce(&BackgroundApplicationListModel::OnExtensionSystemReady,
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
 void BackgroundApplicationListModel::AddObserver(Observer* observer) {
@@ -213,13 +214,13 @@ BackgroundApplicationListModel::FindApplication(
   return (found == applications_.end()) ? nullptr : found->second.get();
 }
 
-const gfx::ImageSkia* BackgroundApplicationListModel::GetIcon(
+gfx::ImageSkia BackgroundApplicationListModel::GetIcon(
     const Extension* extension) {
   const Application* application = FindApplication(extension);
   if (application)
-    return application->icon_.get();
+    return application->icon_;
   AssociateApplicationData(extension);
-  return nullptr;
+  return gfx::ImageSkia();
 }
 
 int BackgroundApplicationListModel::GetPosition(

@@ -6,13 +6,15 @@
 
 #import <Foundation/Foundation.h>
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/test/scoped_feature_list.h"
 #include "ios/chrome/browser/browser_state/test_chrome_browser_state.h"
 #include "ios/chrome/browser/signin/feature_flags.h"
 #include "ios/chrome/browser/signin/gaia_auth_fetcher_ios_bridge.h"
 #import "ios/chrome/browser/web/chrome_web_test.h"
 #include "ios/net/cookies/system_cookie_util.h"
-#include "ios/web/public/features.h"
+#include "ios/web/common/features.h"
 #include "ios/web/public/test/test_web_thread_bundle.h"
 #include "net/cookies/cookie_store.h"
 #include "testing/platform_test.h"
@@ -50,9 +52,9 @@ class FakeGaiaAuthFetcherIOSBridgeDelegate
  public:
   FakeGaiaAuthFetcherIOSBridgeDelegate()
       : GaiaAuthFetcherIOSBridge::GaiaAuthFetcherIOSBridgeDelegate(),
-        fetch_complete_called_(false){};
+        fetch_complete_called_(false) {}
 
-  ~FakeGaiaAuthFetcherIOSBridgeDelegate() override{};
+  ~FakeGaiaAuthFetcherIOSBridgeDelegate() override {}
 
   // GaiaAuthFetcherIOSBridge::GaiaAuthFetcherIOSBridgeDelegate.
   void OnFetchComplete(const GURL& url,
@@ -65,22 +67,22 @@ class FakeGaiaAuthFetcherIOSBridgeDelegate
     data_ = data;
     status_ = status;
     response_code_ = response_code;
-  };
+  }
 
   // Returns true if has been called().
-  bool GetFetchCompleteCalled() { return fetch_complete_called_; };
+  bool GetFetchCompleteCalled() { return fetch_complete_called_; }
 
   // Returns |url| from FetchComplete().
-  const GURL& GetURL() { return url_; };
+  const GURL& GetURL() { return url_; }
 
   // Returns |data| from FetchComplete().
-  const std::string& GetData() { return data_; };
+  const std::string& GetData() { return data_; }
 
   // Returns |status| from FetchComplete().
-  net::URLRequestStatus GetStatus() { return status_; };
+  net::URLRequestStatus GetStatus() { return status_; }
 
   // Returns |response_code| from FetchComplete().
-  int GetResponseCode() { return response_code_; };
+  int GetResponseCode() { return response_code_; }
 
  private:
   // true if has been called().
@@ -129,8 +131,8 @@ class GaiaAuthFetcherIOSNSURLSessionBridgeTest : public ChromeWebTest {
 
   void AddCookiesToCookieManager(NSArray<NSHTTPCookie*>* cookies);
 
-  std::string GetCookieDomain() { return std::string("example.com"); };
-  GURL GetFetchGURL() { return GURL("http://www." + GetCookieDomain()); };
+  std::string GetCookieDomain() { return std::string("example.com"); }
+  GURL GetFetchGURL() { return GURL("http://www." + GetCookieDomain()); }
 
   NSHTTPCookie* GetCookie1();
 
@@ -257,10 +259,13 @@ void GaiaAuthFetcherIOSNSURLSessionBridgeTest::AddCookiesToCookieManager(
   network::mojom::CookieManager* cookie_manager =
       browser_state_->GetCookieManager();
   for (NSHTTPCookie* cookie in cookies) {
+    net::CookieOptions options;
+    options.set_include_httponly();
+    options.set_same_site_cookie_context(
+        net::CookieOptions::SameSiteCookieContext::SAME_SITE_STRICT);
     cookie_manager->SetCanonicalCookie(
         net::CanonicalCookieFromSystemCookie(cookie, base::Time::Now()),
-        /*secure_source=*/true,
-        /*modify_http_only=*/true, base::DoNothing());
+        "https", options, base::DoNothing());
   }
   WaitForBackgroundTasks();
 }

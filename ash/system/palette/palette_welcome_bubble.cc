@@ -8,7 +8,7 @@
 
 #include "ash/public/cpp/ash_pref_names.h"
 #include "ash/public/cpp/shell_window_ids.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/system/palette/palette_tray.h"
@@ -37,7 +37,7 @@ class PaletteWelcomeBubble::WelcomeBubbleView
   WelcomeBubbleView(views::View* anchor, views::BubbleBorder::Arrow arrow)
       : views::BubbleDialogDelegateView(anchor, arrow) {
     set_close_on_deactivate(true);
-    set_can_activate(false);
+    SetCanActivate(false);
     set_accept_events(true);
     set_parent_window(
         anchor_widget()->GetNativeWindow()->GetRootWindow()->GetChildById(
@@ -69,6 +69,9 @@ class PaletteWelcomeBubble::WelcomeBubbleView
   }
 
   int GetDialogButtons() const override { return ui::DIALOG_BUTTON_NONE; }
+
+  // views::View:
+  const char* GetClassName() const override { return "WelcomeBubbleView"; }
 
  private:
   DISALLOW_COPY_AND_ASSIGN(WelcomeBubbleView);
@@ -113,8 +116,10 @@ void PaletteWelcomeBubble::ShowIfNeeded() {
 
   base::Optional<user_manager::UserType> user_type =
       Shell::Get()->session_controller()->GetUserType();
-  if (user_type && *user_type == user_manager::USER_TYPE_GUEST)
+  if (user_type && (*user_type == user_manager::USER_TYPE_GUEST ||
+                    *user_type == user_manager::USER_TYPE_PUBLIC_ACCOUNT)) {
     return;
+  }
 
   if (!HasBeenShown())
     Show();

@@ -125,7 +125,6 @@ Resource::Resource(const ResourceRequest& request,
                    const ResourceLoaderOptions& options)
     : type_(type),
       status_(ResourceStatus::kNotStarted),
-      identifier_(0),
       encoded_size_(0),
       encoded_size_memory_usage_(0),
       decoded_size_(0),
@@ -142,7 +141,7 @@ Resource::Resource(const ResourceRequest& request,
   InstanceCounters::IncrementCounter(InstanceCounters::kResourceCounter);
 
   if (IsMainThread())
-    MemoryCoordinator::Instance().RegisterClient(this);
+    MemoryPressureListenerRegistry::Instance().RegisterClient(this);
 }
 
 Resource::~Resource() {
@@ -156,7 +155,7 @@ void Resource::Trace(blink::Visitor* visitor) {
   visitor->Trace(clients_awaiting_callback_);
   visitor->Trace(finished_clients_);
   visitor->Trace(finish_observers_);
-  MemoryCoordinatorClient::Trace(visitor);
+  MemoryPressureListener::Trace(visitor);
 }
 
 void Resource::SetLoader(ResourceLoader* loader) {
@@ -224,7 +223,7 @@ void Resource::MarkClientFinished(ResourceClient* client) {
 }
 
 void Resource::AppendData(const char* data, size_t length) {
-  TRACE_EVENT0("blink", "Resource::appendData");
+  TRACE_EVENT1("blink", "Resource::appendData", "length", length);
   DCHECK(!is_revalidating_);
   DCHECK(!ErrorOccurred());
   if (options_.data_buffering_policy == kBufferData) {
@@ -338,10 +337,10 @@ void Resource::FinishAsError(const ResourceError& error,
   }
 }
 
-void Resource::Finish(TimeTicks load_finish_time,
+void Resource::Finish(TimeTicks load_response_end,
                       base::SingleThreadTaskRunner* task_runner) {
   DCHECK(!is_revalidating_);
-  load_finish_time_ = load_finish_time;
+  load_response_end_ = load_response_end;
   if (!ErrorOccurred())
     status_ = ResourceStatus::kCached;
   loader_ = nullptr;
@@ -451,6 +450,12 @@ const ResourceRequest& Resource::LastResourceRequest() const {
   return redirect_chain_.back().request_;
 }
 
+const ResourceResponse* Resource::LastResourceResponse() const {
+  if (!redirect_chain_.size())
+    return nullptr;
+  return &redirect_chain_.back().redirect_response_;
+}
+
 void Resource::SetRevalidatingRequest(const ResourceRequest& request) {
   SECURITY_CHECK(redirect_chain_.IsEmpty());
   SECURITY_CHECK(!is_unused_preload_);
@@ -484,8 +489,7 @@ void Resource::SetResponse(const ResourceResponse& response) {
                                    GetResourceRequest().RequestorOrigin()));
 }
 
-void Resource::ResponseReceived(const ResourceResponse& response,
-                                std::unique_ptr<WebDataConsumerHandle>) {
+void Resource::ResponseReceived(const ResourceResponse& response) {
   response_timestamp_ = CurrentTime();
   if (is_revalidating_) {
     if (response.HttpStatusCode() == 304) {
@@ -720,7 +724,6 @@ Resource::MatchStatus Resource::CanReuse(const FetchParameters& params) const {
       GetResourceRequest().RequestorOrigin();
   scoped_refptr<const SecurityOrigin> new_origin =
       new_request.RequestorOrigin();
-  DCHECK_EQ(GetDataBufferingPolicy(), kBufferData);
 
   DCHECK(existing_origin);
   DCHECK(new_origin);
@@ -919,13 +922,17 @@ void Resource::OnMemoryDump(WebMemoryDumpLevelOfDetail level_of_detail,
   overhead_dump->AddScalar("size", "bytes", OverheadSize());
   memory_dump->AddSuballocation(
       overhead_dump->Guid(), String(WTF::Partitions::kAllocatedObjectPoolName));
+
+  const String cache_name = dump_name + "/code_cache";
+  if (cache_handler_)
+    cache_handler_->OnMemoryDump(memory_dump, cache_name);
 }
 
 String Resource::GetMemoryDumpName() const {
   return String::Format(
-      "web_cache/%s_resources/%ld",
-      ResourceTypeToString(GetType(), Options().initiator_info.name),
-      identifier_);
+             "web_cache/%s_resources/",
+             ResourceTypeToString(GetType(), Options().initiator_info.name)) +
+         String::Number(InspectorId());
 }
 
 void Resource::SetCachePolicyBypassingCache() {
@@ -937,7 +944,7 @@ void Resource::SetPreviewsState(WebURLRequest::PreviewsState previews_state) {
 }
 
 void Resource::ClearRangeRequestHeader() {
-  resource_request_.ClearHTTPHeaderField("range");
+  resource_request_.ClearHttpHeaderField("range");
 }
 
 void Resource::RevalidationSucceeded(
@@ -959,7 +966,7 @@ void Resource::RevalidationSucceeded(
     // care about.
     if (!ShouldUpdateHeaderAfterRevalidation(header.key))
       continue;
-    response_.SetHTTPHeaderField(header.key, header.value);
+    response_.SetHttpHeaderField(header.key, header.value);
   }
 
   is_revalidating_ = false;
@@ -1150,8 +1157,6 @@ const char* Resource::ResourceTypeToString(
     ResourceType type,
     const AtomicString& fetch_initiator_name) {
   switch (type) {
-    case ResourceType::kMainResource:
-      return "Main resource";
     case ResourceType::kImage:
       return "Image";
     case ResourceType::kCSSStyleSheet:
@@ -1191,9 +1196,8 @@ blink::mojom::CodeCacheType Resource::ResourceTypeToCodeCacheType(
   DCHECK(
       // Cacheable WebAssembly modules are fetched, so raw resource type.
       resource_type == ResourceType::kRaw ||
-      // Cacheable Javascript is a script or a document resource.
+      // Cacheable Javascript is a script resource.
       resource_type == ResourceType::kScript ||
-      resource_type == ResourceType::kMainResource ||
       // Also accept mock resources for testing.
       resource_type == ResourceType::kMock);
   return ToCodeCacheType(resource_type);
@@ -1205,7 +1209,6 @@ bool Resource::ShouldBlockLoadEvent() const {
 
 bool Resource::IsLoadEventBlockingResourceType() const {
   switch (type_) {
-    case ResourceType::kMainResource:
     case ResourceType::kImage:
     case ResourceType::kCSSStyleSheet:
     case ResourceType::kScript:

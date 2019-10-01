@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/url_row.h"
 
@@ -29,10 +30,8 @@ void FeedHistoryHelper::CheckURL(
 
 void FeedHistoryHelper::OnCheckURLDone(
     FeedLoggingMetrics::CheckURLVisitCallback callback,
-    bool success,
-    const history::URLRow& row,
-    const history::VisitVector& visit_vector) {
-  std::move(callback).Run(success && row.visit_count() != 0);
+    history::QueryURLResult result) {
+  std::move(callback).Run(result.success && result.row.visit_count() != 0);
 }
 
 }  // namespace feed

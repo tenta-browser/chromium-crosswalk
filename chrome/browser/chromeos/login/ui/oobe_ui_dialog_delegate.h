@@ -7,7 +7,7 @@
 
 #include <string>
 
-#include "ash/public/interfaces/login_screen.mojom.h"
+#include "ash/public/cpp/login_types.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observer.h"
@@ -78,7 +78,7 @@ class OobeUIDialogDelegate : public display::DisplayObserver,
   bool IsVisible();
 
   // Update the oobe state of the dialog.
-  void SetState(ash::mojom::OobeDialogState state);
+  void SetState(ash::OobeDialogState state);
 
   // Tell the dialog whether to call FixCaptivePortal next time it is shown.
   void SetShouldDisplayCaptivePortal(bool should_display);
@@ -110,7 +110,8 @@ class OobeUIDialogDelegate : public display::DisplayObserver,
   void OnCloseContents(content::WebContents* source,
                        bool* out_close_dialog) override;
   bool ShouldShowDialogTitle() const override;
-  bool HandleContextMenu(const content::ContextMenuParams& params) override;
+  bool HandleContextMenu(content::RenderFrameHost* render_frame_host,
+                         const content::ContextMenuParams& params) override;
   std::vector<ui::Accelerator> GetAccelerators() override;
   bool AcceleratorPressed(const ui::Accelerator& accelerator) override;
 
@@ -143,7 +144,7 @@ class OobeUIDialogDelegate : public display::DisplayObserver,
       captive_portal_observer_{this};
 
   std::map<ui::Accelerator, std::string> accel_map_;
-  ash::mojom::OobeDialogState state_ = ash::mojom::OobeDialogState::HIDDEN;
+  ash::OobeDialogState state_ = ash::OobeDialogState::HIDDEN;
 
   // Whether the captive portal screen should be shown the next time the Gaia
   // dialog is opened.

@@ -11,6 +11,7 @@
 #include "chrome/browser/ui/tabs/tab_strip_model_delegate.h"
 
 class GURL;
+class TabGroupId;
 
 namespace chrome {
 
@@ -21,7 +22,10 @@ class BrowserTabStripModelDelegate : public TabStripModelDelegate {
 
  private:
   // Overridden from TabStripModelDelegate:
-  void AddTabAt(const GURL& url, int index, bool foreground) override;
+  void AddTabAt(const GURL& url,
+                int index,
+                bool foreground,
+                base::Optional<TabGroupId> group) override;
   Browser* CreateNewStripWithContents(std::vector<NewStripContents> contentses,
                                       const gfx::Rect& window_bounds,
                                       bool maximize) override;

@@ -15,6 +15,7 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "build/build_config.h"
+#include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/autocomplete/autocomplete_classifier_factory.h"
 #include "chrome/browser/autocomplete/chrome_autocomplete_scheme_classifier.h"
 #include "chrome/browser/command_updater.h"
@@ -25,11 +26,12 @@
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/views/chrome_views_test_base.h"
 #include "components/omnibox/browser/omnibox_edit_model.h"
-#include "components/omnibox/browser/omnibox_field_trial.h"
 #include "components/omnibox/browser/test_location_bar_model.h"
+#include "components/omnibox/common/omnibox_features.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/metrics_proto/omnibox_event.pb.h"
 #include "ui/base/clipboard/clipboard.h"
+#include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "ui/base/ime/input_method.h"
 #include "ui/base/ime/text_edit_commands.h"
 #include "ui/base/ui_base_features.h"
@@ -54,18 +56,8 @@ namespace {
 
 class TestingOmniboxView : public OmniboxViewViews {
  public:
-  enum BaseTextEmphasis {
-    DEEMPHASIZED,
-    EMPHASIZED,
-    UNSET,
-  };
-
   TestingOmniboxView(OmniboxEditController* controller,
                      std::unique_ptr<OmniboxClient> client);
-
-  static BaseTextEmphasis to_base_text_emphasis(bool emphasize) {
-    return emphasize ? EMPHASIZED : DEEMPHASIZED;
-  }
 
   using views::Textfield::GetRenderText;
 
@@ -79,7 +71,7 @@ class TestingOmniboxView : public OmniboxViewViews {
 
   Range scheme_range() const { return scheme_range_; }
   Range emphasis_range() const { return emphasis_range_; }
-  BaseTextEmphasis base_text_emphasis() const { return base_text_emphasis_; }
+  bool base_text_emphasis() const { return base_text_emphasis_; }
 
   // OmniboxViewViews:
   void EmphasizeURLComponents() override;
@@ -106,7 +98,7 @@ class TestingOmniboxView : public OmniboxViewViews {
   Range emphasis_range_;
 
   // SetEmphasis() logs whether the base color of the text is emphasized.
-  BaseTextEmphasis base_text_emphasis_ = UNSET;
+  bool base_text_emphasis_;
 
   DISALLOW_COPY_AND_ASSIGN(TestingOmniboxView);
 };
@@ -120,7 +112,7 @@ TestingOmniboxView::TestingOmniboxView(OmniboxEditController* controller,
                        gfx::FontList()) {}
 
 void TestingOmniboxView::ResetEmphasisTestState() {
-  base_text_emphasis_ = UNSET;
+  base_text_emphasis_ = false;
   emphasis_range_ = Range::InvalidRange();
   scheme_range_ = Range::InvalidRange();
 }
@@ -158,7 +150,7 @@ void TestingOmniboxView::UpdatePopup() {
 
 void TestingOmniboxView::SetEmphasis(bool emphasize, const Range& range) {
   if (range == Range::InvalidRange()) {
-    base_text_emphasis_ = to_base_text_emphasis(emphasize);
+    base_text_emphasis_ = emphasize;
     return;
   }
 
@@ -217,6 +209,7 @@ class OmniboxViewViewsTest : public OmniboxViewViewsTestBase {
   OmniboxViewViewsTest() : OmniboxViewViewsTest(std::vector<base::Feature>()) {}
 
   TestLocationBarModel* location_bar_model() { return &location_bar_model_; }
+  CommandUpdaterImpl* command_updater() { return &command_updater_; }
   TestingOmniboxView* omnibox_view() const { return omnibox_view_; }
 
   // TODO(tommycli): These base class accessors exist because Textfield and
@@ -473,8 +466,7 @@ TEST_F(OmniboxViewViewsTest, Emphasis) {
     SCOPED_TRACE(test_case.input);
 
     SetAndEmphasizeText(test_case.input, false);
-    EXPECT_EQ(TestingOmniboxView::to_base_text_emphasis(
-                  test_case.expected_base_text_emphasized),
+    EXPECT_EQ(test_case.expected_base_text_emphasized,
               omnibox_view()->base_text_emphasis());
     EXPECT_EQ(test_case.expected_emphasis_range,
               omnibox_view()->emphasis_range());
@@ -482,8 +474,7 @@ TEST_F(OmniboxViewViewsTest, Emphasis) {
 
     if (test_case.expected_scheme_range.IsValid()) {
       SetAndEmphasizeText(test_case.input, true);
-      EXPECT_EQ(TestingOmniboxView::to_base_text_emphasis(
-                    test_case.expected_base_text_emphasized),
+      EXPECT_EQ(test_case.expected_base_text_emphasized,
                 omnibox_view()->base_text_emphasis());
       EXPECT_EQ(test_case.expected_emphasis_range,
                 omnibox_view()->emphasis_range());
@@ -569,6 +560,47 @@ TEST_F(OmniboxViewViewsTest, BackspaceExitsKeywordMode) {
   EXPECT_TRUE(omnibox_view()->model()->keyword().empty());
 }
 
+TEST_F(OmniboxViewViewsTest, PasteAndGoToUrlOrSearchCommand) {
+  ui::Clipboard* clipboard = ui::Clipboard::GetForCurrentThread();
+  ui::ClipboardType clipboard_type = ui::CLIPBOARD_TYPE_COPY_PASTE;
+  command_updater()->UpdateCommandEnabled(IDC_OPEN_CURRENT_URL, true);
+
+  // Test command is disabled for an empty clipboard.
+  clipboard->Clear(clipboard_type);
+  EXPECT_FALSE(omnibox_view()->IsCommandIdEnabled(IDC_PASTE_AND_GO));
+
+  // Test command is enabled and the correct label text is returned with a URL
+  // on the clipboard.
+  base::string16 expected_text =
+#if defined(OS_MACOSX)
+      base::ASCIIToUTF16("Pa&ste and Go to https://test.com");
+#else
+      base::ASCIIToUTF16("Pa&ste and go to https://test.com");
+#endif
+  ui::ScopedClipboardWriter(clipboard_type)
+      .WriteText(base::ASCIIToUTF16("https://test.com/"));
+  base::string16 returned_text =
+      omnibox_view()->GetLabelForCommandId(IDC_PASTE_AND_GO);
+  EXPECT_TRUE(omnibox_view()->IsCommandIdEnabled(IDC_PASTE_AND_GO));
+  EXPECT_EQ(expected_text, returned_text);
+
+  // Test command is enabled and the correct label text is returned with a
+  // search on the clipboard.
+  expected_text =
+#if defined(OS_MACOSX)
+      base::WideToUTF16(
+          L"Pa&ste and Search for \x201Cthis is a test sentence\x201D");
+#else
+      base::WideToUTF16(
+          L"Pa&ste and search for \x201Cthis is a test sentence\x201D");
+#endif
+  ui::ScopedClipboardWriter(clipboard_type)
+      .WriteText(base::ASCIIToUTF16("this is a test sentence"));
+  returned_text = omnibox_view()->GetLabelForCommandId(IDC_PASTE_AND_GO);
+  EXPECT_TRUE(omnibox_view()->IsCommandIdEnabled(IDC_PASTE_AND_GO));
+  EXPECT_EQ(expected_text, returned_text);
+}
+
 class OmniboxViewViewsClipboardTest
     : public OmniboxViewViewsTest,
       public ::testing::WithParamInterface<ui::TextEditCommand> {
@@ -644,10 +676,10 @@ TEST_P(OmniboxViewViewsClipboardTest, ClipboardCopyOrCutUserText) {
   EXPECT_EQ("user text", read_from_clipboard);
 }
 
-INSTANTIATE_TEST_CASE_P(OmniboxViewViewsClipboardTest,
-                        OmniboxViewViewsClipboardTest,
-                        ::testing::Values(ui::TextEditCommand::COPY,
-                                          ui::TextEditCommand::CUT));
+INSTANTIATE_TEST_SUITE_P(OmniboxViewViewsClipboardTest,
+                         OmniboxViewViewsClipboardTest,
+                         ::testing::Values(ui::TextEditCommand::COPY,
+                                           ui::TextEditCommand::CUT));
 
 class OmniboxViewViewsSteadyStateElisionsTest : public OmniboxViewViewsTest {
  public:
@@ -666,6 +698,13 @@ class OmniboxViewViewsSteadyStateElisionsTest : public OmniboxViewViewsTest {
   const GURL kFullUrl = GURL("https://www.example.com/");
 
   void SetUp() override {
+#if defined(OS_CHROMEOS)
+    // This is necessary in Mash because the touch handles which get created
+    // during GestureTaps require a MusClient.
+    if (features::IsUsingWindowService())
+      set_native_widget_type(NativeWidgetType::kDesktop);
+#endif
+
     OmniboxViewViewsTest::SetUp();
 
     // Advance 5 seconds from epoch so the time is not considered null.
@@ -706,7 +745,7 @@ class OmniboxViewViewsSteadyStateElisionsTest : public OmniboxViewViewsTest {
   }
 
   ui::MouseEvent CreateMouseEvent(ui::EventType type, const gfx::Point& point) {
-    return ui::MouseEvent(type, point, gfx::Point(), ui::EventTimeForNow(),
+    return ui::MouseEvent(type, point, point, ui::EventTimeForNow(),
                           ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
   }
 
@@ -778,9 +817,6 @@ TEST_F(OmniboxViewViewsSteadyStateElisionsTest, UnelideOnHomeKey) {
 }
 
 TEST_F(OmniboxViewViewsSteadyStateElisionsTest, GestureTaps) {
-  // TODO(crbug.com/916256): fix for mash.
-  if (features::IsSingleProcessMash())
-    return;
   ui::GestureEvent tap_down(0, 0, 0, ui::EventTimeForNow(),
                             ui::GestureEventDetails(ui::ET_GESTURE_TAP_DOWN));
   omnibox_textfield()->OnGestureEvent(&tap_down);
@@ -963,6 +999,17 @@ TEST_F(OmniboxViewViewsSteadyStateElisionsTest, MouseDoubleClickDrag) {
   EXPECT_EQ(12U, start);
   EXPECT_EQ(19U, end);
 
+  // Expect that negligible drags are ignored immediately after unelision, as
+  // the text has likely shifted, and we don't want to accidentally change the
+  // selection.
+  gfx::Point drag_point = GetPointInTextAtXOffset(4 * kCharacterWidth);
+  drag_point.Offset(1, 1);  // Offset test point one pixel in each dimension.
+  omnibox_textfield()->OnMouseDragged(
+      CreateMouseEvent(ui::ET_MOUSE_DRAGGED, drag_point));
+  omnibox_view()->GetSelectionBounds(&start, &end);
+  EXPECT_EQ(12U, start);
+  EXPECT_EQ(19U, end);
+
   // Expect that dragging to the fourth character of the full URL (between the
   // the 'p' and the 's' of https), will word-select the scheme, subdomain, and
   // domain, so the new selection will be |https://www.example|.com. The
@@ -1131,4 +1178,23 @@ TEST_F(OmniboxViewViewsSteadyStateElisionsAndQueryInOmniboxTest,
     EXPECT_EQ(41U, start);
     EXPECT_EQ(0U, end);
   }
+}
+
+TEST_F(OmniboxViewViewsSteadyStateElisionsAndQueryInOmniboxTest,
+       NoEmphasisForUrlLikeQueries) {
+  // Prevents regressions for crbug.com/942945. Set the displayed search terms
+  // to something somewhat URL-like.
+  location_bar_model()->set_display_search_terms(base::ASCIIToUTF16("foo:bar"));
+  omnibox_view()->model()->ResetDisplayTexts();
+  omnibox_view()->RevertAll();
+  EXPECT_EQ(base::ASCIIToUTF16("foo:bar"), omnibox_view()->text());
+  EXPECT_FALSE(omnibox_view()->model()->user_input_in_progress());
+
+  omnibox_view()->ResetEmphasisTestState();
+  omnibox_view()->EmphasizeURLComponents();
+
+  // Expect that no part is de-emphasized, there is no "scheme" range.
+  EXPECT_TRUE(omnibox_view()->base_text_emphasis());
+  EXPECT_FALSE(omnibox_view()->emphasis_range().IsValid());
+  EXPECT_FALSE(omnibox_view()->scheme_range().IsValid());
 }

@@ -4,6 +4,8 @@
 
 #include "content/renderer/media/stream/local_media_stream_audio_source.h"
 
+#include <utility>
+
 #include "content/renderer/media/audio/audio_device_factory.h"
 #include "content/renderer/media/webrtc_logging.h"
 #include "content/renderer/render_frame_impl.h"
@@ -13,28 +15,39 @@ namespace content {
 LocalMediaStreamAudioSource::LocalMediaStreamAudioSource(
     int consumer_render_frame_id,
     const blink::MediaStreamDevice& device,
-    bool hotword_enabled,
+    const int* requested_buffer_size,
     bool disable_local_echo,
-    const ConstraintsCallback& started_callback)
-    : MediaStreamAudioSource(true /* is_local_source */,
-                             hotword_enabled,
-                             disable_local_echo),
+    ConstraintsRepeatingCallback started_callback,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner)
+    : blink::MediaStreamAudioSource(std::move(task_runner),
+                                    true /* is_local_source */,
+                                    disable_local_echo),
       consumer_render_frame_id_(consumer_render_frame_id),
-      started_callback_(started_callback) {
+      started_callback_(std::move(started_callback)) {
   DVLOG(1) << "LocalMediaStreamAudioSource::LocalMediaStreamAudioSource()";
   SetDevice(device);
 
-  // If the device buffer size was not provided, use a default.
   int frames_per_buffer = device.input.frames_per_buffer();
+  if (requested_buffer_size)
+    frames_per_buffer = *requested_buffer_size;
+
+  // If the device buffer size was not provided, use a default.
   if (frames_per_buffer <= 0) {
     frames_per_buffer =
-        (device.input.sample_rate() * kFallbackAudioLatencyMs) / 1000;
+        (device.input.sample_rate() * blink::kFallbackAudioLatencyMs) / 1000;
   }
 
-  SetFormat(media::AudioParameters(
-      media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
-      device.input.channel_layout(), device.input.sample_rate(),
-      frames_per_buffer));
+  // Set audio format and take into account the special case where a discrete
+  // channel layout is reported since it will result in an invalid channel
+  // count (=0) if only default constructions is used.
+  media::AudioParameters params(media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
+                                device.input.channel_layout(),
+                                device.input.sample_rate(), frames_per_buffer);
+  if (device.input.channel_layout() == media::CHANNEL_LAYOUT_DISCRETE) {
+    DCHECK_LE(device.input.channels(), 2);
+    params.set_channels_for_discrete(device.input.channels());
+  }
+  SetFormat(params);
 }
 
 LocalMediaStreamAudioSource::~LocalMediaStreamAudioSource() {

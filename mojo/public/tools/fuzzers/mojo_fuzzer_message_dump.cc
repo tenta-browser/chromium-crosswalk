@@ -5,28 +5,28 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "base/bind.h"
 #include "base/containers/flat_map.h"
 #include "base/files/file.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/task/task_scheduler/task_scheduler.h"
+#include "base/task/single_thread_task_executor.h"
+#include "base/task/thread_pool/thread_pool.h"
 #include "mojo/core/embedder/embedder.h"
 #include "mojo/public/tools/fuzzers/fuzz.mojom.h"
 #include "mojo/public/tools/fuzzers/fuzz_impl.h"
 
 /* Environment for the executable. Initializes the mojo EDK and sets up a
- * TaskScheduler, because Mojo messages must be sent and processed from
+ * ThreadPool, because Mojo messages must be sent and processed from
  * TaskRunners. */
 struct Environment {
-  Environment() : message_loop() {
-    base::TaskScheduler::CreateAndStartWithDefaultParams(
+  Environment() {
+    base::ThreadPoolInstance::CreateAndStartWithDefaultParams(
         "MojoFuzzerMessageDumpProcess");
     mojo::core::Init();
   }
 
-  /* Message loop to send messages on. */
-  base::MessageLoop message_loop;
+  base::SingleThreadTaskExecutor main_thread_task_executor;
 
   /* Impl to be created. Stored in environment to keep it alive after
    * DumpMessages returns. */
@@ -44,7 +44,7 @@ class MessageDumper : public mojo::MessageReceiver {
 
   bool Accept(mojo::Message* message) override {
     base::FilePath path = directory_.Append(FILE_PATH_LITERAL("message_") +
-                                            base::IntToString(count_++) +
+                                            base::NumberToString(count_++) +
                                             FILE_PATH_LITERAL(".mojomsg"));
 
     base::File file(path,
@@ -259,7 +259,7 @@ int main(int argc, char** argv) {
   std::string output_directory(argv[1]);
 
   /* Dump the messages from a MessageLoop, and wait for it to finish. */
-  env->message_loop.task_runner()->PostTask(
+  env->main_thread_task_executor.task_runner()->PostTask(
       FROM_HERE, base::BindOnce(&DumpMessages, output_directory));
   base::RunLoop().RunUntilIdle();
 

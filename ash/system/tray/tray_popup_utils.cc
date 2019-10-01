@@ -11,7 +11,7 @@
 #include "ash/public/cpp/ash_constants.h"
 #include "ash/public/cpp/ash_view_ids.h"
 #include "ash/resources/vector_icons/vector_icons.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "ash/system/tray/hover_highlight_view.h"
 #include "ash/system/tray/size_range_layout.h"
@@ -48,9 +48,9 @@ std::unique_ptr<views::LayoutManager> CreateDefaultCenterLayoutManager() {
       views::BoxLayout::kVertical,
       gfx::Insets(8, kTrayPopupLabelHorizontalPadding));
   box_layout->set_main_axis_alignment(
-      views::BoxLayout::MAIN_AXIS_ALIGNMENT_CENTER);
+      views::BoxLayout::MainAxisAlignment::kCenter);
   box_layout->set_cross_axis_alignment(
-      views::BoxLayout::CROSS_AXIS_ALIGNMENT_STRETCH);
+      views::BoxLayout::CrossAxisAlignment::kStretch);
   return std::move(box_layout);
 }
 
@@ -60,9 +60,9 @@ std::unique_ptr<views::LayoutManager> CreateDefaultEndsLayoutManager() {
   auto box_layout =
       std::make_unique<views::BoxLayout>(views::BoxLayout::kHorizontal);
   box_layout->set_main_axis_alignment(
-      views::BoxLayout::MAIN_AXIS_ALIGNMENT_CENTER);
+      views::BoxLayout::MainAxisAlignment::kCenter);
   box_layout->set_cross_axis_alignment(
-      views::BoxLayout::CROSS_AXIS_ALIGNMENT_CENTER);
+      views::BoxLayout::CrossAxisAlignment::kCenter);
   return std::move(box_layout);
 }
 
@@ -203,7 +203,7 @@ std::unique_ptr<views::Painter> TrayPopupUtils::CreateFocusPainter() {
 }
 
 void TrayPopupUtils::ConfigureTrayPopupButton(views::Button* button) {
-  button->SetFocusPainter(TrayPopupUtils::CreateFocusPainter());
+  button->SetInstallFocusRingOnFocus(true);
   button->SetFocusForPlatform();
 
   button->SetInkDropMode(views::InkDropHostView::InkDropMode::ON);
@@ -214,7 +214,7 @@ void TrayPopupUtils::ConfigureTrayPopupButton(views::Button* button) {
 }
 
 void TrayPopupUtils::ConfigureAsStickyHeader(views::View* view) {
-  view->set_id(VIEW_ID_STICKY_HEADER);
+  view->SetID(VIEW_ID_STICKY_HEADER);
   view->SetBorder(
       views::CreateEmptyBorder(gfx::Insets(kMenuSeparatorVerticalPadding, 0)));
   view->SetPaintToLayer();
@@ -224,12 +224,11 @@ void TrayPopupUtils::ConfigureAsStickyHeader(views::View* view) {
 void TrayPopupUtils::ShowStickyHeaderSeparator(views::View* view,
                                                bool show_separator) {
   if (show_separator) {
-    const int separator_width = ash::TrayConstants::separator_width();
     view->SetBorder(views::CreatePaddedBorder(
-        views::CreateSolidSidedBorder(0, 0, separator_width, 0,
+        views::CreateSolidSidedBorder(0, 0, kTraySeparatorWidth, 0,
                                       kMenuSeparatorColor),
         gfx::Insets(kMenuSeparatorVerticalPadding, 0,
-                    kMenuSeparatorVerticalPadding - separator_width, 0)));
+                    kMenuSeparatorVerticalPadding - kTraySeparatorWidth, 0)));
   } else {
     view->SetBorder(views::CreateEmptyBorder(
         gfx::Insets(kMenuSeparatorVerticalPadding, 0)));
@@ -245,9 +244,9 @@ void TrayPopupUtils::ConfigureContainer(TriView::Container container,
 views::LabelButton* TrayPopupUtils::CreateTrayPopupButton(
     views::ButtonListener* listener,
     const base::string16& text) {
-  auto* button = views::MdTextButton::Create(listener, text);
+  auto button = views::MdTextButton::Create(listener, text);
   button->SetProminent(true);
-  return button;
+  return button.release();
 }
 
 views::Separator* TrayPopupUtils::CreateVerticalSeparator() {

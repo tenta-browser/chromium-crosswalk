@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <map>
+#include <numeric>
 
 #include "ash/assistant/model/assistant_query.h"
 #include "ash/assistant/ui/assistant_ui_constants.h"
@@ -137,32 +138,30 @@ class StackLayout : public views::LayoutManager {
   }
 
   gfx::Size GetPreferredSize(const views::View* host) const override {
-    gfx::Size preferred_size;
-
-    for (int i = 0; i < host->child_count(); ++i)
-      preferred_size.SetToMax(host->child_at(i)->GetPreferredSize());
-    return preferred_size;
+    return std::accumulate(host->children().cbegin(), host->children().cend(),
+                           gfx::Size(), [](gfx::Size size, const auto* v) {
+                             size.SetToMax(v->GetPreferredSize());
+                             return size;
+                           });
   }
 
   int GetPreferredHeightForWidth(const views::View* host,
                                  int width) const override {
-    int preferred_height = 0;
-
-    for (int i = 0; i < host->child_count(); ++i) {
-      preferred_height = std::max(host->child_at(i)->GetHeightForWidth(width),
-                                  preferred_height);
-    }
-
-    return preferred_height;
+    const auto& children = host->children();
+    if (children.empty())
+      return 0;
+    std::vector<int> heights(children.size());
+    std::transform(
+        children.cbegin(), children.cend(), heights.begin(),
+        [width](const views::View* v) { return v->GetHeightForWidth(width); });
+    return *std::max_element(heights.cbegin(), heights.cend());
   }
 
   void Layout(views::View* host) override {
     const int host_width = host->GetContentsBounds().width();
     const int host_height = host->GetContentsBounds().height();
 
-    for (int i = 0; i < host->child_count(); ++i) {
-      views::View* child = host->child_at(i);
-
+    for (auto* child : host->children()) {
       int child_width = host_width;
       int child_height = host_height;
 
@@ -251,7 +250,8 @@ void AssistantMainStage::OnViewPreferredSizeChanged(views::View* view) {
   PreferredSizeChanged();
 }
 
-void AssistantMainStage::OnViewVisibilityChanged(views::View* view) {
+void AssistantMainStage::OnViewVisibilityChanged(views::View* view,
+                                                 views::View* starting_view) {
   PreferredSizeChanged();
 }
 
@@ -429,6 +429,9 @@ void AssistantMainStage::OnActivateQuery() {
   using assistant::util::CreateOpacityElement;
   using assistant::util::CreateTransformElement;
 
+  if (!committed_query_view_)
+    return;
+
   // Clear the previously active query.
   OnActiveQueryCleared();
 
@@ -500,7 +503,7 @@ void AssistantMainStage::OnActiveQueryCleared() {
 bool AssistantMainStage::OnActiveQueryExitAnimationEnded(
     const ui::CallbackLayerAnimationObserver& observer) {
   // The exited active query view will always be the first child of its parent.
-  delete query_layout_container_->child_at(0);
+  delete query_layout_container_->children().front();
 
   // TODO(https://crbug.com/896079): Remove this when view.cc handles the
   // event notification.

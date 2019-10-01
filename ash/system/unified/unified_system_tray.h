@@ -12,6 +12,10 @@
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 
+namespace message_center {
+class MessagePopupView;
+}  // namespace message_center
+
 namespace ash {
 
 namespace tray {
@@ -26,19 +30,19 @@ class QuietModeView;
 class UnifiedSliderBubbleController;
 class UnifiedSystemTrayBubble;
 class UnifiedSystemTrayModel;
-class NetworkIconPurger;
 
-// UnifiedSystemTray is system menu of Chromium OS, which is typically
-// accessible from the button on the right bottom of the screen (Status Area).
-// The button shows multiple icons on it to indicate system status.
-// UnifiedSystemTrayBubble is the actual menu bubble shown on top of it when the
-// button is clicked.
+// The UnifiedSystemTray is the system menu of Chromium OS, which is a clickable
+// rounded rectangle typically located on the bottom right corner of the screen,
+// (called the Status Area). The system tray shows multiple icons on it to
+// indicate system status (e.g. time, power, etc.).
 //
-// UnifiedSystemTray is the view class of that button. It creates and owns
-// UnifiedSystemTrayBubble when it is clicked.
+// Note that the Status Area refers to the parent container of the
+// UnifiedSystemTray, which also includes other "trays" such as the ImeMenuTray,
+// SelectToSpeakTray, VirtualKeyboardTray, etc.
 //
-// UnifiedSystemTray is alternative implementation of SystemTray that is going
-// to replace the original one. Eventually, SystemTray will be removed.
+// UnifiedSystemTrayBubble is the actual menu bubble shown above the system tray
+// after the user clicks on it. The UnifiedSystemTrayBubble is created and owned
+// by this class.
 class ASH_EXPORT UnifiedSystemTray : public TrayBackgroundView {
  public:
   explicit UnifiedSystemTray(Shelf* shelf);
@@ -119,6 +123,10 @@ class ASH_EXPORT UnifiedSystemTray : public TrayBackgroundView {
   void UpdateNotificationInternal();
   void UpdateNotificationAfterDelay();
 
+  // Forwarded to UiDelegate.
+  message_center::MessagePopupView* GetPopupViewForNotificationID(
+      const std::string& notification_id);
+
   const std::unique_ptr<UiDelegate> ui_delegate_;
 
   std::unique_ptr<UnifiedSystemTrayBubble> bubble_;
@@ -128,8 +136,6 @@ class ASH_EXPORT UnifiedSystemTray : public TrayBackgroundView {
 
   const std::unique_ptr<UnifiedSliderBubbleController>
       slider_bubble_controller_;
-
-  const std::unique_ptr<NetworkIconPurger> network_icon_purger_;
 
   CurrentLocaleView* const current_locale_view_;
   ImeModeView* const ime_mode_view_;

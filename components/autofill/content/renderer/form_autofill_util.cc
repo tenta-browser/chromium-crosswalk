@@ -16,6 +16,7 @@
 #include "base/command_line.h"
 #include "base/i18n/case_conversion.h"
 #include "base/logging.h"
+#include "base/metrics/field_trial.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/no_destructor.h"
 #include "base/stl_util.h"
@@ -97,6 +98,15 @@ enum FieldFilterMask {
                                      FILTER_READONLY_ELEMENTS |
                                      FILTER_NON_FOCUSABLE_ELEMENTS,
 };
+
+// Returns whether sending autofill field metadata to the server is enabled.
+// TODO(crbug.com/938804): Remove this when button titles are crowdsourced in
+// all channels.
+bool IsAutofillFieldMetadataEnabled() {
+  static base::NoDestructor<std::string> kGroupName(
+      base::FieldTrialList::FindFullName("AutofillFieldMetadata"));
+  return base::StartsWith(*kGroupName, "Enabled", base::CompareCase::SENSITIVE);
+}
 
 void TruncateString(base::string16* str, size_t max_length) {
   if (str->length() > max_length)
@@ -298,7 +308,7 @@ bool InferLabelFromSibling(const WebFormControlElement& element,
                            FormFieldData::LabelSource* label_source) {
   base::string16 inferred_label;
   FormFieldData::LabelSource inferred_label_source =
-      FormFieldData::LabelSource::UNKNOWN;
+      FormFieldData::LabelSource::kUnknown;
   WebNode sibling = element;
   while (true) {
     sibling = forward ? sibling.NextSibling() : sibling.PreviousSibling();
@@ -327,7 +337,7 @@ bool InferLabelFromSibling(const WebFormControlElement& element,
       base::string16 value = FindChildText(sibling);
       // A text node's value will be empty if it is for a line break.
       bool add_space = sibling.IsTextNode() && value.empty();
-      inferred_label_source = FormFieldData::LabelSource::COMBINED;
+      inferred_label_source = FormFieldData::LabelSource::kCombined;
       inferred_label =
           CombineAndCollapseWhitespace(value, inferred_label, add_space);
       continue;
@@ -338,7 +348,7 @@ bool InferLabelFromSibling(const WebFormControlElement& element,
     base::string16 trimmed_label;
     base::TrimWhitespace(inferred_label, base::TRIM_ALL, &trimmed_label);
     if (!trimmed_label.empty()) {
-      inferred_label_source = FormFieldData::LabelSource::COMBINED;
+      inferred_label_source = FormFieldData::LabelSource::kCombined;
       break;
     }
 
@@ -356,8 +366,8 @@ bool InferLabelFromSibling(const WebFormControlElement& element,
     if (HasTagName(sibling, *kPage) || has_label_tag) {
       inferred_label = FindChildText(sibling);
       inferred_label_source = has_label_tag
-                                  ? FormFieldData::LabelSource::LABEL_TAG
-                                  : FormFieldData::LabelSource::P_TAG;
+                                  ? FormFieldData::LabelSource::kLabelTag
+                                  : FormFieldData::LabelSource::kPTag;
     }
 
     break;
@@ -795,7 +805,7 @@ bool InferLabelForElement(const WebFormControlElement& element,
   // If we didn't find a label, check for placeholder text.
   base::string16 inferred_label = InferLabelFromPlaceholder(element);
   if (IsLabelValid(inferred_label, stop_words)) {
-    *label_source = FormFieldData::LabelSource::PLACE_HOLDER;
+    *label_source = FormFieldData::LabelSource::kPlaceHolder;
     *label = std::move(inferred_label);
     return true;
   }
@@ -803,7 +813,7 @@ bool InferLabelForElement(const WebFormControlElement& element,
   // If we didn't find a placeholder, check for aria-label text.
   inferred_label = InferLabelFromAriaLabel(element);
   if (IsLabelValid(inferred_label, stop_words)) {
-    *label_source = FormFieldData::LabelSource::ARIA_LABEL;
+    *label_source = FormFieldData::LabelSource::kAriaLabel;
     *label = std::move(inferred_label);
     return true;
   }
@@ -813,28 +823,28 @@ bool InferLabelForElement(const WebFormControlElement& element,
   std::vector<std::string> tag_names = AncestorTagNames(element);
   std::set<std::string> seen_tag_names;
   FormFieldData::LabelSource ancestor_label_source =
-      FormFieldData::LabelSource::UNKNOWN;
+      FormFieldData::LabelSource::kUnknown;
   for (const std::string& tag_name : tag_names) {
     if (base::ContainsKey(seen_tag_names, tag_name))
       continue;
 
     seen_tag_names.insert(tag_name);
     if (tag_name == "LABEL") {
-      ancestor_label_source = FormFieldData::LabelSource::LABEL_TAG;
+      ancestor_label_source = FormFieldData::LabelSource::kLabelTag;
       inferred_label = InferLabelFromEnclosingLabel(element);
     } else if (tag_name == "DIV") {
-      ancestor_label_source = FormFieldData::LabelSource::DIV_TABLE;
+      ancestor_label_source = FormFieldData::LabelSource::kDivTable;
       inferred_label = InferLabelFromDivTable(element);
     } else if (tag_name == "TD") {
-      ancestor_label_source = FormFieldData::LabelSource::TD_TAG;
+      ancestor_label_source = FormFieldData::LabelSource::kTdTag;
       inferred_label = InferLabelFromTableColumn(element);
       if (!IsLabelValid(inferred_label, stop_words))
         inferred_label = InferLabelFromTableRow(element);
     } else if (tag_name == "DD") {
-      ancestor_label_source = FormFieldData::LabelSource::DD_TAG;
+      ancestor_label_source = FormFieldData::LabelSource::kDdTag;
       inferred_label = InferLabelFromDefinitionList(element);
     } else if (tag_name == "LI") {
-      ancestor_label_source = FormFieldData::LabelSource::LI_TAG;
+      ancestor_label_source = FormFieldData::LabelSource::kLiTag;
       inferred_label = InferLabelFromListItem(element);
     } else if (tag_name == "FIELDSET") {
       break;
@@ -850,7 +860,7 @@ bool InferLabelForElement(const WebFormControlElement& element,
   // If we didn't find a label, check the value attr used as the placeholder.
   inferred_label = InferLabelFromValueAttr(element);
   if (IsLabelValid(inferred_label, stop_words)) {
-    *label_source = FormFieldData::LabelSource::VALUE;
+    *label_source = FormFieldData::LabelSource::kValue;
     *label = std::move(inferred_label);
     return true;
   }
@@ -1051,8 +1061,7 @@ void ForEachMatchingFormFieldCommon(
         // field is not skipped.
         (IsAutofillableInputElement(input_element) ||
          IsTextAreaElement(*element)) &&
-        (element->UserHasEditedTheField() ||
-         !base::FeatureList::IsEnabled(features::kAutofillPrefilledFields)) &&
+        element->UserHasEditedTheField() &&
         !SanitizedFieldIsEmpty(element->Value().Utf16()) &&
         (!element->HasAttribute(*kValue) ||
          element->GetAttribute(*kValue) != element->Value()) &&
@@ -1064,7 +1073,6 @@ void ForEachMatchingFormFieldCommon(
     // Check if we should autofill/preview/clear a select element or leave it.
     if (!force_override && !is_initiating_element &&
         IsSelectElement(*element) && element->UserHasEditedTheField() &&
-        base::FeatureList::IsEnabled(features::kAutofillPrefilledFields) &&
         !SanitizedFieldIsEmpty(element->Value().Utf16()))
       continue;
 
@@ -1414,12 +1422,16 @@ bool UnownedFormElementsAndFieldSetsToFormData(
     ExtractMask extract_mask,
     FormData* form,
     FormFieldData* field) {
-  form->origin = GetCanonicalOriginForDocument(document);
+  form->url = GetCanonicalOriginForDocument(document);
+  if (IsAutofillFieldMetadataEnabled() && !document.Body().IsNull()) {
+    SCOPED_UMA_HISTOGRAM_TIMER(
+        "PasswordManager.ButtonTitlePerformance.NoFormTag");
+    form->button_titles = InferButtonTitlesForForm(document.Body());
+  }
   if (document.GetFrame() && document.GetFrame()->Top()) {
     form->main_frame_origin = document.GetFrame()->Top()->GetSecurityOrigin();
   } else {
     form->main_frame_origin = url::Origin();
-    NOTREACHED();
   }
 
   form->is_form_tag = false;
@@ -1678,7 +1690,7 @@ void WebFormControlElementToFormField(
   }
   if (base::LowerCaseEqualsASCII(element.GetAttribute(*kRole).Utf16(),
                                  "presentation"))
-    field->role = FormFieldData::ROLE_ATTRIBUTE_PRESENTATION;
+    field->role = FormFieldData::RoleAttribute::kPresentation;
 
   field->placeholder = element.GetAttribute(*kPlaceholder).Utf16();
   if (element.HasAttribute(*kClass))
@@ -1789,8 +1801,13 @@ bool WebFormElementToFormData(
 
   form->name = GetFormIdentifier(form_element);
   form->unique_renderer_id = form_element.UniqueRendererFormId();
-  form->origin = GetCanonicalOriginForDocument(frame->GetDocument());
+  form->url = GetCanonicalOriginForDocument(frame->GetDocument());
   form->action = GetCanonicalActionForForm(form_element);
+  if (IsAutofillFieldMetadataEnabled()) {
+    SCOPED_UMA_HISTOGRAM_TIMER(
+        "PasswordManager.ButtonTitlePerformance.HasFormTag");
+    form->button_titles = InferButtonTitlesForForm(form_element);
+  }
   if (frame->Top()) {
     form->main_frame_origin = frame->Top()->GetSecurityOrigin();
   } else {

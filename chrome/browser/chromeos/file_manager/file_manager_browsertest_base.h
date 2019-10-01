@@ -17,6 +17,11 @@
 #include "chrome/browser/profiles/profile.h"
 
 class NotificationDisplayServiceTester;
+class SelectFileDialogExtensionTestFactory;
+
+namespace arc {
+class FakeFileSystemInstance;
+}  // namespace arc
 
 namespace file_manager {
 
@@ -28,6 +33,8 @@ class DownloadsTestVolume;
 class CrostiniTestVolume;
 class AndroidFilesTestVolume;
 class RemovableTestVolume;
+class DocumentsProviderTestVolume;
+class MediaViewTestVolume;
 
 class FileManagerBrowserTestBase : public extensions::ExtensionApiTest {
  protected:
@@ -40,6 +47,7 @@ class FileManagerBrowserTestBase : public extensions::ExtensionApiTest {
   bool SetUpUserDataDirectory() override;
   void SetUpInProcessBrowserTestFixture() override;
   void SetUpOnMainThread() override;
+  void TearDownOnMainThread() override;
 
   // Mandatory overrides for each File Manager test extension type.
   virtual GuestMode GetGuestMode() const = 0;
@@ -51,9 +59,12 @@ class FileManagerBrowserTestBase : public extensions::ExtensionApiTest {
   virtual bool GetTabletMode() const;
   virtual bool GetEnableDriveFs() const;
   virtual bool GetEnableMyFilesVolume() const;
+  virtual bool GetEnableDocumentsProvider() const;
+  virtual bool GetEnableArc() const;
   virtual bool GetRequiresStartupBrowser() const;
   virtual bool GetNeedsZipSupport() const;
   virtual bool GetIsOffline() const;
+  virtual bool GetEnableNativeSmb() const;
   virtual bool GetStartWithNoVolumesMounted() const;
 
   // Launches the test extension from GetTestExtensionManifestName() and uses
@@ -62,6 +73,8 @@ class FileManagerBrowserTestBase : public extensions::ExtensionApiTest {
   void StartTest();
 
  private:
+  class MockFileTasksObserver;
+
   // Returns true if the test requires incognito mode.
   bool IsIncognitoModeTest() const { return GetGuestMode() == IN_INCOGNITO; }
 
@@ -74,6 +87,12 @@ class FileManagerBrowserTestBase : public extensions::ExtensionApiTest {
   // Returns true if the test requires DriveFS.
   bool IsDriveFsTest() const { return GetEnableDriveFs(); }
 
+  // Returns true if the test requires Android documents providers.
+  bool IsDocumentsProviderTest() const { return GetEnableDocumentsProvider(); }
+
+  // Returns true if the test requires ARC++.
+  bool IsArcTest() const { return GetEnableArc(); }
+
   // Returns true if the test MyFilesVolume feature is enabled.
   bool IsMyFilesVolume() const { return GetEnableMyFilesVolume(); }
 
@@ -83,6 +102,10 @@ class FileManagerBrowserTestBase : public extensions::ExtensionApiTest {
   // Returns true if Drive should act as if offline.
   bool IsOfflineTest() const { return GetIsOffline(); }
 
+  // Returns true if the test needs a native SMB file system provider.
+  bool IsNativeSmbTest() const { return GetEnableNativeSmb(); }
+
+  // Returns true if FilesApp should start with no volumes mounted.
   bool DoesTestStartWithNoVolumesMounted() const {
     return GetStartWithNoVolumesMounted();
   }
@@ -117,6 +140,12 @@ class FileManagerBrowserTestBase : public extensions::ExtensionApiTest {
   // Called during tablet mode test setup to enable the Ash virtual keyboard.
   void EnableVirtualKeyboard();
 
+  // Called during tests to determine if SMB file shares is enabled.
+  bool IsSmbEnabled() const;
+
+  // Creates ARC services for testing that are keyed to the current |profile()|.
+  void CreateArcServices();
+
   base::test::ScopedFeatureList feature_list_;
 
   std::unique_ptr<DownloadsTestVolume> local_volume_;
@@ -128,7 +157,10 @@ class FileManagerBrowserTestBase : public extensions::ExtensionApiTest {
   std::unique_ptr<FakeTestVolume> mtp_volume_;
   std::unique_ptr<RemovableTestVolume> partition_1_;
   std::unique_ptr<RemovableTestVolume> partition_2_;
-  std::unique_ptr<RemovableTestVolume> single_usb_volume_;
+  std::unique_ptr<DocumentsProviderTestVolume> documents_provider_volume_;
+  std::unique_ptr<MediaViewTestVolume> media_view_images_;
+  std::unique_ptr<MediaViewTestVolume> media_view_videos_;
+  std::unique_ptr<MediaViewTestVolume> media_view_audio_;
 
   drive::DriveIntegrationServiceFactory::FactoryCallback
       create_drive_integration_service_;
@@ -136,6 +168,12 @@ class FileManagerBrowserTestBase : public extensions::ExtensionApiTest {
       service_factory_for_test_;
 
   std::unique_ptr<NotificationDisplayServiceTester> display_service_;
+  std::unique_ptr<arc::FakeFileSystemInstance> arc_file_system_instance_;
+
+  std::unique_ptr<MockFileTasksObserver> file_tasks_observer_;
+
+  // Not owned.
+  SelectFileDialogExtensionTestFactory* select_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(FileManagerBrowserTestBase);
 };

@@ -24,7 +24,6 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/tts_controller.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/console_message_level.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/extension_registry.h"
@@ -33,6 +32,7 @@
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_set.h"
 #include "net/base/network_change_notifier.h"
+#include "third_party/blink/public/mojom/devtools/console_message.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
 
 using extensions::EventRouter;
@@ -46,7 +46,7 @@ const char kOnSpeak[] = "ttsEngine.onSpeak";
 const char kOnStop[] = "ttsEngine.onStop";
 const char kOnPause[] = "ttsEngine.onPause";
 const char kOnResume[] = "ttsEngine.onResume";
-};  // namespace tts_engine_events
+}  // namespace tts_engine_events
 
 namespace {
 
@@ -68,7 +68,7 @@ void WarnIfMissingPauseOrResumeListener(Profile* profile,
       extensions::ProcessManager::Get(profile)->GetBackgroundHostForExtension(
           extension_id);
   host->host_contents()->GetMainFrame()->AddMessageToConsole(
-      content::CONSOLE_MESSAGE_LEVEL_WARNING,
+      blink::mojom::ConsoleMessageLevel::kWarning,
       constants::kErrorMissingPauseOrResume);
 }
 
@@ -391,6 +391,12 @@ ExtensionTtsEngineSendTtsEventFunction::Run() {
         event->GetInteger(constants::kCharIndexKey, &char_index));
   }
 
+  int length = -1;
+  if (event->HasKey(constants::kLengthKey)) {
+    EXTENSION_FUNCTION_VALIDATE(
+        event->GetInteger(constants::kLengthKey, &length));
+  }
+
   // Make sure the extension has included this event type in its manifest.
   bool event_type_allowed = false;
   Profile* profile = Profile::FromBrowserContext(browser_context());
@@ -411,30 +417,30 @@ ExtensionTtsEngineSendTtsEventFunction::Run() {
   content::TtsController* controller = content::TtsController::GetInstance();
   if (event_type == constants::kEventTypeStart) {
     controller->OnTtsEvent(utterance_id, content::TTS_EVENT_START, char_index,
-                           std::string());
+                           length, std::string());
   } else if (event_type == constants::kEventTypeEnd) {
     controller->OnTtsEvent(utterance_id, content::TTS_EVENT_END, char_index,
-                           std::string());
+                           length, std::string());
   } else if (event_type == constants::kEventTypeWord) {
     controller->OnTtsEvent(utterance_id, content::TTS_EVENT_WORD, char_index,
-                           std::string());
+                           length, std::string());
   } else if (event_type == constants::kEventTypeSentence) {
     controller->OnTtsEvent(utterance_id, content::TTS_EVENT_SENTENCE,
-                           char_index, std::string());
+                           char_index, length, std::string());
   } else if (event_type == constants::kEventTypeMarker) {
     controller->OnTtsEvent(utterance_id, content::TTS_EVENT_MARKER, char_index,
-                           std::string());
+                           length, std::string());
   } else if (event_type == constants::kEventTypeError) {
     std::string error_message;
     event->GetString(constants::kErrorMessageKey, &error_message);
     controller->OnTtsEvent(utterance_id, content::TTS_EVENT_ERROR, char_index,
-                           error_message);
+                           length, error_message);
   } else if (event_type == constants::kEventTypePause) {
     controller->OnTtsEvent(utterance_id, content::TTS_EVENT_PAUSE, char_index,
-                           std::string());
+                           length, std::string());
   } else if (event_type == constants::kEventTypeResume) {
     controller->OnTtsEvent(utterance_id, content::TTS_EVENT_RESUME, char_index,
-                           std::string());
+                           length, std::string());
   } else {
     EXTENSION_FUNCTION_VALIDATE(false);
   }

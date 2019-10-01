@@ -26,6 +26,7 @@
 #include "chrome/common/cloud_print.mojom.h"
 #include "chrome/common/service_process_util.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "components/variations/variations_switches.h"
 #include "components/version_info/version_info.h"
 #include "content/public/common/content_paths.h"
 #include "content/public/common/content_switches.h"
@@ -43,6 +44,12 @@ class ServiceProcessControlBrowserTest
     : public InProcessBrowserTest {
  public:
   ServiceProcessControlBrowserTest() {
+    // Disable the field trial config, since the MojoChannelMac feature state
+    // will not be carried into the service process being launched in this test.
+    // TODO(https://crbug.com/944985): Remove this after the feature is
+    // launched.
+    base::CommandLine::ForCurrentProcess()->AppendSwitch(
+        variations::switches::kDisableFieldTrialTestingConfig);
   }
   ~ServiceProcessControlBrowserTest() override {}
 
@@ -83,11 +90,14 @@ class ServiceProcessControlBrowserTest
     // point to a bundle so that the service process has an Info.plist.
     base::FilePath exe_path;
     ASSERT_TRUE(base::PathService::Get(base::DIR_EXE, &exe_path));
-    exe_path = exe_path.DirName()
+    exe_path = exe_path.Append(chrome::kBrowserProcessExecutablePath)
                    .DirName()
-                   .Append("Contents")
+                   .DirName()
+                   .Append("Frameworks")
+                   .Append(chrome::kFrameworkName)
                    .Append("Versions")
                    .Append(chrome::kChromeVersion)
+                   .Append("Helpers")
                    .Append(chrome::kHelperProcessExecutablePath);
     child_process_exe_override_ = std::make_unique<base::ScopedPathOverride>(
         content::CHILD_PROCESS_EXE, exe_path);
@@ -408,16 +418,7 @@ IN_PROC_BROWSER_TEST_F(ServiceProcessControlBrowserTest, HistogramsNoService) {
       base::TimeDelta()));
 }
 
-// Histograms disabled on OSX http://crbug.com/406227
-#if defined(OS_MACOSX)
-#define MAYBE_HistogramsTimeout DISABLED_HistogramsTimeout
-#define MAYBE_Histograms DISABLED_Histograms
-#else
-#define MAYBE_HistogramsTimeout HistogramsTimeout
-#define MAYBE_Histograms Histograms
-#endif
-IN_PROC_BROWSER_TEST_F(ServiceProcessControlBrowserTest,
-                       MAYBE_HistogramsTimeout) {
+IN_PROC_BROWSER_TEST_F(ServiceProcessControlBrowserTest, HistogramsTimeout) {
   LaunchServiceProcessControlAndWait();
   ASSERT_TRUE(ServiceProcessControl::GetInstance()->IsConnected());
   // Callback should not be called during GetHistograms call.
@@ -432,7 +433,7 @@ IN_PROC_BROWSER_TEST_F(ServiceProcessControlBrowserTest,
   run_loop.Run();
 }
 
-IN_PROC_BROWSER_TEST_F(ServiceProcessControlBrowserTest, MAYBE_Histograms) {
+IN_PROC_BROWSER_TEST_F(ServiceProcessControlBrowserTest, Histograms) {
   LaunchServiceProcessControlAndWait();
   ASSERT_TRUE(ServiceProcessControl::GetInstance()->IsConnected());
   // Callback should not be called during GetHistograms call.

@@ -8,8 +8,8 @@
 #include <stdlib.h>
 
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/log/net_log.h"
@@ -104,7 +104,7 @@ class BufferedSocketWriterTest : public testing::Test {
                                                &socket_data_provider_));
     socket_data_provider_.set_connect_data(
         net::MockConnect(net::SYNCHRONOUS, net::OK));
-    EXPECT_EQ(net::OK, socket_->Connect(net::CompletionCallback()));
+    EXPECT_EQ(net::OK, socket_->Connect(net::CompletionOnceCallback()));
 
     writer_.reset(new BufferedSocketWriter());
     test_buffer_ = base::MakeRefCounted<net::IOBufferWithSize>(kTestBufferSize);
@@ -120,7 +120,7 @@ class BufferedSocketWriterTest : public testing::Test {
     writer_->Start(base::Bind(&WriteNetSocket, socket_.get()),
                    base::Bind(&BufferedSocketWriterTest::OnWriteFailed,
                               base::Unretained(this)));
-  };
+  }
 
   void OnWriteFailed(int error) {
     write_error_ = error;
@@ -148,16 +148,17 @@ class BufferedSocketWriterTest : public testing::Test {
   }
 
   void TestAppendInCallback() {
-    writer_->Write(test_buffer_,
-                   base::Bind(base::IgnoreResult(&BufferedSocketWriter::Write),
-                              base::Unretained(writer_.get()), test_buffer_2_,
-                              base::Closure(), TRAFFIC_ANNOTATION_FOR_TESTS),
-                   TRAFFIC_ANNOTATION_FOR_TESTS);
+    writer_->Write(
+        test_buffer_,
+        base::BindOnce(base::IgnoreResult(&BufferedSocketWriter::Write),
+                       base::Unretained(writer_.get()), test_buffer_2_,
+                       base::Closure(), TRAFFIC_ANNOTATION_FOR_TESTS),
+        TRAFFIC_ANNOTATION_FOR_TESTS);
     base::RunLoop().RunUntilIdle();
     VerifyWrittenData();
   }
 
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   net::NetLog net_log_;
   SocketDataProvider socket_data_provider_;
   std::unique_ptr<net::StreamSocket> socket_;

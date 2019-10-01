@@ -24,7 +24,6 @@ class GpuMemoryBufferManager;
 namespace viz {
 
 class BufferQueue;
-class SyntheticBeginFrameSource;
 
 // An OutputSurface implementation that directly draws and swap to a GL
 // "buffer_queue" surface (aka one backed by a buffer managed explicitly in
@@ -35,35 +34,39 @@ class GLOutputSurfaceBufferQueue : public GLOutputSurface {
   GLOutputSurfaceBufferQueue(
       scoped_refptr<VizProcessContextProvider> context_provider,
       gpu::SurfaceHandle surface_handle,
-      SyntheticBeginFrameSource* synthetic_begin_frame_source,
       gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager,
-      uint32_t target,
-      uint32_t internal_format,
       gfx::BufferFormat buffer_format);
 
   ~GLOutputSurfaceBufferQueue() override;
 
   // TODO(rjkroege): Implement the equivalent of Reflector.
 
- private:
+ protected:
   // OutputSurface implementation.
-  void BindFramebuffer() override;
+  void SetDisplayTransformHint(gfx::OverlayTransform transform) override;
+  gfx::OverlayTransform GetDisplayTransform() override;
   void Reshape(const gfx::Size& size,
                float device_scale_factor,
                const gfx::ColorSpace& color_space,
                bool has_alpha,
                bool use_stencil) override;
+
+ private:
+  // OutputSurface implementation.
+  void BindFramebuffer() override;
   void SwapBuffers(OutputSurfaceFrame frame) override;
   uint32_t GetFramebufferCopyTextureFormat() override;
   bool IsDisplayedAsOverlayPlane() const override;
   unsigned GetOverlayTextureId() const override;
   gfx::BufferFormat GetOverlayBufferFormat() const override;
+  void SetDrawRectangle(const gfx::Rect& damage) override;
 
   // GLOutputSurface:
   void DidReceiveSwapBuffersAck(gfx::SwapResult result) override;
 
   std::unique_ptr<BufferQueue> buffer_queue_;
 
+  gfx::OverlayTransform display_transform_ = gfx::OVERLAY_TRANSFORM_NONE;
   gfx::Size reshape_size_;
   gfx::Size swap_size_;
 

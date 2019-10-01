@@ -7,6 +7,7 @@
 #include <limits>
 #include <string>
 
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
@@ -110,7 +111,7 @@ const char LevelDBSiteCharacteristicsDatabase::kDbMetadataKey[] =
     "database_metadata";
 
 // Helper class used to run all the blocking operations posted by
-// LocalSiteCharacteristicDatabase on a TaskScheduler sequence with the
+// LocalSiteCharacteristicDatabase on a ThreadPool sequence with the
 // |MayBlock()| trait.
 //
 // Instances of this class should only be destructed once all the posted tasks
@@ -133,11 +134,11 @@ class LevelDBSiteCharacteristicsDatabase::AsyncHelper {
 
   // Implementations of the DB manipulation functions of
   // LevelDBSiteCharacteristicsDatabase that run on a blocking sequence.
-  base::Optional<SiteCharacteristicsProto> ReadSiteCharacteristicsFromDB(
+  base::Optional<SiteDataProto> ReadSiteCharacteristicsFromDB(
       const url::Origin& origin);
   void WriteSiteCharacteristicsIntoDB(
       const url::Origin& origin,
-      const SiteCharacteristicsProto& site_characteristic_proto);
+      const SiteDataProto& site_characteristic_proto);
   void RemoveSiteCharacteristicsFromDB(
       const std::vector<url::Origin>& site_origin);
   void ClearDatabase();
@@ -215,7 +216,7 @@ void LevelDBSiteCharacteristicsDatabase::AsyncHelper::OpenOrCreateDatabase() {
   }
 }
 
-base::Optional<SiteCharacteristicsProto>
+base::Optional<SiteDataProto>
 LevelDBSiteCharacteristicsDatabase::AsyncHelper::ReadSiteCharacteristicsFromDB(
     const url::Origin& origin) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -227,16 +228,16 @@ LevelDBSiteCharacteristicsDatabase::AsyncHelper::ReadSiteCharacteristicsFromDB(
   std::string protobuf_value;
   {
     base::ScopedBlockingCall scoped_blocking_call(
-        base::BlockingType::MAY_BLOCK);
+        FROM_HERE, base::BlockingType::MAY_BLOCK);
     s = db_->Get(read_options_, SerializeOriginIntoDatabaseKey(origin),
                  &protobuf_value);
   }
-  base::Optional<SiteCharacteristicsProto> site_characteristic_proto;
+  base::Optional<SiteDataProto> site_characteristic_proto;
   if (s.ok()) {
-    site_characteristic_proto = SiteCharacteristicsProto();
+    site_characteristic_proto = SiteDataProto();
     if (!site_characteristic_proto->ParseFromString(protobuf_value)) {
       site_characteristic_proto = base::nullopt;
-      DLOG(ERROR) << "Error while trying to parse a SiteCharacteristicsProto "
+      DLOG(ERROR) << "Error while trying to parse a SiteDataProto "
                   << "protobuf.";
     }
   }
@@ -246,7 +247,7 @@ LevelDBSiteCharacteristicsDatabase::AsyncHelper::ReadSiteCharacteristicsFromDB(
 void LevelDBSiteCharacteristicsDatabase::AsyncHelper::
     WriteSiteCharacteristicsIntoDB(
         const url::Origin& origin,
-        const SiteCharacteristicsProto& site_characteristic_proto) {
+        const SiteDataProto& site_characteristic_proto) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (!db_)
@@ -255,7 +256,7 @@ void LevelDBSiteCharacteristicsDatabase::AsyncHelper::
   leveldb::Status s;
   {
     base::ScopedBlockingCall scoped_blocking_call(
-        base::BlockingType::MAY_BLOCK);
+        FROM_HERE, base::BlockingType::MAY_BLOCK);
     s = db_->Put(write_options_, SerializeOriginIntoDatabaseKey(origin),
                  site_characteristic_proto.SerializeAsString());
   }
@@ -275,7 +276,8 @@ void LevelDBSiteCharacteristicsDatabase::AsyncHelper::
   if (!db_)
     return;
 
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   leveldb::WriteBatch batch;
   for (const auto& iter : site_origins)
     batch.Delete(SerializeOriginIntoDatabaseKey(iter));
@@ -291,7 +293,8 @@ void LevelDBSiteCharacteristicsDatabase::AsyncHelper::ClearDatabase() {
   if (!db_)
     return;
 
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   db_.reset();
   leveldb_env::Options options;
   leveldb::Status status = leveldb::DestroyDB(db_path_.AsUTF8Unsafe(), options);
@@ -309,7 +312,8 @@ LevelDBSiteCharacteristicsDatabase::AsyncHelper::GetDatabaseSize() {
   if (!db_)
     return DatabaseSizeResult();
 
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   DatabaseSizeResult ret;
 #if defined(OS_WIN)
   // Windows has an annoying mis-feature that the size of an open file is not
@@ -341,7 +345,8 @@ LevelDBSiteCharacteristicsDatabase::AsyncHelper::OpeningType
 LevelDBSiteCharacteristicsDatabase::AsyncHelper::OpenOrCreateDatabaseImpl() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!db_) << "Database already open";
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   OpeningType opening_type = OpeningType::kNewDb;
 
@@ -421,7 +426,7 @@ void LevelDBSiteCharacteristicsDatabase::ReadSiteCharacteristicsFromDB(
 
 void LevelDBSiteCharacteristicsDatabase::WriteSiteCharacteristicsIntoDB(
     const url::Origin& origin,
-    const SiteCharacteristicsProto& site_characteristic_proto) {
+    const SiteDataProto& site_characteristic_proto) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   blocking_task_runner_->PostTask(
       FROM_HERE, base::BindOnce(&LevelDBSiteCharacteristicsDatabase::

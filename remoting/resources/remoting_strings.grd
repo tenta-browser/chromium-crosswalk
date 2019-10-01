@@ -653,6 +653,12 @@
         <message name="IDS_SERVER_COMMUNICATION_ERROR" desc="Message shown when the client fails to communicate with the back end server.">
           Failed to communicate with the server: <ph name="ERROR">$1<ex>Server Unavailable</ex></ph>
         </message>
+        <message name="IDS_TERMS_OF_SERVICE" desc="The label to access the terms of service, displayed in navigation menu." formatter_data="android_java">
+          Terms of Service
+        </message>
+        <message name="IDS_PRIVACY_POLICY" desc="The label to access the privacy policy, displayed in navigation menu." formatter_data="android_java">
+          Privacy Policy
+        </message>
 
 <!-- Play Store listings text. These Android-specific strings are not marked
      with formatter_data="android_java" since they are used only for the Play
@@ -683,8 +689,7 @@ Remote computers with non US-English keyboards may receive incorrect text input.
 For information about privacy, please see the Google Privacy Policy (http://goo.gl/SyrVzj) and the Chrome Privacy Policy (http://goo.gl/0uXE5d).
         </message>
         <message name="IDS_PLAY_STORE_CHANGES" desc="List of what's changed in this release of Chrome Remote Desktop for Android. [CHAR-LIMIT=500] [NAME=play_store_changes]">
-• Added support for Android 9.0 Pie.
-• Support for resizing remote desktop resolution to match your Android device's screen.
+Stability improvements and bug fixes.
         </message>
 
         <!-- iOS App Store metadata text. Won't be bundled into the app. -->
@@ -711,8 +716,7 @@ Securely access your computer from your iOS device. It's fast, simple and free.
 • On your iOS device, open the app and tap on any of your online computers to connect.
         </message>
         <message name="IDS_APP_STORE_CHANGES" desc="List of what's changed in this release of Chrome Remote Desktop for iOS. [CHAR-LIMIT=4000] [NAME=app_store_changes]">
-• Better panning and zooming experience on iPhone X.
-• Stability improvements and bug fixes.
+Stability improvements and bug fixes.
         </message>
       </if>  <!-- is_android or is_ios -->
 
@@ -1362,6 +1366,9 @@ Securely access your computer from your iOS device. It's fast, simple and free.
       </message>
       <message  name="IDS_WEBSITE_INVITE_DEPRECATION" desc="Requirement all users to try the new version">
         This app is no longer supported. To ensure you're getting the latest features and security updates, please use the <ph name="LINK_BEGIN">$1<ex>&lt;a href=http://example.com&gt;</ex></ph>Chrome Remote Desktop web app<ph name="LINK_END">$2<ex>&lt;/a&gt;</ex></ph>.
+      </message>
+      <message name="IDS_DOWNLOAD_FILE_DIALOG_TITLE" desc="Window title for file chooser to select file to download to the client">
+        Download File
       </message>
       <if expr="is_macosx">
         <message name="IDS_HOST_AUTHENTICATION_PROMPT" desc="The prompt to be displayed in the authentication dialog when making changes to the system.  The system will add a sentence asking for an administrator's name and password.  Mac-only.">

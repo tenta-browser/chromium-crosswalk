@@ -16,6 +16,7 @@
 #include "ash/app_list/views/search_box_view.h"
 #include "ash/app_list/views/test/apps_grid_view_test_api.h"
 #include "ash/public/cpp/app_list/app_list_switches.h"
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/time/time.h"
@@ -42,7 +43,7 @@ class GridViewVisibleWaiter {
   ~GridViewVisibleWaiter() {}
 
   void Wait() {
-    if (grid_view_->visible())
+    if (grid_view_->GetVisible())
       return;
 
     check_timer_.Start(FROM_HERE, base::TimeDelta::FromMilliseconds(50),
@@ -55,7 +56,7 @@ class GridViewVisibleWaiter {
 
  private:
   void OnTimerCheck() {
-    if (grid_view_->visible())
+    if (grid_view_->GetVisible())
       run_loop_->Quit();
   }
 
@@ -204,10 +205,10 @@ class AppListMainViewTest : public views::ViewsTestBase {
     EXPECT_EQ(folder_item_view->item(), folder_item);
 
     // Click on the folder to open it.
-    EXPECT_FALSE(FolderView()->visible());
+    EXPECT_FALSE(FolderView()->GetVisible());
     SimulateClick(folder_item_view);
     base::RunLoop().RunUntilIdle();
-    EXPECT_TRUE(FolderView()->visible());
+    EXPECT_TRUE(FolderView()->GetVisible());
 
     return folder_item_view;
   }
@@ -219,8 +220,8 @@ class AppListMainViewTest : public views::ViewsTestBase {
     AppListItemView* dragged =
         SimulateInitiateDrag(FolderGridView(), AppsGridView::MOUSE, point);
     EXPECT_EQ(item_view, dragged);
-    EXPECT_FALSE(RootGridView()->visible());
-    EXPECT_TRUE(FolderView()->visible());
+    EXPECT_FALSE(RootGridView()->GetVisible());
+    EXPECT_TRUE(FolderView()->GetVisible());
 
     // Drag it to top left corner.
     point = gfx::Point(0, 0);
@@ -233,7 +234,7 @@ class AppListMainViewTest : public views::ViewsTestBase {
 
     // Wait until the folder view is invisible and root grid view shows up.
     GridViewVisibleWaiter(RootGridView()).Wait();
-    EXPECT_TRUE(RootGridView()->visible());
+    EXPECT_TRUE(RootGridView()->GetVisible());
     EXPECT_EQ(0, FolderView()->layer()->opacity());
 
     return dragged;

@@ -9,10 +9,10 @@
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
 #include "third_party/blink/public/common/features.h"
+#include "third_party/blink/public/mojom/devtools/console_message.mojom-shared.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
-#include "third_party/blink/renderer/core/inspector/console_types.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
@@ -59,7 +59,7 @@ PreviewsResourceLoadingHints::PreviewsResourceLoadingHints(
   block_resource_type_[static_cast<int>(ResourceType::kCSSStyleSheet)] = true;
   block_resource_type_[static_cast<int>(ResourceType::kScript)] = true;
   block_resource_type_[static_cast<int>(ResourceType::kRaw)] = true;
-  for (int i = 0; i < static_cast<int>(ResourceType::kLast) + 1; ++i) {
+  for (int i = 0; i < static_cast<int>(ResourceType::kMaxValue) + 1; ++i) {
     // Parameter names are of format: "block_resource_type_%d". The value
     // should be either "true" or "false".
     block_resource_type_[i] = base::GetFieldTrialParamByFeatureAsBool(
@@ -129,9 +129,9 @@ bool PreviewsResourceLoadingHints::AllowLoad(
 
 void PreviewsResourceLoadingHints::ReportBlockedLoading(
     const KURL& resource_url) const {
-  execution_context_->AddConsoleMessage(
-      ConsoleMessage::Create(kOtherMessageSource, kWarningMessageLevel,
-                             GetConsoleLogStringForBlockedLoad(resource_url)));
+  execution_context_->AddConsoleMessage(ConsoleMessage::Create(
+      mojom::ConsoleMessageSource::kOther, mojom::ConsoleMessageLevel::kWarning,
+      GetConsoleLogStringForBlockedLoad(resource_url)));
 }
 
 void PreviewsResourceLoadingHints::Trace(blink::Visitor* visitor) {

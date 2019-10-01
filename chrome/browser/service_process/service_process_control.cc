@@ -281,11 +281,6 @@ bool ServiceProcessControl::GetHistograms(
   DCHECK(!histograms_callback.is_null());
   histograms_callback_.Reset();
 
-#if defined(OS_MACOSX)
-  // TODO(vitalybuka): Investigate why it crashes MAC http://crbug.com/406227.
-  return false;
-#endif  // OS_MACOSX
-
   // If the service process is already running then connect to it.
   if (!CheckServiceProcessReady())
     return false;
@@ -362,7 +357,7 @@ void ServiceProcessControl::Launcher::DoDetectLaunched() {
       process_.WaitForExitWithTimeout(base::TimeDelta(), &exit_code)) {
     process_.Close();
     base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
-                             base::Bind(&Launcher::Notify, this));
+                             base::BindOnce(&Launcher::Notify, this));
     return;
   }
   retry_count_++;
@@ -370,7 +365,7 @@ void ServiceProcessControl::Launcher::DoDetectLaunched() {
   // If the service process is not launched yet then check again in 2 seconds.
   const base::TimeDelta kDetectLaunchRetry = base::TimeDelta::FromSeconds(2);
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE, base::Bind(&Launcher::DoDetectLaunched, this),
+      FROM_HERE, base::BindOnce(&Launcher::DoDetectLaunched, this),
       kDetectLaunchRetry);
 }
 
@@ -385,10 +380,10 @@ void ServiceProcessControl::Launcher::DoRun() {
   if (process_.IsValid()) {
     saved_pid_ = process_.Pid();
     base::PostTaskWithTraits(FROM_HERE, {BrowserThread::IO},
-                             base::Bind(&Launcher::DoDetectLaunched, this));
+                             base::BindOnce(&Launcher::DoDetectLaunched, this));
   } else {
     base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
-                             base::Bind(&Launcher::Notify, this));
+                             base::BindOnce(&Launcher::Notify, this));
   }
 }
 #endif  // !OS_MACOSX

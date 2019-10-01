@@ -11,6 +11,7 @@
 
 #include "ash/public/cpp/notification_utils.h"
 #include "ash/public/cpp/vector_icons/vector_icons.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
@@ -170,14 +171,9 @@ void NetworkPortalNotificationControllerDelegate::Click(
 
   Profile* profile = ProfileManager::GetActiveUserProfile();
 
-  const bool disable_bypass_proxy_switch_present =
-      base::CommandLine::ForCurrentProcess()->HasSwitch(
-          chromeos::switches::kDisableCaptivePortalBypassProxy);
   const bool use_incognito_profile =
-      disable_bypass_proxy_switch_present
-          ? false
-          : (profile && profile->GetPrefs()->GetBoolean(
-                            prefs::kCaptivePortalAuthenticationIgnoresProxy));
+      profile && profile->GetPrefs()->GetBoolean(
+                     prefs::kCaptivePortalAuthenticationIgnoresProxy);
 
   if (use_incognito_profile) {
     if (controller_)

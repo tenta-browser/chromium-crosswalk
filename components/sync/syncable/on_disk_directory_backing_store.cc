@@ -23,8 +23,10 @@ enum HistogramResultEnum {
 
 OnDiskDirectoryBackingStore::OnDiskDirectoryBackingStore(
     const std::string& dir_name,
+    const base::RepeatingCallback<std::string()>& cache_guid_generator,
     const base::FilePath& backing_file_path)
-    : DirectoryBackingStore(dir_name), backing_file_path_(backing_file_path) {
+    : DirectoryBackingStore(dir_name, cache_guid_generator),
+      backing_file_path_(backing_file_path) {
   DCHECK(backing_file_path_.IsAbsolute());
 }
 
@@ -42,7 +44,8 @@ DirOpenResult OnDiskDirectoryBackingStore::TryLoad(
       return FAILED_OPEN_DATABASE;
   }
 
-  if (!InitializeTables())
+  bool did_start_new = false;
+  if (!InitializeTables(&did_start_new))
     return FAILED_OPEN_DATABASE;
 
   if (!LoadEntries(handles_map, metahandles_to_purge))
@@ -54,7 +57,7 @@ DirOpenResult OnDiskDirectoryBackingStore::TryLoad(
   if (!VerifyReferenceIntegrity(handles_map))
     return FAILED_DATABASE_CORRUPT;
 
-  return OPENED;
+  return did_start_new ? OPENED_NEW : OPENED_EXISTING;
 }
 
 DirOpenResult OnDiskDirectoryBackingStore::Load(
@@ -65,10 +68,10 @@ DirOpenResult OnDiskDirectoryBackingStore::Load(
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DirOpenResult result = TryLoad(handles_map, delete_journals,
                                  metahandles_to_purge, kernel_load_info);
-  if (result == OPENED) {
+  if (result == OPENED_NEW || result == OPENED_EXISTING) {
     UMA_HISTOGRAM_ENUMERATION("Sync.DirectoryOpenResult", FIRST_TRY_SUCCESS,
                               RESULT_COUNT);
-    return OPENED;
+    return result;
   }
 
   ReportFirstTryOpenFailure();
@@ -84,7 +87,7 @@ DirOpenResult OnDiskDirectoryBackingStore::Load(
 
   result = TryLoad(handles_map, delete_journals, metahandles_to_purge,
                    kernel_load_info);
-  if (result == OPENED) {
+  if (result == OPENED_NEW || result == OPENED_EXISTING) {
     UMA_HISTOGRAM_ENUMERATION("Sync.DirectoryOpenResult", SECOND_TRY_SUCCESS,
                               RESULT_COUNT);
   } else {

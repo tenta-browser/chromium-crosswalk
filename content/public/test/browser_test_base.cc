@@ -5,6 +5,7 @@
 #include "content/public/test/browser_test_base.h"
 
 #include <stddef.h>
+#include <iostream>
 
 #include "base/base_switches.h"
 #include "base/bind.h"
@@ -57,6 +58,18 @@
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_switches.h"
 
+#if defined(OS_ANDROID)
+#include "content/app/mojo/mojo_init.h"
+#include "content/common/url_schemes.h"
+#include "content/public/app/content_main_delegate.h"
+#include "content/public/common/content_paths.h"
+#include "ui/base/ui_base_paths.h"
+
+#ifdef V8_USE_EXTERNAL_STARTUP_DATA
+#include "gin/v8_initializer.h"
+#endif
+#endif
+
 #if defined(OS_MACOSX)
 #include "ui/events/test/event_generator.h"
 #include "ui/views/test/event_generator_delegate_mac.h"
@@ -64,12 +77,6 @@
 
 #if defined(OS_POSIX)
 #include "base/process/process_handle.h"
-#endif
-
-#if defined(OS_CHROMEOS)
-#include "content/public/browser/network_service_instance.h"
-#include "net/base/network_change_notifier.h"
-#include "net/base/network_change_notifier_posix.h"
 #endif
 
 #if defined(USE_AURA)
@@ -97,16 +104,22 @@ void DumpStackTraceSignalHandler(int signal) {
     message += strsignal(signal);
     message += ". Backtrace:\n";
     logging::RawLog(logging::LOG_ERROR, message.c_str());
-    base::debug::StackTrace().Print();
+    auto stack_trace = base::debug::StackTrace();
+    stack_trace.OutputToStream(&std::cerr);
+#if defined(OS_ANDROID)
+    // Also output the trace to logcat on Android.
+    stack_trace.Print();
+#endif
   }
   _exit(128 + signal);
 }
 #endif  // defined(OS_POSIX)
 
-void RunTaskOnRendererThread(const base::Closure& task,
-                             const base::Closure& quit_task) {
-  task.Run();
-  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI}, quit_task);
+void RunTaskOnRendererThread(base::OnceClosure task,
+                             base::OnceClosure quit_task) {
+  std::move(task).Run();
+  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
+                           std::move(quit_task));
 }
 
 void TraceStopTracingComplete(const base::Closure& quit,
@@ -157,8 +170,8 @@ BrowserTestBase::BrowserTestBase()
   embedded_test_server_ = std::make_unique<net::EmbeddedTestServer>();
 
 #if defined(USE_AURA)
-  ui::test::EventGeneratorDelegate::SetFactoryFunction(base::BindRepeating(
-      &aura::test::EventGeneratorDelegateAura::Create, nullptr));
+  ui::test::EventGeneratorDelegate::SetFactoryFunction(
+      base::BindRepeating(&aura::test::EventGeneratorDelegateAura::Create));
 #elif defined(OS_MACOSX)
   ui::test::EventGeneratorDelegate::SetFactoryFunction(
       base::BindRepeating(&views::test::CreateEventGeneratorDelegateMac));
@@ -172,10 +185,11 @@ BrowserTestBase::~BrowserTestBase() {
   spawned_test_server_.reset();
 #endif
 
-  CHECK(set_up_called_) << "SetUp was not called. This probably means that the "
-                           "developer has overridden the method and not called "
-                           "the superclass version. In this case, the test "
-                           "does not run and reports a false positive result.";
+  CHECK(set_up_called_ || IsSkipped())
+      << "SetUp was not called. This probably means that the "
+         "developer has overridden the method and not called "
+         "the superclass version. In this case, the test "
+         "does not run and reports a false positive result.";
 }
 
 void BrowserTestBase::SetUp() {
@@ -193,7 +207,7 @@ void BrowserTestBase::SetUp() {
   // when sharded.
   command_line->AppendSwitchASCII(
       switches::kIPCConnectionTimeout,
-      base::Int64ToString(TestTimeouts::action_max_timeout().InSeconds()));
+      base::NumberToString(TestTimeouts::action_max_timeout().InSeconds()));
 
   // The tests assume that file:// URIs can freely access other file:// URIs.
   if (AllowFileAccessFromFiles())
@@ -266,9 +280,6 @@ void BrowserTestBase::SetUp() {
   // not affect the results.
   command_line->AppendSwitchASCII(switches::kForceDisplayColorProfile, "srgb");
 
-  // Disable compositor Ukm in browser tests until crbug.com/761524 is resolved.
-  command_line->AppendSwitch(switches::kDisableCompositorUkmForTests);
-
   test_host_resolver_ = std::make_unique<TestHostResolver>();
 
   ContentBrowserSanityChecker scoped_enable_sanity_checks;
@@ -332,16 +343,74 @@ void BrowserTestBase::SetUp() {
           &BrowserTestBase::CreatedBrowserMainParts, base::Unretained(this)));
 
 #if defined(OS_ANDROID)
-  MainFunctionParams params(*command_line);
-  params.ui_task = ui_task.release();
-  params.created_main_parts_closure = created_main_parts_closure.release();
-  base::TaskScheduler::Create("Browser");
-  DCHECK(!field_trial_list_);
-  field_trial_list_ = SetUpFieldTrialsAndFeatureList();
-  StartBrowserTaskScheduler();
-  BrowserTaskExecutor::Create();
-  // TODO(phajdan.jr): Check return code, http://crbug.com/374738 .
-  BrowserMain(params);
+  // For all other platforms, we call ContentMain for browser tests which goes
+  // through the normal browser initialization paths. For Android, we must set
+  // things up manually. A meager re-implementation of ContentMainRunnerImpl
+  // follows.
+
+  base::i18n::AllowMultipleInitializeCallsForTesting();
+  base::i18n::InitializeICU();
+
+#ifdef V8_USE_EXTERNAL_STARTUP_DATA
+  gin::V8Initializer::LoadV8Snapshot();
+  gin::V8Initializer::LoadV8Natives();
+#endif
+
+  ContentMainDelegate* delegate = GetContentMainDelegateForTesting();
+  // The delegate should have been set by JNI_OnLoad for the test target.
+  DCHECK(delegate);
+
+  bool startup_error = delegate->BasicStartupComplete(/*exit_code=*/nullptr);
+  DCHECK(!startup_error);
+
+  InitializeMojo();
+
+  {
+    SetBrowserClientForTesting(delegate->CreateContentBrowserClient());
+    if (command_line->HasSwitch(switches::kSingleProcess))
+      SetRendererClientForTesting(delegate->CreateContentRendererClient());
+
+    content::RegisterPathProvider();
+    content::RegisterContentSchemes(false);
+    ui::RegisterPathProvider();
+
+    delegate->PreSandboxStartup();
+
+    DCHECK(!field_trial_list_);
+    if (delegate->ShouldCreateFeatureList()) {
+      field_trial_list_ = SetUpFieldTrialsAndFeatureList();
+      delegate->PostFieldTrialInitialization();
+    }
+
+    base::ThreadPoolInstance::Create("Browser");
+
+    delegate->PreCreateMainMessageLoop();
+    BrowserTaskExecutor::Create();
+    delegate->PostEarlyInitialization(/*is_running_tests=*/true);
+
+    StartBrowserThreadPool();
+    BrowserTaskExecutor::PostFeatureListSetup();
+    delegate->PostTaskSchedulerStart();
+  }
+
+  // ContentMain would normally call RunProcess() on the delegate and fallback
+  // to BrowserMain() if it did not run it (or equivalent) itself. On Android,
+  // RunProcess() will return 0 so we don't have to fallback to BrowserMain().
+  {
+    MainFunctionParams params(*command_line);
+    params.ui_task = ui_task.release();
+    params.created_main_parts_closure = created_main_parts_closure.release();
+    // Passing "" as the process type to indicate the browser process.
+    int exit_code = delegate->RunProcess("", params);
+    DCHECK_EQ(exit_code, 0);
+  }
+
+  // Normally the BrowserMainLoop does this during shutdown but on Android we
+  // don't go through shutdown, so this doesn't happen there. We do need it
+  // for the test harness to be able to delete temp dirs.
+  base::ThreadRestrictions::SetIOAllowed(true);
+
+  BrowserTaskExecutor::ResetForTesting();
 #else
   GetContentMainParams()->ui_task = ui_task.release();
   GetContentMainParams()->created_main_parts_closure =
@@ -364,7 +433,7 @@ bool BrowserTestBase::AllowFileAccessFromFiles() const {
 
 void BrowserTestBase::SimulateNetworkServiceCrash() {
   CHECK(base::FeatureList::IsEnabled(network::features::kNetworkService));
-  CHECK(!IsNetworkServiceRunningInProcess())
+  CHECK(!IsInProcessNetworkService())
       << "Can't crash the network service if it's running in-process!";
   network::mojom::NetworkServiceTestPtr network_service_test;
   ServiceManagerConnection::GetForProcess()->GetConnector()->BindInterface(
@@ -392,32 +461,6 @@ void BrowserTestBase::ProxyRunTestOnMainThreadLoop() {
   if (handle_sigterm_)
     signal(SIGTERM, DumpStackTraceSignalHandler);
 #endif  // defined(OS_POSIX)
-
-#if defined(OS_CHROMEOS)
-  // Manually set the connection type since ChromeOS's NetworkChangeNotifier
-  // implementation relies on some other class controlling it (normally
-  // NetworkChangeManagerClient), which may not be set up in all browser tests.
-  net::NetworkChangeNotifierPosix* network_change_notifier =
-      static_cast<net::NetworkChangeNotifierPosix*>(
-          content::GetNetworkChangeNotifier());
-  network_change_notifier->OnConnectionChanged(
-      net::NetworkChangeNotifier::CONNECTION_ETHERNET);
-  // If the network service is enabled, set the connection type for its
-  // NetworkChangeNotifier instance as well.
-  if (base::FeatureList::IsEnabled(network::features::kNetworkService) &&
-      !IsNetworkServiceRunningInProcess()) {
-    network::mojom::NetworkChangeManagerPtr manager_ptr;
-    network::mojom::NetworkChangeManagerRequest request(
-        mojo::MakeRequest(&manager_ptr));
-    GetNetworkService()->GetNetworkChangeManager(std::move(request));
-    manager_ptr->OnNetworkChanged(
-        /*dns_changed=*/false, /*ip_address_changed=*/false,
-        /*connection_type_changed=*/true,
-        network::mojom::ConnectionType::CONNECTION_ETHERNET,
-        /*connection_subtype_changed=*/false,
-        network::mojom::ConnectionSubtype::SUBTYPE_UNKNOWN);
-  }
-#endif
 
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kEnableTracing)) {
@@ -494,7 +537,7 @@ void BrowserTestBase::CreateTestServer(const base::FilePath& test_server_base) {
 }
 
 void BrowserTestBase::PostTaskToInProcessRendererAndWait(
-    const base::Closure& task) {
+    base::OnceClosure task) {
   CHECK(base::CommandLine::ForCurrentProcess()->HasSwitch(
       switches::kSingleProcess));
 
@@ -504,8 +547,8 @@ void BrowserTestBase::PostTaskToInProcessRendererAndWait(
 
   base::RunLoop run_loop;
   renderer_task_runner->PostTask(
-      FROM_HERE,
-      base::BindOnce(&RunTaskOnRendererThread, task, run_loop.QuitClosure()));
+      FROM_HERE, base::BindOnce(&RunTaskOnRendererThread, std::move(task),
+                                run_loop.QuitClosure()));
   run_loop.Run();
 }
 
@@ -563,13 +606,15 @@ void BrowserTestBase::InitializeNetworkProcess() {
          rule.resolver_type !=
              net::RuleBasedHostResolverProc::Rule::kResolverTypeIPLiteral) ||
         rule.address_family != net::AddressFamily::ADDRESS_FAMILY_UNSPECIFIED ||
-        !!rule.latency_ms || rule.replacement.empty())
+        !!rule.latency_ms)
       continue;
     network::mojom::RulePtr mojo_rule = network::mojom::Rule::New();
     if (rule.resolver_type ==
         net::RuleBasedHostResolverProc::Rule::kResolverTypeSystem) {
       mojo_rule->resolver_type =
-          network::mojom::ResolverType::kResolverTypeSystem;
+          rule.replacement.empty()
+              ? network::mojom::ResolverType::kResolverTypeDirectLookup
+              : network::mojom::ResolverType::kResolverTypeSystem;
     } else {
       mojo_rule->resolver_type =
           network::mojom::ResolverType::kResolverTypeIPLiteral;

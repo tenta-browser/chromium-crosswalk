@@ -37,15 +37,18 @@
 #include "services/network/public/mojom/referrer_policy.mojom-shared.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/platform/web_application_cache_host.h"
+#include "third_party/blink/public/web/web_application_cache_host.h"
 #include "third_party/blink/renderer/bindings/core/v8/isolated_world_csp.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
+#include "third_party/blink/renderer/core/css/media_query_list_listener.h"
+#include "third_party/blink/renderer/core/css/media_query_matcher.h"
 #include "third_party/blink/renderer/core/dom/document_fragment.h"
 #include "third_party/blink/renderer/core/dom/node_with_index.h"
 #include "third_party/blink/renderer/core/dom/range.h"
 #include "third_party/blink/renderer/core/dom/synchronous_mutation_observer.h"
 #include "third_party/blink/renderer/core/dom/text.h"
+#include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/frame/viewport_data.h"
@@ -58,6 +61,8 @@
 #include "third_party/blink/renderer/core/page/validation_message_client.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/mojo/interface_invalidator.h"
 #include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/weborigin/scheme_registry.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
@@ -67,7 +72,9 @@ namespace blink {
 
 class DocumentTest : public PageTestBase {
  protected:
-  void TearDown() override { ThreadState::Current()->CollectAllGarbage(); }
+  void TearDown() override {
+    ThreadState::Current()->CollectAllGarbageForTesting();
+  }
 
   void SetHtmlInnerHTML(const char*);
 };
@@ -315,6 +322,7 @@ class MockDocumentValidationMessageClient
   void DocumentDetached(const Document&) override {
     document_detached_was_called = true;
   }
+  void DidChangeFocusTo(const Element*) override {}
   void WillBeDestroyed() override {}
 
   // virtual void Trace(Visitor* visitor) {
@@ -336,6 +344,15 @@ class MockWebApplicationCacheHost : public blink::WebApplicationCacheHost {
 
   bool with_manifest_was_called_ = false;
   bool without_manifest_was_called_ = false;
+};
+
+class PrefersColorSchemeTestListener final : public MediaQueryListListener {
+ public:
+  void NotifyMediaQueryChanged() override { notified_ = true; }
+  bool IsNotified() const { return notified_; }
+
+ private:
+  bool notified_ = false;
 };
 
 }  // anonymous namespace
@@ -420,13 +437,15 @@ TEST_F(DocumentTest, LinkManifest) {
   EXPECT_EQ(nullptr, GetDocument().LinkManifest());
 
   // Check that we use the first manifest with <link rel=manifest>
-  auto* link = HTMLLinkElement::Create(GetDocument(), CreateElementFlags());
+  auto* link = MakeGarbageCollected<HTMLLinkElement>(GetDocument(),
+                                                     CreateElementFlags());
   link->setAttribute(blink::html_names::kRelAttr, "manifest");
   link->setAttribute(blink::html_names::kHrefAttr, "foo.json");
   GetDocument().head()->AppendChild(link);
   EXPECT_EQ(link, GetDocument().LinkManifest());
 
-  auto* link2 = HTMLLinkElement::Create(GetDocument(), CreateElementFlags());
+  auto* link2 = MakeGarbageCollected<HTMLLinkElement>(GetDocument(),
+                                                      CreateElementFlags());
   link2->setAttribute(blink::html_names::kRelAttr, "manifest");
   link2->setAttribute(blink::html_names::kHrefAttr, "bar.json");
   GetDocument().head()->InsertBefore(link2, link);
@@ -592,12 +611,12 @@ TEST_F(DocumentTest, EnforceSandboxFlags) {
   scoped_refptr<SecurityOrigin> origin =
       SecurityOrigin::CreateFromString("http://example.test");
   GetDocument().SetSecurityOrigin(origin);
-  SandboxFlags mask = kSandboxNavigation;
+  SandboxFlags mask = WebSandboxFlags::kNavigation;
   GetDocument().EnforceSandboxFlags(mask);
   EXPECT_EQ(origin, GetDocument().GetSecurityOrigin());
   EXPECT_FALSE(GetDocument().GetSecurityOrigin()->IsPotentiallyTrustworthy());
 
-  mask |= kSandboxOrigin;
+  mask |= WebSandboxFlags::kOrigin;
   GetDocument().EnforceSandboxFlags(mask);
   EXPECT_TRUE(GetDocument().GetSecurityOrigin()->IsOpaque());
   EXPECT_FALSE(GetDocument().GetSecurityOrigin()->IsPotentiallyTrustworthy());
@@ -710,7 +729,7 @@ TEST_F(DocumentTest, SynchronousMutationNotifierMoveTreeToNewDocument) {
   move_sample->appendChild(GetDocument().createTextNode("b456"));
   GetDocument().body()->AppendChild(move_sample);
 
-  Document& another_document = *Document::CreateForTest();
+  Document& another_document = *MakeGarbageCollected<Document>();
   another_document.AppendChild(move_sample);
 
   EXPECT_EQ(1u, observer.MoveTreeToNewDocumentNodes().size());
@@ -875,7 +894,7 @@ TEST_F(DocumentTest, SandboxDisablesAppCache) {
   scoped_refptr<SecurityOrigin> origin =
       SecurityOrigin::CreateFromString("https://test.com");
   GetDocument().SetSecurityOrigin(origin);
-  SandboxFlags mask = kSandboxOrigin;
+  SandboxFlags mask = WebSandboxFlags::kOrigin;
   GetDocument().EnforceSandboxFlags(mask);
   GetDocument().SetURL(KURL("https://test.com/foobar/document"));
 
@@ -1070,11 +1089,16 @@ TEST_P(IsolatedWorldCSPTest, CSPForWorld) {
   }
 }
 
-INSTANTIATE_TEST_CASE_P(, IsolatedWorldCSPTest, testing::Values(true, false));
+INSTANTIATE_TEST_SUITE_P(, IsolatedWorldCSPTest, testing::Values(true, false));
 
 TEST_F(DocumentTest, CanExecuteScriptsWithSandboxAndIsolatedWorld) {
-  constexpr SandboxFlags kSandboxMask = kSandboxScripts;
+  constexpr SandboxFlags kSandboxMask = WebSandboxFlags::kScripts;
   GetDocument().EnforceSandboxFlags(kSandboxMask);
+  // With FeaturePolicyForSandbox, all the sandbox flags must be explicitly
+  // converted to equivalent feature policies. Since sandbox is enforced above,
+  // the feature policies have to be reset; setting an empty header policy will
+  // internally convert the newly set sandbox flags to policies.
+  GetDocument().ApplyFeaturePolicyFromHeader("");
 
   LocalFrame* frame = GetDocument().GetFrame();
   frame->GetSettings()->SetScriptEnabled(true);
@@ -1179,6 +1203,25 @@ TEST_F(DocumentTest, ElementFromPointWithPageZoom) {
   EXPECT_EQ(GetDocument().ElementFromPoint(1, 12), GetDocument().body());
 }
 
+TEST_F(DocumentTest, PrefersColorSchemeChanged) {
+  UpdateAllLifecyclePhasesForTest();
+
+  auto* list = GetDocument().GetMediaQueryMatcher().MatchMedia(
+      "(prefers-color-scheme: dark)");
+  auto* listener = MakeGarbageCollected<PrefersColorSchemeTestListener>();
+  list->AddListener(listener);
+
+  EXPECT_FALSE(listener->IsNotified());
+
+  GetDocument().GetSettings()->SetPreferredColorScheme(
+      PreferredColorScheme::kDark);
+
+  UpdateAllLifecyclePhasesForTest();
+  GetDocument().ServiceScriptedAnimations(base::TimeTicks());
+
+  EXPECT_TRUE(listener->IsNotified());
+}
+
 /**
  * Tests for viewport-fit propagation.
  */
@@ -1274,7 +1317,7 @@ TEST_P(ParameterizedViewportFitDocumentTest, EffectiveViewportFit) {
   EXPECT_EQ(std::get<2>(GetParam()), GetViewportFit());
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     All,
     ParameterizedViewportFitDocumentTest,
     testing::Values(

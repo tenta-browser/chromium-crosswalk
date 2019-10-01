@@ -348,10 +348,10 @@ class TouchActionBrowserTest : public ContentBrowserTest,
         )HTML";
 
     base::JSONReader json_reader;
-    std::unique_ptr<base::Value> params =
+    base::Optional<base::Value> params =
         json_reader.ReadToValue(pointer_actions_json);
-    ASSERT_TRUE(params.get()) << json_reader.GetErrorMessage();
-    ActionsParser actions_parser(params.get());
+    ASSERT_TRUE(params.has_value()) << json_reader.GetErrorMessage();
+    ActionsParser actions_parser(std::move(params.value()));
 
     ASSERT_TRUE(actions_parser.ParsePointerActionSequence());
 
@@ -378,7 +378,7 @@ class TouchActionBrowserTest : public ContentBrowserTest,
           "actions": [
             { "name": "pointerDown", "x": 50, "y": 50 },
             { "name": "pointerUp" },
-            { "name": "pause", "duration": 0.05 },
+            { "name": "pause", "duration": 50 },
             { "name": "pointerDown", "x": 50, "y": 50 },
             { "name": "pointerMove", "x": 50, "y": 150 },
             { "name": "pointerUp" }
@@ -387,10 +387,10 @@ class TouchActionBrowserTest : public ContentBrowserTest,
         )HTML";
 
     base::JSONReader json_reader;
-    std::unique_ptr<base::Value> params =
+    base::Optional<base::Value> params =
         json_reader.ReadToValue(pointer_actions_json);
-    ASSERT_TRUE(params.get()) << json_reader.GetErrorMessage();
-    ActionsParser actions_parser(params.get());
+    ASSERT_TRUE(params.has_value()) << json_reader.GetErrorMessage();
+    ActionsParser actions_parser(std::move(params.value()));
 
     ASSERT_TRUE(actions_parser.ParsePointerActionSequence());
 
@@ -456,7 +456,7 @@ class TouchActionBrowserTest : public ContentBrowserTest,
   DISALLOW_COPY_AND_ASSIGN(TouchActionBrowserTest);
 };
 
-INSTANTIATE_TEST_CASE_P(, TouchActionBrowserTest, testing::Bool());
+INSTANTIATE_TEST_SUITE_P(, TouchActionBrowserTest, testing::Bool());
 
 #if !defined(NDEBUG) || defined(ADDRESS_SANITIZER) ||       \
     defined(MEMORY_SANITIZER) || defined(LEAK_SANITIZER) || \
@@ -684,13 +684,6 @@ IN_PROC_BROWSER_TEST_P(TouchActionBrowserTest, BlockDoubleTapDragZoom) {
   ASSERT_EQ(1, ExecuteScriptAndExtractDouble("window.visualViewport.scale"));
 
   DoDoubleTapDragZoom();
-
-  // Since we don't expect anything to change, we don't know how long to wait
-  // before we're sure the zoom was blocked.  Do a scroll so that we can wait
-  // until the offset changes. At that point, we know the zoom should have
-  // taken effect if it wasn't blocked by touch-action.
-  DoTouchScroll(gfx::Point(300, 300), gfx::Vector2d(0, 200), true, 10075,
-                gfx::Vector2d(0, 200), kNoJankTime);
 
   EXPECT_EQ(1, ExecuteScriptAndExtractDouble("window.visualViewport.scale"));
 }

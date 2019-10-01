@@ -4,18 +4,19 @@
 
 #include "ui/base/ime/input_method_delegate.h"
 
-#include "base/callback.h"
 #include "ui/events/event.h"
 
 namespace ui {
 namespace internal {
 
 // static
-void InputMethodDelegate::CallDispatchKeyEventPostIMEAck(
+void InputMethodDelegate::RunDispatchKeyEventPostIMECallback(
     KeyEvent* key_event,
-    base::OnceCallback<void(bool)> ack_callback) {
-  if (ack_callback)
-    std::move(ack_callback).Run(key_event->stopped_propagation());
+    DispatchKeyEventPostIMECallback callback) {
+  if (!callback)
+    return;
+  std::move(callback).Run(key_event->handled(),
+                          key_event->stopped_propagation());
 }
 
 }  // namespace internal

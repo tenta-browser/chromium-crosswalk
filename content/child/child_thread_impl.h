@@ -128,12 +128,6 @@ class CONTENT_EXPORT ChildThreadImpl
   // Returns the one child thread. Can only be called on the main thread.
   static ChildThreadImpl* current();
 
-#if defined(OS_ANDROID)
-  // Called on Android's service thread to shutdown the main thread of this
-  // process.
-  static void ShutdownThread();
-#endif
-
  protected:
   friend class ChildProcess;
 
@@ -151,6 +145,10 @@ class CONTENT_EXPORT ChildThreadImpl
 #if BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
   void SetIPCLoggingEnabled(bool enable) override;
 #endif
+  void RunService(
+      const std::string& service_name,
+      mojo::PendingReceiver<service_manager::mojom::Service> receiver) override;
+
   void OnChildControlRequest(mojom::ChildControlRequest);
 
   virtual bool OnControlMessageReceived(const IPC::Message& msg);

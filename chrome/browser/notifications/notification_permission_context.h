@@ -36,6 +36,11 @@ class Profile;
 // CONTENT_SETTING_BLOCK will be returned to reflect the fact that permission
 // cannot be requested.
 //
+// When the user rejects a notification permission request, the WebContents will
+// be prevented from requesting the permission again (regardless of origin)
+// until a user-initiated navigation occurs. This stops users from being locked
+// in to cross-origin request loops that may be hard to escape from.
+//
 // ANDROID O+
 //
 //     On Android O and beyond, notification channels will be used for storing
@@ -114,7 +119,7 @@ class NotificationPermissionContext : public PermissionContextBase {
                         const GURL& requesting_origin,
                         const GURL& embedding_origin,
                         bool user_gesture,
-                        const BrowserPermissionCallback& callback) override;
+                        BrowserPermissionCallback callback) override;
   void UpdateContentSetting(const GURL& requesting_origin,
                             const GURL& embedder_origin,
                             ContentSetting content_setting) override;

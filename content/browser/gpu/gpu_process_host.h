@@ -57,12 +57,6 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
                        public IPC::Sender,
                        public viz::GpuHostImpl::Delegate {
  public:
-  enum GpuProcessKind {
-    GPU_PROCESS_KIND_UNSANDBOXED_NO_GL,  // Unsandboxed, no init GL bindings.
-    GPU_PROCESS_KIND_SANDBOXED,
-    GPU_PROCESS_KIND_COUNT
-  };
-
   static int GetGpuCrashCount();
 
   // Creates a new GpuProcessHost (if |force_create| is turned on) or gets an
@@ -85,7 +79,7 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
   CONTENT_EXPORT static void CallOnIO(
       GpuProcessKind kind,
       bool force_create,
-      const base::Callback<void(GpuProcessHost*)>& callback);
+      base::OnceCallback<void(GpuProcessHost*)> callback);
 
   // Get the GPU process host for the GPU process with the given ID. Returns
   // null if the process no longer exists.
@@ -159,6 +153,9 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
       override;
   void BindInterface(const std::string& interface_name,
                      mojo::ScopedMessagePipeHandle interface_pipe) override;
+  void RunService(
+      const std::string& service_name,
+      mojo::PendingReceiver<service_manager::mojom::Service> receiver) override;
 #if defined(USE_OZONE)
   void TerminateGpuProcess(const std::string& message) override;
   void SendGpuProcessMessage(IPC::Message* message) override;

@@ -60,9 +60,7 @@
 #include "chrome/browser/component_updater/optimization_hints_component_installer.h"
 #include "chrome/browser/component_updater/origin_trials_component_installer.h"
 #include "chrome/browser/component_updater/pepper_flash_component_installer.h"
-#include "chrome/browser/component_updater/recovery_component_installer.h"
-#include "chrome/browser/component_updater/recovery_improved_component_installer.h"
-#include "chrome/browser/component_updater/sth_set_component_installer.h"
+#include "chrome/browser/component_updater/sth_set_component_remover.h"
 #include "chrome/browser/component_updater/subresource_filter_component_installer.h"
 #include "chrome/browser/component_updater/supervised_user_whitelist_installer.h"
 #include "chrome/browser/defaults.h"
@@ -78,7 +76,9 @@
 #include "chrome/browser/metrics/renderer_uptime_tracker.h"
 #include "chrome/browser/metrics/thread_watcher.h"
 #include "chrome/browser/nacl_host/nacl_browser_delegate_impl.h"
+#include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/performance_monitor/process_monitor.h"
+#include "chrome/browser/performance_monitor/system_monitor.h"
 #include "chrome/browser/plugins/plugin_prefs.h"
 #include "chrome/browser/policy/chrome_browser_policy_connector.h"
 #include "chrome/browser/prefs/chrome_command_line_pref_store.h"
@@ -91,14 +91,14 @@
 #include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profiles_state.h"
-#include "chrome/browser/resource_coordinator/render_process_probe.h"
 #include "chrome/browser/sessions/chrome_serialized_navigation_driver.h"
 #include "chrome/browser/shell_integration.h"
+#include "chrome/browser/site_isolation/site_isolation_policy.h"
+#include "chrome/browser/startup_data.h"
 #include "chrome/browser/tracing/background_tracing_field_trial.h"
 #include "chrome/browser/tracing/navigation_tracing.h"
+#include "chrome/browser/tracing/trace_event_system_stats_monitor.h"
 #include "chrome/browser/translate/translate_service.h"
-#include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/javascript_dialogs/chrome_javascript_native_dialog_factory.h"
 #include "chrome/browser/ui/profile_error_dialog.h"
 #include "chrome/browser/ui/startup/bad_flags_prompt.h"
@@ -136,7 +136,6 @@
 #include "components/metrics/call_stack_profile_metrics_provider.h"
 #include "components/metrics/call_stack_profile_params.h"
 #include "components/metrics/expired_histogram_util.h"
-#include "components/metrics/legacy_call_stack_profile_builder.h"
 #include "components/metrics/metrics_reporting_default_state.h"
 #include "components/metrics/metrics_service.h"
 #include "components/metrics_services_manager/metrics_services_manager.h"
@@ -195,11 +194,14 @@
 #include "ui/base/resource/resource_bundle.h"
 
 #if defined(OS_ANDROID)
+#include "chrome/browser/android/chrome_feature_list.h"
 #include "chrome/browser/metrics/thread_watcher_android.h"
 #include "ui/base/resource/resource_bundle_android.h"
 #else
 #include "chrome/browser/feedback/feedback_profile_observer.h"
 #include "chrome/browser/resource_coordinator/tab_activity_watcher.h"
+#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/usb/web_usb_detector.h"
 #include "ui/base/l10n/l10n_util.h"
 #endif  // defined(OS_ANDROID)
@@ -215,6 +217,7 @@
 #include "chrome/browser/chromeos/settings/stats_reporting_controller.h"
 #include "chromeos/constants/chromeos_switches.h"
 #include "chromeos/settings/cros_settings_names.h"
+#include "components/arc/metrics/stability_metrics_manager.h"
 #endif  // defined(OS_CHROMEOS)
 
 #if defined(OS_LINUX) && !defined(OS_CHROMEOS)
@@ -259,7 +262,14 @@
 #if defined(OS_WIN) || defined(OS_MACOSX) || \
     (defined(OS_LINUX) && !defined(OS_CHROMEOS))
 #include "chrome/browser/metrics/desktop_session_duration/desktop_session_duration_tracker.h"
+#include "chrome/browser/profiles/profile_activity_metrics_recorder.h"
 #endif
+
+#if defined(OS_WIN)
+#include "chrome/browser/component_updater/recovery_improved_component_installer.h"
+#else
+#include "chrome/browser/component_updater/recovery_component_installer.h"
+#endif  // defined(OS_WIN)
 
 #if BUILDFLAG(ENABLE_BACKGROUND_MODE)
 #include "chrome/browser/background/background_mode_manager.h"
@@ -289,6 +299,11 @@
 #include "printing/printed_document.h"
 #endif
 
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW) && defined(OS_WIN)
+#include "components/printing/browser/printer_capabilities.h"
+#include "printing/backend/win_helper.h"
+#endif
+
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW) && !defined(OS_CHROMEOS)
 #include "chrome/browser/printing/cloud_print/cloud_print_proxy_service.h"
 #include "chrome/browser/printing/cloud_print/cloud_print_proxy_service_factory.h"
@@ -303,6 +318,7 @@
 #include "chrome/browser/component_updater/vr_assets_component_installer.h"
 #include "chrome/browser/vr/service/vr_service_impl.h"
 #if defined(OS_WIN)
+#include "chrome/browser/vr/service/xr_session_request_consent_manager_impl.h"
 #include "chrome/browser/vr/ui_host/vr_ui_host_impl.h"
 #endif
 #endif
@@ -312,7 +328,6 @@
 #endif  // BUILDFLAG(ENABLE_WIDEVINE_CDM_COMPONENT)
 
 #if defined(USE_AURA)
-#include "services/service_manager/runner/common/client_util.h"
 #include "ui/aura/env.h"
 #endif
 
@@ -445,10 +460,12 @@ OSStatus KeychainCallback(SecKeychainEvent keychain_event,
 void RegisterComponentsForUpdate(PrefService* profile_prefs) {
   auto* const cus = g_browser_process->component_updater();
 
-  if (base::FeatureList::IsEnabled(features::kImprovedRecoveryComponent))
-    RegisterRecoveryImprovedComponent(cus, g_browser_process->local_state());
-  else
-    RegisterRecoveryComponent(cus, g_browser_process->local_state());
+#if defined(OS_WIN)
+  RegisterRecoveryImprovedComponent(cus, g_browser_process->local_state());
+#else
+  // TODO(crbug.com/687231): Implement the Improved component on Mac, etc.
+  RegisterRecoveryComponent(cus, g_browser_process->local_state());
+#endif  // defined(OS_WIN)
 
 #if !defined(OS_ANDROID)
   RegisterPepperFlashComponent(cus);
@@ -480,6 +497,15 @@ void RegisterComponentsForUpdate(PrefService* profile_prefs) {
     // The CRLSet component previously resided in a different location: delete
     // the old file.
     component_updater::DeleteLegacyCRLSet(path);
+
+#if !defined(OS_CHROMEOS) && !defined(OS_ANDROID)
+    // Clean up previous STH sets that may have been installed. This is not
+    // done for:
+    // Android: Because STH sets were never used
+    // Chrome OS: On Chrome OS, this cleanup is delayed until user login.
+    component_updater::DeleteLegacySTHSet(path);
+#endif
+
 #if !defined(OS_CHROMEOS) && !defined(OS_ANDROID)
     // CRLSetFetcher attempts to load a CRL set from either the local disk or
     // network.
@@ -488,12 +514,6 @@ void RegisterComponentsForUpdate(PrefService* profile_prefs) {
     component_updater::RegisterCRLSetComponent(cus, path);
 #endif  // !defined(OS_CHROMEOS) && !defined(OS_ANDROID)
 
-#if !defined(OS_CHROMEOS) && !defined(OS_ANDROID)
-    // Registration of the STH set fetcher here is not done for:
-    // Android: Because the story around CT on Mobile is not finalized yet.
-    // Chrome OS: On Chrome OS this registration is delayed until user login.
-    RegisterSTHSetComponent(cus, path);
-#endif  // !defined(OS_CHROMEOS) && !defined(OS_ANDROID)
     RegisterOriginTrialsComponent(cus, path);
 
     RegisterFileTypePoliciesComponent(cus, path);
@@ -529,12 +549,12 @@ void RegisterComponentsForUpdate(PrefService* profile_prefs) {
 }
 
 #if !defined(OS_ANDROID)
-bool ProcessSingletonNotificationCallback(
+void ProcessSingletonNotificationCallbackImpl(
     const base::CommandLine& command_line,
     const base::FilePath& current_directory) {
-  // Drop the request if the browser process is already in shutdown path.
+  // Drop the request if the browser process is already shutting down.
   if (!g_browser_process || g_browser_process->IsShuttingDown())
-    return false;
+    return;
 
   if (command_line.HasSwitch(switches::kOriginalProcessStartTime)) {
     std::string start_time_string =
@@ -567,8 +587,28 @@ bool ProcessSingletonNotificationCallback(
   // Record now as the last successful chrome start.
   if (ShouldRecordActiveUse(command_line))
     GoogleUpdateSettings::SetLastRunTime();
+}
 
-  return true;
+bool ProcessSingletonNotificationCallback(
+    const base::CommandLine& command_line,
+    const base::FilePath& current_directory) {
+  // Drop the request if the browser process is already shutting down.
+  // Note that we're going to post an async task below. Even if the browser
+  // process isn't shutting down right now, it could be by the time the task
+  // starts running. So, an additional check needs to happen when it starts.
+  // But regardless of any future check, there is no reason to post the task
+  // now if we know we're already shutting down.
+  if (!g_browser_process || g_browser_process->IsShuttingDown())
+    return false;
+
+  // In order to handle this request on Windows, there is platform specific
+  // code in browser_finder.cc that requires making outbound COM calls to
+  // cross-apartment shell objects (via IVirtualDesktopManager). That is not
+  // allowed within a SendMessage handler, which this function is a part of.
+  // So, we post a task to asynchronously finish the command line processing.
+  return base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(&ProcessSingletonNotificationCallbackImpl,
+                                command_line, current_directory));
 }
 #endif  // !defined(OS_ANDROID)
 
@@ -596,19 +636,6 @@ bool IsWebDriverOverridingPolicy(PrefService* local_state) {
                 prefs::kWebDriverOverridesIncompatiblePolicies)));
 }
 
-bool IsSiteIsolationEnterprisePolicyApplicable() {
-#if defined(OS_ANDROID)
-  // https://crbug.com/844118: Limiting policy to devices with > 1GB RAM.
-  // Using 1077 rather than 1024 because 1) it helps ensure that devices with
-  // exactly 1GB of RAM won't get included because of inaccuracies or off-by-one
-  // errors and 2) this is the bucket boundary in Memory.Stats.Win.TotalPhys2.
-  bool have_enough_memory = base::SysInfo::AmountOfPhysicalMemoryMB() > 1077;
-  return have_enough_memory;
-#else
-  return true;
-#endif
-}
-
 // Sets up the ThreadProfiler for the browser process, runs it, and returns the
 // profiler.
 std::unique_ptr<ThreadProfiler> CreateAndStartBrowserMainThreadProfiler() {
@@ -623,7 +650,7 @@ std::unique_ptr<ThreadProfiler> CreateAndStartBrowserMainThreadProfiler() {
 
 ChromeBrowserMainParts::ChromeBrowserMainParts(
     const content::MainFunctionParams& parameters,
-    ChromeFeatureListCreator* chrome_feature_list_creator)
+    StartupData* startup_data)
     : parameters_(parameters),
       parsed_command_line_(parameters.command_line),
       result_code_(service_manager::RESULT_CODE_NORMAL_EXIT),
@@ -633,8 +660,8 @@ ChromeBrowserMainParts::ChromeBrowserMainParts(
           !parameters.ui_task),
       profile_(NULL),
       run_message_loop_(true),
-      chrome_feature_list_creator_(chrome_feature_list_creator) {
-  DCHECK(chrome_feature_list_creator_);
+      startup_data_(startup_data) {
+  DCHECK(startup_data_);
   // If we're running tests (ui_task is non-null).
   if (parameters.ui_task)
     browser_defaults::enable_help_app = false;
@@ -660,6 +687,10 @@ void ChromeBrowserMainParts::SetupMetrics() {
       variations::SyntheticTrialsActiveGroupIdProvider::GetInstance());
   // Now that field trials have been created, initializes metrics recording.
   metrics->InitializeMetricsRecordingState();
+
+  startup_data_->chrome_feature_list_creator()
+      ->browser_field_trials()
+      ->RegisterSyntheticTrials();
 }
 
 void ChromeBrowserMainParts::StartMetricsRecording() {
@@ -786,18 +817,20 @@ int ChromeBrowserMainParts::PreEarlyInitialization() {
 
   // Create BrowserProcess in PreEarlyInitialization() so that we can load
   // field trials (and all it depends upon).
-  browser_process_ =
-      std::make_unique<BrowserProcessImpl>(chrome_feature_list_creator_);
+  browser_process_ = std::make_unique<BrowserProcessImpl>(startup_data_);
 
   bool failed_to_load_resource_bundle = false;
   const int load_local_state_result =
       OnLocalStateLoaded(&failed_to_load_resource_bundle);
 
   // Reuses the MetricsServicesManager and GetMetricsServicesManagerClient
-  // instances created in the FeatureListCreator so they won't be created again.
+  // instances created in the FeatureListCreator so they won't be created
+  // again.
+  auto* chrome_feature_list_creator =
+      startup_data_->chrome_feature_list_creator();
   browser_process_->SetMetricsServices(
-      chrome_feature_list_creator_->TakeMetricsServicesManager(),
-      chrome_feature_list_creator_->GetMetricsServicesManagerClient());
+      chrome_feature_list_creator->TakeMetricsServicesManager(),
+      chrome_feature_list_creator->GetMetricsServicesManagerClient());
 
   if (load_local_state_result == chrome::RESULT_CODE_MISSING_DATA &&
       failed_to_load_resource_bundle) {
@@ -837,7 +870,14 @@ void ChromeBrowserMainParts::PostMainMessageLoopStart() {
   ui_thread_profiler_->SetMainThreadTaskRunner(
       base::ThreadTaskRunnerHandle::Get());
 
-  heap_profiler_controller_->StartIfEnabled();
+  heap_profiler_controller_->Start();
+
+  system_monitor_ = performance_monitor::SystemMonitor::Create();
+
+  // TODO(sebmarchand): Allow this to be created earlier if startup tracing is
+  // enabled.
+  trace_event_system_stats_monitor_ =
+      std::make_unique<tracing::TraceEventSystemStatsMonitor>();
 
   // device_event_log must be initialized after the message loop. Calls to
   // {DEVICE}_LOG prior to here will only be logged with VLOG. Some
@@ -898,7 +938,8 @@ int ChromeBrowserMainParts::OnLocalStateLoaded(
   }
 #endif  // defined(OS_WIN)
 
-  std::string locale = chrome_feature_list_creator_->actual_locale();
+  std::string locale =
+      startup_data_->chrome_feature_list_creator()->actual_locale();
   if (locale.empty()) {
     *failed_to_load_resource_bundle = true;
     return chrome::RESULT_CODE_MISSING_DATA;
@@ -924,7 +965,7 @@ int ChromeBrowserMainParts::ApplyFirstRunPrefs() {
   master_prefs_ = std::make_unique<first_run::MasterPrefs>();
 
   std::unique_ptr<installer::MasterPreferences> installer_master_prefs =
-      chrome_feature_list_creator_->TakeMasterPrefs();
+      startup_data_->chrome_feature_list_creator()->TakeMasterPrefs();
   if (!installer_master_prefs)
     return service_manager::RESULT_CODE_NORMAL_EXIT;
 
@@ -992,6 +1033,7 @@ int ChromeBrowserMainParts::PreCreateThreadsImpl() {
 #if defined(OS_CHROMEOS)
   chromeos::CrosSettings::Initialize(local_state);
   chromeos::StatsReportingController::Initialize(local_state);
+  arc::StabilityMetricsManager::Initialize(local_state);
 #endif  // defined(OS_CHROMEOS)
 
   {
@@ -1015,15 +1057,9 @@ int ChromeBrowserMainParts::PreCreateThreadsImpl() {
 #endif  // !defined(OS_ANDROID)
 
 #if defined(OS_WIN)
-  // This is needed to enable ETW exporting when requested in about:flags.
-  // Normally, we enable it in ContentMainRunnerImpl::Initialize when the flag
-  // is present on the command line but flags in about:flags are converted only
-  // after this function runs. Note that this starts exporting later which
-  // affects tracing the browser startup. Also, this is only relevant for the
-  // browser process, as other processes will get all the flags on their command
-  // line regardless of the origin (command line or about:flags).
-  if (parsed_command_line().HasSwitch(switches::kTraceExportEventsToETW))
-    base::trace_event::TraceEventETWExport::EnableETWExport();
+  // This is needed to enable ETW exporting. This is only relevant for the
+  // browser process, as other processes enable it separately.
+  base::trace_event::TraceEventETWExport::EnableETWExport();
 #endif  // OS_WIN
 
   // Reset the command line in the crash report details, since we may have
@@ -1077,6 +1113,8 @@ int ChromeBrowserMainParts::PreCreateThreadsImpl() {
 
 #if defined(OS_WIN)
   vr::VRUiHost::SetFactory(&vr::VRUiHostImpl::Create);
+  vr::XRSessionRequestConsentManager::SetInstance(
+      new vr::XRSessionRequestConsentManagerImpl());
 #endif  // defined(OS_WIN)
 #endif  // BUILDFLAG(ENABLE_VR)
 
@@ -1089,6 +1127,7 @@ int ChromeBrowserMainParts::PreCreateThreadsImpl() {
 #if defined(OS_WIN) || defined(OS_MACOSX) || \
     (defined(OS_LINUX) && !defined(OS_CHROMEOS))
   metrics::DesktopSessionDurationTracker::Initialize();
+  ProfileActivityMetricsRecorder::Initialize();
 #endif
   metrics::RendererUptimeTracker::Initialize();
 
@@ -1096,28 +1135,19 @@ int ChromeBrowserMainParts::PreCreateThreadsImpl() {
     auto* command_line = base::CommandLine::ForCurrentProcess();
     // Add Site Isolation switches as dictated by policy.
     if (local_state->GetBoolean(prefs::kSitePerProcess) &&
-        IsSiteIsolationEnterprisePolicyApplicable() &&
+        SiteIsolationPolicy::IsEnterprisePolicyApplicable() &&
         !command_line->HasSwitch(switches::kSitePerProcess)) {
       command_line->AppendSwitch(switches::kSitePerProcess);
     }
-    // We apply the flag always when it differs from the command line state,
-    // because we don't want the command-line switch to take precedence over
-    // enterprise policy. (This behavior is in harmony with other enterprise
-    // policy settings.)
-    if (local_state->HasPrefPath(prefs::kIsolateOrigins) &&
-        IsSiteIsolationEnterprisePolicyApplicable() &&
-        (!command_line->HasSwitch(switches::kIsolateOrigins) ||
-         command_line->GetSwitchValueASCII(switches::kIsolateOrigins) !=
-             local_state->GetString(prefs::kIsolateOrigins))) {
-      command_line->AppendSwitchASCII(
-          switches::kIsolateOrigins,
-          local_state->GetString(prefs::kIsolateOrigins));
-    }
+    // IsolateOrigins policy is taken care of through SiteIsolationPrefsObserver
+    // (constructed and owned by BrowserProcessImpl).
   }
 
+#if defined(OS_ANDROID)
   // The admin should also be able to use these policies to force Site Isolation
-  // off.  Note that disabling either SitePerProcess or IsolateOrigins via
-  // policy will disable both types of isolation.
+  // off (on Android; using enterprise policies to disable Site Isolation is not
+  // supported on other platforms).  Note that disabling either SitePerProcess
+  // or IsolateOrigins via policy will disable both types of isolation.
   if ((local_state->IsManagedPreference(prefs::kSitePerProcess) &&
        !local_state->GetBoolean(prefs::kSitePerProcess)) ||
       (local_state->IsManagedPreference(prefs::kIsolateOrigins) &&
@@ -1125,6 +1155,7 @@ int ChromeBrowserMainParts::PreCreateThreadsImpl() {
     base::CommandLine::ForCurrentProcess()->AppendSwitch(
         switches::kDisableSiteIsolationForPolicy);
   }
+#endif
 
   // ChromeOS needs ui::ResourceBundle::InitSharedInstance to be called before
   // this.
@@ -1172,13 +1203,6 @@ void ChromeBrowserMainParts::ServiceManagerConnectionStarted(
 }
 
 void ChromeBrowserMainParts::PreMainMessageLoopRun() {
-#if defined(USE_AURA)
-  if (content::ServiceManagerConnection::GetForProcess() &&
-      service_manager::ServiceManagerIsRemote()) {
-    content::ServiceManagerConnection::GetForProcess()->
-        SetConnectionLostClosure(base::Bind(&chrome::SessionEnding));
-  }
-#endif
   TRACE_EVENT0("startup", "ChromeBrowserMainParts::PreMainMessageLoopRun");
 
   result_code_ = PreMainMessageLoopRunImpl();
@@ -1310,6 +1334,12 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
 #if !defined(OS_ANDROID)
   // Now that the file thread has been started, start recording.
   StartMetricsRecording();
+#else
+  // When kUmaBackgroundSessions is enabled, start metrics recording for every
+  // Chrome start. Otherwise, recording is only started when Chrome becomes
+  // foregrounded.
+  if (base::FeatureList::IsEnabled(chrome::android::kUmaBackgroundSessions))
+    StartMetricsRecording();
 #endif  // !defined(OS_ANDROID)
 
   if (!base::debug::BeingDebugged()) {
@@ -1321,17 +1351,6 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
   // Do any initializating in the browser process that requires all threads
   // running.
   browser_process_->PreMainMessageLoopRun();
-
-#if !defined(OS_CHROMEOS) && !defined(OS_ANDROID)
-  // Wait for the result of machine level user cloud policy enrollment after
-  // we start the enrollment process in browser_porcess_->PreMainMessageLoopRun.
-  // Abort the launch process if the enrollment is failed.
-  if (!browser_process_->browser_policy_connector()
-           ->machine_level_user_cloud_policy_controller()
-           ->WaitUntilPolicyEnrollmentFinished()) {
-    return chrome::RESULT_CODE_CLOUD_POLICY_ENROLLMENT_FAILED;
-  }
-#endif
 
   // Record last shutdown time into a histogram.
   browser_shutdown::ReadLastShutdownInfo();
@@ -1426,6 +1445,32 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
                     "now to avoid profile corruption.";
       return chrome::RESULT_CODE_PROFILE_IN_USE;
   }
+
+#if !defined(OS_CHROMEOS) && !defined(OS_ANDROID)
+  // Initialize the machine level user cloud policy controller after the
+  // browser process singleton is acquired to remove race conditions where
+  // multiple browser processes start simultaneously.  The main
+  // initialization of browser_policy_connector is performed inside
+  // PreMainMessageLoopRun() so that policies can be applied as soon as
+  // possible.
+  //
+  // Note that this protects against multiple browser process starts in
+  // the same user data dir and not multiple starts across user data dirs.
+  browser_process_->browser_policy_connector()
+      ->machine_level_user_cloud_policy_controller()
+      ->Init(browser_process_->local_state(),
+             browser_process_->system_network_context_manager()
+                 ->GetSharedURLLoaderFactory());
+
+  // Wait for the machine level user cloud policy enrollment to finish.
+  // If no enrollment is needed, this function returns immediately.
+  // Abort the launch process if the enrollment fails.
+  if (!browser_process_->browser_policy_connector()
+           ->machine_level_user_cloud_policy_controller()
+           ->WaitUntilPolicyEnrollmentFinished()) {
+    return chrome::RESULT_CODE_CLOUD_POLICY_ENROLLMENT_FAILED;
+  }
+#endif
 
   // Handle special early return paths (which couldn't be processed even earlier
   // as they require the process singleton to be held) first.
@@ -1595,8 +1640,8 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
   if (NetworkProfileBubble::ShouldCheckNetworkProfile(profile_)) {
     base::PostTaskWithTraits(
         FROM_HERE, {base::MayBlock()},
-        base::Bind(&NetworkProfileBubble::CheckNetworkProfile,
-                   profile_->GetPath()));
+        base::BindOnce(&NetworkProfileBubble::CheckNetworkProfile,
+                       profile_->GetPath()));
   }
 #endif  // defined(OS_WIN)
 
@@ -1645,12 +1690,16 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
   }
 #endif  // BUILDFLAG(ENABLE_PRINT_PREVIEW) && !defined(OFFICIAL_BUILD)
 
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW) && defined(OS_WIN)
+  printing::SetGetDisplayNameFunction(&printing::GetUserFriendlyName);
+#endif
+
   HandleTestParameters(parsed_command_line());
   browser_process_->metrics_service()->RecordBreakpadHasDebugger(
       base::debug::BeingDebugged());
 
   language_usage_metrics::LanguageUsageMetrics::RecordAcceptLanguages(
-      profile_->GetPrefs()->GetString(prefs::kAcceptLanguages));
+      profile_->GetPrefs()->GetString(language::prefs::kAcceptLanguages));
   language_usage_metrics::LanguageUsageMetrics::RecordApplicationLanguage(
       browser_process_->GetApplicationLocale());
 
@@ -1789,15 +1838,14 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
 
   PostBrowserStart();
 
-#if defined(OS_ANDROID)
-  DCHECK(!parameters().ui_task);
-#else
+  // The ui_task can be injected by tests to replace the main message loop.
+  // In that case we Run() it here, and set a flag to avoid running the main
+  // message loop later, as the test will do so as needed from the |ui_task|.
   if (parameters().ui_task) {
     parameters().ui_task->Run();
     delete parameters().ui_task;
     run_message_loop_ = false;
   }
-#endif
 
 #if defined(OS_WIN)
   // Clean up old user data directory and disk cache directory.
@@ -1901,11 +1949,6 @@ void ChromeBrowserMainParts::PostMainMessageLoopRun() {
 #endif  // defined(OS_ANDROID)
 }
 
-void ChromeBrowserMainParts::PreShutdown() {
-  metrics::LegacyCallStackProfileBuilder::SetProcessMilestone(
-      metrics::LegacyCallStackProfileBuilder::SHUTDOWN_START);
-}
-
 void ChromeBrowserMainParts::PostDestroyThreads() {
 #if defined(OS_ANDROID)
   // On Android, there is no quit/exit. So the browser's main message loop will
@@ -1946,6 +1989,7 @@ void ChromeBrowserMainParts::PostDestroyThreads() {
   CHECK(metrics::MetricsService::UmaMetricsProperlyShutdown());
 
 #if defined(OS_CHROMEOS)
+  arc::StabilityMetricsManager::Shutdown();
   chromeos::StatsReportingController::Shutdown();
   chromeos::CrosSettings::Shutdown();
 #endif  // defined(OS_CHROMEOS)

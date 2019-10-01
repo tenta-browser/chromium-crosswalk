@@ -24,6 +24,14 @@ PolymerTest.prototype = {
   browsePreload: 'chrome://chrome-urls/',
 
   /**
+   * The name of the custom element under test. Should be overridden by
+   * subclasses that are using the HTML imports polyfill and need to wait for
+   * a custom element to be defined before starting the test.
+   * @type {?string}
+   */
+  customElementName: null,
+
+  /**
    * The mocha adapter assumes all tests are async.
    * @override
    * @final
@@ -38,16 +46,15 @@ PolymerTest.prototype = {
   runAccessibilityChecks: false,
 
   /**
-   * Files that need not be compiled. Should be overridden to use correct
-   * relative paths with PolymerTest.getLibraries.
+   * Files that need not be compiled.
    * @override
    */
   extraLibraries: [
-    'ui/webui/resources/js/cr.js',
-    'ui/webui/resources/js/promise_resolver.js',
-    'third_party/mocha/mocha.js',
-    'chrome/test/data/webui/mocha_adapter.js',
-    'third_party/polymer/v1_0/components-chromium/iron-test-helpers/' +
+    '//ui/webui/resources/js/cr.js',
+    '//ui/webui/resources/js/promise_resolver.js',
+    '//third_party/mocha/mocha.js',
+    '//chrome/test/data/webui/mocha_adapter.js',
+    '//third_party/polymer/v1_0/components-chromium/iron-test-helpers/' +
         'mock-interactions.js',
   ],
 
@@ -87,12 +94,19 @@ PolymerTest.prototype = {
       }
     };
 
-    // Import Polymer before running tests.
-    suiteSetup(function() {
-      if (!window.Polymer) {
-        return PolymerTest.importHtml('chrome://resources/html/polymer.html');
-      }
-    });
+    if (typeof HTMLImports !== 'undefined') {
+      suiteSetup(() => {
+        return new Promise(resolve => {
+                 HTMLImports.whenReady(resolve);
+               })
+            .then(() => {
+              const customElementName = this.customElementName;
+              if (customElementName) {
+                return customElements.whenDefined(customElementName);
+              }
+            });
+      });
+    }
   },
 
   /** @override */
@@ -183,20 +197,6 @@ PolymerTest.clearBody = function() {
   }
 };
 
-/**
- * Helper function to return the list of extra libraries relative to basePath.
- */
-PolymerTest.getLibraries = function(basePath) {
-  // Ensure basePath ends in '/'.
-  if (basePath.length && basePath[basePath.length - 1] != '/') {
-    basePath += '/';
-  }
-
-  return PolymerTest.prototype.extraLibraries.map(function(library) {
-    return basePath + library;
-  });
-};
-
 /*
  * Waits for queued up tasks to finish before proceeding. Inspired by:
  * https://github.com/Polymer/web-component-tester/blob/master/browser/environment/helpers.js#L97
@@ -207,5 +207,16 @@ PolymerTest.flushTasks = function() {
   // new task.
   return new Promise(function(resolve, reject) {
     window.setTimeout(resolve, 0);
+  });
+};
+
+/**
+ * @param {!HTMLElement} element
+ * @return {!Promise} Promise that resolves when an afterNextRender()
+ *     callback on |element| is run.
+ */
+PolymerTest.afterNextRender = function(element) {
+  return new Promise(resolve => {
+    Polymer.RenderStatus.afterNextRender(element, resolve);
   });
 };

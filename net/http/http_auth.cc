@@ -9,7 +9,9 @@
 #include "base/stl_util.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/strings/string_util.h"
+#include "base/values.h"
 #include "net/base/net_errors.h"
+#include "net/dns/host_resolver.h"
 #include "net/http/http_auth_challenge_tokenizer.h"
 #include "net/http/http_auth_handler.h"
 #include "net/http/http_auth_handler_factory.h"
@@ -17,6 +19,7 @@
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_util.h"
+#include "net/log/net_log.h"
 
 namespace net {
 
@@ -31,9 +34,10 @@ void HttpAuth::ChooseBestChallenge(
     const GURL& origin,
     const std::set<Scheme>& disabled_schemes,
     const NetLogWithSource& net_log,
+    HostResolver* host_resolver,
     std::unique_ptr<HttpAuthHandler>* handler) {
   DCHECK(http_auth_handler_factory);
-  DCHECK(handler->get() == NULL);
+  DCHECK(handler->get() == nullptr);
 
   // Choose the challenge whose authentication handler gives the maximum score.
   std::unique_ptr<HttpAuthHandler> best;
@@ -43,7 +47,7 @@ void HttpAuth::ChooseBestChallenge(
   while (response_headers.EnumerateHeader(&iter, header_name, &cur_challenge)) {
     std::unique_ptr<HttpAuthHandler> cur;
     int rv = http_auth_handler_factory->CreateAuthHandlerFromString(
-        cur_challenge, target, ssl_info, origin, net_log, &cur);
+        cur_challenge, target, ssl_info, origin, net_log, host_resolver, &cur);
     if (rv != OK) {
       VLOG(1) << "Unable to create AuthHandler. Status: "
               << ErrorToString(rv) << " Challenge: " << cur_challenge;
@@ -65,6 +69,7 @@ HttpAuth::AuthorizationResult HttpAuth::HandleChallengeResponse(
     std::string* challenge_used) {
   DCHECK(handler);
   DCHECK(challenge_used);
+
   challenge_used->clear();
   HttpAuth::Scheme current_scheme = handler->auth_scheme();
   if (disabled_schemes.find(current_scheme) != disabled_schemes.end())
@@ -76,11 +81,12 @@ HttpAuth::AuthorizationResult HttpAuth::HandleChallengeResponse(
   HttpAuth::AuthorizationResult authorization_result =
       HttpAuth::AUTHORIZATION_RESULT_INVALID;
   while (response_headers.EnumerateHeader(&iter, header_name, &challenge)) {
-    HttpAuthChallengeTokenizer props(challenge.begin(), challenge.end());
-    if (!base::LowerCaseEqualsASCII(props.scheme(),
-                                    current_scheme_name.c_str()))
+    HttpAuthChallengeTokenizer challenge_tokens(challenge.begin(),
+                                                challenge.end());
+    if (!base::LowerCaseEqualsASCII(challenge_tokens.scheme(),
+                                    current_scheme_name))
       continue;
-    authorization_result = handler->HandleAnotherChallenge(&props);
+    authorization_result = handler->HandleAnotherChallenge(&challenge_tokens);
     if (authorization_result != HttpAuth::AUTHORIZATION_RESULT_INVALID) {
       *challenge_used = challenge;
       return authorization_result;
@@ -141,6 +147,33 @@ const char* HttpAuth::SchemeToString(Scheme scheme) {
     return "invalid_scheme";
   }
   return kSchemeNames[scheme];
+}
+
+// static
+const char* HttpAuth::AuthorizationResultToString(
+    AuthorizationResult authorization_result) {
+  switch (authorization_result) {
+    case AUTHORIZATION_RESULT_ACCEPT:
+      return "accept";
+    case AUTHORIZATION_RESULT_REJECT:
+      return "reject";
+    case AUTHORIZATION_RESULT_STALE:
+      return "stale";
+    case AUTHORIZATION_RESULT_INVALID:
+      return "invalid";
+    case AUTHORIZATION_RESULT_DIFFERENT_REALM:
+      return "different_realm";
+  }
+  NOTREACHED();
+  return "(invalid result)";
+}
+
+// static
+NetLogParametersCallback HttpAuth::NetLogAuthorizationResultCallback(
+    const char* name,
+    AuthorizationResult authorization_result) {
+  return NetLog::StringCallback(
+      name, AuthorizationResultToString(authorization_result));
 }
 
 }  // namespace net

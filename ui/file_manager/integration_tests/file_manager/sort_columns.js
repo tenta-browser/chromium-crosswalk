@@ -6,8 +6,8 @@
 /**
  * Tests the order is sorted correctly for each of the columns.
  */
-testcase.sortColumns = async function() {
-  var NAME_ASC = TestEntryInfo.getExpectedRows([
+testcase.sortColumns = async () => {
+  const NAME_ASC = TestEntryInfo.getExpectedRows([
     ENTRIES.photos,
     ENTRIES.beautiful,
     ENTRIES.hello,
@@ -15,7 +15,7 @@ testcase.sortColumns = async function() {
     ENTRIES.world,
   ]);
 
-  var NAME_DESC = TestEntryInfo.getExpectedRows([
+  const NAME_DESC = TestEntryInfo.getExpectedRows([
     ENTRIES.photos,
     ENTRIES.world,
     ENTRIES.desktop,
@@ -23,7 +23,7 @@ testcase.sortColumns = async function() {
     ENTRIES.beautiful,
   ]);
 
-  var SIZE_ASC = TestEntryInfo.getExpectedRows([
+  const SIZE_ASC = TestEntryInfo.getExpectedRows([
     ENTRIES.photos,
     ENTRIES.hello,
     ENTRIES.desktop,
@@ -31,7 +31,7 @@ testcase.sortColumns = async function() {
     ENTRIES.world,
   ]);
 
-  var SIZE_DESC = TestEntryInfo.getExpectedRows([
+  const SIZE_DESC = TestEntryInfo.getExpectedRows([
     ENTRIES.photos,
     ENTRIES.world,
     ENTRIES.beautiful,
@@ -39,7 +39,7 @@ testcase.sortColumns = async function() {
     ENTRIES.hello,
   ]);
 
-  var TYPE_ASC = TestEntryInfo.getExpectedRows([
+  const TYPE_ASC = TestEntryInfo.getExpectedRows([
     ENTRIES.photos,
     ENTRIES.beautiful,
     ENTRIES.world,
@@ -47,7 +47,7 @@ testcase.sortColumns = async function() {
     ENTRIES.desktop,
   ]);
 
-  var TYPE_DESC = TestEntryInfo.getExpectedRows([
+  const TYPE_DESC = TestEntryInfo.getExpectedRows([
     ENTRIES.photos,
     ENTRIES.desktop,
     ENTRIES.hello,
@@ -55,7 +55,7 @@ testcase.sortColumns = async function() {
     ENTRIES.beautiful,
   ]);
 
-  var DATE_ASC = TestEntryInfo.getExpectedRows([
+  const DATE_ASC = TestEntryInfo.getExpectedRows([
     ENTRIES.photos,
     ENTRIES.hello,
     ENTRIES.world,
@@ -63,7 +63,7 @@ testcase.sortColumns = async function() {
     ENTRIES.beautiful,
   ]);
 
-  var DATE_DESC = TestEntryInfo.getExpectedRows([
+  const DATE_DESC = TestEntryInfo.getExpectedRows([
     ENTRIES.photos,
     ENTRIES.beautiful,
     ENTRIES.desktop,
@@ -72,6 +72,7 @@ testcase.sortColumns = async function() {
   ]);
 
   const appId = await setupAndWaitUntilReady(RootPath.DOWNLOADS);
+  let a11yMessages;
 
   // Click the 'Name' column header and check the list.
   await remoteCall.callRemoteTestUtil(
@@ -79,17 +80,33 @@ testcase.sortColumns = async function() {
   await remoteCall.waitForElement(appId, '.table-header-sort-image-asc');
   await remoteCall.waitForFiles(appId, NAME_ASC, {orderCheck: true});
 
+  // Fetch A11y messages.
+  a11yMessages =
+      await remoteCall.callRemoteTestUtil('getA11yAnnounces', appId, []);
+  chrome.test.assertEq(1, a11yMessages.length, 'Missing a11y message');
+  console.log(a11yMessages[0]);
+
   // Click the 'Name' again and check the list.
   await remoteCall.callRemoteTestUtil(
       'fakeMouseClick', appId, ['.table-header-cell:nth-of-type(1)']);
   await remoteCall.waitForElement(appId, '.table-header-sort-image-desc');
   await remoteCall.waitForFiles(appId, NAME_DESC, {orderCheck: true});
 
+  // Fetch A11y messages.
+  a11yMessages =
+      await remoteCall.callRemoteTestUtil('getA11yAnnounces', appId, []);
+  chrome.test.assertEq(2, a11yMessages.length, 'Missing a11y message');
+
   // Click the 'Size' column header and check the list.
   await remoteCall.callRemoteTestUtil(
       'fakeMouseClick', appId, ['.table-header-cell:nth-of-type(2)']);
   await remoteCall.waitForElement(appId, '.table-header-sort-image-desc');
   await remoteCall.waitForFiles(appId, SIZE_DESC, {orderCheck: true});
+
+  // Fetch A11y messages.
+  a11yMessages =
+      await remoteCall.callRemoteTestUtil('getA11yAnnounces', appId, []);
+  chrome.test.assertEq(3, a11yMessages.length, 'Missing a11y message');
 
   // 'Size' should be checked in the sort menu.
   await remoteCall.callRemoteTestUtil(
@@ -101,6 +118,11 @@ testcase.sortColumns = async function() {
       'fakeMouseClick', appId, ['.table-header-cell:nth-of-type(2)']);
   await remoteCall.waitForElement(appId, '.table-header-sort-image-asc');
   await remoteCall.waitForFiles(appId, SIZE_ASC, {orderCheck: true});
+
+  // Fetch A11y messages.
+  a11yMessages =
+      await remoteCall.callRemoteTestUtil('getA11yAnnounces', appId, []);
+  chrome.test.assertEq(4, a11yMessages.length, 'Missing a11y message');
 
   // 'Size' should still be checked in the sort menu, even when the sort order
   // is reversed.
@@ -114,11 +136,21 @@ testcase.sortColumns = async function() {
   await remoteCall.waitForElement(appId, '.table-header-sort-image-asc');
   await remoteCall.waitForFiles(appId, TYPE_ASC, {orderCheck: true});
 
+  // Fetch A11y messages.
+  a11yMessages =
+      await remoteCall.callRemoteTestUtil('getA11yAnnounces', appId, []);
+  chrome.test.assertEq(5, a11yMessages.length, 'Missing a11y message');
+
   // Click the 'Type' column header again and check the list.
   await remoteCall.callRemoteTestUtil(
       'fakeMouseClick', appId, ['.table-header-cell:nth-of-type(4)']);
   await remoteCall.waitForElement(appId, '.table-header-sort-image-desc');
   await remoteCall.waitForFiles(appId, TYPE_DESC, {orderCheck: true});
+
+  // Fetch A11y messages.
+  a11yMessages =
+      await remoteCall.callRemoteTestUtil('getA11yAnnounces', appId, []);
+  chrome.test.assertEq(6, a11yMessages.length, 'Missing a11y message');
 
   // 'Type' should still be checked in the sort menu, even when the sort order
   // is reversed.
@@ -132,11 +164,21 @@ testcase.sortColumns = async function() {
   await remoteCall.waitForElement(appId, '.table-header-sort-image-desc');
   await remoteCall.waitForFiles(appId, DATE_DESC, {orderCheck: true});
 
+  // Fetch A11y messages.
+  a11yMessages =
+      await remoteCall.callRemoteTestUtil('getA11yAnnounces', appId, []);
+  chrome.test.assertEq(7, a11yMessages.length, 'Missing a11y message');
+
   // Click the 'Date modified' column header again and check the list.
   await remoteCall.callRemoteTestUtil(
       'fakeMouseClick', appId, ['.table-header-cell:nth-of-type(5)']);
   await remoteCall.waitForElement(appId, '.table-header-sort-image-asc');
   await remoteCall.waitForFiles(appId, DATE_ASC, {orderCheck: true});
+
+  // Fetch A11y messages.
+  a11yMessages =
+      await remoteCall.callRemoteTestUtil('getA11yAnnounces', appId, []);
+  chrome.test.assertEq(8, a11yMessages.length, 'Missing a11y message');
 
   // 'Date modified' should still be checked in the sort menu.
   await remoteCall.callRemoteTestUtil(
@@ -149,11 +191,21 @@ testcase.sortColumns = async function() {
   await remoteCall.waitForElement(appId, '.table-header-sort-image-asc');
   await remoteCall.waitForFiles(appId, NAME_ASC, {orderCheck: true});
 
+  // Fetch A11y messages.
+  a11yMessages =
+      await remoteCall.callRemoteTestUtil('getA11yAnnounces', appId, []);
+  chrome.test.assertEq(9, a11yMessages.length, 'Missing a11y message');
+
   // Click the 'Name' again to reverse the order (to descending order).
   await remoteCall.callRemoteTestUtil(
       'fakeMouseClick', appId, ['.table-header-cell:nth-of-type(1)']);
   await remoteCall.waitForElement(appId, '.table-header-sort-image-desc');
   await remoteCall.waitForFiles(appId, NAME_DESC, {orderCheck: true});
+
+  // Fetch A11y messages.
+  a11yMessages =
+      await remoteCall.callRemoteTestUtil('getA11yAnnounces', appId, []);
+  chrome.test.assertEq(10, a11yMessages.length, 'Missing a11y message');
 
   // Click 'Name' in the sort menu again should get the order back to
   // ascending order.
@@ -161,4 +213,9 @@ testcase.sortColumns = async function() {
       'fakeMouseClick', appId, ['#sort-menu-sort-by-name']);
   await remoteCall.waitForElement(appId, '.table-header-sort-image-asc');
   await remoteCall.waitForFiles(appId, NAME_ASC, {orderCheck: true});
+
+  // Fetch A11y messages.
+  a11yMessages =
+      await remoteCall.callRemoteTestUtil('getA11yAnnounces', appId, []);
+  chrome.test.assertEq(11, a11yMessages.length, 'Missing a11y message');
 };

@@ -4,6 +4,7 @@
 
 #include "components/heap_profiling/client_connection_manager.h"
 
+#include "base/bind.h"
 #include "base/rand_util.h"
 #include "base/task/post_task.h"
 #include "components/services/heap_profiling/public/cpp/controller.h"
@@ -48,7 +49,7 @@ class ProfilingClientBinder {
   // Binds to the local connector to get the browser process' ProfilingClient.
   explicit ProfilingClientBinder(service_manager::Connector* connector)
       : ProfilingClientBinder() {
-    connector->BindInterface(content::mojom::kBrowserServiceName,
+    connector->BindInterface(content::mojom::kSystemServiceName,
                              std::move(request_));
   }
 

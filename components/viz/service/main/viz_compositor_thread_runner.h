@@ -31,7 +31,7 @@ class UiDevToolsServer;
 }  // namespace ui_devtools
 
 namespace viz {
-class DisplayProvider;
+class OutputSurfaceProvider;
 class FrameSinkManagerImpl;
 class GpuServiceImpl;
 class ServerSharedBitmapManager;
@@ -60,10 +60,9 @@ class VizCompositorThreadRunner {
   // version without supports only software compositing. Should be called from
   // the thread that owns |this| to initialize state on VizCompositorThread.
   void CreateFrameSinkManager(mojom::FrameSinkManagerParamsPtr params);
-  void CreateFrameSinkManager(
-      mojom::FrameSinkManagerParamsPtr params,
-      scoped_refptr<gpu::CommandBufferTaskExecutor> task_executor,
-      GpuServiceImpl* gpu_service);
+  void CreateFrameSinkManager(mojom::FrameSinkManagerParamsPtr params,
+                              gpu::CommandBufferTaskExecutor* task_executor,
+                              GpuServiceImpl* gpu_service);
 
 #if defined(USE_VIZ_DEVTOOLS)
   void CreateVizDevTools(mojom::VizDevToolsParamsPtr params);
@@ -83,7 +82,7 @@ class VizCompositorThreadRunner {
  private:
   void CreateFrameSinkManagerOnCompositorThread(
       mojom::FrameSinkManagerParamsPtr params,
-      scoped_refptr<gpu::CommandBufferTaskExecutor> task_executor,
+      gpu::CommandBufferTaskExecutor* task_executor,
       GpuServiceImpl* gpu_service);
 #if defined(USE_VIZ_DEVTOOLS)
   void CreateVizDevToolsOnCompositorThread(mojom::VizDevToolsParamsPtr params);
@@ -94,7 +93,7 @@ class VizCompositorThreadRunner {
 
   // Start variables to be accessed only on |task_runner_|.
   std::unique_ptr<ServerSharedBitmapManager> server_shared_bitmap_manager_;
-  std::unique_ptr<DisplayProvider> display_provider_;
+  std::unique_ptr<OutputSurfaceProvider> output_surface_provider_;
   std::unique_ptr<FrameSinkManagerImpl> frame_sink_manager_;
 #if defined(USE_VIZ_DEVTOOLS)
   std::unique_ptr<ui_devtools::UiDevToolsServer> devtools_server_;

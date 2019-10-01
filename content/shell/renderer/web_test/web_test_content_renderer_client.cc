@@ -30,7 +30,6 @@
 #include "content/shell/test_runner/web_frame_test_proxy.h"
 #include "content/shell/test_runner/web_test_interfaces.h"
 #include "content/shell/test_runner/web_test_runner.h"
-#include "content/shell/test_runner/web_view_test_proxy.h"
 #include "media/base/audio_latency.h"
 #include "media/base/mime_util.h"
 #include "media/media_buildflags.h"
@@ -39,7 +38,6 @@
 #include "third_party/blink/public/platform/web_rtc_peer_connection_handler.h"
 #include "third_party/blink/public/platform/web_runtime_features.h"
 #include "third_party/blink/public/web/blink.h"
-#include "third_party/blink/public/web/web_frame_widget.h"
 #include "third_party/blink/public/web/web_plugin_params.h"
 #include "third_party/blink/public/web/web_testing_support.h"
 #include "third_party/blink/public/web/web_view.h"
@@ -72,24 +70,11 @@ void WebTestContentRendererClient::RenderThreadStarted() {
 
 void WebTestContentRendererClient::RenderFrameCreated(
     RenderFrame* render_frame) {
-  test_runner::WebFrameTestProxyBase* frame_proxy =
-      GetWebFrameTestProxyBase(render_frame);
-  frame_proxy->set_web_frame(render_frame->GetWebFrame());
   new WebTestRenderFrameObserver(render_frame);
 }
 
 void WebTestContentRendererClient::RenderViewCreated(RenderView* render_view) {
   new ShellRenderViewObserver(render_view);
-
-  test_runner::WebViewTestProxyBase* proxy =
-      GetWebViewTestProxyBase(render_view);
-  proxy->set_web_view(render_view->GetWebView());
-  // TODO(lfg): We should fix the TestProxy to track the WebWidgets on every
-  // local root in WebFrameTestProxy instead of having only the WebWidget for
-  // the main frame in WebViewTestProxy.
-  proxy->web_widget_test_proxy_base()->set_web_widget(
-      render_view->GetWebView()->MainFrameWidget());
-  proxy->Reset();
 
   BlinkTestRunner* test_runner = BlinkTestRunner::Get(render_view);
   test_runner->Reset(false /* for_new_test */);
@@ -101,9 +86,9 @@ WebThemeEngine* WebTestContentRendererClient::OverrideThemeEngine() {
       ->ThemeEngine();
 }
 
-std::unique_ptr<MediaStreamRendererFactory>
+std::unique_ptr<blink::WebMediaStreamRendererFactory>
 WebTestContentRendererClient::CreateMediaStreamRendererFactory() {
-  return std::unique_ptr<MediaStreamRendererFactory>(
+  return std::unique_ptr<blink::WebMediaStreamRendererFactory>(
       new TestMediaStreamRendererFactory());
 }
 
@@ -122,7 +107,7 @@ void WebTestContentRendererClient::
   // We always expose GC to web tests.
   std::string flags("--expose-gc");
   auto* command_line = base::CommandLine::ForCurrentProcess();
-  v8::V8::SetFlagsFromString(flags.c_str(), static_cast<int>(flags.size()));
+  v8::V8::SetFlagsFromString(flags.c_str(), flags.size());
   if (!command_line->HasSwitch(switches::kStableReleaseMode)) {
     blink::WebRuntimeFeatures::EnableTestOnlyFeatures(true);
   }
@@ -144,7 +129,7 @@ bool WebTestContentRendererClient::IsIdleMediaSuspendEnabled() {
 bool WebTestContentRendererClient::SuppressLegacyTLSVersionConsoleMessage() {
 #if defined(OS_MACOSX)
   // Blink uses an outdated test server on older versions of macOS. Until those
-  // are fixed, suppress the warning. See https://crbug.com/905831.
+  // are fixed, suppress the warning. See https://crbug.com/936515.
   return true;
 #else
   return false;

@@ -9,6 +9,7 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/process/process_metrics.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/post_task.h"
 #include "build/build_config.h"
@@ -89,9 +90,9 @@ class AuxGPUInfoEnumerator : public gpu::GPUInfo::Enumerator {
 
   void EndVideoEncodeAcceleratorSupportedProfile() override {}
 
-  void BeginOverlayCapability() override {}
+  void BeginImageDecodeAcceleratorSupportedProfile() override {}
 
-  void EndOverlayCapability() override {}
+  void EndImageDecodeAcceleratorSupportedProfile() override {}
 
   void BeginDx12VulkanVersionInfo() override {}
 
@@ -116,6 +117,8 @@ std::unique_ptr<GPUDevice> GPUDeviceToProtocol(
                             .SetDeviceId(device.device_id)
                             .SetVendorString(device.vendor_string)
                             .SetDeviceString(device.device_string)
+                            .SetDriverVendor(device.driver_vendor)
+                            .SetDriverVersion(device.driver_version)
                             .Build();
 }
 

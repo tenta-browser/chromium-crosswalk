@@ -13,13 +13,13 @@
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
-#include "content/public/renderer/media_stream_audio_renderer.h"
 #include "content/renderer/media/audio/audio_device_factory.h"
 #include "content/renderer/media/webrtc/webrtc_audio_device_impl.h"
 #include "media/base/audio_capturer_source.h"
 #include "media/base/mock_audio_renderer_sink.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/platform/modules/mediastream/web_media_stream_audio_renderer.h"
 #include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
 #include "third_party/blink/public/platform/web_media_stream.h"
 #include "third_party/blink/public/platform/web_media_stream_track.h"
@@ -150,7 +150,7 @@ class WebRtcAudioRendererTest : public testing::Test,
   std::unique_ptr<MockAudioRendererSource> source_;
   blink::WebMediaStream stream_;
   scoped_refptr<WebRtcAudioRenderer> renderer_;
-  scoped_refptr<MediaStreamAudioRenderer> renderer_proxy_;
+  scoped_refptr<blink::WebMediaStreamAudioRenderer> renderer_proxy_;
 };
 
 // Verify that the renderer will be stopped if the only proxy is stopped.
@@ -172,10 +172,11 @@ TEST_F(WebRtcAudioRendererTest, MultipleRenderers) {
   renderer_proxy_->Start();
 
   // Create a vector of renderer proxies from the |renderer_|.
-  std::vector<scoped_refptr<MediaStreamAudioRenderer> > renderer_proxies_;
+  std::vector<scoped_refptr<blink::WebMediaStreamAudioRenderer>>
+      renderer_proxies_;
   static const int kNumberOfRendererProxy = 5;
   for (int i = 0; i < kNumberOfRendererProxy; ++i) {
-    scoped_refptr<MediaStreamAudioRenderer> renderer_proxy(
+    scoped_refptr<blink::WebMediaStreamAudioRenderer> renderer_proxy(
         renderer_->CreateSharedAudioRendererProxy(stream_));
     renderer_proxy->Start();
     renderer_proxies_.push_back(renderer_proxy);
@@ -257,8 +258,8 @@ TEST_F(WebRtcAudioRendererTest, SwitchOutputDevice) {
   base::RunLoop loop;
   renderer_proxy_->SwitchOutputDevice(
       kOtherOutputDeviceId,
-      base::Bind(&WebRtcAudioRendererTest::SwitchDeviceCallback,
-                 base::Unretained(this), &loop));
+      base::BindOnce(&WebRtcAudioRendererTest::SwitchDeviceCallback,
+                     base::Unretained(this), &loop));
   loop.Run();
   EXPECT_EQ(kOtherOutputDeviceId,
             mock_sink_->GetOutputDeviceInfo().device_id());
@@ -283,8 +284,8 @@ TEST_F(WebRtcAudioRendererTest, SwitchOutputDeviceInvalidDevice) {
   base::RunLoop loop;
   renderer_proxy_->SwitchOutputDevice(
       kInvalidOutputDeviceId,
-      base::Bind(&WebRtcAudioRendererTest::SwitchDeviceCallback,
-                 base::Unretained(this), &loop));
+      base::BindOnce(&WebRtcAudioRendererTest::SwitchDeviceCallback,
+                     base::Unretained(this), &loop));
   loop.Run();
   EXPECT_EQ(kDefaultOutputDeviceId,
             original_sink->GetOutputDeviceInfo().device_id());
@@ -324,8 +325,8 @@ TEST_F(WebRtcAudioRendererTest, SwitchOutputDeviceStoppedSource) {
   renderer_proxy_->Stop();
   renderer_proxy_->SwitchOutputDevice(
       kInvalidOutputDeviceId,
-      base::BindRepeating(&WebRtcAudioRendererTest::SwitchDeviceCallback,
-                          base::Unretained(this), &loop));
+      base::BindOnce(&WebRtcAudioRendererTest::SwitchDeviceCallback,
+                     base::Unretained(this), &loop));
   loop.Run();
 }
 

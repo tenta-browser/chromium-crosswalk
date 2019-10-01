@@ -11,13 +11,64 @@ Polymer({
   is: 'viewer-zoom-toolbar',
 
   properties: {
+    newPrintPreview: {
+      type: Boolean,
+      reflectToAttribute: true,
+    },
+
+    /** @private */
+    keyboardNavigationActive_: {
+      type: Boolean,
+      value: false,
+    },
+
+    /** @private */
+    showOnLeft_: {
+      type: Boolean,
+      computed: 'computeShowOnLeft_(newPrintPreview)',
+      reflectToAttribute: true,
+    },
+
     strings: {type: Object, observer: 'updateTooltips_'},
 
     visible_: {type: Boolean, value: true}
   },
 
+  listeners: {
+    'focus': 'onFocus_',
+    'keyup': 'onKeyUp_',
+    'pointerdown': 'onPointerDown_',
+  },
+
   isVisible: function() {
     return this.visible_;
+  },
+
+  /** @private */
+  onFocus_: function() {
+    // This can only happen when the plugin is shown within Print Preview.
+    if (!this.visible_) {
+      this.show();
+    }
+  },
+
+  /** @private */
+  onKeyUp_: function() {
+    this.keyboardNavigationActive_ = true;
+  },
+
+  /** @private */
+  onPointerDown_: function() {
+    this.keyboardNavigationActive_ = false;
+  },
+
+  /**
+   * @return {boolean} Whether to show the zoom toolbar on the left side of the
+   *     viewport.
+   * @private
+   */
+  computeShowOnLeft_: function() {
+    return isRTL() !== this.newPrintPreview;
   },
 
   /**

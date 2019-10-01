@@ -18,12 +18,13 @@
 #include "third_party/blink/renderer/platform/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/graphics/image_data_buffer.h"
 #include "third_party/blink/renderer/platform/graphics/skia/skia_utils.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/histogram.h"
 #include "third_party/blink/renderer/platform/image-encoders/image_encoder_utils.h"
-#include "third_party/blink/renderer/platform/scheduler/public/background_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
+#include "third_party/blink/renderer/platform/scheduler/public/worker_pool.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/time.h"
 #include "third_party/skia/include/core/SkSurface.h"
@@ -128,29 +129,20 @@ void RecordScaledDurationHistogram(ImageEncodingMimeType mime_type,
 
 }  // anonymous namespace
 
-CanvasAsyncBlobCreator* CanvasAsyncBlobCreator::Create(
-    scoped_refptr<StaticBitmapImage> image,
-    const ImageEncodingMimeType mime_type,
-    V8BlobCallback* callback,
-    ToBlobFunctionType function_type,
-    TimeTicks start_time,
-    ExecutionContext* context) {
-  ImageEncodeOptions* options = ImageEncodeOptions::Create();
-  options->setType(ImageEncodingMimeTypeName(mime_type));
-  return MakeGarbageCollected<CanvasAsyncBlobCreator>(
-      image, options, function_type, callback, start_time, context, nullptr);
-}
-
-CanvasAsyncBlobCreator* CanvasAsyncBlobCreator::Create(
+CanvasAsyncBlobCreator::CanvasAsyncBlobCreator(
     scoped_refptr<StaticBitmapImage> image,
     const ImageEncodeOptions* options,
     ToBlobFunctionType function_type,
     TimeTicks start_time,
     ExecutionContext* context,
-    ScriptPromiseResolver* resolver) {
-  return MakeGarbageCollected<CanvasAsyncBlobCreator>(
-      image, options, function_type, nullptr, start_time, context, resolver);
-}
+    ScriptPromiseResolver* resolver)
+    : CanvasAsyncBlobCreator(image,
+                             options,
+                             function_type,
+                             nullptr,
+                             start_time,
+                             context,
+                             resolver) {}
 
 CanvasAsyncBlobCreator::CanvasAsyncBlobCreator(
     scoped_refptr<StaticBitmapImage> image,
@@ -330,10 +322,10 @@ void CanvasAsyncBlobCreator::ScheduleAsyncBlobCreation(const double& quality) {
                         WrapPersistent(this)));
 
     } else {
-      background_scheduler::PostOnBackgroundThread(
-          FROM_HERE,
-          CrossThreadBind(&CanvasAsyncBlobCreator::EncodeImageOnEncoderThread,
-                          WrapCrossThreadPersistent(this), quality));
+      worker_pool::PostTask(
+          FROM_HERE, CrossThreadBindOnce(
+                         &CanvasAsyncBlobCreator::EncodeImageOnEncoderThread,
+                         WrapCrossThreadPersistent(this), quality));
     }
   } else {
     idle_task_status_ = kIdleTaskNotStarted;
@@ -431,8 +423,8 @@ void CanvasAsyncBlobCreator::ForceEncodeRowsOnCurrentThread() {
   } else {
     PostCrossThreadTask(
         *context_->GetTaskRunner(TaskType::kCanvasBlobSerialization), FROM_HERE,
-        CrossThreadBind(&CanvasAsyncBlobCreator::CreateBlobAndReturnResult,
-                        WrapCrossThreadPersistent(this)));
+        CrossThreadBindOnce(&CanvasAsyncBlobCreator::CreateBlobAndReturnResult,
+                            WrapCrossThreadPersistent(this)));
   }
 
   SignalAlternativeCodePathFinishedForTesting();
@@ -451,7 +443,11 @@ void CanvasAsyncBlobCreator::CreateBlobAndReturnResult() {
                              WrapPersistent(callback_.Get()), nullptr,
                              WrapPersistent(result_blob)));
   } else {
-    script_promise_resolver_->Resolve(result_blob);
+    context_->GetTaskRunner(TaskType::kCanvasBlobSerialization)
+        ->PostTask(FROM_HERE,
+                   WTF::Bind(&ScriptPromiseResolver::Resolve<Blob*>,
+                             WrapPersistent(script_promise_resolver_.Get()),
+                             WrapPersistent(result_blob)));
   }
 
   RecordScaledDurationHistogram(mime_type_,
@@ -473,9 +469,13 @@ void CanvasAsyncBlobCreator::CreateNullAndReturnResult() {
                           V8BlobCallback>::InvokeAndReportException,
                       WrapPersistent(callback_.Get()), nullptr, nullptr));
   } else {
-    script_promise_resolver_->Reject(
-        DOMException::Create(DOMExceptionCode::kEncodingError,
-                             "Encoding of the source image has failed."));
+    context_->GetTaskRunner(TaskType::kCanvasBlobSerialization)
+        ->PostTask(FROM_HERE,
+                   WTF::Bind(&ScriptPromiseResolver::Reject<DOMException*>,
+                             WrapPersistent(script_promise_resolver_.Get()),
+                             WrapPersistent(MakeGarbageCollected<DOMException>(
+                                 DOMExceptionCode::kEncodingError,
+                                 "Encoding of the source image has failed."))));
   }
   // Avoid unwanted retention, see dispose().
   Dispose();
@@ -486,15 +486,15 @@ void CanvasAsyncBlobCreator::EncodeImageOnEncoderThread(double quality) {
   if (!EncodeImage(quality)) {
     PostCrossThreadTask(
         *parent_frame_task_runner_, FROM_HERE,
-        CrossThreadBind(&CanvasAsyncBlobCreator::CreateNullAndReturnResult,
-                        WrapCrossThreadPersistent(this)));
+        CrossThreadBindOnce(&CanvasAsyncBlobCreator::CreateNullAndReturnResult,
+                            WrapCrossThreadPersistent(this)));
     return;
   }
 
   PostCrossThreadTask(
       *parent_frame_task_runner_, FROM_HERE,
-      CrossThreadBind(&CanvasAsyncBlobCreator::CreateBlobAndReturnResult,
-                      WrapCrossThreadPersistent(this)));
+      CrossThreadBindOnce(&CanvasAsyncBlobCreator::CreateBlobAndReturnResult,
+                          WrapCrossThreadPersistent(this)));
 }
 
 bool CanvasAsyncBlobCreator::InitializeEncoder(double quality) {

@@ -32,6 +32,9 @@
 
 #include "third_party/blink/renderer/bindings/core/v8/script_controller.h"
 
+#include <memory>
+#include <utility>
+
 #include "third_party/blink/public/web/web_settings.h"
 #include "third_party/blink/renderer/bindings/core/v8/referrer_script_info.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_source_code.h"
@@ -56,7 +59,6 @@
 #include "third_party/blink/renderer/core/inspector/main_thread_debugger.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/loader/frame_loader.h"
-#include "third_party/blink/renderer/core/loader/navigation_scheduler.h"
 #include "third_party/blink/renderer/core/loader/progress_tracker.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
 #include "third_party/blink/renderer/platform/histogram.h"
@@ -130,9 +132,9 @@ v8::Local<v8::Value> ScriptController::ExecuteScriptAndReturnValue(
     v8::MaybeLocal<v8::Value> maybe_result;
     maybe_result = V8ScriptRunner::RunCompiledScript(GetIsolate(), script,
                                                      GetFrame()->GetDocument());
-    probe::produceCompilationCache(frame_, source, script);
+    probe::ProduceCompilationCache(frame_, source, script);
     V8CodeCache::ProduceCache(GetIsolate(), script, source,
-                              produce_cache_options, compile_options);
+                              produce_cache_options);
 
     if (!maybe_result.ToLocal(&result)) {
       return result;
@@ -181,13 +183,14 @@ Vector<const char*>& RegisteredExtensionNames() {
 
 }  // namespace
 
-void ScriptController::RegisterExtensionIfNeeded(v8::Extension* extension) {
+void ScriptController::RegisterExtensionIfNeeded(
+    std::unique_ptr<v8::Extension> extension) {
   for (const auto* extension_name : RegisteredExtensionNames()) {
     if (!strcmp(extension_name, extension->name()))
       return;
   }
   RegisteredExtensionNames().push_back(extension->name());
-  v8::RegisterExtension(extension);
+  v8::RegisterExtension(std::move(extension));
 }
 
 v8::ExtensionConfiguration ScriptController::ExtensionsFor(
@@ -211,12 +214,10 @@ void ScriptController::UpdateDocument() {
   EnableEval();
 }
 
-bool ScriptController::ExecuteScriptIfJavaScriptURL(
+void ScriptController::ExecuteJavaScriptURL(
     const KURL& url,
-    Element* element,
     ContentSecurityPolicyDisposition check_main_world_csp) {
-  if (!url.ProtocolIsJavaScript())
-    return false;
+  DCHECK(url.ProtocolIsJavaScript());
 
   const int kJavascriptSchemeLength = sizeof("javascript:") - 1;
   String script_source = DecodeURLEscapeSequences(
@@ -227,25 +228,20 @@ bool ScriptController::ExecuteScriptIfJavaScriptURL(
       ContentSecurityPolicy::ShouldBypassMainWorld(GetFrame()->GetDocument());
   if (!GetFrame()->GetPage() ||
       (!should_bypass_main_world_content_security_policy &&
-       !GetFrame()
-            ->GetDocument()
-            ->GetContentSecurityPolicy()
-            ->AllowJavaScriptURLs(element, script_source,
-                                  GetFrame()->GetDocument()->Url(),
-                                  EventHandlerPosition().line_))) {
-    return true;
+       !GetFrame()->GetDocument()->GetContentSecurityPolicy()->AllowInline(
+           ContentSecurityPolicy::InlineType::kNavigation, nullptr,
+           script_source, String() /* nonce */,
+           GetFrame()->GetDocument()->Url(), EventHandlerPosition().line_))) {
+    return;
   }
 
   script_source = script_source.Substring(kJavascriptSchemeLength);
 
   Document* owner_document = GetFrame()->GetDocument();
 
-  bool location_change_before =
-      GetFrame()->GetNavigationScheduler().LocationChangePending();
-
   v8::HandleScope handle_scope(GetIsolate());
 
-  // https://html.spec.whatwg.org/multipage/browsing-the-web.html#navigate
+  // https://html.spec.whatwg.org/C/#navigate
   // Step 12.8 "Let base URL be settings object's API base URL." [spec text]
   KURL base_url = owner_document->BaseURL();
 
@@ -262,21 +258,11 @@ bool ScriptController::ExecuteScriptIfJavaScriptURL(
   // If executing script caused this frame to be removed from the page, we
   // don't want to try to replace its document!
   if (!GetFrame()->GetPage())
-    return true;
-
+    return;
   if (result.IsEmpty() || !result->IsString())
-    return true;
-  String script_result = ToCoreString(v8::Local<v8::String>::Cast(result));
-
-  // We're still in a frame, so there should be a DocumentLoader.
-  DCHECK(GetFrame()->GetDocument()->Loader());
-  if (!location_change_before &&
-      GetFrame()->GetNavigationScheduler().LocationChangePending())
-    return true;
-
+    return;
   GetFrame()->Loader().ReplaceDocumentWhileExecutingJavaScriptURL(
-      script_result, owner_document);
-  return true;
+      ToCoreString(v8::Local<v8::String>::Cast(result)), owner_document);
 }
 
 void ScriptController::ExecuteScriptInMainWorld(

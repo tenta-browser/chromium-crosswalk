@@ -253,8 +253,8 @@ class SubresourceLoader : public network::mojom::URLLoader,
                                      std::move(ack_callback));
   }
 
-  void OnReceiveCachedMetadata(const std::vector<uint8_t>& data) override {
-    remote_client_->OnReceiveCachedMetadata(data);
+  void OnReceiveCachedMetadata(mojo_base::BigBuffer data) override {
+    remote_client_->OnReceiveCachedMetadata(std::move(data));
   }
 
   void OnTransferSizeUpdated(int32_t transfer_size_diff) override {
@@ -366,11 +366,20 @@ void AppCacheSubresourceURLFactory::CreateLoaderAndStart(
     network::mojom::URLLoaderClientPtr client,
     const net::MutableNetworkTrafficAnnotationTag& traffic_annotation) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
+
+  // TODO(943887): Replace HasSecurityState() call with something that can
+  // preserve security state after process shutdown. The security state check
+  // is a temporary solution to avoid crashes when this method is run after the
+  // process associated with |appcache_host_->process_id()| has been destroyed.
+  // It temporarily restores the old behavior of always allowing access if the
+  // process is gone.
+  // See https://crbug.com/910287 for details.
+  auto* policy = ChildProcessSecurityPolicyImpl::GetInstance();
   if (request.request_initiator.has_value() &&
       !request.request_initiator.value().opaque() && appcache_host_ &&
-      !ChildProcessSecurityPolicyImpl::GetInstance()->CanAccessDataForOrigin(
-          appcache_host_->process_id(),
-          request.request_initiator.value().GetURL())) {
+      !policy->CanAccessDataForOrigin(appcache_host_->process_id(),
+                                      request.request_initiator.value()) &&
+      policy->HasSecurityState(appcache_host_->process_id())) {
     const char* scheme_exception =
         GetContentClient()
             ->browser()
@@ -386,6 +395,14 @@ void AppCacheSubresourceURLFactory::CreateLoaderAndStart(
           "APPCACHE_SUBRESOURCE_URL_FACTORY_INVALID_INITIATOR");
       return;
     }
+  }
+
+  // Subresource requests from renderer processes should not be allowed to use
+  // network::mojom::FetchRequestMode::kNavigate.
+  if (request.fetch_request_mode ==
+      network::mojom::FetchRequestMode::kNavigate) {
+    mojo::ReportBadMessage("APPCACHE_SUBRESOURCE_URL_FACTORY_NAVIGATE");
+    return;
   }
 
   new SubresourceLoader(std::move(url_loader_request), routing_id, request_id,

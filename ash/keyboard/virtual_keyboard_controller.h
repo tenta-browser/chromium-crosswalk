@@ -9,13 +9,13 @@
 
 #include "ash/ash_export.h"
 #include "ash/bluetooth_devices_observer.h"
+#include "ash/keyboard/ui/keyboard_controller_observer.h"
+#include "ash/keyboard/ui/keyboard_layout_delegate.h"
 #include "ash/session/session_observer.h"
 #include "ash/wm/tablet_mode/tablet_mode_observer.h"
 #include "base/macros.h"
 #include "ui/base/ime/chromeos/public/interfaces/ime_keyset.mojom.h"
 #include "ui/events/devices/input_device_event_observer.h"
-#include "ui/keyboard/keyboard_controller_observer.h"
-#include "ui/keyboard/keyboard_layout_delegate.h"
 
 namespace ash {
 
@@ -66,9 +66,6 @@ class ASH_EXPORT VirtualKeyboardController
 
   // Updates the keyboard state.
   void UpdateKeyboardEnabled();
-
-  // Creates the keyboard if |enabled|, else destroys it.
-  void SetKeyboardEnabled(bool enabled);
 
   // Force enable the keyboard and show it, even in laptop mode.
   void ForceShowKeyboard();

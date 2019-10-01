@@ -6,7 +6,6 @@
 
 #include "base/android/jni_string.h"
 #include "chrome/browser/android/tab_android.h"
-#include "chrome/browser/android/vr/arcore_device/arcore_device.h"
 #include "chrome/browser/android/vr/arcore_device/arcore_device_provider.h"
 #include "chrome/browser/android/vr/arcore_device/arcore_shim.h"
 #include "content/public/browser/render_frame_host.h"
@@ -39,10 +38,11 @@ ArCoreDeviceProviderFactoryImpl::CreateDeviceProvider() {
 
 }  // namespace
 
-ArCoreJavaUtils::ArCoreJavaUtils(device::ArCoreDevice* arcore_device)
-    : arcore_device_(arcore_device) {
-  DCHECK(arcore_device_);
-
+ArCoreJavaUtils::ArCoreJavaUtils(
+    base::RepeatingCallback<void(bool)> ar_module_installation_callback,
+    base::RepeatingCallback<void(bool)> ar_core_installation_callback)
+    : ar_module_installation_callback_(ar_module_installation_callback),
+      ar_core_installation_callback_(ar_core_installation_callback) {
   JNIEnv* env = AttachCurrentThread();
   if (!env)
     return;
@@ -62,8 +62,7 @@ void ArCoreJavaUtils::OnRequestInstallSupportedArCoreResult(
     JNIEnv* env,
     const base::android::JavaParamRef<jobject>& obj,
     bool success) {
-  // TODO(crbug.com/893348): don't reach back into arcore device like this.
-  arcore_device_->OnRequestInstallSupportedArCoreResult(success);
+  ar_core_installation_callback_.Run(success);
 }
 
 bool ArCoreJavaUtils::CanRequestInstallArModule() {
@@ -99,12 +98,69 @@ void ArCoreJavaUtils::RequestInstallSupportedArCore(int render_process_id,
       getTabFromRenderer(render_process_id, render_frame_id));
 }
 
+void ArCoreJavaUtils::RequestArSession(
+    int render_process_id,
+    int render_frame_id,
+    SurfaceReadyCallback ready_callback,
+    SurfaceTouchCallback touch_callback,
+    SurfaceDestroyedCallback destroyed_callback) {
+  DVLOG(1) << __func__;
+  JNIEnv* env = AttachCurrentThread();
+
+  Java_ArCoreJavaUtils_launchArConsentDialog(
+      env, j_arcore_java_utils_,
+      getTabFromRenderer(render_process_id, render_frame_id));
+
+  surface_ready_callback_ = std::move(ready_callback);
+  surface_touch_callback_ = std::move(touch_callback);
+  surface_destroyed_callback_ = std::move(destroyed_callback);
+}
+
+void ArCoreJavaUtils::DestroyDrawingSurface() {
+  DVLOG(1) << __func__;
+  JNIEnv* env = AttachCurrentThread();
+
+  Java_ArCoreJavaUtils_destroyArImmersiveOverlay(env, j_arcore_java_utils_);
+}
+
+void ArCoreJavaUtils::OnDrawingSurfaceReady(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& obj,
+    const base::android::JavaParamRef<jobject>& surface,
+    int rotation,
+    int width,
+    int height) {
+  DVLOG(1) << __func__ << ": width=" << width << " height=" << height
+           << " rotation=" << rotation;
+  gfx::AcceleratedWidget window =
+      ANativeWindow_fromSurface(base::android::AttachCurrentThread(), surface);
+  display::Display::Rotation display_rotation =
+      static_cast<display::Display::Rotation>(rotation);
+  surface_ready_callback_.Run(window, display_rotation, {width, height});
+}
+
+void ArCoreJavaUtils::OnDrawingSurfaceTouch(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& obj,
+    bool touching,
+    float x,
+    float y) {
+  DVLOG(3) << __func__ << ": touching=" << touching;
+  surface_touch_callback_.Run(touching, {x, y});
+}
+
+void ArCoreJavaUtils::OnDrawingSurfaceDestroyed(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& obj) {
+  DVLOG(1) << __func__ << ":::";
+  std::move(surface_destroyed_callback_).Run();
+}
+
 void ArCoreJavaUtils::OnRequestInstallArModuleResult(
     JNIEnv* env,
     const base::android::JavaParamRef<jobject>& obj,
     bool success) {
-  // TODO(crbug.com/893348): don't reach back into arcore device like this.
-  arcore_device_->OnRequestInstallArModuleResult(success);
+  ar_module_installation_callback_.Run(success);
 }
 
 bool ArCoreJavaUtils::EnsureLoaded() {

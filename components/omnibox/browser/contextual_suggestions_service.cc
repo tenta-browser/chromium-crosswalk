@@ -7,14 +7,15 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/feature_list.h"
 #include "base/json/json_writer.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
-#include "components/data_use_measurement/core/data_use_user_data.h"
 #include "components/omnibox/browser/base_search_provider.h"
 #include "components/omnibox/browser/omnibox_field_trial.h"
+#include "components/omnibox/common/omnibox_features.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/sync/base/time.h"
 #include "components/variations/net/variations_http_headers.h"
@@ -31,8 +32,19 @@
 namespace {
 
 // Server address for the experimental suggestions service.
+//
+// For now, we wish to disable on-focus suggestions, but do so in a way that
+// can be overridden by an experiment config file change.
+//
+// To disable on-focus suggestions, we set the address to a URL that will not
+// reply.  It returns a 404.  (This URL is at the same host and similar to the
+// URL that will reply.)
+//
+// We'd be able to enable on-focus suggestions again by overriding this
+// default address in an experiment config.
 const char kDefaultExperimentalServerAddress[] =
-    "https://cuscochromeextension-pa.googleapis.com/v1/omniboxsuggestions";
+    "https://cuscochromeextension-pa.googleapis.com/v_turned_down_returns_404/"
+    "omniboxsuggestions";
 
 void AddVariationHeaders(network::ResourceRequest* request) {
   // Add Chrome experiment state to the request headers.
@@ -40,8 +52,8 @@ void AddVariationHeaders(network::ResourceRequest* request) {
   // Note: It's OK to pass InIncognito::kNo since we are expected to be in
   // non-incognito state here (i.e. contextual sugestions are not served in
   // incognito mode).
-  variations::AppendVariationHeadersUnknownSignedIn(
-      request->url, variations::InIncognito::kNo, &request->headers);
+  variations::AppendVariationsHeaderUnknownSignedIn(
+      request->url, variations::InIncognito::kNo, request);
 }
 
 // Returns API request body. The final result depends on the following input
@@ -243,9 +255,6 @@ void ContextualSuggestionsService::CreateDefaultRequest(
   request->attach_same_site_cookies = true;
   request->site_for_cookies = suggest_url;
   AddVariationHeaders(request.get());
-  // TODO(https://crbug.com/808498) re-add data use measurement once
-  // SimpleURLLoader supports it.
-  // data_use_measurement::DataUseUserData::OMNIBOX
   StartDownloadAndTransferLoader(std::move(request), std::string(),
                                  traffic_annotation, std::move(start_callback),
                                  std::move(completion_callback));
@@ -298,11 +307,7 @@ void ContextualSuggestionsService::CreateExperimentalRequest(
   std::string request_body =
       FormatRequestBodyExperimentalService(current_url, visit_time);
   AddVariationHeaders(request.get());
-  request->load_flags =
-      net::LOAD_DO_NOT_SEND_COOKIES | net::LOAD_DO_NOT_SAVE_COOKIES;
-  // TODO(https://crbug.com/808498) re-add data use measurement once
-  // SimpleURLLoader supports it.
-  // data_use_measurement::DataUseUserData::OMNIBOX
+  request->allow_credentials = false;
 
   // If authentication services are unavailable or if this request is still
   // waiting for an oauth2 token, run the contextual service without access

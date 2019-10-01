@@ -25,7 +25,11 @@ class StateController;
 namespace arc {
 class ArcServiceLauncher;
 class VoiceInteractionControllerClient;
-}
+}  // namespace arc
+
+namespace policy {
+class LockToSingleUserManager;
+}  // namespace policy
 
 #if BUILDFLAG(ENABLE_CROS_ASSISTANT)
 class AssistantClient;
@@ -34,30 +38,35 @@ class AssistantClient;
 namespace chromeos {
 
 class ArcKioskAppManager;
+class CrosUsbDetector;
+class CupsProxyServiceManager;
 class DemoModeResourcesRemover;
-class DiagnosticsdBridge;
 class DiscoverManager;
 class EventRewriterDelegateImpl;
 class FastTransitionObserver;
 class IdleActionWarningObserver;
+class KerberosCredentialsManager;
 class LowDiskNotification;
 class NetworkChangeManagerClient;
 class NetworkPrefStateObserver;
 class NetworkThrottlingObserver;
 class PowerMetricsReporter;
 class RendererFreezer;
+class SchedulerConfigurationManager;
+class SessionTerminationManager;
 class ShutdownPolicyForwarder;
 class WakeOnWifiManager;
+class WilcoDtcSupportdManager;
+class GnubbyNotification;
 
 namespace default_app_order {
 class ExternalLoader;
 }
 
-
 namespace internal {
 class DBusServices;
 class SystemTokenCertDBInitializer;
-}
+}  // namespace internal
 
 namespace power {
 namespace ml {
@@ -70,15 +79,18 @@ class Controller;
 }  // namespace auto_screen_brightness
 }  // namespace power
 
+namespace system {
+class DarkResumeController;
+}  // namespace system
+
 // ChromeBrowserMainParts implementation for chromeos specific code.
 // NOTE: Chromeos UI (Ash) support should be added to
 // ChromeBrowserMainExtraPartsAsh instead. This class should not depend on
 // src/ash or chrome/browser/ui/ash.
 class ChromeBrowserMainPartsChromeos : public ChromeBrowserMainPartsLinux {
  public:
-  ChromeBrowserMainPartsChromeos(
-      const content::MainFunctionParams& parameters,
-      ChromeFeatureListCreator* chrome_feature_list_creator);
+  ChromeBrowserMainPartsChromeos(const content::MainFunctionParams& parameters,
+                                 StartupData* startup_data);
   ~ChromeBrowserMainPartsChromeos() override;
 
   // ChromeBrowserMainParts overrides.
@@ -107,9 +119,6 @@ class ChromeBrowserMainPartsChromeos : public ChromeBrowserMainPartsLinux {
   std::unique_ptr<NetworkThrottlingObserver> network_throttling_observer_;
   std::unique_ptr<NetworkChangeManagerClient> network_change_manager_client_;
 
-  // Indicates whether the DBus has been initialized before. It is possible that
-  // the DBus has been initialized in ChromeFeatureListCreator.
-  bool is_dbus_initialized_ = false;
   std::unique_ptr<internal::DBusServices> dbus_services_;
 
   std::unique_ptr<internal::SystemTokenCertDBInitializer>
@@ -155,7 +164,22 @@ class ChromeBrowserMainPartsChromeos : public ChromeBrowserMainPartsLinux {
   std::unique_ptr<DemoModeResourcesRemover> demo_mode_resources_remover_;
   std::unique_ptr<crostini::CrosvmMetrics> crosvm_metrics_;
   std::unique_ptr<DiscoverManager> discover_manager_;
-  std::unique_ptr<DiagnosticsdBridge> diagnosticsd_bridge_;
+  std::unique_ptr<SchedulerConfigurationManager>
+      scheduler_configuration_manager_;
+
+  std::unique_ptr<CrosUsbDetector> cros_usb_detector_;
+
+  std::unique_ptr<chromeos::system::DarkResumeController>
+      dark_resume_controller_;
+
+  std::unique_ptr<SessionTerminationManager> session_termination_manager_;
+  std::unique_ptr<policy::LockToSingleUserManager> lock_to_single_user_manager_;
+  std::unique_ptr<WilcoDtcSupportdManager> wilco_dtc_supportd_manager_;
+  std::unique_ptr<KerberosCredentialsManager> kerberos_credentials_manager_;
+
+  std::unique_ptr<GnubbyNotification> gnubby_notification_;
+  std::unique_ptr<chromeos::CupsProxyServiceManager>
+      cups_proxy_service_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeBrowserMainPartsChromeos);
 };

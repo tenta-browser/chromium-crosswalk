@@ -9,10 +9,24 @@
 
 #include "ash/ash_export.h"
 #include "base/macros.h"
+#include "base/observer_list.h"
 #include "ui/aura/window_observer.h"
 #include "ui/wm/public/activation_change_observer.h"
 
 namespace ash {
+
+enum DesksMruType {
+  // The MRU window list will include windows from all active and inactive
+  // desks.
+  kAllDesks,
+
+  // The MRU window list will exclude windows from the inactive desks.
+  kActiveDesk,
+};
+
+// A predicate that determines whether |window| can be included in the MRU
+// window list.
+bool CanIncludeWindowInMruList(aura::Window* window);
 
 // Maintains a most recently used list of windows. This is used for window
 // cycling using Alt+Tab and overview mode.
@@ -21,28 +35,44 @@ class ASH_EXPORT MruWindowTracker : public ::wm::ActivationChangeObserver,
  public:
   using WindowList = std::vector<aura::Window*>;
 
+  class Observer : public base::CheckedObserver {
+   public:
+    // Invoked when a tracked window is destroyed,
+    virtual void OnWindowUntracked(aura::Window* untracked_window) {}
+  };
+
   MruWindowTracker();
   ~MruWindowTracker() override;
 
   // Returns the set of windows which can be cycled through using the tracked
   // list of most recently used windows.
-  WindowList BuildMruWindowList() const;
+  // |desks_mru_type| determines whether to include or exclude windows from the
+  // inactive desks.
+  WindowList BuildMruWindowList(DesksMruType desks_mru_type) const;
 
   // This does the same thing as the above, but ignores the system modal dialog
   // state and hence the returned list could contain more windows if a system
   // modal dialog window is present.
-  WindowList BuildWindowListIgnoreModal() const;
+  // |desks_mru_type| determines whether to include or exclude windows from the
+  // inactive desks.
+  WindowList BuildWindowListIgnoreModal(DesksMruType desks_mru_type) const;
 
   // This does the same thing as |BuildMruWindowList()| but with some
   // exclusions. This list is used for cycling through by the keyboard via
   // alt-tab.
-  WindowList BuildWindowForCycleList() const;
+  // |desks_mru_type| determines whether to include or exclude windows from the
+  // inactive desks.
+  WindowList BuildWindowForCycleList(DesksMruType desks_mru_type) const;
 
   // Starts or stops ignoring window activations. If no longer ignoring
   // activations the currently active window is moved to the front of the
   // MRU window list. Used by WindowCycleList to avoid adding all cycled
   // windows to the front of the MRU window list.
   void SetIgnoreActivations(bool ignore);
+
+  // Add/Remove observers.
+  void AddObserver(Observer* observer);
+  void RemoveObserver(Observer* observer);
 
  private:
   // Updates the mru_windows_ list to insert/move |active_window| at/to the
@@ -60,6 +90,8 @@ class ASH_EXPORT MruWindowTracker : public ::wm::ActivationChangeObserver,
   // List of windows that have been activated in containers that we cycle
   // through, sorted such that the most recently used window comes last.
   std::vector<aura::Window*> mru_windows_;
+
+  base::ObserverList<Observer, true> observers_;
 
   bool ignore_window_activations_ = false;
 

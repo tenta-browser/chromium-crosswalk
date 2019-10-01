@@ -28,11 +28,14 @@ default_generated_data_dir = os.path.join(test_data_dir, 'generated')
 
 error_image_cloud_storage_bucket = 'chromium-browser-gpu-tests'
 
-goldctl_bin = os.path.abspath(os.path.join(
-    os.path.dirname(__file__), '..', '..', '..', '..', 'tools',
-    'skia_goldctl', 'goldctl'))
+chromium_root_dir = os.path.abspath(os.path.join(
+    os.path.dirname(__file__), '..', '..', '..', '..'))
+goldctl_bin = os.path.join(
+    chromium_root_dir, 'tools', 'skia_goldctl', 'goldctl')
 if sys.platform == 'win32':
   goldctl_bin += '.exe'
+
+SKIA_GOLD_INSTANCE = 'chrome-gpu'
 
 class _ReferenceImageParameters(object):
   def __init__(self):
@@ -132,9 +135,16 @@ class CloudStorageIntegrationTestBase(gpu_integration_test.GpuIntegrationTest):
       '--buildbucket-build-id',
       help='For Skia Gold integration. Buildbucket build ID.',
       default='')
+    parser.add_option(
+      '--no-skia-gold-failure',
+      action='store_true', default=False,
+      help='For Skia Gold integration. Always report that the test passed even '
+           'if the Skia Gold image comparison reported a failure, but '
+           'otherwise perform the same steps as usual.')
 
   def _CompareScreenshotSamples(self, tab, screenshot, expected_colors,
-                                device_pixel_ratio, test_machine_name):
+                                tolerance, device_pixel_ratio,
+                                test_machine_name):
     # First scan through the expected_colors and see if there are any scale
     # factor overrides that would preempt the device pixel ratio. This
     # is mainly a workaround for complex tests like the Maps test.
@@ -187,7 +197,7 @@ class CloudStorageIntegrationTestBase(gpu_integration_test.GpuIntegrationTest):
               expectation["color"][0],
               expectation["color"][1],
               expectation["color"][2])
-          if not actual_color.IsEqual(expected_color, expectation["tolerance"]):
+          if not actual_color.IsEqual(expected_color, tolerance):
             self.fail('Expected pixel at ' + str(location) +
                 ' (actual pixel (' + str(x) + ', ' + str(y) + ')) ' +
                 ' to be ' +
@@ -297,14 +307,17 @@ class CloudStorageIntegrationTestBase(gpu_integration_test.GpuIntegrationTest):
       return '%s_%04x_%04x%s' % (
         os_type, params.vendor_id, params.device_id, msaa_string)
     else:
-      # This is the code path for Android devices. Include the model
+      # This is the code path for Android devices. Disambiguate
+      # chrome on Android and Android webview. Include the model
       # name (e.g. "Nexus 9") in the GPU string to disambiguate
       # multiple devices on the waterfall which might have the same
       # device string ("NVIDIA Tegra") but different screen
       # resolutions and device pixel ratios.
+      os_type = cls.GetParsedCommandLineOptions().os_type
+      if cls.browser.browser_type.startswith('android-webview'):
+        os_type = os_type + "_webview"
       return '%s_%s_%s_%s%s' % (
-        cls.GetParsedCommandLineOptions().os_type,
-        params.vendor_string, params.device_string,
+        os_type, params.vendor_string, params.device_string,
         params.model_name, msaa_string)
 
   @classmethod
@@ -384,8 +397,8 @@ class CloudStorageIntegrationTestBase(gpu_integration_test.GpuIntegrationTest):
            'view_test_results.html?%s for this run\'s test results') % (
       error_image_cloud_storage_bucket, upload_dir)
 
-  def _ValidateScreenshotSamples(self, tab, url,
-                                 screenshot, expectations, device_pixel_ratio):
+  def _ValidateScreenshotSamples(self, tab, url, screenshot, expectations,
+                                 tolerance, device_pixel_ratio):
     """Samples the given screenshot and verifies pixel color values.
        The sample locations and expected color values are given in expectations.
        In case any of the samples do not match the expected color, it raises
@@ -393,8 +406,7 @@ class CloudStorageIntegrationTestBase(gpu_integration_test.GpuIntegrationTest):
        what machine the test is being run."""
     try:
       self._CompareScreenshotSamples(
-        tab, screenshot, expectations,
-        device_pixel_ratio,
+        tab, screenshot, expectations, tolerance, device_pixel_ratio,
         self.GetParsedCommandLineOptions().test_machine_name)
     except Exception:
       # An exception raised from self.fail() indicates a failure.
@@ -410,9 +422,11 @@ class CloudStorageIntegrationTestBase(gpu_integration_test.GpuIntegrationTest):
   def ToHex(self, num):
     return hex(int(num))
 
+  def ToHexOrNone(self, num):
+    return 'None' if num == None else self.ToHex(num)
+
   def _UploadTestResultToSkiaGold(self, image_name, screenshot,
-                                  tab, page,
-                                  is_check_mode=True, build_id_args=None):
+                                  tab, page, build_id_args=None):
     if build_id_args is None:
       raise Exception('Requires build args to be specified, including --commit')
     if self._skia_gold_temp_dir is None:
@@ -425,27 +439,32 @@ class CloudStorageIntegrationTestBase(gpu_integration_test.GpuIntegrationTest):
     ref_img_params = self.GetReferenceImageParameters(tab, page)
     # All values need to be strings, otherwise goldctl fails.
     gpu_keys = {
-      'vendor_id': self.ToHex(ref_img_params.vendor_id),
-      'device_id': self.ToHex(ref_img_params.device_id),
+      'vendor_id': self.ToHexOrNone(ref_img_params.vendor_id),
+      'device_id': self.ToHexOrNone(ref_img_params.device_id),
       'vendor_string': str(ref_img_params.vendor_string),
       'device_string': str(ref_img_params.device_string),
       'msaa': str(ref_img_params.msaa),
       'model_name': str(ref_img_params.model_name),
     }
-    mode = ['--passfail'] if is_check_mode else []
+    mode = ['--passfail']
     json_temp_file = tempfile.NamedTemporaryFile(suffix='.json').name
     failure_file = tempfile.NamedTemporaryFile(suffix='.txt').name
     with open(json_temp_file, 'w+') as f:
       json.dump(gpu_keys, f)
     try:
-      subprocess.check_output([goldctl_bin, 'imgtest', 'add'] + mode +
+      if not self.GetParsedCommandLineOptions().no_luci_auth:
+        subprocess.check_output([goldctl_bin, 'auth', '--luci',
+                                 '--work-dir', self._skia_gold_temp_dir],
+            stderr=subprocess.STDOUT)
+      cmd = ([goldctl_bin, 'imgtest', 'add'] + mode +
                             ['--test-name', image_name,
-                             '--instance', 'chrome-gpu',
+                             '--instance', SKIA_GOLD_INSTANCE,
                              '--keys-file', json_temp_file,
                              '--png-file', png_temp_file,
                              '--work-dir', self._skia_gold_temp_dir,
                              '--failure-file', failure_file] +
-                            build_id_args, stderr=subprocess.STDOUT)
+                            build_id_args)
+      subprocess.check_output(cmd, stderr=subprocess.STDOUT)
     except CalledProcessError as e:
       contents = ''
       try:
@@ -454,10 +473,12 @@ class CloudStorageIntegrationTestBase(gpu_integration_test.GpuIntegrationTest):
       except Exception:
         logging.error('Failed to read contents of goldctl failure file')
       logging.error('goldctl failed with output: %s', e.output)
-      raise Exception('goldctl command failed: ' + contents)
+      self._MaybeOutputSkiaGoldLink()
+      if not self.GetParsedCommandLineOptions().no_skia_gold_failure:
+        raise Exception('goldctl command failed: ' + contents)
 
-  def _ValidateScreenshotSamplesWithSkiaGold(self, tab, page,
-                                             screenshot, expectations,
+  def _ValidateScreenshotSamplesWithSkiaGold(self, tab, page, screenshot,
+                                             expectations, tolerance,
                                              device_pixel_ratio,
                                              build_id_args):
     """Samples the given screenshot and verifies pixel color values.
@@ -468,23 +489,39 @@ class CloudStorageIntegrationTestBase(gpu_integration_test.GpuIntegrationTest):
     url = page.name
     try:
       self._CompareScreenshotSamples(
-        tab, screenshot, expectations,
-        device_pixel_ratio,
+        tab, screenshot, expectations, tolerance, device_pixel_ratio,
         self.GetParsedCommandLineOptions().test_machine_name)
     except Exception:
       # An exception raised from self.fail() indicates a failure.
       image_name = self._UrlToImageName(url)
       if self.GetParsedCommandLineOptions().test_machine_name:
-        # TODO(https://crbug.com/850107): Generate a link to Skia Gold on
-        # failure.
         self._UploadTestResultToSkiaGold(
           image_name, screenshot,
           tab, page,
-          # Always upload because we already did the check locally.
-          is_check_mode=False,
           build_id_args=build_id_args)
       else:
         self._WriteErrorImages(
           self.GetParsedCommandLineOptions().generated_dir, image_name,
           screenshot, None)
       raise
+
+  def _MaybeOutputSkiaGoldLink(self):
+    # TODO(https://crbug.com/850107): Differentiate between an image mismatch
+    # and an infra/other failure, and only output the link on image mismatch.
+    skia_url = 'https://%s-gold.skia.org/search?' % SKIA_GOLD_INSTANCE
+    patch_issue = self.GetParsedCommandLineOptions().review_patch_issue
+    is_tryjob = patch_issue != None
+    # These URL formats were just taken from links on the Gold instance pointing
+    # to untriaged results.
+    if is_tryjob:
+      skia_url += 'issue=%s&unt=true&master=false' % patch_issue
+    else:
+      skia_url += 'blame=%s&unt=true&head=true&query=source_type%%3D%s' % (
+          self.GetParsedCommandLineOptions().build_revision,
+          SKIA_GOLD_INSTANCE)
+    logging.error('View and triage untriaged images at %s', skia_url)
+
+  @classmethod
+  def GenerateGpuTests(cls, options):
+    del options
+    return []

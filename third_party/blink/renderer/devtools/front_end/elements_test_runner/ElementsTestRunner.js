@@ -163,7 +163,6 @@ ElementsTestRunner.dumpComputedStyle = function(doNotAutoExpand) {
 
     let dumpText = '';
     dumpText += treeElement.title.querySelector('.property-name').textContent;
-    dumpText += ' ';
     dumpText += treeElement.title.querySelector('.property-value').textContent;
     TestRunner.addResult(dumpText);
 
@@ -524,6 +523,14 @@ ElementsTestRunner.eventListenersWidget = function() {
 
 ElementsTestRunner.showEventListenersWidget = function() {
   return UI.viewManager.showView('elements.eventListeners');
+};
+
+/**
+ * @return {Promise}
+ */
+ElementsTestRunner.showComputedStyles = function() {
+  UI.panels.elements.sidebarPaneView.tabbedPane().selectTab('Computed', true);
+  return ElementsTestRunner.computedStyleWidget().doUpdate();
 };
 
 ElementsTestRunner.expandAndDumpSelectedElementEventListeners = function(callback, force) {
@@ -1114,6 +1121,23 @@ ElementsTestRunner.dumpInspectorHighlightJSON = function(idValue, callback) {
   async function nodeResolved(node) {
     const result = await TestRunner.OverlayAgent.getHighlightObjectForTest(node.id);
     TestRunner.addResult(idValue + JSON.stringify(result, null, 2));
+    callback();
+  }
+};
+
+ElementsTestRunner.dumpInspectorDistanceJSON = function(idValue, callback) {
+  ElementsTestRunner.nodeWithId(idValue, nodeResolved);
+
+  async function nodeResolved(node) {
+    const result = await TestRunner.OverlayAgent.getHighlightObjectForTest(node.id, true);
+    const info = result['distanceInfo'];
+    if (!info) {
+      TestRunner.addResult(`${idValue}: No distance info`);
+    } else {
+      if (info['style'])
+        info['style'] = '<style data>';
+      TestRunner.addResult(idValue + JSON.stringify(info, null, 2));
+    }
     callback();
   }
 };

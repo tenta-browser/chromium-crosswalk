@@ -8,6 +8,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
@@ -270,12 +271,6 @@ bool NonBlockingInvalidator::UpdateRegisteredIds(InvalidationHandler* handler,
     NOTREACHED();
   }
   return true;
-}
-
-bool NonBlockingInvalidator::UpdateRegisteredIds(InvalidationHandler* handler,
-                                                 const TopicSet& ids) {
-  NOTREACHED();
-  return false;
 }
 
 void NonBlockingInvalidator::UnregisterHandler(InvalidationHandler* handler) {

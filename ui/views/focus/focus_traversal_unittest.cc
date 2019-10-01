@@ -8,6 +8,7 @@
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "ui/base/models/combobox_model.h"
 #include "ui/views/background.h"
 #include "ui/views/border.h"
@@ -94,14 +95,14 @@ class DummyComboboxModel : public ui::ComboboxModel {
   // Overridden from ui::ComboboxModel:
   int GetItemCount() const override { return 10; }
   base::string16 GetItemAt(int index) override {
-    return ASCIIToUTF16("Item ") + base::IntToString16(index);
+    return ASCIIToUTF16("Item ") + base::NumberToString16(index);
   }
 };
 
 // A View that can act as a pane.
 class PaneView : public View, public FocusTraversable {
  public:
-  PaneView() : focus_search_(NULL) {}
+  PaneView() = default;
 
   // If this method is called, this view will use GetPaneFocusTraversable to
   // have this provided FocusSearch used instead of the default one, allowing
@@ -115,16 +116,16 @@ class PaneView : public View, public FocusTraversable {
     if (focus_search_)
       return this;
     else
-      return NULL;
+      return nullptr;
   }
 
   // Overridden from FocusTraversable:
   views::FocusSearch* GetFocusSearch() override { return focus_search_; }
-  FocusTraversable* GetFocusTraversableParent() override { return NULL; }
-  View* GetFocusTraversableParentView() override { return NULL; }
+  FocusTraversable* GetFocusTraversableParent() override { return nullptr; }
+  View* GetFocusTraversableParentView() override { return nullptr; }
 
  private:
-  FocusSearch* focus_search_;
+  FocusSearch* focus_search_ = nullptr;
 };
 
 // BorderView is a view containing a native window with its own view hierarchy.
@@ -197,7 +198,7 @@ class FocusTraversalTest : public FocusManagerTest {
     view = search_border_view_->GetContentsRootView()->GetViewByID(id);
     if (view)
       return view;
-    return NULL;
+    return nullptr;
   }
 
  protected:
@@ -214,13 +215,14 @@ class FocusTraversalTest : public FocusManagerTest {
         View* focused_view = GetFocusManager()->GetFocusedView();
         EXPECT_NE(nullptr, focused_view);
         if (focused_view)
-          EXPECT_EQ(traversal_ids[reverse ? N - j - 1 : j], focused_view->id());
+          EXPECT_EQ(traversal_ids[reverse ? N - j - 1 : j],
+                    focused_view->GetID());
       }
     }
   }
 
-  TabbedPane* style_tab_;
-  BorderView* search_border_view_;
+  TabbedPane* style_tab_ = nullptr;
+  BorderView* search_border_view_ = nullptr;
   DummyComboboxModel combobox_model_;
   PaneView* left_container_;
   PaneView* right_container_;
@@ -228,13 +230,9 @@ class FocusTraversalTest : public FocusManagerTest {
   DISALLOW_COPY_AND_ASSIGN(FocusTraversalTest);
 };
 
-FocusTraversalTest::FocusTraversalTest()
-    : style_tab_(NULL),
-      search_border_view_(NULL) {
-}
+FocusTraversalTest::FocusTraversalTest() = default;
 
-FocusTraversalTest::~FocusTraversalTest() {
-}
+FocusTraversalTest::~FocusTraversalTest() = default;
 
 void FocusTraversalTest::InitContentView() {
   // Create a complicated view hierarchy with lots of control types for
@@ -305,13 +303,13 @@ void FocusTraversalTest::InitContentView() {
   GetContentsView()->AddChildView(cb);
   // In this fast paced world, who really has time for non hard-coded layout?
   cb->SetBounds(10, 10, 200, 20);
-  cb->set_id(TOP_CHECKBOX_ID);
+  cb->SetID(TOP_CHECKBOX_ID);
 
   left_container_ = new PaneView();
   left_container_->SetBorder(CreateSolidBorder(1, SK_ColorBLACK));
   left_container_->SetBackground(
       CreateSolidBackground(SkColorSetRGB(240, 240, 240)));
-  left_container_->set_id(LEFT_CONTAINER_ID);
+  left_container_->SetID(LEFT_CONTAINER_ID);
   GetContentsView()->AddChildView(left_container_);
   left_container_->SetBounds(10, 35, 250, 200);
 
@@ -323,12 +321,12 @@ void FocusTraversalTest::InitContentView() {
   int gap_between_labels = 10;
 
   Label* label = new Label(ASCIIToUTF16("Apple:"));
-  label->set_id(APPLE_LABEL_ID);
+  label->SetID(APPLE_LABEL_ID);
   left_container_->AddChildView(label);
   label->SetBounds(label_x, y, label_width, label_height);
 
   Textfield* text_field = new Textfield();
-  text_field->set_id(APPLE_TEXTFIELD_ID);
+  text_field->SetID(APPLE_TEXTFIELD_ID);
   left_container_->AddChildView(text_field);
   text_field->SetBounds(label_x + label_width + 5, y,
                         text_field_width, label_height);
@@ -336,12 +334,12 @@ void FocusTraversalTest::InitContentView() {
   y += label_height + gap_between_labels;
 
   label = new Label(ASCIIToUTF16("Orange:"));
-  label->set_id(ORANGE_LABEL_ID);
+  label->SetID(ORANGE_LABEL_ID);
   left_container_->AddChildView(label);
   label->SetBounds(label_x, y, label_width, label_height);
 
   text_field = new Textfield();
-  text_field->set_id(ORANGE_TEXTFIELD_ID);
+  text_field->SetID(ORANGE_TEXTFIELD_ID);
   left_container_->AddChildView(text_field);
   text_field->SetBounds(label_x + label_width + 5, y,
                         text_field_width, label_height);
@@ -349,12 +347,12 @@ void FocusTraversalTest::InitContentView() {
   y += label_height + gap_between_labels;
 
   label = new Label(ASCIIToUTF16("Banana:"));
-  label->set_id(BANANA_LABEL_ID);
+  label->SetID(BANANA_LABEL_ID);
   left_container_->AddChildView(label);
   label->SetBounds(label_x, y, label_width, label_height);
 
   text_field = new Textfield();
-  text_field->set_id(BANANA_TEXTFIELD_ID);
+  text_field->SetID(BANANA_TEXTFIELD_ID);
   left_container_->AddChildView(text_field);
   text_field->SetBounds(label_x + label_width + 5, y,
                         text_field_width, label_height);
@@ -362,40 +360,40 @@ void FocusTraversalTest::InitContentView() {
   y += label_height + gap_between_labels;
 
   label = new Label(ASCIIToUTF16("Kiwi:"));
-  label->set_id(KIWI_LABEL_ID);
+  label->SetID(KIWI_LABEL_ID);
   left_container_->AddChildView(label);
   label->SetBounds(label_x, y, label_width, label_height);
 
   text_field = new Textfield();
-  text_field->set_id(KIWI_TEXTFIELD_ID);
+  text_field->SetID(KIWI_TEXTFIELD_ID);
   left_container_->AddChildView(text_field);
   text_field->SetBounds(label_x + label_width + 5, y,
                         text_field_width, label_height);
 
   y += label_height + gap_between_labels;
 
-  LabelButton* button = MdTextButton::Create(NULL, ASCIIToUTF16("Click me"));
+  auto button = MdTextButton::Create(nullptr, ASCIIToUTF16("Click me"));
   button->SetBounds(label_x, y + 10, 80, 30);
-  button->set_id(FRUIT_BUTTON_ID);
-  left_container_->AddChildView(button);
+  button->SetID(FRUIT_BUTTON_ID);
+  left_container_->AddChildView(std::move(button));
   y += 40;
 
   cb =  new Checkbox(ASCIIToUTF16("This is another check box"));
   cb->SetBounds(label_x + label_width + 5, y, 180, 20);
-  cb->set_id(FRUIT_CHECKBOX_ID);
+  cb->SetID(FRUIT_CHECKBOX_ID);
   left_container_->AddChildView(cb);
   y += 20;
 
   Combobox* combobox =  new Combobox(&combobox_model_);
   combobox->SetBounds(label_x + label_width + 5, y, 150, 30);
-  combobox->set_id(COMBOBOX_ID);
+  combobox->SetID(COMBOBOX_ID);
   left_container_->AddChildView(combobox);
 
   right_container_ = new PaneView();
   right_container_->SetBorder(CreateSolidBorder(1, SK_ColorBLACK));
   right_container_->SetBackground(
       CreateSolidBackground(SkColorSetRGB(240, 240, 240)));
-  right_container_->set_id(RIGHT_CONTAINER_ID);
+  right_container_->SetID(RIGHT_CONTAINER_ID);
   GetContentsView()->AddChildView(right_container_);
   right_container_->SetBounds(270, 35, 300, 200);
 
@@ -403,20 +401,20 @@ void FocusTraversalTest::InitContentView() {
   int radio_button_height = 18;
   int gap_between_radio_buttons = 10;
   RadioButton* radio_button = new RadioButton(ASCIIToUTF16("Asparagus"), 1);
-  radio_button->set_id(ASPARAGUS_BUTTON_ID);
+  radio_button->SetID(ASPARAGUS_BUTTON_ID);
   right_container_->AddChildView(radio_button);
   radio_button->SetBounds(5, y, 70, radio_button_height);
   radio_button->SetGroup(1);
   y += radio_button_height + gap_between_radio_buttons;
   radio_button = new RadioButton(ASCIIToUTF16("Broccoli"), 1);
-  radio_button->set_id(BROCCOLI_BUTTON_ID);
+  radio_button->SetID(BROCCOLI_BUTTON_ID);
   right_container_->AddChildView(radio_button);
   radio_button->SetBounds(5, y, 70, radio_button_height);
   radio_button->SetGroup(1);
   RadioButton* radio_button_to_check = radio_button;
   y += radio_button_height + gap_between_radio_buttons;
   radio_button = new RadioButton(ASCIIToUTF16("Cauliflower"), 1);
-  radio_button->set_id(CAULIFLOWER_BUTTON_ID);
+  radio_button->SetID(CAULIFLOWER_BUTTON_ID);
   right_container_->AddChildView(radio_button);
   radio_button->SetBounds(5, y, 70, radio_button_height);
   radio_button->SetGroup(1);
@@ -426,20 +424,21 @@ void FocusTraversalTest::InitContentView() {
   inner_container->SetBorder(CreateSolidBorder(1, SK_ColorBLACK));
   inner_container->SetBackground(
       CreateSolidBackground(SkColorSetRGB(230, 230, 230)));
-  inner_container->set_id(INNER_CONTAINER_ID);
+  inner_container->SetID(INNER_CONTAINER_ID);
   right_container_->AddChildView(inner_container);
   inner_container->SetBounds(100, 10, 150, 180);
 
   ScrollView* scroll_view = new ScrollView();
-  scroll_view->set_id(SCROLL_VIEW_ID);
+  scroll_view->SetID(SCROLL_VIEW_ID);
   inner_container->AddChildView(scroll_view);
   scroll_view->SetBounds(1, 1, 148, 178);
 
-  View* scroll_content = new View();
+  auto scroll_content = std::make_unique<View>();
   scroll_content->SetBounds(0, 0, 200, 200);
   scroll_content->SetBackground(
       CreateSolidBackground(SkColorSetRGB(200, 200, 200)));
-  scroll_view->SetContents(scroll_content);
+  auto* scroll_content_ptr =
+      scroll_view->SetContents(std::move(scroll_content));
 
   static const char* const kTitles[] = {
       "Rosetta", "Stupeur et tremblement", "The diner game",
@@ -461,35 +460,34 @@ void FocusTraversalTest::InitContentView() {
   for (size_t i = 0; i < base::size(kTitles); ++i) {
     Link* link = new Link(ASCIIToUTF16(kTitles[i]));
     link->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-    link->set_id(kIDs[i]);
-    scroll_content->AddChildView(link);
+    link->SetID(kIDs[i]);
+    scroll_content_ptr->AddChildView(link);
     link->SetBounds(5, y, 300, 15);
     y += 15;
   }
 
   y = 250;
   int width = 60;
-  button = MdTextButton::Create(NULL, ASCIIToUTF16("OK"));
-  button->set_id(OK_BUTTON_ID);
+  button = MdTextButton::Create(nullptr, ASCIIToUTF16("OK"));
+  button->SetID(OK_BUTTON_ID);
   button->SetIsDefault(true);
-
-  GetContentsView()->AddChildView(button);
   button->SetBounds(150, y, width, 30);
+  GetContentsView()->AddChildView(std::move(button));
 
-  button = MdTextButton::Create(NULL, ASCIIToUTF16("Cancel"));
-  button->set_id(CANCEL_BUTTON_ID);
-  GetContentsView()->AddChildView(button);
+  button = MdTextButton::Create(nullptr, ASCIIToUTF16("Cancel"));
+  button->SetID(CANCEL_BUTTON_ID);
   button->SetBounds(220, y, width, 30);
+  GetContentsView()->AddChildView(std::move(button));
 
-  button = MdTextButton::Create(NULL, ASCIIToUTF16("Help"));
-  button->set_id(HELP_BUTTON_ID);
-  GetContentsView()->AddChildView(button);
+  button = MdTextButton::Create(nullptr, ASCIIToUTF16("Help"));
+  button->SetID(HELP_BUTTON_ID);
   button->SetBounds(290, y, width, 30);
+  GetContentsView()->AddChildView(std::move(button));
 
   y += 40;
 
-  View* contents = NULL;
-  Link* link = NULL;
+  View* contents = nullptr;
+  Link* link = nullptr;
 
   // Left bottom box with style checkboxes.
   contents = new View();
@@ -497,33 +495,33 @@ void FocusTraversalTest::InitContentView() {
   cb = new Checkbox(ASCIIToUTF16("Bold"));
   contents->AddChildView(cb);
   cb->SetBounds(10, 10, 50, 20);
-  cb->set_id(BOLD_CHECKBOX_ID);
+  cb->SetID(BOLD_CHECKBOX_ID);
 
   cb = new Checkbox(ASCIIToUTF16("Italic"));
   contents->AddChildView(cb);
   cb->SetBounds(70, 10, 50, 20);
-  cb->set_id(ITALIC_CHECKBOX_ID);
+  cb->SetID(ITALIC_CHECKBOX_ID);
 
   cb = new Checkbox(ASCIIToUTF16("Underlined"));
   contents->AddChildView(cb);
   cb->SetBounds(130, 10, 70, 20);
-  cb->set_id(UNDERLINED_CHECKBOX_ID);
+  cb->SetID(UNDERLINED_CHECKBOX_ID);
 
   link = new Link(ASCIIToUTF16("Help"));
   contents->AddChildView(link);
   link->SetBounds(10, 35, 70, 10);
-  link->set_id(STYLE_HELP_LINK_ID);
+  link->SetID(STYLE_HELP_LINK_ID);
 
   text_field = new Textfield();
   contents->AddChildView(text_field);
   text_field->SetBounds(10, 50, 100, 20);
-  text_field->set_id(STYLE_TEXT_EDIT_ID);
+  text_field->SetID(STYLE_TEXT_EDIT_ID);
 
   style_tab_ = new TabbedPane();
   GetContentsView()->AddChildView(style_tab_);
   style_tab_->SetBounds(10, y, 210, 100);
   style_tab_->AddTab(ASCIIToUTF16("Style"), contents);
-  style_tab_->GetSelectedTab()->set_id(STYLE_CONTAINER_ID);
+  style_tab_->GetSelectedTab()->SetID(STYLE_CONTAINER_ID);
   style_tab_->AddTab(ASCIIToUTF16("Other"), new View());
 
   // Right bottom box with search.
@@ -532,21 +530,21 @@ void FocusTraversalTest::InitContentView() {
   text_field = new Textfield();
   contents->AddChildView(text_field);
   text_field->SetBounds(10, 10, 100, 20);
-  text_field->set_id(SEARCH_TEXTFIELD_ID);
+  text_field->SetID(SEARCH_TEXTFIELD_ID);
 
-  button = MdTextButton::Create(NULL, ASCIIToUTF16("Search"));
-  contents->AddChildView(button);
+  button = MdTextButton::Create(nullptr, ASCIIToUTF16("Search"));
   button->SetBounds(112, 5, 60, 30);
-  button->set_id(SEARCH_BUTTON_ID);
+  button->SetID(SEARCH_BUTTON_ID);
+  contents->AddChildView(std::move(button));
 
   link = new Link(ASCIIToUTF16("Help"));
   link->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-  link->set_id(HELP_LINK_ID);
+  link->SetID(HELP_LINK_ID);
   contents->AddChildView(link);
   link->SetBounds(175, 10, 30, 20);
 
   search_border_view_ = new BorderView(contents);
-  search_border_view_->set_id(SEARCH_CONTAINER_ID);
+  search_border_view_->SetID(SEARCH_CONTAINER_ID);
 
   GetContentsView()->AddChildView(search_border_view_);
   search_border_view_->SetBounds(300, y, 240, 50);
@@ -556,15 +554,15 @@ void FocusTraversalTest::InitContentView() {
   contents = new View();
   contents->SetFocusBehavior(View::FocusBehavior::ALWAYS);
   contents->SetBackground(CreateSolidBackground(SK_ColorBLUE));
-  contents->set_id(THUMBNAIL_CONTAINER_ID);
-  button = MdTextButton::Create(NULL, ASCIIToUTF16("Star"));
-  contents->AddChildView(button);
+  contents->SetID(THUMBNAIL_CONTAINER_ID);
+  button = MdTextButton::Create(nullptr, ASCIIToUTF16("Star"));
   button->SetBounds(5, 5, 50, 30);
-  button->set_id(THUMBNAIL_STAR_ID);
-  button = MdTextButton::Create(NULL, ASCIIToUTF16("SuperStar"));
-  contents->AddChildView(button);
+  button->SetID(THUMBNAIL_STAR_ID);
+  contents->AddChildView(std::move(button));
+  button = MdTextButton::Create(nullptr, ASCIIToUTF16("SuperStar"));
   button->SetBounds(60, 5, 100, 30);
-  button->set_id(THUMBNAIL_SUPER_STAR_ID);
+  button->SetID(THUMBNAIL_SUPER_STAR_ID);
+  contents->AddChildView(std::move(button));
 
   GetContentsView()->AddChildView(contents);
   contents->SetBounds(250, y, 200, 50);
@@ -650,32 +648,34 @@ TEST_F(FocusTraversalTest, NormalTraversalMac) {
 TEST_F(FocusTraversalTest, FullKeyboardToggle) {
   // Give focus to TOP_CHECKBOX_ID .
   FindViewByID(TOP_CHECKBOX_ID)->RequestFocus();
-  EXPECT_EQ(TOP_CHECKBOX_ID, GetFocusManager()->GetFocusedView()->id());
+  EXPECT_EQ(TOP_CHECKBOX_ID, GetFocusManager()->GetFocusedView()->GetID());
 
   // Turn off full keyboard access. Focus should move to next view with ALWAYS
   // focus behavior.
   GetFocusManager()->SetKeyboardAccessible(false);
-  EXPECT_EQ(APPLE_TEXTFIELD_ID, GetFocusManager()->GetFocusedView()->id());
+  EXPECT_EQ(APPLE_TEXTFIELD_ID, GetFocusManager()->GetFocusedView()->GetID());
 
   // Turning on full keyboard access should not change the focused view.
   GetFocusManager()->SetKeyboardAccessible(true);
-  EXPECT_EQ(APPLE_TEXTFIELD_ID, GetFocusManager()->GetFocusedView()->id());
+  EXPECT_EQ(APPLE_TEXTFIELD_ID, GetFocusManager()->GetFocusedView()->GetID());
 
   // Give focus to SEARCH_BUTTON_ID.
   FindViewByID(SEARCH_BUTTON_ID)->RequestFocus();
-  EXPECT_EQ(SEARCH_BUTTON_ID, GetFocusManager()->GetFocusedView()->id());
+  EXPECT_EQ(SEARCH_BUTTON_ID, GetFocusManager()->GetFocusedView()->GetID());
 
   // Turn off full keyboard access. Focus should move to next view with ALWAYS
   // focus behavior.
   GetFocusManager()->SetKeyboardAccessible(false);
-  EXPECT_EQ(THUMBNAIL_CONTAINER_ID, GetFocusManager()->GetFocusedView()->id());
+  EXPECT_EQ(THUMBNAIL_CONTAINER_ID,
+            GetFocusManager()->GetFocusedView()->GetID());
 
   // See focus advances correctly in both directions.
   GetFocusManager()->AdvanceFocus(false);
-  EXPECT_EQ(APPLE_TEXTFIELD_ID, GetFocusManager()->GetFocusedView()->id());
+  EXPECT_EQ(APPLE_TEXTFIELD_ID, GetFocusManager()->GetFocusedView()->GetID());
 
   GetFocusManager()->AdvanceFocus(true);
-  EXPECT_EQ(THUMBNAIL_CONTAINER_ID, GetFocusManager()->GetFocusedView()->id());
+  EXPECT_EQ(THUMBNAIL_CONTAINER_ID,
+            GetFocusManager()->GetFocusedView()->GetID());
 }
 #endif  // OS_MACOSX
 
@@ -704,9 +704,9 @@ TEST_F(FocusTraversalTest, TraversalWithNonEnabledViews) {
   SCOPED_TRACE("TraversalWithNonEnabledViews");
 
   // Let's disable some views.
-  for (size_t i = 0; i < base::size(kDisabledIDs); i++) {
-    View* v = FindViewByID(kDisabledIDs[i]);
-    ASSERT_TRUE(v != NULL);
+  for (int kDisabledID : kDisabledIDs) {
+    View* v = FindViewByID(kDisabledID);
+    ASSERT_TRUE(v != nullptr);
     v->SetEnabled(false);
   }
 
@@ -744,9 +744,9 @@ TEST_F(FocusTraversalTest, TraversalWithInvisibleViews) {
   SCOPED_TRACE("TraversalWithInvisibleViews");
 
   // Let's make some views invisible.
-  for (size_t i = 0; i < base::size(kInvisibleIDs); i++) {
-    View* v = FindViewByID(kInvisibleIDs[i]);
-    ASSERT_TRUE(v != NULL);
+  for (int kInvisibleID : kInvisibleIDs) {
+    View* v = FindViewByID(kInvisibleID);
+    ASSERT_TRUE(v != nullptr);
     v->SetVisible(false);
   }
 
@@ -810,12 +810,12 @@ TEST_F(FocusTraversalTest, PaneTraversal) {
 
 class FocusTraversalNonFocusableTest : public FocusManagerTest {
  public:
-  ~FocusTraversalNonFocusableTest() override {}
+  ~FocusTraversalNonFocusableTest() override = default;
 
   void InitContentView() override;
 
  protected:
-  FocusTraversalNonFocusableTest() {}
+  FocusTraversalNonFocusableTest() = default;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(FocusTraversalNonFocusableTest);
@@ -848,19 +848,19 @@ void FocusTraversalNonFocusableTest::InitContentView() {
   for (int i = 0; i < 300; i += 10) {
     // |v|'s left child is the top of the next group. If |v| is 20, this is 30.
     View* v10 = new View;
-    v10->set_id(i + 10);
+    v10->SetID(i + 10);
     v->AddChildView(v10);
 
     // |v|'s right child. If |v| is 20, this is 21.
     View* v1 = new View;
-    v1->set_id(i + 1);
+    v1->SetID(i + 1);
     v->AddChildView(v1);
 
     // |v|'s right child has two children. If |v| is 20, these are 22 and 23.
     View* v2 = new View;
-    v2->set_id(i + 2);
+    v2->SetID(i + 2);
     View* v3 = new View;
-    v3->set_id(i + 3);
+    v3->SetID(i + 3);
     v1->AddChildView(v2);
     v1->AddChildView(v3);
 

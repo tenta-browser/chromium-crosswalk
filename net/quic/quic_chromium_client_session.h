@@ -21,6 +21,7 @@
 #include "base/containers/mru_cache.h"
 #include "base/macros.h"
 #include "base/time/time.h"
+#include "base/timer/timer.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/load_timing_info.h"
 #include "net/base/net_error_details.h"
@@ -38,12 +39,12 @@
 #include "net/spdy/http2_priority_dependencies.h"
 #include "net/spdy/multiplexed_session.h"
 #include "net/spdy/server_push_delegate.h"
-#include "net/third_party/quic/core/http/quic_client_push_promise_index.h"
-#include "net/third_party/quic/core/http/quic_spdy_client_session_base.h"
-#include "net/third_party/quic/core/quic_crypto_client_stream.h"
-#include "net/third_party/quic/core/quic_packets.h"
-#include "net/third_party/quic/core/quic_server_id.h"
-#include "net/third_party/quic/core/quic_time.h"
+#include "net/third_party/quiche/src/quic/core/http/quic_client_push_promise_index.h"
+#include "net/third_party/quiche/src/quic/core/http/quic_spdy_client_session_base.h"
+#include "net/third_party/quiche/src/quic/core/quic_crypto_client_stream.h"
+#include "net/third_party/quiche/src/quic/core/quic_packets.h"
+#include "net/third_party/quiche/src/quic/core/quic_server_id.h"
+#include "net/third_party/quiche/src/quic/core/quic_time.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 
 namespace net {
@@ -106,6 +107,7 @@ enum QuicConnectionMigrationStatus {
   MIGRATION_STATUS_TIMEOUT,
   MIGRATION_STATUS_ON_WRITE_ERROR_DISABLED,
   MIGRATION_STATUS_PATH_DEGRADING_BEFORE_HANDSHAKE_CONFIRMED,
+  MIGRATION_STATUS_IDLE_MIGRATION_TIMEOUT,
   MIGRATION_STATUS_MAX
 };
 
@@ -373,13 +375,16 @@ class NET_EXPORT_PRIVATE QuicChromiumClientSession
       bool require_confirmation,
       bool migrate_sesion_early_v2,
       bool migrate_session_on_network_change_v2,
-      bool go_away_on_path_degrading,
       NetworkChangeNotifier::NetworkHandle default_network,
+      quic::QuicTime::Delta retransmittable_on_wire_timeout,
+      bool migrate_idle_session,
+      base::TimeDelta idle_migration_period,
       base::TimeDelta max_time_on_non_default_network,
       int max_migrations_to_non_default_network_on_write_error,
       int max_migrations_to_non_default_network_on_path_degrading,
       int yield_after_packets,
       quic::QuicTime::Delta yield_after_duration,
+      bool go_away_on_path_degrading,
       bool headers_include_h2_stream_dependency,
       int cert_verify_flags,
       const quic::QuicConfig& config,
@@ -389,6 +394,7 @@ class NET_EXPORT_PRIVATE QuicChromiumClientSession
       base::TimeTicks dns_resolution_end_time,
       quic::QuicClientPushPromiseIndex* push_promise_index,
       ServerPushDelegate* push_delegate,
+      const base::TickClock* tick_clock,
       base::SequencedTaskRunner* task_runner,
       std::unique_ptr<SocketPerformanceWatcher> socket_performance_watcher,
       NetLog* net_log);
@@ -449,7 +455,7 @@ class NET_EXPORT_PRIVATE QuicChromiumClientSession
       const quic::QuicSocketAddress& peer_address) override;
 
   // quic::QuicSpdySession methods:
-  size_t WriteHeaders(
+  size_t WriteHeadersOnHeadersStream(
       quic::QuicStreamId id,
       spdy::SpdyHeaderBlock headers,
       bool fin,
@@ -496,7 +502,7 @@ class NET_EXPORT_PRIVATE QuicChromiumClientSession
       const quic::QuicSocketAddress& self_address,
       const quic::QuicSocketAddress& peer_address) override;
   void OnPathDegrading() override;
-  bool HasOpenDynamicStreams() const override;
+  bool ShouldKeepConnectionAlive() const override;
 
   // QuicChromiumPacketReader::Visitor methods:
   void OnReadError(int result, const DatagramClientSocket* socket) override;
@@ -531,8 +537,7 @@ class NET_EXPORT_PRIVATE QuicChromiumClientSession
                                 quic::QuicErrorCode quic_error,
                                 quic::ConnectionCloseBehavior behavior);
 
-  std::unique_ptr<base::Value> GetInfoAsValue(
-      const std::set<HostPortPair>& aliases);
+  base::Value GetInfoAsValue(const std::set<HostPortPair>& aliases);
 
   const NetLogWithSource& net_log() const { return net_log_; }
 
@@ -709,9 +714,12 @@ class NET_EXPORT_PRIVATE QuicChromiumClientSession
   void TryMigrateBackToDefaultNetwork(base::TimeDelta timeout);
   void MaybeRetryMigrateBackToDefaultNetwork();
 
-  // Returns true if session is migratable. If not, a task is posted to
-  // close the session later if |close_session_if_not_migratable| is true.
-  bool IsSessionMigratable(bool close_session_if_not_migratable);
+  // If migrate idle session is enabled, returns true and post a task to close
+  // the connection if session's idle time exceeds the |idle_migration_period_|.
+  // If migrate idle session is not enabled, returns true and posts a task to
+  // close the connection if session doesn't have outstanding streams.
+  bool CheckIdleTimeExceedsIdleMigrationPeriod();
+
   // Close non-migratable streams in both directions by sending reset stream to
   // peer when connection migration attempts to migrate to the alternate
   // network.
@@ -744,7 +752,9 @@ class NET_EXPORT_PRIVATE QuicChromiumClientSession
   bool require_confirmation_;
   bool migrate_session_early_v2_;
   bool migrate_session_on_network_change_v2_;
-  bool go_away_on_path_degrading_;
+  bool migrate_idle_session_;
+  // Session can be migrated if its idle time is within this period.
+  base::TimeDelta idle_migration_period_;
   base::TimeDelta max_time_on_non_default_network_;
   // Maximum allowed number of migrations to non-default network triggered by
   // packet write error per default network.
@@ -757,9 +767,12 @@ class NET_EXPORT_PRIVATE QuicChromiumClientSession
   quic::QuicClock* clock_;  // Unowned.
   int yield_after_packets_;
   quic::QuicTime::Delta yield_after_duration_;
+  bool go_away_on_path_degrading_;
 
   base::TimeTicks most_recent_path_degrading_timestamp_;
   base::TimeTicks most_recent_network_disconnected_timestamp_;
+  const base::TickClock* tick_clock_;
+  base::TimeTicks most_recent_stream_close_time_;
 
   int most_recent_write_error_;
   base::TimeTicks most_recent_write_error_timestamp_;

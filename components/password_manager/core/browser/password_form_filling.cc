@@ -52,7 +52,7 @@ void Autofill(const PasswordManagerClient& client,
               const std::vector<const PasswordForm*>& federated_matches,
               const PasswordForm& preferred_match,
               bool wait_for_username) {
-  DCHECK_EQ(PasswordForm::SCHEME_HTML, preferred_match.scheme);
+  DCHECK_EQ(PasswordForm::Scheme::kHtml, preferred_match.scheme);
 
   std::unique_ptr<BrowserSavePasswordProgressLogger> logger;
   if (password_manager_util::IsLoggingActive(&client)) {
@@ -60,9 +60,8 @@ void Autofill(const PasswordManagerClient& client,
     logger->LogMessage(Logger::STRING_PASSWORDMANAGER_AUTOFILL);
   }
 
-  autofill::PasswordFormFillData fill_data;
-  InitPasswordFormFillData(form_for_autofill, best_matches, &preferred_match,
-                           wait_for_username, &fill_data);
+  PasswordFormFillData fill_data(form_for_autofill, best_matches,
+                                 preferred_match, wait_for_username);
   if (logger)
     logger->LogBoolean(Logger::STRING_WAIT_FOR_USERNAME, wait_for_username);
   UMA_HISTOGRAM_BOOLEAN(
@@ -83,7 +82,7 @@ void ShowInitialPasswordAccountSuggestions(
     const std::map<base::string16, const PasswordForm*>& best_matches,
     const PasswordForm& preferred_match,
     bool wait_for_username) {
-  DCHECK_EQ(PasswordForm::SCHEME_HTML, preferred_match.scheme);
+  DCHECK_EQ(PasswordForm::Scheme::kHtml, preferred_match.scheme);
 
   std::unique_ptr<BrowserSavePasswordProgressLogger> logger;
   if (password_manager_util::IsLoggingActive(&client)) {
@@ -93,12 +92,10 @@ void ShowInitialPasswordAccountSuggestions(
             STRING_PASSWORDMANAGER_SHOW_INITIAL_PASSWORD_ACCOUNT_SUGGESTIONS);
   }
 
-  PasswordFormFillData fill_data;
-  InitPasswordFormFillData(form_for_autofill, best_matches, &preferred_match,
-                           wait_for_username, &fill_data);
   if (logger)
     logger->LogBoolean(Logger::STRING_WAIT_FOR_USERNAME, wait_for_username);
-  driver->ShowInitialPasswordAccountSuggestions(fill_data);
+  driver->ShowInitialPasswordAccountSuggestions(PasswordFormFillData(
+      form_for_autofill, best_matches, preferred_match, wait_for_username));
 }
 
 }  // namespace
@@ -113,7 +110,7 @@ LikelyFormFilling SendFillInformationToRenderer(
     const PasswordForm* preferred_match,
     PasswordFormMetricsRecorder* metrics_recorder) {
   DCHECK(driver);
-  DCHECK_EQ(PasswordForm::SCHEME_HTML, observed_form.scheme);
+  DCHECK_EQ(PasswordForm::Scheme::kHtml, observed_form.scheme);
 
   const bool new_parsing_enabled =
       base::FeatureList::IsEnabled(features::kNewPasswordFormParsing);

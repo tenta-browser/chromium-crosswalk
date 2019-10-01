@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
@@ -29,6 +30,10 @@ class InfoBarManager;
 
 namespace translate {
 
+// Feature flag used to control the auto-always and auto-never snackbar
+// parameters (i.e. threshold and maximum-number-of).
+extern const base::Feature kTranslateAutoSnackbars;
+
 // Feature flag for "Translate Compact Infobar UI" project.
 extern const base::Feature kTranslateCompactUI;
 
@@ -45,12 +50,22 @@ class TranslateInfoBarDelegate : public infobars::InfoBarDelegate {
                                         TranslateErrors::Type error_type) = 0;
     // Return whether user declined translate service.
     virtual bool IsDeclinedByUser() = 0;
+    // Called when the TranslateInfoBarDelegate instance is destroyed.
+    virtual void OnTranslateInfoBarDelegateDestroyed(
+        TranslateInfoBarDelegate* delegate) = 0;
 
    protected:
     virtual ~Observer() {}
   };
 
   static const size_t kNoIndex;
+
+  // Get the threshold and maximum number of occurences that parameterize
+  // automatic always- and never-translate.
+  static int GetAutoAlwaysThreshold();
+  static int GetAutoNeverThreshold();
+  static int GetMaximumNumberOfAutoAlways();
+  static int GetMaximumNumberOfAutoNever();
 
   ~TranslateInfoBarDelegate() override;
 
@@ -77,17 +92,13 @@ class TranslateInfoBarDelegate : public infobars::InfoBarDelegate {
                      bool triggered_from_menu);
 
   // Returns the number of languages supported.
-  size_t num_languages() const { return ui_delegate_.GetNumberOfLanguages(); }
+  virtual size_t num_languages() const;
 
   // Returns the ISO code for the language at |index|.
-  std::string language_code_at(size_t index) const {
-    return ui_delegate_.GetLanguageCodeAt(index);
-  }
+  virtual std::string language_code_at(size_t index) const;
 
   // Returns the displayable name for the language at |index|.
-  base::string16 language_name_at(size_t index) const {
-    return ui_delegate_.GetLanguageNameAt(index);
-  }
+  virtual base::string16 language_name_at(size_t index) const;
 
   translate::TranslateStep translate_step() const { return step_; }
 
@@ -99,9 +110,7 @@ class TranslateInfoBarDelegate : public infobars::InfoBarDelegate {
     return ui_delegate_.GetOriginalLanguageCode();
   }
 
-  base::string16 original_language_name() const {
-    return language_name_at(ui_delegate_.GetOriginalLanguageIndex());
-  }
+  virtual base::string16 original_language_name() const;
 
   void UpdateOriginalLanguage(const std::string& language_code);
 
@@ -156,13 +165,18 @@ class TranslateInfoBarDelegate : public infobars::InfoBarDelegate {
   void ResetTranslationAcceptedCount();
   void ResetTranslationDeniedCount();
 
-#if defined(OS_ANDROID)
+  // Returns whether "Always Translate Language" should automatically trigger.
+  // If true, this method has the side effect of mutating some prefs.
+  bool ShouldAutoAlwaysTranslate();
+  // Returns whether "Never Translate Language" should automatically trigger.
+  // If true, this method has the side effect of mutating some prefs.
+  bool ShouldAutoNeverTranslate();
+
   int GetTranslationAutoAlwaysCount();
   int GetTranslationAutoNeverCount();
 
   void IncrementTranslationAutoAlwaysCount();
   void IncrementTranslationAutoNeverCount();
-#endif
 
   // The following methods are called by the infobar that displays the status
   // while translating and also the one displaying the error message.

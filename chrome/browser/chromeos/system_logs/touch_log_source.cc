@@ -6,7 +6,7 @@
 
 #include <stddef.h>
 
-#include "ash/touch/touch_observer_hud.h"
+#include "ash/touch/touch_hud_debug.h"
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
@@ -128,7 +128,7 @@ void PackEventLog(system_logs::SystemLogsResponse* response,
   // Cleanup these temporary log files.
   base::PostTaskWithTraits(FROM_HERE,
                            {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
-                           base::Bind(CleanupEventLog, log_paths));
+                           base::BindOnce(CleanupEventLog, log_paths));
 }
 
 // Callback for handing the outcome of GetTouchEventLog().
@@ -175,7 +175,7 @@ void CollectTouchHudDebugLog(system_logs::SystemLogsResponse* response) {
     return;
   }
   std::unique_ptr<base::DictionaryValue> dictionary =
-      ash::TouchObserverHUD::GetAllAsDictionary();
+      ash::TouchHudDebug::GetAllAsDictionary();
   if (!dictionary->empty()) {
     std::string touch_log;
     JSONStringValueSerializer json(&touch_log);

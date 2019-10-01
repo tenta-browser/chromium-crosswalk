@@ -60,7 +60,7 @@ const SwitchAccessPredicate = {
     }
 
     // Check various indicators that the node is actionable.
-    if (role === RoleType.BUTTON)
+    if (role === RoleType.BUTTON || role === RoleType.SLIDER)
       return true;
 
     if (SwitchAccessPredicate.isTextInput(node))
@@ -81,10 +81,11 @@ const SwitchAccessPredicate = {
       return true;
     }
 
-    // Focusable items should be surfaced as either groups or actionable.
+    // Focusable items should be surfaced as either groups or actionable. So
+    // should menu items.
     // Current heuristic is to show as actionble any focusable item where no
     // child is an interesting subtree.
-    if (state[StateType.FOCUSABLE])
+    if (state[StateType.FOCUSABLE] || role === RoleType.MENU_ITEM)
       return !node.children.some(SwitchAccessPredicate.isInterestingSubtree);
 
     return false;
@@ -168,7 +169,7 @@ const SwitchAccessPredicate = {
    * @param {!chrome.automation.AutomationNode} node
    * @return {boolean}
    */
-  isSwitchAccessMenu: (node) => node.htmlAttributes.id === MenuManager.MenuId,
+  isSwitchAccessMenu: (node) => node.htmlAttributes.id === SAConstants.MENU_ID,
 
   /**
    * Returns a Restrictions object ready to be passed to AutomationTreeWalker.

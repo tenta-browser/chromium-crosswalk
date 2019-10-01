@@ -6,21 +6,22 @@
 
 #include <memory>
 
+#include "ash/public/cpp/app_types.h"
 #include "ash/public/cpp/ash_constants.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/public/cpp/window_properties.h"
 #include "ash/root_window_controller.h"
 #include "ash/scoped_animation_disabler.h"
-#include "ash/session/session_controller.h"
+#include "ash/screen_util.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shelf/shelf.h"
 #include "ash/shell.h"
 #include "ash/wm/splitview/split_view_controller.h"
-#include "ash/wm/widget_finder.h"
+#include "ash/wm/tablet_mode/tablet_mode_controller.h"
+#include "ash/wm/tablet_mode/tablet_mode_observer.h"
 #include "ash/wm/window_positioning_utils.h"
 #include "ash/wm/window_state.h"
 #include "ash/wm/wm_event.h"
-#include "ash/ws/window_service_owner.h"
-#include "services/ws/window_service.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/capture_client.h"
 #include "ui/aura/client/focus_client.h"
@@ -62,14 +63,6 @@ bool MoveWindowToRoot(aura::Window* window, aura::Window* root) {
   return true;
 }
 
-// Asks the remote client that owns |window| to close it. Returns true if there
-// was a remote client for |window|, false otherwise.
-bool AskRemoteClientToCloseWindow(aura::Window* window) {
-  ws::WindowService* window_service =
-      Shell::Get()->window_service_owner()->window_service();
-  return window_service && window_service->RequestClose(window);
-}
-
 // This window targeter reserves space for the portion of the resize handles
 // that extend within a top level window.
 class InteriorResizeHandleTargeter : public aura::WindowTargeter {
@@ -98,6 +91,10 @@ class InteriorResizeHandleTargeter : public aura::WindowTargeter {
   }
 
   bool ShouldUseExtendedBounds(const aura::Window* target) const override {
+    // Fullscreen/maximized windows can't be drag-resized.
+    const WindowState* window_state = GetWindowState(window());
+    if (window_state && window_state->IsMaximizedOrFullscreenOrPinned())
+      return false;
     // The shrunken hit region only applies to children of |window()|.
     return target->parent() == window();
   }
@@ -178,17 +175,18 @@ bool MoveWindowToDisplay(aura::Window* window, int64_t display_id) {
   DCHECK(window);
   WindowState* window_state = GetWindowState(window);
   if (window_state->allow_set_bounds_direct()) {
-    aura::Window* root = Shell::GetRootWindowForDisplayId(display_id);
-    if (root) {
-      gfx::Rect bounds = window->bounds();
-      MoveWindowToRoot(window, root);
-      // Client controlled won't update the bounds upon the root window
-      // Change. Explicitly update the bounds so that the client can
-      // make decision.
-      window->SetBounds(bounds);
-      return true;
-    }
-    return false;
+    display::Display display;
+    if (!display::Screen::GetScreen()->GetDisplayWithDisplayId(display_id,
+                                                               &display))
+      return false;
+    gfx::Rect bounds = window->bounds();
+    gfx::Rect work_area_in_display(display.size());
+    work_area_in_display.Inset(display.GetWorkAreaInsets());
+    wm::AdjustBoundsToEnsureMinimumWindowVisibility(work_area_in_display,
+                                                    &bounds);
+    wm::SetBoundsEvent event(bounds, display_id);
+    window_state->OnWMEvent(&event);
+    return true;
   }
   aura::Window* root = Shell::GetRootWindowForDisplayId(display_id);
   // Update restore bounds to target root window.
@@ -237,10 +235,7 @@ void SetChildrenUseExtendedHitRegionForWindow(aura::Window* window) {
 }
 
 void CloseWidgetForWindow(aura::Window* window) {
-  if (AskRemoteClientToCloseWindow(window))
-    return;
-
-  views::Widget* widget = GetInternalWidgetForWindow(window);
+  views::Widget* widget = views::Widget::GetWidgetForNativeView(window);
   DCHECK(widget);
   widget->Close();
 }
@@ -257,7 +252,7 @@ bool IsDraggingTabs(const aura::Window* window) {
   return window->GetProperty(ash::kIsDraggingTabsKey);
 }
 
-bool ShouldExcludeForBothCycleListAndOverview(const aura::Window* window) {
+bool ShouldExcludeForCycleList(const aura::Window* window) {
   // Exclude windows:
   // - non user positionable windows, such as extension popups.
   // - windows being dragged
@@ -266,38 +261,35 @@ bool ShouldExcludeForBothCycleListAndOverview(const aura::Window* window) {
   if (!state->IsUserPositionable() || state->is_dragged() || state->IsPip())
     return true;
 
-  return window->GetProperty(kHideInOverviewKey);
-}
-
-bool ShouldExcludeForCycleList(const aura::Window* window) {
   // Exclude the AppList window, which will hide as soon as cycling starts
   // anyway. It doesn't make sense to count it as a "switchable" window, yet
   // a lot of code relies on the MRU list returning the app window. If we
   // don't manually remove it, the window cycling UI won't crash or misbehave,
   // but there will be a flicker as the target window changes. Also exclude
   // unselectable windows such as extension popups.
-  // TODO(sammiequon): Investigate if this is needed.
   for (auto* parent = window->parent(); parent; parent = parent->parent()) {
     if (parent->id() == kShellWindowId_AppListContainer)
       return true;
   }
 
-  return ShouldExcludeForBothCycleListAndOverview(window);
+  return window->GetProperty(kHideInOverviewKey);
 }
 
 bool ShouldExcludeForOverview(const aura::Window* window) {
-  // Remove the default snapped window from the window list. The default
-  // snapped window occupies one side of the screen, while the other windows
-  // occupy the other side of the screen in overview mode. The default snap
-  // position is the position where the window was first snapped. See
-  // |default_snap_position_| in SplitViewController for more detail.
-  if (Shell::Get()->IsSplitViewModeActive() &&
-      window ==
-          Shell::Get()->split_view_controller()->GetDefaultSnappedWindow()) {
+  // If we're currently in tablet splitview, remove the default snapped window
+  // from the window list. The default snapped window occupies one side of the
+  // screen, while the other windows occupy the other side of the screen in
+  // overview mode. The default snap position is the position where the window
+  // was first snapped. See |default_snap_position_| in SplitViewController for
+  // more detail.
+  auto* split_view_controller = Shell::Get()->split_view_controller();
+  if (split_view_controller->InTabletSplitViewMode() &&
+      window == split_view_controller->GetDefaultSnappedWindow()) {
     return true;
   }
 
-  return ShouldExcludeForBothCycleListAndOverview(window);
+  // Remove everything cycle list should not have.
+  return ShouldExcludeForCycleList(window);
 }
 
 void RemoveTransientDescendants(std::vector<aura::Window*>* out_window_list) {
@@ -317,12 +309,14 @@ void HideAndMaybeMinimizeWithoutAnimation(std::vector<aura::Window*> windows,
   for (auto* window : windows) {
     ScopedAnimationDisabler disable(window);
 
-    // ARC windows are minimized asynchronously, so hide here now.
+    // ARC windows are minimized asynchronously, so we hide them after
+    // minimization. We minimize ARC windows first so they receive occlusion
+    // updates before losing focus from being hidden. See crbug.com/910304.
     // TODO(oshima): Investigate better way to handle ARC apps immediately.
-    window->Hide();
-
     if (minimize)
       wm::GetWindowState(window)->Minimize();
+
+    window->Hide();
   }
   if (windows.size()) {
     // Disable the animations using |disable|. However, doing so will skip

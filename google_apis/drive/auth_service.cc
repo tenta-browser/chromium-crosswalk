@@ -40,7 +40,7 @@ void RecordAuthResultHistogram(int value) {
 class AuthRequest {
  public:
   AuthRequest(identity::IdentityManager* identity_manager,
-              const std::string& account_id,
+              const CoreAccountId& account_id,
               scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
               const AuthStatusCallback& callback,
               const std::vector<std::string>& scopes);
@@ -59,7 +59,7 @@ class AuthRequest {
 
 AuthRequest::AuthRequest(
     identity::IdentityManager* identity_manager,
-    const std::string& account_id,
+    const CoreAccountId& account_id,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     const AuthStatusCallback& callback,
     const std::vector<std::string>& scopes)
@@ -112,7 +112,7 @@ void AuthRequest::OnAccessTokenFetchComplete(
 
 AuthService::AuthService(
     identity::IdentityManager* identity_manager,
-    const std::string& account_id,
+    const CoreAccountId& account_id,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     const std::vector<std::string>& scopes)
     : identity_manager_(identity_manager),
@@ -137,7 +137,7 @@ void AuthService::StartAuthentication(const AuthStatusCallback& callback) {
   if (HasAccessToken()) {
     // We already have access token. Give it back to the caller asynchronously.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(callback, HTTP_SUCCESS, access_token_));
+        FROM_HERE, base::BindOnce(callback, HTTP_SUCCESS, access_token_));
   } else if (HasRefreshToken()) {
     // We have refresh token, let's get an access token.
     new AuthRequest(identity_manager_, account_id_, url_loader_factory_,
@@ -146,7 +146,7 @@ void AuthService::StartAuthentication(const AuthStatusCallback& callback) {
                     scopes_);
   } else {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(callback, DRIVE_NOT_READY, std::string()));
+        FROM_HERE, base::BindOnce(callback, DRIVE_NOT_READY, std::string()));
   }
 }
 
@@ -201,13 +201,13 @@ void AuthService::RemoveObserver(AuthServiceObserver* observer) {
 }
 
 void AuthService::OnRefreshTokenUpdatedForAccount(
-    const AccountInfo& account_info) {
+    const CoreAccountInfo& account_info) {
   if (account_info.account_id == account_id_)
     OnHandleRefreshToken(true);
 }
 
 void AuthService::OnRefreshTokenRemovedForAccount(
-    const std::string& account_id) {
+    const CoreAccountId& account_id) {
   if (account_id == account_id_)
     OnHandleRefreshToken(false);
 }

@@ -17,6 +17,7 @@
 
 namespace gpu {
 
+class VulkanFenceHelper;
 class VulkanCommandPool;
 
 class VULKAN_EXPORT VulkanDeviceQueue {
@@ -36,7 +37,14 @@ class VULKAN_EXPORT VulkanDeviceQueue {
   bool Initialize(
       uint32_t options,
       const std::vector<const char*>& required_extensions,
-      const GetPresentationSupportCallback& get_presentation_support);
+      const GetPresentationSupportCallback& get_presentation_support,
+      bool use_swiftshader);
+
+  bool InitializeForWevbView(VkPhysicalDevice vk_physical_device,
+                             VkDevice vk_device,
+                             VkQueue vk_queue,
+                             uint32_t vk_queue_index,
+                             gfx::ExtensionSet enabled_extensions);
 
   const gfx::ExtensionSet& enabled_extensions() const {
     return enabled_extensions_;
@@ -48,6 +56,10 @@ class VULKAN_EXPORT VulkanDeviceQueue {
     DCHECK_NE(static_cast<VkPhysicalDevice>(VK_NULL_HANDLE),
               vk_physical_device_);
     return vk_physical_device_;
+  }
+
+  const VkPhysicalDeviceProperties& vk_physical_device_properties() const {
+    return vk_physical_device_properties_;
   }
 
   VkDevice GetVulkanDevice() const {
@@ -66,13 +78,18 @@ class VULKAN_EXPORT VulkanDeviceQueue {
 
   std::unique_ptr<gpu::VulkanCommandPool> CreateCommandPool();
 
+  VulkanFenceHelper* GetFenceHelper() const { return cleanup_helper_.get(); }
+
  private:
   gfx::ExtensionSet enabled_extensions_;
   VkPhysicalDevice vk_physical_device_ = VK_NULL_HANDLE;
+  VkPhysicalDeviceProperties vk_physical_device_properties_;
+  VkDevice owned_vk_device_ = VK_NULL_HANDLE;
   VkDevice vk_device_ = VK_NULL_HANDLE;
   VkQueue vk_queue_ = VK_NULL_HANDLE;
   uint32_t vk_queue_index_ = 0;
   const VkInstance vk_instance_;
+  std::unique_ptr<VulkanFenceHelper> cleanup_helper_;
 
   DISALLOW_COPY_AND_ASSIGN(VulkanDeviceQueue);
 };

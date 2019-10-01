@@ -10,9 +10,12 @@
 #include "third_party/blink/renderer/platform/heap/blink_gc.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
+#include "third_party/blink/renderer/platform/wtf/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/time.h"
 
 namespace blink {
+
+class UnifiedHeapController;
 
 // Manages counters and statistics across garbage collection cycles.
 //
@@ -23,6 +26,8 @@ namespace blink {
 //   stats_collector.NotifySweepingFinished();
 //   // Previous event is available using stats_collector.previous().
 class PLATFORM_EXPORT ThreadHeapStatsCollector {
+  USING_FAST_MALLOC(ThreadHeapStatsCollector);
+
  public:
   // These ids will form human readable names when used in Scopes.
   enum Id {
@@ -42,6 +47,8 @@ class PLATFORM_EXPORT ThreadHeapStatsCollector {
     kMarkProcessWorklist,
     kMarkNotFullyConstructedObjects,
     kMarkWeakProcessing,
+    kUnifiedMarkingAtomicPrologue,
+    kUnifiedMarkingStep,
     kVisitCrossThreadPersistents,
     kVisitDOMWrappers,
     kVisitPersistentRoots,
@@ -84,6 +91,10 @@ class PLATFORM_EXPORT ThreadHeapStatsCollector {
         return "BlinkGC.MarkProcessWorklist";
       case Id::kMarkWeakProcessing:
         return "BlinkGC.MarkWeakProcessing";
+      case kUnifiedMarkingAtomicPrologue:
+        return "BlinkGC.UnifiedMarkingAtomicPrologue";
+      case kUnifiedMarkingStep:
+        return "BlinkGC.UnifiedMarkingStep";
       case Id::kVisitCrossThreadPersistents:
         return "BlinkGC.VisitCrossThreadPersistents";
       case Id::kVisitDOMWrappers:
@@ -208,7 +219,7 @@ class PLATFORM_EXPORT ThreadHeapStatsCollector {
 
   // Indicates that marking of the current garbage collection cycle is
   // completed.
-  void NotifyMarkingCompleted();
+  void NotifyMarkingCompleted(size_t marked_bytes);
 
   // Indicates the end of a garbage collection cycle. This means that sweeping
   // is finished at this point.
@@ -220,7 +231,6 @@ class PLATFORM_EXPORT ThreadHeapStatsCollector {
   }
 
   void UpdateReason(BlinkGC::GCReason);
-  void IncreaseMarkedObjectSize(size_t);
   void IncreaseCompactionFreedSize(size_t);
   void IncreaseCompactionFreedPages(size_t);
   void IncreaseAllocatedObjectSize(size_t);
@@ -230,6 +240,12 @@ class PLATFORM_EXPORT ThreadHeapStatsCollector {
   void IncreaseWrapperCount(size_t);
   void DecreaseWrapperCount(size_t);
   void IncreaseCollectedWrapperCount(size_t);
+
+  // Called by the GC when it hits a point where allocated memory may be
+  // reported and garbage collection is possible. This is necessary, as
+  // increments and decrements are reported as close to their actual
+  // allocation/reclamation as possible.
+  void AllocatedObjectSizeSafepoint();
 
   // Size of objects on the heap. Based on marked bytes in the previous cycle
   // and newly allocated bytes since the previous cycle.
@@ -241,7 +257,8 @@ class PLATFORM_EXPORT ThreadHeapStatsCollector {
   double estimated_marking_time_in_seconds() const;
   TimeDelta estimated_marking_time() const;
 
-  size_t allocated_bytes_since_prev_gc() const;
+  size_t marked_bytes() const;
+  int64_t allocated_bytes_since_prev_gc() const;
 
   size_t allocated_space_bytes() const;
 
@@ -257,6 +274,10 @@ class PLATFORM_EXPORT ThreadHeapStatsCollector {
     return TimeDelta::FromMilliseconds(current_.marking_time_in_ms());
   }
 
+  void SetUnifiedHeapController(UnifiedHeapController* controller) {
+    unified_heap_controller_ = controller;
+  }
+
  private:
   // Statistics for the currently running garbage collection. Note that the
   // Event may not be fully populated yet as some phase may not have been run.
@@ -266,9 +287,8 @@ class PLATFORM_EXPORT ThreadHeapStatsCollector {
   Event previous_;
 
   // Allocated bytes since the last garbage collection. These bytes are reset
-  // after marking as they should be accounted in marked_bytes then (which are
-  // only available after sweeping though).
-  size_t allocated_bytes_since_prev_gc_ = 0;
+  // after marking as they are accounted in marked_bytes then.
+  int64_t allocated_bytes_since_prev_gc_ = 0;
 
   // Allocated space in bytes for all arenas.
   size_t allocated_space_bytes_ = 0;
@@ -281,6 +301,10 @@ class PLATFORM_EXPORT ThreadHeapStatsCollector {
   // TimeDelta for RawScope. These don't need to be nested within a garbage
   // collection cycle to make them easier to use.
   TimeDelta gc_nested_in_v8_;
+
+  // Unified heap observes interesting statistics and forwards them to V8 after
+  // some aggregation.
+  UnifiedHeapController* unified_heap_controller_ = nullptr;
 
   FRIEND_TEST_ALL_PREFIXES(ThreadHeapStatsCollectorTest, InitialEmpty);
   FRIEND_TEST_ALL_PREFIXES(ThreadHeapStatsCollectorTest, IncreaseScopeTime);

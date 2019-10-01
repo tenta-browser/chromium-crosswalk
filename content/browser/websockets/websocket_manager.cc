@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/feature_list.h"
 #include "base/logging.h"
@@ -56,13 +57,14 @@ class WebSocketManager::Delegate final : public network::WebSocket::Delegate {
       const GURL& url,
       int child_id,
       int frame_id,
+      int net_error,
       const net::SSLInfo& ssl_info,
       bool fatal) override {
     ssl_error_handler_delegate_ =
         std::make_unique<SSLErrorHandlerDelegate>(std::move(callbacks));
     SSLManager::OnSSLCertificateSubresourceError(
         ssl_error_handler_delegate_->GetWeakPtr(), url, child_id, frame_id,
-        ssl_info, fatal);
+        net_error, ssl_info, fatal);
   }
 
   void ReportBadMessage(BadMessageReason reason,
@@ -165,7 +167,9 @@ void WebSocketManager::CreateWebSocket(
     int process_id,
     int frame_id,
     url::Origin origin,
+    uint32_t options,
     network::mojom::AuthenticationHandlerPtr auth_handler,
+    network::mojom::TrustedHeaderClientPtr header_client,
     network::mojom::WebSocketRequest request) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
 
@@ -177,11 +181,14 @@ void WebSocketManager::CreateWebSocket(
     network::mojom::NetworkContext* network_context =
         storage_partition->GetNetworkContext();
     network_context->CreateWebSocket(std::move(request), process_id, frame_id,
-                                     origin, std::move(auth_handler));
+                                     origin, options, std::move(auth_handler),
+                                     std::move(header_client));
     return;
   }
-  // |auth_handler| is provided only for the network service path.
+  // |auth_handler| and |header_client| are provided only for the network
+  // service path.
   DCHECK(!auth_handler);
+  DCHECK(!header_client);
 
   // Maintain a WebSocketManager per RenderProcessHost. While the instance of
   // WebSocketManager is allocated on the UI thread, it must only be used and
@@ -202,7 +209,7 @@ void WebSocketManager::CreateWebSocket(
       FROM_HERE, {BrowserThread::IO},
       base::BindOnce(&WebSocketManager::DoCreateWebSocket,
                      base::Unretained(handle->manager()), frame_id,
-                     std::move(origin), std::move(request)));
+                     std::move(origin), options, std::move(request)));
 }
 
 WebSocketManager::WebSocketManager(int process_id,
@@ -235,6 +242,7 @@ WebSocketManager::~WebSocketManager() {
 void WebSocketManager::DoCreateWebSocket(
     int frame_id,
     url::Origin origin,
+    uint32_t options,
     network::mojom::WebSocketRequest request) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
 
@@ -259,7 +267,7 @@ void WebSocketManager::DoCreateWebSocket(
   impls_.insert(DoCreateWebSocketInternal(
       std::make_unique<Delegate>(this), std::move(request),
       throttler_.IssuePendingConnectionTracker(), process_id_, frame_id,
-      std::move(origin), throttler_.CalculateDelay()));
+      std::move(origin), options, throttler_.CalculateDelay()));
 
   if (!throttling_period_timer_.IsRunning()) {
     throttling_period_timer_.Start(
@@ -283,11 +291,12 @@ std::unique_ptr<network::WebSocket> WebSocketManager::DoCreateWebSocketInternal(
     int child_id,
     int frame_id,
     url::Origin origin,
+    uint32_t options,
     base::TimeDelta delay) {
   return std::make_unique<network::WebSocket>(
-      std::move(delegate), std::move(request), nullptr,
+      std::move(delegate), std::move(request), nullptr, nullptr,
       std::move(pending_connection_tracker), child_id, frame_id,
-      std::move(origin), delay);
+      std::move(origin), options, delay);
 }
 
 net::URLRequestContext* WebSocketManager::GetURLRequestContext() {

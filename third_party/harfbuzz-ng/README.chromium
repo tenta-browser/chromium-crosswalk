@@ -1,9 +1,9 @@
 Name: harfbuzz-ng
 Short Name: harfbuzz-ng
 URL: http://harfbuzz.org
-Version: 2.3.0-181
-Date: 20190129
-Revision: fe532923101586e316b300d419a337d357cd93da
+Version: 2.4.0-721
+Date: 20190514
+Revision: c73d7ba75d4556d9b8e05b10d6572f74f4814f7a
 Security Critical: yes
 License: MIT
 License File: src/COPYING
@@ -41,20 +41,10 @@ on HarfBuzz' built-in AAT shaping.
     hb-directwrite.cc
     hb-directwrite.h
     hb-fallback-shape.cc
-    hb-iter-private.hh
-    hb-machinery-private.hh
-    hb-map-private.hh
-    hb-map.cc
-    hb-map.h
     hb-null.hh
     hb-ot-color-sbix-table.hh
     hb-ot-color-svg-table.hh
     hb-ot-color.cc
-    hb-subset-glyf.cc
-    hb-subset-input.cc
-    hb-subset-plan.cc
-    hb-subset.cc
     hb-uniscribe.cc
     hb-uniscribe.h
-    hb-vector-private.hh
     test-unicode-ranges.cc

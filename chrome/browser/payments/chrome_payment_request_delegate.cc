@@ -22,9 +22,9 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/web_data_service_factory.h"
 #include "components/autofill/core/browser/address_normalizer_impl.h"
+#include "components/autofill/core/browser/geo/region_data_loader_impl.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
-#include "components/autofill/core/browser/region_combobox_model.h"
-#include "components/autofill/core/browser/region_data_loader_impl.h"
+#include "components/autofill/core/browser/ui/region_combobox_model.h"
 #include "components/keyed_service/core/service_access_type.h"
 #include "components/payments/content/payment_manifest_web_data_service.h"
 #include "components/payments/content/payment_request.h"
@@ -105,7 +105,7 @@ const std::string& ChromePaymentRequestDelegate::GetApplicationLocale() const {
 bool ChromePaymentRequestDelegate::IsIncognito() const {
   Profile* profile =
       Profile::FromBrowserContext(web_contents_->GetBrowserContext());
-  return profile && profile->GetProfileType() == Profile::INCOGNITO_PROFILE;
+  return profile && profile->IsIncognitoProfile();
 }
 
 bool ChromePaymentRequestDelegate::IsSslCertificateValid() {
@@ -188,6 +188,10 @@ void ChromePaymentRequestDelegate::EmbedPaymentHandlerWindow(
                             /*render_process_id=*/0,
                             /*render_frame_id=*/0);
   }
+}
+
+bool ChromePaymentRequestDelegate::IsInteractive() const {
+  return shown_dialog_ && shown_dialog_->IsInteractive();
 }
 
 }  // namespace payments

@@ -68,7 +68,16 @@ gpu::CommandBufferStub* GetCommandBufferStub(
   if (!channel)
     return nullptr;
 
-  return channel->LookupCommandBuffer(route_id);
+  gpu::CommandBufferStub* stub = channel->LookupCommandBuffer(route_id);
+  if (!stub)
+    return nullptr;
+
+  // Only allow stubs that have a ContextGroup, that is, the GLES2 ones. Later
+  // code assumes the ContextGroup is valid.
+  if (!stub->decoder_context()->GetContextGroup())
+    return nullptr;
+
+  return stub;
 }
 #endif
 
@@ -112,9 +121,35 @@ std::unique_ptr<AudioDecoder> GpuMojoMediaClient::CreateAudioDecoder(
 #endif  // defined(OS_ANDROID)
 }
 
-std::vector<SupportedVideoDecoderConfig>
+SupportedVideoDecoderConfigMap
 GpuMojoMediaClient::GetSupportedVideoDecoderConfigs() {
-  // TODO(liberato): Implement for D3D11VideoDecoder and MediaCodecVideoDecoder.
+#if defined(OS_ANDROID)
+  static SupportedVideoDecoderConfigMap supported_configs{
+      {VideoDecoderImplementation::kDefault,
+       MediaCodecVideoDecoder::GetSupportedConfigs()},
+  };
+  return supported_configs;
+#else
+  SupportedVideoDecoderConfigMap supported_config_map;
+
+#if defined(OS_WIN)
+  // Start with the configurations supported by D3D11VideoDecoder.
+  // VdaVideoDecoder is still used as a fallback.
+  if (!d3d11_supported_configs_) {
+    d3d11_supported_configs_ =
+        D3D11VideoDecoder::GetSupportedVideoDecoderConfigs(
+            gpu_preferences_, gpu_workarounds_, GetD3D11DeviceCallback());
+  }
+  supported_config_map[VideoDecoderImplementation::kAlternate] =
+      *d3d11_supported_configs_;
+#endif
+
+  auto& default_configs =
+      supported_config_map[VideoDecoderImplementation::kDefault];
+
+  // VdaVideoDecoder will be used to wrap a VDA. Add the configs supported
+  // by the VDA implementation.
+  // TODO(sandersd): Move conversion code into VdaVideoDecoder.
   VideoDecodeAccelerator::Capabilities capabilities =
       GpuVideoAcceleratorUtil::ConvertGpuToMediaDecodeCapabilities(
           GpuVideoDecodeAcceleratorFactory::GetDecoderCapabilities(
@@ -122,23 +157,8 @@ GpuMojoMediaClient::GetSupportedVideoDecoderConfigs() {
   bool allow_encrypted =
       capabilities.flags &
       VideoDecodeAccelerator::Capabilities::SUPPORTS_ENCRYPTED_STREAMS;
-
-  std::vector<SupportedVideoDecoderConfig> supported_configs;
-
-#if defined(OS_ANDROID)
-  // TODO(liberato): Add MCVD.
-#elif defined(OS_WIN)
-  if (!d3d11_supported_configs_) {
-    d3d11_supported_configs_ =
-        D3D11VideoDecoder::GetSupportedVideoDecoderConfigs(
-            gpu_preferences_, gpu_workarounds_, GetD3D11DeviceCallback());
-  }
-  supported_configs = *d3d11_supported_configs_;
-#endif
-
-  // Merge the VDA supported profiles.
   for (const auto& supported_profile : capabilities.supported_profiles) {
-    supported_configs.push_back(SupportedVideoDecoderConfig(
+    default_configs.push_back(SupportedVideoDecoderConfig(
         supported_profile.profile,           // profile_min
         supported_profile.profile,           // profile_max
         supported_profile.min_resolution,    // coded_size_min
@@ -146,61 +166,70 @@ GpuMojoMediaClient::GetSupportedVideoDecoderConfigs() {
         allow_encrypted,                     // allow_encrypted
         supported_profile.encrypted_only));  // require_encrypted
   }
-  return supported_configs;
+
+  return supported_config_map;
+#endif  // defined(OS_ANDROID)
 }
 
 std::unique_ptr<VideoDecoder> GpuMojoMediaClient::CreateVideoDecoder(
     scoped_refptr<base::SingleThreadTaskRunner> task_runner,
     MediaLog* media_log,
     mojom::CommandBufferIdPtr command_buffer_id,
+    VideoDecoderImplementation implementation,
     RequestOverlayInfoCB request_overlay_info_cb,
     const gfx::ColorSpace& target_color_space) {
   // All implementations require a command buffer.
   if (!command_buffer_id)
     return nullptr;
 
+  std::unique_ptr<VideoDecoder> video_decoder;
+
+  switch (implementation) {
+    case VideoDecoderImplementation::kDefault: {
 #if defined(OS_ANDROID)
   auto get_stub_cb =
       base::Bind(&GetCommandBufferStub, media_gpu_channel_manager_,
                  command_buffer_id->channel_token, command_buffer_id->route_id);
-  return std::make_unique<MediaCodecVideoDecoder>(
+  video_decoder = std::make_unique<MediaCodecVideoDecoder>(
       gpu_preferences_, gpu_feature_info_, DeviceInfo::GetInstance(),
       CodecAllocator::GetInstance(gpu_task_runner_),
       std::make_unique<AndroidVideoSurfaceChooserImpl>(
           DeviceInfo::GetInstance()->IsSetOutputSurfaceSupported()),
       android_overlay_factory_cb_, std::move(request_overlay_info_cb),
-      std::make_unique<VideoFrameFactoryImpl>(gpu_task_runner_,
-                                              std::move(get_stub_cb)));
+      std::make_unique<VideoFrameFactoryImpl>(
+          gpu_task_runner_, std::move(get_stub_cb), gpu_preferences_));
 #elif defined(OS_CHROMEOS) || defined(OS_MACOSX) || defined(OS_WIN) || \
     defined(OS_LINUX)
-  std::unique_ptr<VideoDecoder> vda_video_decoder = VdaVideoDecoder::Create(
-      task_runner, gpu_task_runner_, media_log->Clone(), target_color_space,
-      gpu_preferences_, gpu_workarounds_,
-      base::BindRepeating(&GetCommandBufferStub, media_gpu_channel_manager_,
-                          command_buffer_id->channel_token,
-                          command_buffer_id->route_id));
+      video_decoder = VdaVideoDecoder::Create(
+          task_runner, gpu_task_runner_, media_log->Clone(), target_color_space,
+          gpu_preferences_, gpu_workarounds_,
+          base::BindRepeating(&GetCommandBufferStub, media_gpu_channel_manager_,
+                              command_buffer_id->channel_token,
+                              command_buffer_id->route_id));
+#endif  // defined(OS_ANDROID)
+    } break;
+
+    case VideoDecoderImplementation::kAlternate:
 #if defined(OS_WIN)
   if (base::FeatureList::IsEnabled(kD3D11VideoDecoder)) {
     // If nothing has cached the configs yet, then do so now.
     if (!d3d11_supported_configs_)
       GetSupportedVideoDecoderConfigs();
 
-    std::unique_ptr<VideoDecoder> d3d11_video_decoder =
-        D3D11VideoDecoder::Create(
-            gpu_task_runner_, media_log->Clone(), gpu_preferences_,
-            gpu_workarounds_,
-            base::BindRepeating(
-                &GetCommandBufferStub, media_gpu_channel_manager_,
-                command_buffer_id->channel_token, command_buffer_id->route_id),
-            GetD3D11DeviceCallback(), *d3d11_supported_configs_);
-    return base::WrapUnique<VideoDecoder>(new FallbackVideoDecoder(
-        std::move(d3d11_video_decoder), std::move(vda_video_decoder)));
+    video_decoder = D3D11VideoDecoder::Create(
+        gpu_task_runner_, media_log->Clone(), gpu_preferences_,
+        gpu_workarounds_,
+        base::BindRepeating(&GetCommandBufferStub, media_gpu_channel_manager_,
+                            command_buffer_id->channel_token,
+                            command_buffer_id->route_id),
+        GetD3D11DeviceCallback(), *d3d11_supported_configs_);
   }
 #endif  // defined(OS_WIN)
-  return vda_video_decoder;
-#else
-  return nullptr;
-#endif  // defined(OS_ANDROID)
+  break;
+  };  // switch
+
+  // |video_decoder| may be null if we don't support |implementation|.
+  return video_decoder;
 }
 
 std::unique_ptr<CdmFactory> GpuMojoMediaClient::CreateCdmFactory(

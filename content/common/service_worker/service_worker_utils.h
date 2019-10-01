@@ -25,10 +25,7 @@ namespace content {
 
 class ServiceWorkerUtils {
  public:
-
-  static bool IsMainResourceType(ResourceType type) {
-    return IsResourceTypeFrame(type) || type == RESOURCE_TYPE_SHARED_WORKER;
-  }
+  static bool IsMainResourceType(ResourceType type);
 
   // Returns true if |scope| matches |url|.
   CONTENT_EXPORT static bool ScopeMatches(const GURL& scope, const GURL& url);
@@ -61,11 +58,6 @@ class ServiceWorkerUtils {
   CONTENT_EXPORT static bool AllOriginsMatchAndCanAccessServiceWorkers(
       const std::vector<GURL>& urls);
 
-  // Returns true if the |provider_id| was assigned by the browser process.
-  static bool IsBrowserAssignedProviderId(int provider_id) {
-    return provider_id < kInvalidServiceWorkerProviderId;
-  }
-
   template <typename T>
   static std::string MojoEnumToString(T mojo_enum) {
     std::ostringstream oss;
@@ -76,6 +68,12 @@ class ServiceWorkerUtils {
   static bool ShouldBypassCacheDueToUpdateViaCache(
       bool is_main_script,
       blink::mojom::ServiceWorkerUpdateViaCache cache_mode);
+
+  static bool ShouldValidateBrowserCacheForScript(
+      bool is_main_script,
+      bool force_bypass_cache,
+      blink::mojom::ServiceWorkerUpdateViaCache cache_mode,
+      base::TimeDelta time_since_last_check);
 
   // Converts an enum defined in net/base/load_flags.h to
   // blink::mojom::FetchCacheMode.
@@ -90,6 +88,25 @@ class ServiceWorkerUtils {
 
   CONTENT_EXPORT static const char* FetchResponseSourceToSuffix(
       network::mojom::FetchResponseSource source);
+
+  struct CONTENT_EXPORT ResourceResponseHeadAndMetadata {
+    ResourceResponseHeadAndMetadata(network::ResourceResponseHead head,
+                                    std::vector<uint8_t> metadata);
+    ResourceResponseHeadAndMetadata(ResourceResponseHeadAndMetadata&& other);
+    ResourceResponseHeadAndMetadata(
+        const ResourceResponseHeadAndMetadata& other) = delete;
+    ~ResourceResponseHeadAndMetadata();
+
+    network::ResourceResponseHead head;
+    std::vector<uint8_t> metadata;
+  };
+
+  CONTENT_EXPORT static ResourceResponseHeadAndMetadata
+  CreateResourceResponseHeadAndMetadata(const net::HttpResponseInfo* http_info,
+                                        uint32_t options,
+                                        base::TimeTicks request_start_time,
+                                        base::TimeTicks response_start_time,
+                                        int response_data_size);
 
  private:
   static bool IsPathRestrictionSatisfiedInternal(

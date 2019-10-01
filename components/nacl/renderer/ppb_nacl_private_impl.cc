@@ -427,7 +427,8 @@ void PPBNaClPrivate::LaunchSelLdr(
   InstanceInfo instance_info;
   instance_info.url = GURL(alleged_url);
 
-  uint32_t perm_bits = ppapi::PERMISSION_NONE;
+  // Keep backwards-compatible, but no other permissions.
+  uint32_t perm_bits = ppapi::PERMISSION_DEFAULT;
   instance_info.permissions =
       ppapi::PpapiPermissions::GetForCommandLine(perm_bits);
 
@@ -486,10 +487,6 @@ void PPBNaClPrivate::LaunchSelLdr(
     // Even on error, some FDs/handles may be passed to here.
     // We must release those resources.
     // See also nacl_process_host.cc.
-    if (base::SharedMemory::IsHandleValid(
-            launch_result.crash_info_shmem_handle))
-      base::SharedMemory::CloseHandle(launch_result.crash_info_shmem_handle);
-
     if (PP_ToBool(main_service_runtime)) {
       load_manager->ReportLoadError(PP_NACL_ERROR_SEL_LDR_LAUNCH,
                                     "ServiceRuntime: failed to start",
@@ -526,8 +523,8 @@ void PPBNaClPrivate::LaunchSelLdr(
   }
 
   // Store the crash information shared memory handle.
-  load_manager->set_crash_info_shmem_handle(
-      launch_result.crash_info_shmem_handle);
+  load_manager->set_crash_info_shmem_region(
+      std::move(launch_result.crash_info_shmem_region));
 
   // Create the trusted plugin channel.
   if (!IsValidChannelHandle(launch_result.trusted_ipc_channel_handle)) {
@@ -1246,7 +1243,7 @@ PP_Bool PPBNaClPrivate::GetPnaclResourceInfo(PP_Instance instance,
   int json_read_error_code;
   std::string json_read_error_msg;
   std::unique_ptr<base::DictionaryValue> json_dict(
-      base::DictionaryValue::From(json_reader.ReadAndReturnError(
+      base::DictionaryValue::From(json_reader.ReadAndReturnErrorDeprecated(
           buffer.get(), base::JSON_PARSE_RFC, &json_read_error_code,
           &json_read_error_msg)));
   if (!json_dict) {
@@ -1737,7 +1734,7 @@ void PPBNaClPrivate::StreamPexe(PP_Instance instance,
   blink::WebURLRequest url_request = CreateWebURLRequest(document, gurl);
   // Mark the request as requesting a PNaCl bitcode file,
   // so that component updater can detect this user action.
-  url_request.AddHTTPHeaderField(
+  url_request.AddHttpHeaderField(
       blink::WebString::FromUTF8("Accept"),
       blink::WebString::FromUTF8("application/x-pnacl, */*"));
   url_request.SetRequestContext(blink::mojom::RequestContextType::OBJECT);

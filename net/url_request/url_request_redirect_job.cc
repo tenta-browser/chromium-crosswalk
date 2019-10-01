@@ -66,8 +66,8 @@ void URLRequestRedirectJob::Start() {
       NetLogEventType::URL_REQUEST_REDIRECT_JOB,
       NetLog::StringCallback("reason", &redirect_reason_));
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&URLRequestRedirectJob::StartAsync,
-                            weak_factory_.GetWeakPtr()));
+      FROM_HERE, base::BindOnce(&URLRequestRedirectJob::StartAsync,
+                                weak_factory_.GetWeakPtr()));
 }
 
 void URLRequestRedirectJob::Kill() {
@@ -111,10 +111,9 @@ void URLRequestRedirectJob::StartAsync() {
         http_origin.c_str());
   }
 
-  fake_headers_ = new HttpResponseHeaders(
-      HttpUtil::AssembleRawHeaders(header_string.c_str(),
-                                   header_string.length()));
-  DCHECK(fake_headers_->IsRedirect(NULL));
+  fake_headers_ = base::MakeRefCounted<HttpResponseHeaders>(
+      HttpUtil::AssembleRawHeaders(header_string));
+  DCHECK(fake_headers_->IsRedirect(nullptr));
 
   request()->net_log().AddEvent(
       NetLogEventType::URL_REQUEST_FAKE_RESPONSE_HEADERS_CREATED,

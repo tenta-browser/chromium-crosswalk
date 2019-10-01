@@ -61,8 +61,8 @@ class ResponderThunk : public MessageReceiverWithStatus {
         }
       } else {
         task_runner_->PostTask(
-            FROM_HERE,
-            base::Bind(&InterfaceEndpointClient::RaiseError, endpoint_client_));
+            FROM_HERE, base::BindOnce(&InterfaceEndpointClient::RaiseError,
+                                      endpoint_client_));
       }
     }
   }
@@ -141,7 +141,8 @@ InterfaceEndpointClient::InterfaceEndpointClient(
     std::unique_ptr<MessageReceiver> payload_validator,
     bool expect_sync_requests,
     scoped_refptr<base::SequencedTaskRunner> runner,
-    uint32_t interface_version)
+    uint32_t interface_version,
+    const char* interface_name)
     : expect_sync_requests_(expect_sync_requests),
       handle_(std::move(handle)),
       incoming_receiver_(receiver),
@@ -150,6 +151,7 @@ InterfaceEndpointClient::InterfaceEndpointClient(
       task_runner_(std::move(runner)),
       control_message_proxy_(this),
       control_message_handler_(interface_version),
+      interface_name_(interface_name),
       weak_ptr_factory_(this) {
   DCHECK(handle_.is_valid());
 
@@ -239,6 +241,12 @@ bool InterfaceEndpointClient::Accept(Message* message) {
 
   InitControllerIfNecessary();
 
+#if DCHECK_IS_ON()
+  // TODO(https://crbug.com/695289): Send |next_call_location_| in a control
+  // message before calling |SendMessage()| below.
+#endif
+
+  message->set_heap_profiler_tag(interface_name_);
   return controller_->SendMessage(message);
 }
 
@@ -264,6 +272,12 @@ bool InterfaceEndpointClient::AcceptWithResponder(
     request_id = next_request_id_++;
 
   message->set_request_id(request_id);
+  message->set_heap_profiler_tag(interface_name_);
+
+#if DCHECK_IS_ON()
+  // TODO(https://crbug.com/695289): Send |next_call_location_| in a control
+  // message before calling |SendMessage()| below.
+#endif
 
   bool is_sync = message->has_flag(Message::kFlagIsSync);
   if (!controller_->SendMessage(message))
@@ -368,9 +382,9 @@ void InterfaceEndpointClient::OnAssociationEvent(
   } else if (event ==
              ScopedInterfaceEndpointHandle::PEER_CLOSED_BEFORE_ASSOCIATION) {
     task_runner_->PostTask(FROM_HERE,
-                           base::Bind(&InterfaceEndpointClient::NotifyError,
-                                      weak_ptr_factory_.GetWeakPtr(),
-                                      handle_.disconnect_reason()));
+                           base::BindOnce(&InterfaceEndpointClient::NotifyError,
+                                          weak_ptr_factory_.GetWeakPtr(),
+                                          handle_.disconnect_reason()));
   }
 }
 

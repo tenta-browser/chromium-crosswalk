@@ -50,6 +50,11 @@ class StubWebView : public WebView {
                                const base::ListValue& args,
                                const base::TimeDelta& timeout,
                                std::unique_ptr<base::Value>* result) override;
+  Status CallUserSyncFunction(const std::string& frame,
+                              const std::string& function,
+                              const base::ListValue& args,
+                              const base::TimeDelta& timeout,
+                              std::unique_ptr<base::Value>* result) override;
   Status GetFrameByFunction(const std::string& frame,
                             const std::string& function,
                             const base::ListValue& args,
@@ -88,7 +93,8 @@ class StubWebView : public WebView {
       const base::DictionaryValue& params) override;
   Status SetFileInputFiles(const std::string& frame,
                            const base::DictionaryValue& element,
-                           const std::vector<base::FilePath>& files) override;
+                           const std::vector<base::FilePath>& files,
+                           const bool append) override;
   Status TakeHeapSnapshot(std::unique_ptr<base::Value>* snapshot) override;
   Status StartProfile() override;
   Status EndProfile(std::unique_ptr<base::Value>* profile_data) override;

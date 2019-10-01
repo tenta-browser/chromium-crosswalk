@@ -34,14 +34,16 @@
 #include "base/macros.h"
 #include "base/optional.h"
 #include "base/unguessable_token.h"
+#include "third_party/blink/public/mojom/frame/lifecycle.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/sanitize_script_errors.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_notifier.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
-#include "third_party/blink/renderer/core/execution_context/pause_state.h"
-#include "third_party/blink/renderer/core/loader/console_logger_impl_base.h"
+#include "third_party/blink/renderer/core/execution_context/context_lifecycle_notifier.h"
+#include "third_party/blink/renderer/core/execution_context/context_lifecycle_observer.h"
+#include "third_party/blink/renderer/core/frame/use_counter.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/loader/fetch/console_logger.h"
 #include "third_party/blink/renderer/platform/loader/fetch/https_state.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/supplementable.h"
 #include "v8/include/v8.h"
 
@@ -61,6 +63,14 @@ enum class ReferrerPolicy : int32_t;
 
 namespace blink {
 
+namespace mojom {
+namespace blink {
+class DocumentInterfaceBroker;
+}  // namespace blink
+}  // namespace mojom
+
+class Agent;
+class ConsoleMessage;
 class ContentSecurityPolicy;
 class ContentSecurityPolicyDelegate;
 class CoreProbeSink;
@@ -71,14 +81,14 @@ class FrameOrWorkerScheduler;
 class InterfaceInvalidator;
 class KURL;
 class LocalDOMWindow;
-class PausableObject;
 class PublicURLManager;
 class ResourceFetcher;
 class SecurityContext;
 class SecurityOrigin;
 class ScriptState;
+class TrustedTypePolicyFactory;
 
-enum class TaskType : unsigned;
+enum class TaskType : unsigned char;
 
 enum ReasonForCallingCanExecuteScripts {
   kAboutToExecuteScript,
@@ -111,7 +121,9 @@ enum class SecureContextMode { kInsecureContext, kSecureContext };
 // in common.
 class CORE_EXPORT ExecutionContext : public ContextLifecycleNotifier,
                                      public Supplementable<ExecutionContext>,
-                                     public ConsoleLoggerImplBase {
+                                     public ConsoleLogger,
+                                     public UseCounter,
+                                     public FeatureContext {
   MERGE_GARBAGE_COLLECTED_MIXINS();
 
  public:
@@ -177,6 +189,7 @@ class CORE_EXPORT ExecutionContext : public ContextLifecycleNotifier,
   virtual ResourceFetcher* Fetcher() const = 0;
 
   virtual SecurityContext& GetSecurityContext() = 0;
+  virtual const SecurityContext& GetSecurityContext() const = 0;
 
   // https://tc39.github.io/ecma262/#sec-agent-clusters
   virtual const base::UnguessableToken& GetAgentClusterID() const = 0;
@@ -197,28 +210,33 @@ class CORE_EXPORT ExecutionContext : public ContextLifecycleNotifier,
 
   virtual void RemoveURLFromMemoryCache(const KURL&);
 
-  void PausePausableObjects(PauseState);
-  void UnpausePausableObjects();
-  void StopPausableObjects();
+  void SetLifecycleState(mojom::FrameLifecycleState);
   void NotifyContextDestroyed() override;
 
-  void PauseScheduledTasks(PauseState);
-  void UnpauseScheduledTasks();
+  // FeatureContext override
+  bool FeatureEnabled(OriginTrialFeature) const override;
+
+  using ConsoleLogger::AddConsoleMessage;
+
+  void AddConsoleMessage(ConsoleMessage* message,
+                         bool discard_duplicates = false) {
+    AddConsoleMessageImpl(message, discard_duplicates);
+  }
 
   // TODO(haraken): Remove these methods by making the customers inherit from
-  // PausableObject. PausableObject is a standard way to observe context
-  // suspension/resumption.
+  // ContextLifecycleObserver. ContextLifecycleObserver is a standard way to
+  // observe context suspension/resumption.
   virtual bool TasksNeedPause() { return false; }
   virtual void TasksWerePaused() {}
   virtual void TasksWereUnpaused() {}
 
-  bool IsContextPaused() const { return pause_state_.has_value(); }
+  bool IsContextPaused() const {
+    return lifecycle_state_ != mojom::FrameLifecycleState::kRunning;
+  }
   bool IsContextDestroyed() const { return is_context_destroyed_; }
-  base::Optional<PauseState> ContextPauseState() const { return pause_state_; }
-
-  // Called after the construction of an PausableObject to synchronize
-  // pause state.
-  void PausePausableObjectIfNeeded(PausableObject*);
+  mojom::FrameLifecycleState ContextPauseState() const {
+    return lifecycle_state_;
+  }
 
   // Gets the next id in a circular sequence from 1 to 2^31-1.
   int CircularSequentialID();
@@ -267,6 +285,10 @@ class CORE_EXPORT ExecutionContext : public ContextLifecycleNotifier,
     return nullptr;
   }
 
+  virtual mojom::blink::DocumentInterfaceBroker* GetDocumentInterfaceBroker() {
+    return nullptr;
+  }
+
   virtual FrameOrWorkerScheduler* GetScheduler() = 0;
   virtual scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner(
       TaskType) = 0;
@@ -274,12 +296,31 @@ class CORE_EXPORT ExecutionContext : public ContextLifecycleNotifier,
   InterfaceInvalidator* GetInterfaceInvalidator() { return invalidator_.get(); }
 
   v8::Isolate* GetIsolate() const { return isolate_; }
+  Agent* GetAgent() const { return agent_; }
+
+  virtual TrustedTypePolicyFactory* GetTrustedTypes() const { return nullptr; }
+
+  bool RequireTrustedTypes() const;
 
  protected:
-  explicit ExecutionContext(v8::Isolate* isolate);
+  explicit ExecutionContext(v8::Isolate* isolate, Agent* agent);
   ~ExecutionContext() override;
 
+  void SetAgent(Agent* agent) {
+    DCHECK(agent);
+    agent_ = agent;
+  }
+
  private:
+  // ConsoleLogger implementation.
+  void AddConsoleMessageImpl(mojom::ConsoleMessageSource,
+                             mojom::ConsoleMessageLevel,
+                             const String& message,
+                             bool discard_duplicates) final;
+
+  virtual void AddConsoleMessageImpl(ConsoleMessage*,
+                                     bool discard_duplicates) = 0;
+
   v8::Isolate* const isolate_;
 
   bool DispatchErrorEventInternal(ErrorEvent*, SanitizeScriptErrors);
@@ -289,12 +330,15 @@ class CORE_EXPORT ExecutionContext : public ContextLifecycleNotifier,
   bool in_dispatch_error_event_;
   HeapVector<Member<ErrorEvent>> pending_exceptions_;
 
-  base::Optional<PauseState> pause_state_;
+  mojom::FrameLifecycleState lifecycle_state_ =
+      mojom::FrameLifecycleState::kRunning;
   bool is_context_destroyed_;
 
   Member<PublicURLManager> public_url_manager_;
 
   const Member<ContentSecurityPolicyDelegate> csp_delegate_;
+
+  Member<Agent> agent_;
 
   // Counter that keeps track of how many window interaction calls are allowed
   // for this ExecutionContext. Callers are expected to call

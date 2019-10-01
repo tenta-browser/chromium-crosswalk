@@ -70,7 +70,7 @@ class TestPreviewsLoggerObserver : public PreviewsLoggerObserver {
   // Expose the received MessageLogs for testing.
   const std::vector<PreviewsLogger::MessageLog>& messages() const {
     return messages_;
-  };
+  }
 
   // Expose blacklist events info for testing.
   const std::unordered_map<std::string, base::Time>& blacklisted_hosts() {
@@ -769,8 +769,7 @@ TEST_F(PreviewsLoggerTest,
   base::test::ScopedCommandLine scoped_command_line;
   base::CommandLine* command_line = scoped_command_line.GetProcessCommandLine();
   command_line->AppendSwitch(switches::kIgnorePreviewsBlacklist);
-  ASSERT_TRUE(base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kIgnorePreviewsBlacklist));
+  ASSERT_TRUE(switches::ShouldIgnorePreviewsBlacklist());
 
   TestPreviewsLoggerObserver observer;
   PreviewsLogger logger;

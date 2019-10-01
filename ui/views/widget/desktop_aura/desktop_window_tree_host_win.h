@@ -41,6 +41,10 @@ namespace corewm {
 class TooltipWin;
 }
 
+namespace test {
+class DesktopWindowTreeHostWinTestApi;
+}
+
 class VIEWS_EXPORT DesktopWindowTreeHostWin
     : public DesktopWindowTreeHost,
       public wm::AnimationHost,
@@ -128,10 +132,7 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   void ShowImpl() override;
   void HideImpl() override;
   gfx::Rect GetBoundsInPixels() const override;
-  void SetBoundsInPixels(
-      const gfx::Rect& bounds,
-      const viz::LocalSurfaceIdAllocation& local_surface_id_allocation =
-          viz::LocalSurfaceIdAllocation()) override;
+  void SetBoundsInPixels(const gfx::Rect& bounds) override;
   gfx::Point GetLocationOnScreenInPixels() const override;
   void SetCapture() override;
   void ReleaseCapture() override;
@@ -157,8 +158,7 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   FrameMode GetFrameMode() const override;
   bool HasFrame() const override;
   void SchedulePaint() override;
-  void SetAlwaysRenderAsActive(bool always_render_as_active) override;
-  bool IsAlwaysRenderAsActive() override;
+  bool ShouldPaintAsActive() const override;
   bool CanResize() const override;
   bool CanMaximize() const override;
   bool CanMinimize() const override;
@@ -178,7 +178,6 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   gfx::Size DIPToScreenSize(const gfx::Size& dip_size) const override;
   void ResetWindowControls() override;
   gfx::NativeViewAccessible GetNativeViewAccessible() override;
-  void HandleAppDeactivated() override;
   void HandleActivationChanged(bool active) override;
   bool HandleAppCommand(short command) override;
   void HandleCancelMode() override;
@@ -232,6 +231,8 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   HWND GetHWND() const;
 
  private:
+  friend class ::views::test::DesktopWindowTreeHostWinTestApi;
+
   void SetWindowTransparency();
 
   // Returns true if a modal window is active in the current root window chain.

@@ -10,9 +10,11 @@
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/optional.h"
+#include "base/rand_util.h"
 #include "chrome/browser/android/chrome_feature_list.h"
 #include "chrome/browser/android/feature_utilities.h"
 #include "chrome/browser/android/hung_renderer_infobar_delegate.h"
@@ -31,6 +33,7 @@
 #include "chrome/browser/ssl/security_state_tab_helper.h"
 #include "chrome/browser/ui/android/bluetooth_chooser_android.h"
 #include "chrome/browser/ui/android/infobars/framebust_block_infobar.h"
+#include "chrome/browser/ui/android/tab_model/tab_model_list.h"
 #include "chrome/browser/ui/blocked_content/popup_blocker.h"
 #include "chrome/browser/ui/blocked_content/popup_tracker.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
@@ -67,6 +70,7 @@
 
 using base::android::AttachCurrentThread;
 using base::android::JavaParamRef;
+using base::android::JavaRef;
 using base::android::ScopedJavaLocalRef;
 using blink::mojom::FileChooserParams;
 using content::BluetoothChooser;
@@ -188,18 +192,6 @@ bool TabWebContentsDelegateAndroid::ShouldFocusLocationBarByDefault(
   }
   return false;
 }
-
-#if BUILDFLAG(ENABLE_PRINTING)
-void TabWebContentsDelegateAndroid::PrintCrossProcessSubframe(
-    content::WebContents* web_contents,
-    const gfx::Rect& rect,
-    int document_cookie,
-    content::RenderFrameHost* subframe_host) const {
-  auto* client = printing::PrintCompositeClient::FromWebContents(web_contents);
-  if (client)
-    client->PrintCrossProcessSubframe(rect, document_cookie, subframe_host);
-}
-#endif
 
 void TabWebContentsDelegateAndroid::Observe(
     int type,
@@ -338,12 +330,12 @@ void TabWebContentsDelegateAndroid::SetOverlayMode(bool use_overlay_mode) {
   Java_TabWebContentsDelegateAndroid_setOverlayMode(env, obj, use_overlay_mode);
 }
 
-bool TabWebContentsDelegateAndroid::RequestPpapiBrokerPermission(
+void TabWebContentsDelegateAndroid::RequestPpapiBrokerPermission(
     WebContents* web_contents,
     const GURL& url,
     const base::FilePath& plugin_path,
-    const base::Callback<void(bool)>& callback) {
-    return false;
+    base::OnceCallback<void(bool)> callback) {
+  std::move(callback).Run(false);
 }
 
 WebContents* TabWebContentsDelegateAndroid::OpenURLFromTab(
@@ -385,9 +377,14 @@ WebContents* TabWebContentsDelegateAndroid::OpenURLFromTab(
                                  params.url, &prerender_params)) {
       return prerender_params.replaced_contents;
     }
+
+    // Ask the parent to handle in-place opening.
+    return WebContentsDelegateAndroid::OpenURLFromTab(source, params);
   }
 
-  return WebContentsDelegateAndroid::OpenURLFromTab(source, params);
+  nav_params.created_with_opener = true;
+  TabModelList::HandlePopupNavigation(&nav_params);
+  return nullptr;
 }
 
 bool TabWebContentsDelegateAndroid::ShouldResumeRequestsForCreatedWindow() {
@@ -450,9 +447,8 @@ blink::WebSecurityStyle TabWebContentsDelegateAndroid::GetSecurityStyle(
   SecurityStateTabHelper* helper =
       SecurityStateTabHelper::FromWebContents(web_contents);
   DCHECK(helper);
-  security_state::SecurityInfo security_info;
-  helper->GetSecurityInfo(&security_info);
-  return security_state::GetSecurityStyle(security_info,
+  return security_state::GetSecurityStyle(helper->GetSecurityLevel(),
+                                          *helper->GetVisibleSecurityState(),
                                           security_style_explanations);
 }
 
@@ -489,18 +485,72 @@ TabWebContentsDelegateAndroid::SwapWebContents(
   return base::WrapUnique(old_contents);
 }
 
+#if BUILDFLAG(ENABLE_PRINTING)
+void TabWebContentsDelegateAndroid::PrintCrossProcessSubframe(
+    content::WebContents* web_contents,
+    const gfx::Rect& rect,
+    int document_cookie,
+    content::RenderFrameHost* subframe_host) const {
+  auto* client = printing::PrintCompositeClient::FromWebContents(web_contents);
+  if (client)
+    client->PrintCrossProcessSubframe(rect, document_cookie, subframe_host);
+}
+#endif
+
+bool TabWebContentsDelegateAndroid::ShouldEnableEmbeddedMediaExperience()
+    const {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  ScopedJavaLocalRef<jobject> obj = GetJavaDelegate(env);
+  if (obj.is_null())
+    return false;
+  return Java_TabWebContentsDelegateAndroid_shouldEnableEmbeddedMediaExperience(
+      env, obj);
+}
+
+bool TabWebContentsDelegateAndroid::IsPictureInPictureEnabled() const {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  ScopedJavaLocalRef<jobject> obj = GetJavaDelegate(env);
+  if (obj.is_null())
+    return false;
+  return Java_TabWebContentsDelegateAndroid_isPictureInPictureEnabled(env, obj);
+}
+
+bool TabWebContentsDelegateAndroid::IsNightModeEnabled() const {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  ScopedJavaLocalRef<jobject> obj = GetJavaDelegate(env);
+  if (obj.is_null())
+    return false;
+  return Java_TabWebContentsDelegateAndroid_isNightModeEnabled(env, obj);
+}
+
+const GURL TabWebContentsDelegateAndroid::GetManifestScope() const {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  ScopedJavaLocalRef<jobject> obj = GetJavaDelegate(env);
+  if (obj.is_null())
+    return GURL();
+  const JavaRef<jstring>& scope =
+      Java_TabWebContentsDelegateAndroid_getManifestScope(env, obj);
+  return scope.is_null() ? GURL()
+                         : GURL(base::android::ConvertJavaStringToUTF8(scope));
+}
+
 }  // namespace android
 
 void JNI_TabWebContentsDelegateAndroid_OnRendererUnresponsive(
     JNIEnv* env,
     const JavaParamRef<jobject>& java_web_contents) {
+  // Rate limit the number of stack dumps so we don't overwhelm our crash
+  // reports.
+  content::WebContents* web_contents =
+      content::WebContents::FromJavaWebContents(java_web_contents);
+  if (base::RandDouble() < 0.01)
+    web_contents->GetMainFrame()->GetProcess()->DumpProcessStack();
+
   if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kEnableHungRendererInfoBar)) {
     return;
   }
 
-  content::WebContents* web_contents =
-        content::WebContents::FromJavaWebContents(java_web_contents);
   InfoBarService* infobar_service =
       InfoBarService::FromWebContents(web_contents);
   DCHECK(!FindHungRendererInfoBar(infobar_service));

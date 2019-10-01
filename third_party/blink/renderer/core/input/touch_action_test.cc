@@ -219,7 +219,7 @@ WebViewImpl* TouchActionTest::SetupTest(
 }
 
 IntRect WindowClipRect(const LocalFrameView& frame_view) {
-  LayoutRect clip_rect(LayoutPoint(), LayoutSize(frame_view.Size()));
+  PhysicalRect clip_rect(PhysicalOffset(), PhysicalSize(frame_view.Size()));
   frame_view.GetLayoutView()->MapToVisualRectInAncestorSpace(
       &frame_view.GetLayoutView()->ContainerForPaintInvalidation(), clip_rect,
       0, kDefaultVisualRectFlags);
@@ -299,7 +299,7 @@ void TouchActionTest::RunTestOnTree(
       std::string failure_context_pos = context_stream.str();
 
       LocalFrame* main_frame =
-          ToLocalFrame(WebFrame::ToCoreFrame(*web_view->MainFrame()));
+          To<LocalFrame>(WebFrame::ToCoreFrame(*web_view->MainFrame()));
       LocalFrameView* main_frame_view = main_frame->View();
       IntRect visible_rect = WindowClipRect(*main_frame_view);
       ASSERT_TRUE(visible_rect.Contains(window_point))

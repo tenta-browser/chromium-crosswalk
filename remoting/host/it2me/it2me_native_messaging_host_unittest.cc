@@ -35,6 +35,7 @@
 #include "remoting/host/setup/test_util.h"
 #include "remoting/protocol/errors.h"
 #include "remoting/protocol/ice_config.h"
+#include "remoting/signaling/log_to_server.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace remoting {
@@ -93,10 +94,10 @@ base::DictionaryValue CreateConnectMessage(int id) {
   connect_message.SetString("directoryBotJid", kTestBotJid);
   connect_message.SetString("userName", kTestClientUsername);
   connect_message.SetString("authServiceWithToken", "oauth2:sometoken");
-  connect_message.Set(
-      "iceConfig",
-      base::JSONReader::Read("{ \"iceServers\": [ { \"urls\": [ \"stun:" +
-                             std::string(kTestStunServer) + "\" ] } ] }"));
+  connect_message.Set("iceConfig",
+                      base::JSONReader::ReadDeprecated(
+                          "{ \"iceServers\": [ { \"urls\": [ \"stun:" +
+                          std::string(kTestStunServer) + "\" ] } ] }"));
 
   return connect_message;
 }
@@ -118,6 +119,8 @@ class MockIt2MeHost : public It2MeHost {
   void Connect(std::unique_ptr<ChromotingHostContext> context,
                std::unique_ptr<base::DictionaryValue> policies,
                std::unique_ptr<It2MeConfirmationDialogFactory> dialog_factory,
+               std::unique_ptr<RegisterSupportHostRequest> register_request,
+               std::unique_ptr<LogToServer> log_to_server,
                base::WeakPtr<It2MeHost::Observer> observer,
                std::unique_ptr<SignalStrategy> signal_strategy,
                const std::string& username,
@@ -137,6 +140,8 @@ void MockIt2MeHost::Connect(
     std::unique_ptr<ChromotingHostContext> context,
     std::unique_ptr<base::DictionaryValue> policies,
     std::unique_ptr<It2MeConfirmationDialogFactory> dialog_factory,
+    std::unique_ptr<RegisterSupportHostRequest> register_request,
+    std::unique_ptr<LogToServer> log_to_server,
     base::WeakPtr<It2MeHost::Observer> observer,
     std::unique_ptr<SignalStrategy> signal_strategy,
     const std::string& username,
@@ -152,6 +157,7 @@ void MockIt2MeHost::Connect(
   host_context_ = std::move(context);
   observer_ = std::move(observer);
   signal_strategy_ = std::move(signal_strategy);
+  register_request_ = std::move(register_request);
 
   OnPolicyUpdate(std::move(policies));
 
@@ -159,15 +165,16 @@ void MockIt2MeHost::Connect(
   RunSetState(kRequestedAccessCode);
 
   host_context()->ui_task_runner()->PostTask(
-      FROM_HERE, base::Bind(&It2MeHost::Observer::OnStoreAccessCode, observer_,
-                            kTestAccessCode, kTestAccessCodeLifetime));
+      FROM_HERE,
+      base::BindOnce(&It2MeHost::Observer::OnStoreAccessCode, observer_,
+                     kTestAccessCode, kTestAccessCodeLifetime));
 
   RunSetState(kReceivedAccessCode);
   RunSetState(kConnecting);
 
   host_context()->ui_task_runner()->PostTask(
-      FROM_HERE, base::Bind(&It2MeHost::Observer::OnClientAuthenticated,
-                            observer_, kTestClientUsername));
+      FROM_HERE, base::BindOnce(&It2MeHost::Observer::OnClientAuthenticated,
+                                observer_, kTestClientUsername));
 
   RunSetState(kConnected);
 }
@@ -176,7 +183,7 @@ void MockIt2MeHost::Disconnect() {
   if (!host_context()->network_task_runner()->BelongsToCurrentThread()) {
     DCHECK(host_context()->ui_task_runner()->BelongsToCurrentThread());
     host_context()->network_task_runner()->PostTask(
-        FROM_HERE, base::Bind(&MockIt2MeHost::Disconnect, this));
+        FROM_HERE, base::BindOnce(&MockIt2MeHost::Disconnect, this));
     return;
   }
 
@@ -186,8 +193,8 @@ void MockIt2MeHost::Disconnect() {
 void MockIt2MeHost::RunSetState(It2MeHostState state) {
   if (!host_context()->network_task_runner()->BelongsToCurrentThread()) {
     host_context()->network_task_runner()->PostTask(
-        FROM_HERE,
-        base::Bind(&It2MeHost::SetStateForTesting, this, state, ErrorCode::OK));
+        FROM_HERE, base::BindOnce(&It2MeHost::SetStateForTesting, this, state,
+                                  ErrorCode::OK));
   } else {
     SetStateForTesting(state, ErrorCode::OK);
   }
@@ -285,9 +292,8 @@ void It2MeNativeMessagingHostTest::SetUp() {
                  base::Unretained(this)));
 
   host_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&It2MeNativeMessagingHostTest::StartHost,
-                 base::Unretained(this)));
+      FROM_HERE, base::BindOnce(&It2MeNativeMessagingHostTest::StartHost,
+                                base::Unretained(this)));
 
   // Wait until the host finishes starting.
   test_run_loop_->Run();
@@ -355,7 +361,8 @@ It2MeNativeMessagingHostTest::ReadMessageFromOutputPipe() {
       return nullptr;
     }
 
-    std::unique_ptr<base::Value> message = base::JSONReader::Read(message_json);
+    std::unique_ptr<base::Value> message =
+        base::JSONReader::ReadDeprecated(message_json);
     if (!message || !message->is_dict()) {
       LOG(ERROR) << "Malformed message:" << message_json;
       return nullptr;
@@ -570,9 +577,8 @@ void It2MeNativeMessagingHostTest::StartHost() {
 void It2MeNativeMessagingHostTest::ExitTest() {
   if (!test_message_loop_->task_runner()->RunsTasksInCurrentSequence()) {
     test_message_loop_->task_runner()->PostTask(
-        FROM_HERE,
-        base::Bind(&It2MeNativeMessagingHostTest::ExitTest,
-                   base::Unretained(this)));
+        FROM_HERE, base::BindOnce(&It2MeNativeMessagingHostTest::ExitTest,
+                                  base::Unretained(this)));
     return;
   }
   test_run_loop_->Quit();
@@ -640,7 +646,7 @@ TEST_F(It2MeNativeMessagingHostTest,
   connect_message.SetBoolean("noDialogs", true);
   WriteMessageToInputPipe(connect_message);
   VerifyConnectResponses(next_id);
-#if defined(OS_CHROMEOS)
+#if defined(OS_CHROMEOS) || !defined(NDEBUG)
   EXPECT_FALSE(factory_raw_ptr_->host->enable_dialogs());
 #else
   EXPECT_TRUE(factory_raw_ptr_->host->enable_dialogs());

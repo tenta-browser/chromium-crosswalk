@@ -11,11 +11,8 @@ Resources.AppManifestView = class extends UI.VBox {
     this.registerRequiredCSS('resources/appManifestView.css');
 
     this._emptyView = new UI.EmptyWidget(Common.UIString('No manifest detected'));
-    const p = this._emptyView.appendParagraph();
-    const linkElement = UI.XLink.create(
-        'https://developers.google.com/web/fundamentals/engage-and-retain/web-app-manifest/?utm_source=devtools',
-        Common.UIString('Read more about the web manifest'));
-    p.appendChild(UI.formatLocalized('A web manifest allows you to control how your app behaves when launched and displayed to the user. %s', [linkElement]));
+    this._emptyView.appendLink(
+        'https://developers.google.com/web/fundamentals/engage-and-retain/web-app-manifest/?utm_source=devtools');
 
     this._emptyView.show(this.contentElement);
     this._emptyView.hideWidget();
@@ -93,15 +90,17 @@ Resources.AppManifestView = class extends UI.VBox {
    */
   async _updateManifest(immediately) {
     const {url, data, errors} = await this._resourceTreeModel.fetchAppManifest();
-    this._throttler.schedule(() => this._renderManifest(url, data, errors), immediately);
+    const installabilityErrors = await this._resourceTreeModel.getInstallabilityErrors();
+    this._throttler.schedule(() => this._renderManifest(url, data, errors, installabilityErrors), immediately);
   }
 
   /**
    * @param {string} url
    * @param {?string} data
    * @param {!Array<!Protocol.Page.AppManifestError>} errors
+   * @param {!Array<string>} installabilityErrors
    */
-  async _renderManifest(url, data, errors) {
+  async _renderManifest(url, data, errors, installabilityErrors) {
     if (!data && !errors.length) {
       this._emptyView.showWidget();
       this._reportView.hideWidget();
@@ -115,13 +114,11 @@ Resources.AppManifestView = class extends UI.VBox {
     this._errorsSection.element.classList.toggle('hidden', !errors.length);
     for (const error of errors) {
       this._errorsSection.appendRow().appendChild(
-          UI.createLabel(error.message, error.critical ? 'smallicon-error' : 'smallicon-warning'));
+          UI.createIconLabel(error.message, error.critical ? 'smallicon-error' : 'smallicon-warning'));
     }
 
     if (!data)
       return;
-
-    const installabilityErrors = [];
 
     if (data.charCodeAt(0) === 0xFEFF)
       data = data.slice(1);  // Trim the BOM as per https://tools.ietf.org/html/rfc7159#section-8.1.
@@ -129,22 +126,13 @@ Resources.AppManifestView = class extends UI.VBox {
     const parsedManifest = JSON.parse(data);
     this._nameField.textContent = stringProperty('name');
     this._shortNameField.textContent = stringProperty('short_name');
-    if (!this._nameField.textContent && !this._shortNameField.textContent)
-      installabilityErrors.push(ls`Either 'name' or 'short_name' is required`);
 
     this._startURLField.removeChildren();
     const startURL = stringProperty('start_url');
     if (startURL) {
       const completeURL = /** @type {string} */ (Common.ParsedURL.completeURL(url, startURL));
       this._startURLField.appendChild(Components.Linkifier.linkifyURL(completeURL, {text: startURL}));
-      if (!this._serviceWorkerManager.hasRegistrationForURLs([completeURL, this._target.inspectedURL()]))
-        installabilityErrors.push(ls`Service worker is not registered or does not control the Start URL`);
-      else if (!await this._swHasFetchHandler())
-        installabilityErrors.push(ls`Service worker does not have the 'fetch' handler`);
-    } else {
-      installabilityErrors.push(ls`'start_url' needs to be a valid URL`);
     }
-
 
     this._themeColorSwatch.classList.toggle('hidden', !stringProperty('theme_color'));
     const themeColor = Common.Color.parse(stringProperty('theme_color') || 'white') || Common.Color.parse('white');
@@ -157,38 +145,22 @@ Resources.AppManifestView = class extends UI.VBox {
     this._orientationField.textContent = stringProperty('orientation');
     const displayType = stringProperty('display');
     this._displayField.textContent = displayType;
-    if (!['minimal-ui', 'standalone', 'fullscreen'].includes(displayType))
-      installabilityErrors.push(ls`'display' property must be set to 'standalone', 'fullscreen' or 'minimal-ui'`);
 
     const icons = parsedManifest['icons'] || [];
-    let hasInstallableIcon = false;
     this._iconsSection.clearContent();
 
     for (const icon of icons) {
-      if (!icon.sizes)
-        hasInstallableIcon = true;  // any
       const title = (icon['sizes'] || '') + '\n' + (icon['type'] || '');
-      try {
-        const widthHeight = icon['sizes'].split('x');
-        if (parseInt(widthHeight[0], 10) >= 144 && parseInt(widthHeight[1], 10) >= 144)
-          hasInstallableIcon = true;
-      } catch (e) {
-      }
-
       const field = this._iconsSection.appendField(title);
       const image = await this._loadImage(Common.ParsedURL.completeURL(url, icon['src']));
       if (image)
         field.appendChild(image);
-      else
-        installabilityErrors.push(ls`Some of the icons could not be loaded`);
     }
-    if (!hasInstallableIcon)
-      installabilityErrors.push(ls`An icon at least 144px x 144px large is required`);
 
     this._installabilitySection.clearContent();
     this._installabilitySection.element.classList.toggle('hidden', !installabilityErrors.length);
     for (const error of installabilityErrors)
-      this._installabilitySection.appendRow().appendChild(UI.createLabel(error, 'smallicon-warning'));
+      this._installabilitySection.appendRow().appendChild(UI.createIconLabel(error, 'smallicon-warning'));
 
     /**
      * @param {string} name
@@ -200,32 +172,6 @@ Resources.AppManifestView = class extends UI.VBox {
         return '';
       return value;
     }
-  }
-
-  /**
-   * @return {!Promise<boolean>}
-   */
-  async _swHasFetchHandler() {
-    for (const target of SDK.targetManager.targets()) {
-      if (target.type() !== SDK.Target.Type.Worker)
-        continue;
-      if (!target.parentTarget() || target.parentTarget().type() !== SDK.Target.Type.ServiceWorker)
-        continue;
-
-      const ec = target.model(SDK.RuntimeModel).defaultExecutionContext();
-      const result = await ec.evaluate(
-          {
-            expression: `'fetch' in getEventListeners(self)`,
-            includeCommandLineAPI: true,
-            silent: true,
-            returnByValue: true
-          },
-          false, false);
-      if (!result.object || !result.object.value)
-        continue;
-      return true;
-    }
-    return false;
   }
 
   /**

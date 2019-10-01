@@ -46,11 +46,7 @@
       }, { once: true });
 
       video.addEventListener('leavepictureinpicture', () => {
-        document.title = 'left';
-      }, { once: true });
-
-      video.addEventListener('pictureinpicturecontrolclick', function(event) {
-        document.title = event.id;
+        document.title = 'leavepictureinpicture';
       }, { once: true });
 
       window.domAutomationController.send(true);
@@ -58,27 +54,6 @@
     .catch(e => {
       window.domAutomationController.send(false);
     });
-  }
-
-  function setControls(ids) {
-    try{
-      var controls = [];
-      Array.from(ids).forEach(id => {
-        controls.push({
-          id: id,
-          label: "label_" + id,
-          icons: [{
-            src: "icon.png",
-            sizes: "144x144",
-            type: "image/png",
-          }],
-        });
-      });
-      video.setPictureInPictureControls(controls);
-      return true;
-    } catch(error) {
-      return false;
-    }
   }
 
   function secondPictureInPicture() {
@@ -146,6 +121,36 @@
 
   function unsetMediaSessionActionHandler(name) {
     navigator.mediaSession.setActionHandler(name, null);
+  }
+
+  function addVolumeChangeEventListener() {
+    video.addEventListener('volumechange', () => {
+      document.title = 'muted: ' + video.muted;
+    });
+  }
+
+  function addPictureInPictureEventListeners() {
+    video.addEventListener('enterpictureinpicture', () => {
+      document.title = 'enterpictureinpicture';
+    });
+    video.addEventListener('leavepictureinpicture', () => {
+      document.title = 'leavepictureinpicture';
+    });
+  }
+
+  function tryToEnterPictureInPictureAfterLeaving() {
+    video.addEventListener('leavepictureinpicture', () => {
+      video.requestPictureInPicture()
+      .then(_ => { document.title = 'entered Picture-in-Picture after leaving'; })
+      .catch(e => { document.title = 'failed to enter Picture-in-Picture after leaving'; });
+    });
+  }
+
+  function resetVideo() {
+    video.addEventListener('emptied', () => {
+      document.title = 'emptied';
+    }, { once: true });
+    video.src = '';
   }
 </script>
 </html>

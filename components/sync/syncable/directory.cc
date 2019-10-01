@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "base/base64.h"
+#include "base/bind.h"
 #include "base/files/file_enumerator.h"
 #include "base/guid.h"
 #include "base/logging.h"
@@ -74,8 +75,8 @@ bool Directory::PersistedKernelInfo::HasEmptyDownloadProgress(
 
 size_t Directory::PersistedKernelInfo::EstimateMemoryUsage() const {
   using base::trace_event::EstimateMemoryUsage;
-  return EstimateMemoryUsage(store_birthday) +
-         EstimateMemoryUsage(bag_of_chips) +
+  return EstimateMemoryUsage(legacy_store_birthday) +
+         EstimateMemoryUsage(legacy_bag_of_chips) +
          EstimateMemoryUsage(datatype_context);
 }
 
@@ -98,7 +99,7 @@ Directory::Kernel::Kernel(
       name(name),
       info_status(Directory::KERNEL_SHARE_INFO_VALID),
       persisted_info(info.kernel_info),
-      cache_guid(info.cache_guid),
+      legacy_cache_guid(info.legacy_cache_guid),
       next_metahandle(info.max_metahandle + 1),
       delegate(delegate),
       transaction_observer(transaction_observer) {
@@ -135,7 +136,7 @@ DirOpenResult Directory::Open(
 
   const DirOpenResult result = OpenImpl(name, delegate, transaction_observer);
 
-  if (OPENED != result)
+  if (OPENED_NEW != result && OPENED_EXISTING != result)
     Close();
   return result;
 }
@@ -190,7 +191,7 @@ DirOpenResult Directory::OpenImpl(
 
   DirOpenResult result = store_->Load(&tmp_handles_map, delete_journals.get(),
                                       &metahandles_to_purge, &info);
-  if (OPENED != result)
+  if (OPENED_NEW != result && OPENED_EXISTING != result)
     return result;
 
   DCHECK(!kernel_);
@@ -210,7 +211,7 @@ DirOpenResult Directory::OpenImpl(
   store_->SetCatastrophicErrorHandler(base::Bind(
       &Directory::OnCatastrophicError, weak_ptr_factory_.GetWeakPtr()));
 
-  return OPENED;
+  return result;
 }
 
 DeleteJournal* Directory::delete_journal() {
@@ -827,7 +828,7 @@ void Directory::OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd) {
       base::StringPrintf("sync/0x%" PRIXPTR, reinterpret_cast<uintptr_t>(this));
 
   size_t kernel_memory_usage;
-  size_t model_type_entry_count[MODEL_TYPE_COUNT] = {0};
+  size_t model_type_entry_count[ModelType::NUM_ENTRIES] = {0};
   {
     using base::trace_event::EstimateMemoryUsage;
 
@@ -845,7 +846,7 @@ void Directory::OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd) {
         EstimateMemoryUsage(kernel_->dirty_metahandles) +
         EstimateMemoryUsage(kernel_->metahandles_to_purge) +
         EstimateMemoryUsage(kernel_->persisted_info) +
-        EstimateMemoryUsage(kernel_->cache_guid);
+        EstimateMemoryUsage(kernel_->legacy_cache_guid);
 
     for (const auto& handle_and_kernel : kernel_->metahandles_map) {
       const EntryKernel* kernel = handle_and_kernel.second.get();
@@ -859,7 +860,7 @@ void Directory::OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd) {
   }
 
   // Similar to UploadModelTypeEntryCount()
-  for (size_t i = FIRST_REAL_MODEL_TYPE; i != MODEL_TYPE_COUNT; ++i) {
+  for (size_t i = FIRST_REAL_MODEL_TYPE; i != ModelType::NUM_ENTRIES; ++i) {
     ModelType model_type = static_cast<ModelType>(i);
     std::string notification_type;
     if (RealModelTypeToNotificationType(model_type, &notification_type)) {
@@ -1034,38 +1035,44 @@ void Directory::MarkInitialSyncEndedForType(BaseWriteTransaction* trans,
   }
 }
 
-string Directory::store_birthday() const {
+std::string Directory::legacy_store_birthday() const {
   ScopedKernelLock lock(this);
-  return kernel_->persisted_info.store_birthday;
+  return kernel_->persisted_info.legacy_store_birthday;
 }
 
-void Directory::set_store_birthday(const string& store_birthday) {
+void Directory::set_legacy_store_birthday(const string& store_birthday) {
   ScopedKernelLock lock(this);
-  if (kernel_->persisted_info.store_birthday == store_birthday)
+  if (kernel_->persisted_info.legacy_store_birthday == store_birthday)
     return;
-  kernel_->persisted_info.store_birthday = store_birthday;
+  kernel_->persisted_info.legacy_store_birthday = store_birthday;
   kernel_->info_status = KERNEL_SHARE_INFO_DIRTY;
 }
 
-string Directory::bag_of_chips() const {
+void Directory::set_legacy_bag_of_chips(const string& bag_of_chips) {
   ScopedKernelLock lock(this);
-  return kernel_->persisted_info.bag_of_chips;
-}
-
-void Directory::set_bag_of_chips(const string& bag_of_chips) {
-  ScopedKernelLock lock(this);
-  if (kernel_->persisted_info.bag_of_chips == bag_of_chips)
+  if (kernel_->persisted_info.legacy_bag_of_chips == bag_of_chips)
     return;
-  kernel_->persisted_info.bag_of_chips = bag_of_chips;
+  kernel_->persisted_info.legacy_bag_of_chips = bag_of_chips;
   kernel_->info_status = KERNEL_SHARE_INFO_DIRTY;
 }
 
-string Directory::cache_guid() const {
+const string& Directory::cache_guid() const {
+  DCHECK(!cache_guid_.empty()) << this;
+  return cache_guid_;
+}
+
+void Directory::set_cache_guid(const std::string& cache_guid) {
+  DCHECK(!cache_guid.empty());
+  cache_guid_ = cache_guid;
+}
+
+string Directory::legacy_cache_guid() const {
   // No need to lock since nothing ever writes to it after load.
-  return kernel_->cache_guid;
+  return kernel_->legacy_cache_guid;
 }
 
 NigoriHandler* Directory::GetNigoriHandler() {
+  DCHECK(nigori_handler_);
   return nigori_handler_;
 }
 
@@ -1113,7 +1120,7 @@ void Directory::GetUnappliedUpdateMetaHandles(BaseTransaction* trans,
                                               std::vector<int64_t>* result) {
   result->clear();
   ScopedKernelLock lock(this);
-  for (int i = UNSPECIFIED; i < MODEL_TYPE_COUNT; ++i) {
+  for (int i = UNSPECIFIED; i < ModelType::NUM_ENTRIES; ++i) {
     const ModelType type = ModelTypeFromInt(i);
     if (server_types.Has(type)) {
       std::copy(kernel_->unapplied_update_metahandles[type].begin(),

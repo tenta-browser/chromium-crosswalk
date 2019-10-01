@@ -4,17 +4,26 @@
 
 #include "content/public/test/test_browser_thread_bundle.h"
 
+#include <utility>
+
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/message_loop/message_loop_current.h"
 #include "base/run_loop.h"
 #include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/after_startup_task_utils.h"
+#include "content/browser/scheduler/browser_io_task_environment.h"
 #include "content/browser/scheduler/browser_task_executor.h"
+#include "content/browser/scheduler/browser_ui_thread_scheduler.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/test_browser_thread.h"
 #include "content/public/test/test_utils.h"
+
+#if defined(OS_ANDROID)
+#include "base/android/task_scheduler/post_task_android.h"
+#endif
 
 #if defined(OS_WIN)
 #include "base/win/scoped_com_initializer.h"
@@ -23,31 +32,26 @@
 namespace content {
 
 TestBrowserThreadBundle::~TestBrowserThreadBundle() {
-  // To ensure a clean teardown, each thread's message loop must be flushed
-  // just before the thread is destroyed. But stopping a fake thread does not
-  // automatically flush the message loop, so we have to do it manually.
-  // See http://crbug.com/247525 for discussion.
-  base::RunLoop().RunUntilIdle();
-  io_thread_->Stop();
-  base::RunLoop().RunUntilIdle();
-  ui_thread_->Stop();
-  base::RunLoop().RunUntilIdle();
+  // This is required to ensure we run all remaining MessageLoop and
+  // ThreadPool tasks in an atomic step. This is a bit different than
+  // production where the main thread is not flushed after it's done running
+  // but this approach is preferred in unit tests as running more tasks can
+  // merely uncover more issues (e.g. if a bad tasks is posted but never
+  // blocked upon it could make a test flaky whereas by flushing we guarantee
+  // it will blow up).
+  RunUntilIdle();
 
-  // Skip the following steps when RunAllTasksUntilIdle might result in a hang
-  // (ExecutionMode::QUEUED) or for MainThreadType::MOCK_TIME where we haven't
-  // enforced there being no pending tasks.
-  if (main_thread_type() != MainThreadType::MOCK_TIME &&
-      execution_control_mode() != ExecutionMode::QUEUED) {
-    // This is required to ensure we run all remaining MessageLoop and
-    // TaskScheduler tasks in an atomic step. This is a bit different than
-    // production where the main thread is not flushed after it's done running
-    // but this approach is preferred in unit tests as running more tasks can
-    // merely uncover more issues (e.g. if a bad tasks is posted but never
-    // blocked upon it could make a test flaky whereas by flushing we guarantee
-    // it will blow up).
-    RunAllTasksUntilIdle();
-    CHECK(!MainThreadHasPendingTask());
+  // When REAL_IO_THREAD, we need to stop the IO thread explicitly and flush
+  // again.
+  if (real_io_thread_) {
+    io_thread_->Stop();
+    RunUntilIdle();
   }
+
+  // The only way this check can fail after RunUntilIdle() is if a test is
+  // running its own base::Thread's. Such tests should make sure to coalesce
+  // independent threads before this point.
+  CHECK(MainThreadIsIdle()) << sequence_manager()->DescribeAllPendingTasks();
 
   BrowserTaskExecutor::ResetForTesting();
 
@@ -83,7 +87,19 @@ void TestBrowserThreadBundle::Init() {
   CHECK(com_initializer_->Succeeded());
 #endif
 
-  BrowserTaskExecutor::Create();
+  auto browser_ui_thread_scheduler = BrowserUIThreadScheduler::CreateForTesting(
+      sequence_manager(), GetTimeDomain());
+  auto default_ui_task_runner =
+      browser_ui_thread_scheduler->GetHandle().GetDefaultTaskRunner();
+  auto browser_io_task_environment =
+      real_io_thread_
+          ? std::make_unique<BrowserIOTaskEnvironment>()
+          : BrowserIOTaskEnvironment::CreateForTesting(sequence_manager());
+  browser_io_task_environment->SetAllowBlockingForTesting();
+
+  BrowserTaskExecutor::CreateForTesting(std::move(browser_ui_thread_scheduler),
+                                        std::move(browser_io_task_environment));
+  DeferredInitFromSubclass(std::move(default_ui_task_runner));
 
   if (HasIOMainLoop()) {
     CHECK(base::MessageLoopCurrentForIO::IsSet());
@@ -97,8 +113,7 @@ void TestBrowserThreadBundle::Init() {
       BrowserThread::UI, base::ThreadTaskRunnerHandle::Get());
 
   if (real_io_thread_) {
-    io_thread_ = std::make_unique<TestBrowserThread>(BrowserThread::IO);
-    io_thread_->StartIOThread();
+    io_thread_ = TestBrowserThread::StartIOThread();
   } else {
     io_thread_ = std::make_unique<TestBrowserThread>(
         BrowserThread::IO, base::ThreadTaskRunnerHandle::Get());
@@ -107,6 +122,12 @@ void TestBrowserThreadBundle::Init() {
   // Consider startup complete such that after-startup-tasks always run in
   // the scope of the test they were posted from (http://crbug.com/732018).
   SetBrowserStartupIsCompleteForTesting();
+  // Some unittests check the number of pending tasks, which will include the
+  // one that enables the best effort queues, so run everything pending before
+  // we hand control over to the test.
+  // TODO(carlscab): Maybe find a better way to not expose control tasks
+  BrowserTaskExecutor::RunAllPendingTasksOnThreadForTesting(BrowserThread::UI);
+  BrowserTaskExecutor::RunAllPendingTasksOnThreadForTesting(BrowserThread::IO);
 }
 
 void TestBrowserThreadBundle::RunIOThreadUntilIdle() {

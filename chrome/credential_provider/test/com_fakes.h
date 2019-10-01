@@ -12,9 +12,19 @@
 #include <vector>
 
 #include "base/strings/string16.h"
+#include "chrome/credential_provider/gaiacp/gaia_credential_provider.h"
 #include "chrome/credential_provider/gaiacp/gaia_credential_provider_i.h"
+#include "chrome/credential_provider/test/test_credential_provider.h"
 
 namespace credential_provider {
+
+namespace testing {
+
+#define DECLARE_IUNKOWN_NOQI_WITH_REF()                            \
+  IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override; \
+  ULONG STDMETHODCALLTYPE AddRef() override;                       \
+  ULONG STDMETHODCALLTYPE Release(void) override;                  \
+  ULONG ref_count_ = 1;
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -26,9 +36,7 @@ class FakeCredentialProviderUser : public ICredentialProviderUser {
 
  private:
   // ICredentialProviderUser
-  IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override;
-  ULONG STDMETHODCALLTYPE AddRef() override;
-  ULONG STDMETHODCALLTYPE Release(void) override;
+  DECLARE_IUNKOWN_NOQI_WITH_REF()
   HRESULT STDMETHODCALLTYPE GetSid(wchar_t** sid) override;
   HRESULT STDMETHODCALLTYPE GetProviderID(GUID* providerID) override;
   HRESULT STDMETHODCALLTYPE GetStringValue(REFPROPERTYKEY key,
@@ -52,19 +60,21 @@ class FakeCredentialProviderUserArray : public ICredentialProviderUserArray {
     users_.emplace_back(sid, username);
   }
 
+  void SetAccountOptions(CREDENTIAL_PROVIDER_ACCOUNT_OPTIONS cpao) {
+    cpao_ = cpao;
+  }
+
  private:
   // ICredentialProviderUserArray
-  IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override;
-  ULONG STDMETHODCALLTYPE AddRef() override;
-  ULONG STDMETHODCALLTYPE Release(void) override;
+  DECLARE_IUNKOWN_NOQI_WITH_REF()
   IFACEMETHODIMP SetProviderFilter(REFGUID guidProviderToFilterTo) override;
   IFACEMETHODIMP GetAccountOptions(
-      CREDENTIAL_PROVIDER_ACCOUNT_OPTIONS* credentialProviderAccountOptions)
-      override;
+      CREDENTIAL_PROVIDER_ACCOUNT_OPTIONS* cpao) override;
   IFACEMETHODIMP GetCount(DWORD* userCount) override;
   IFACEMETHODIMP GetAt(DWORD index, ICredentialProviderUser** user) override;
 
   std::vector<FakeCredentialProviderUser> users_;
+  CREDENTIAL_PROVIDER_ACCOUNT_OPTIONS cpao_ = CPAO_NONE;
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -76,10 +86,11 @@ class FakeCredentialProviderEvents : public ICredentialProviderEvents {
   virtual ~FakeCredentialProviderEvents();
 
   // ICredentialProviderEvents
-  IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override;
-  ULONG STDMETHODCALLTYPE AddRef() override;
-  ULONG STDMETHODCALLTYPE Release(void) override;
+  DECLARE_IUNKOWN_NOQI_WITH_REF()
   IFACEMETHODIMP CredentialsChanged(UINT_PTR upAdviseContext) override;
+
+  bool CredentialsChangedReceived() const { return did_change_; }
+  void ResetCredentialsChangedReceived() { did_change_ = false; }
 
  private:
   bool did_change_ = false;
@@ -87,40 +98,44 @@ class FakeCredentialProviderEvents : public ICredentialProviderEvents {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-// Fake the GaiaCredentialProvider COM object.
-class FakeGaiaCredentialProvider : public IGaiaCredentialProvider,
-                                   public IGaiaCredentialProviderForTesting {
+// Test implementation of GaiaCredentialProvider that stores information from
+// OnUserAuthenticatedImpl.
+class CTestGaiaCredentialProvider : public CGaiaCredentialProvider,
+                                    public ITestCredentialProvider {
  public:
-  FakeGaiaCredentialProvider();
-  virtual ~FakeGaiaCredentialProvider();
+  const CComBSTR& STDMETHODCALLTYPE username() const override;
+  const CComBSTR& STDMETHODCALLTYPE password() const override;
+  const CComBSTR& STDMETHODCALLTYPE sid() const override;
+  bool STDMETHODCALLTYPE credentials_changed_fired() const override;
+  void STDMETHODCALLTYPE ResetCredentialsChangedFired() override;
 
-  const CComBSTR& username() const { return username_; }
-  const CComBSTR& password() const { return password_; }
-  const CComBSTR& sid() const { return sid_; }
-  bool credentials_changed_fired() const { return credentials_changed_fired_; }
+  BEGIN_COM_MAP(CTestGaiaCredentialProvider)
+  COM_INTERFACE_ENTRY(IGaiaCredentialProvider)
+  COM_INTERFACE_ENTRY(ICredentialProviderSetUserArray)
+  COM_INTERFACE_ENTRY(ICredentialProvider)
+  COM_INTERFACE_ENTRY(ICredentialUpdateEventsHandler)
+  COM_INTERFACE_ENTRY(ITestCredentialProvider)
+  END_COM_MAP()
 
-  // IGaiaCredentialProvider
-  IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override;
-  ULONG STDMETHODCALLTYPE AddRef() override;
-  ULONG STDMETHODCALLTYPE Release(void) override;
-  IFACEMETHODIMP OnUserAuthenticated(IUnknown* credential,
-                                     BSTR username,
-                                     BSTR password,
-                                     BSTR sid,
-                                     BOOL password_stale) override;
-  IFACEMETHODIMP HasInternetConnection() override;
+ protected:
+  // CGaiaCredentialProvider
+  HRESULT OnUserAuthenticatedImpl(IUnknown* credential,
+                                  BSTR username,
+                                  BSTR password,
+                                  BSTR sid,
+                                  BOOL fire_credentials_changed) override;
 
-  // IGaiaCredentialProviderForTesting
-  IFACEMETHODIMP SetHasInternetConnection(
-      HasInternetConnectionCheckType has_internet_connection) override;
+  CTestGaiaCredentialProvider();
+  ~CTestGaiaCredentialProvider() override;
 
  private:
   CComBSTR username_;
   CComBSTR password_;
   CComBSTR sid_;
   BOOL credentials_changed_fired_ = FALSE;
-  HasInternetConnectionCheckType has_internet_connection_ = kHicForceYes;
 };
+
+}  // namespace testing
 
 }  // namespace credential_provider
 

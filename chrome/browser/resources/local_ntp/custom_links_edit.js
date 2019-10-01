@@ -56,7 +56,7 @@ let queryArgs = {};
  * The prepopulated data for the form. Includes title, url, and rid.
  * @type {Object}
  */
-let prepopulatedLink = {
+const prepopulatedLink = {
   rid: -1,
   title: '',
   url: '',
@@ -96,7 +96,7 @@ function prepopulateFields(rid) {
   }
 
   // Grab the link data from the embeddedSearch API.
-  let data = chrome.embeddedSearch.newTabPage.getMostVisitedItemData(rid);
+  const data = chrome.embeddedSearch.newTabPage.getMostVisitedItemData(rid);
   if (!data) {
     return;
   }
@@ -117,7 +117,7 @@ function prepopulateFields(rid) {
  */
 function showInvalidUrlUntilTextInput() {
   $(IDS.URL_FIELD_CONTAINER).classList.add('invalid');
-  let reenable = (event) => {
+  const reenable = (event) => {
     $(IDS.URL_FIELD_CONTAINER).classList.remove('invalid');
     $(IDS.URL_FIELD).removeEventListener('input', reenable);
   };
@@ -152,7 +152,7 @@ function finishEditLink() {
   }
 
   // Update the link only if a field was changed.
-  if (!!newUrl || !!newTitle) {
+  if (newUrl || newTitle) {
     chrome.embeddedSearch.newTabPage.updateCustomLink(
         prepopulatedLink.rid, newUrl, newTitle);
   }
@@ -179,7 +179,7 @@ function closeDialog() {
   // Small delay to allow the dialog to close before cleaning up.
   window.setTimeout(() => {
     $(IDS.FORM).reset();
-    $(IDS.TITLE_FIELD).dir = null;
+    $(IDS.TITLE_FIELD).dir = '';
     $(IDS.URL_FIELD_CONTAINER).classList.remove('invalid');
     $(IDS.DELETE).disabled = false;
     $(IDS.DONE).disabled = false;
@@ -197,10 +197,7 @@ function closeDialog() {
  */
 function focusBackOnCancel(event) {
   if (event.keyCode === KEYCODES.ENTER || event.keyCode === KEYCODES.SPACE) {
-    let message = {
-      cmd: 'focusMenu',
-      tid: prepopulatedLink.rid
-    };
+    const message = {cmd: 'focusMenu', tid: prepopulatedLink.rid};
     window.parent.postMessage(message, DOMAIN_ORIGIN);
     event.preventDefault();
     closeDialog();
@@ -209,12 +206,21 @@ function focusBackOnCancel(event) {
 
 
 /**
+ * Handler for the 'updateTheme' message from the host page.
+ * @param {!Object} info Data received in the message.
+ */
+function updateTheme(info) {
+  document.documentElement.setAttribute('darkmode', info.isDarkMode);
+}
+
+
+/**
  * Event handler for messages from the host page.
  * @param {Event} event Event received.
  */
 function handlePostMessage(event) {
-  let cmd = event.data.cmd;
-  let args = event.data;
+  const cmd = event.data.cmd;
+  const args = event.data;
   if (cmd === 'linkData') {
     if (args.tid) {  // We are editing a link, prepopulate the link data.
       document.title = editLinkTitle;
@@ -234,6 +240,8 @@ function handlePostMessage(event) {
     window.setTimeout(() => {
       $(IDS.TITLE_FIELD).select();
     }, 10);
+  } else if (cmd === 'updateTheme') {
+    updateTheme(args);
   }
 }
 
@@ -243,10 +251,10 @@ function handlePostMessage(event) {
  */
 function init() {
   // Parse query arguments.
-  let query = window.location.search.substring(1).split('&');
+  const query = window.location.search.substring(1).split('&');
   queryArgs = {};
   for (let i = 0; i < query.length; ++i) {
-    let val = query[i].split('=');
+    const val = query[i].split('=');
     if (val[0] == '') {
       continue;
     }
@@ -258,11 +266,6 @@ function init() {
   // Enable RTL.
   if (queryArgs['rtl'] == '1') {
     document.documentElement.setAttribute('dir', 'rtl');
-  }
-
-  // Enable dark mode.
-  if (queryArgs['enableDarkMode'] == '1') {
-    document.documentElement.setAttribute('darkmode', true);
   }
 
   // Populate text content.
@@ -296,7 +299,7 @@ function init() {
     event.preventDefault();
     finishEditLink();
   });
-  let finishEditOrClose = (event) => {
+  const finishEditOrClose = (event) => {
     if (event.keyCode === KEYCODES.ENTER) {
       event.preventDefault();
       if (!$(IDS.DONE).disabled) {
@@ -313,7 +316,7 @@ function init() {
   animations.addRippleAnimations();
 
   // Change input field name to blue on input field focus.
-  let changeColor = (fieldTitle) => {
+  const changeColor = (fieldTitle) => {
     $(fieldTitle).classList.toggle('focused');
   };
   $(IDS.TITLE_FIELD)
@@ -327,6 +330,8 @@ function init() {
   // Disables the "Done" button when the URL field is empty.
   $(IDS.URL_FIELD).addEventListener('input',
       () => $(IDS.DONE).disabled = ($(IDS.URL_FIELD).value.trim() === ''));
+
+  utils.setPlatformClass(document.body);
 
   $(IDS.EDIT_DIALOG).showModal();
 

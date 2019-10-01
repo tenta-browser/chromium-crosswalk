@@ -9,7 +9,7 @@
 
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/sync/test/integration/single_client_status_change_checker.h"
-#include "components/sync/base/cryptographer.h"
+#include "components/sync/nigori/cryptographer.h"
 #include "components/sync/protocol/nigori_specifics.pb.h"
 #include "components/sync/test/fake_server/fake_server.h"
 
@@ -52,7 +52,7 @@ sync_pb::NigoriSpecifics CreateCustomPassphraseNigori(
 // available on the server.
 class ServerNigoriChecker : public SingleClientStatusChangeChecker {
  public:
-  ServerNigoriChecker(browser_sync::ProfileSyncService* service,
+  ServerNigoriChecker(syncer::ProfileSyncService* service,
                       fake_server::FakeServer* fake_server,
                       syncer::PassphraseType expected_passphrase_type);
 
@@ -67,7 +67,7 @@ class ServerNigoriChecker : public SingleClientStatusChangeChecker {
 // Checker used to block until Sync requires or stops requiring a passphrase.
 class PassphraseRequiredStateChecker : public SingleClientStatusChangeChecker {
  public:
-  PassphraseRequiredStateChecker(browser_sync::ProfileSyncService* service,
+  PassphraseRequiredStateChecker(syncer::ProfileSyncService* service,
                                  bool desired_state);
 
   bool IsExitConditionSatisfied() override;

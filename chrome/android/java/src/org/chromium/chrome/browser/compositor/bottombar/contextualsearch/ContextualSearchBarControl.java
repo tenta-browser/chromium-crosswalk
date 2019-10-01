@@ -12,6 +12,7 @@ import android.view.ViewGroup;
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.compositor.animation.CompositorAnimator;
 import org.chromium.chrome.browser.compositor.bottombar.OverlayPanelAnimation;
 import org.chromium.ui.base.LocalizationUtils;
@@ -54,6 +55,12 @@ public class ContextualSearchBarControl {
      * The {@link ContextualSearchQuickActionControl} used to control quick action behavior.
      */
     private final ContextualSearchQuickActionControl mQuickActionControl;
+
+    /**
+     * The {@link ContextualSearchCardIconControl} used to control icons for non-action Cards
+     * returned by the server.
+     */
+    private final ContextualSearchCardIconControl mCardIconControl;
 
     /**
      * The {@link ContextualSearchImageControl} for the panel.
@@ -141,9 +148,10 @@ public class ContextualSearchBarControl {
         mImageControl = new ContextualSearchImageControl(panel);
         mContextControl = new ContextualSearchContextControl(panel, context, container, loader);
         mSearchTermControl = new ContextualSearchTermControl(panel, context, container, loader);
-        mCaptionControl = new ContextualSearchCaptionControl(panel, context, container, loader,
-                mCanPromoteToNewTab);
+        mCaptionControl = new ContextualSearchCaptionControl(
+                panel, context, container, loader, mCanPromoteToNewTab);
         mQuickActionControl = new ContextualSearchQuickActionControl(context, loader);
+        mCardIconControl = new ContextualSearchCardIconControl(context, loader);
 
         mTextLayerMinHeight = context.getResources().getDimension(
                 R.dimen.contextual_search_text_layer_min_height);
@@ -155,10 +163,13 @@ public class ContextualSearchBarControl {
                 R.dimen.contextual_search_divider_line_width);
         mDividerLineHeight = context.getResources().getDimension(
                 R.dimen.contextual_search_divider_line_height);
-        mDividerLineColor = ApiCompatibilityUtils.getColor(context.getResources(),
-                R.color.light_grey);
-        mEndButtonWidth = context.getResources().getDimension(
-                R.dimen.contextual_search_end_button_width);
+        mDividerLineColor = ApiCompatibilityUtils.getColor(
+                context.getResources(), R.color.contextual_search_divider_line_color);
+        int endButtonsWidthDimension =
+                ChromeFeatureList.isEnabled(ChromeFeatureList.OVERLAY_NEW_LAYOUT)
+                ? R.dimen.contextual_search_end_buttons_width
+                : R.dimen.contextual_search_end_button_width;
+        mEndButtonWidth = context.getResources().getDimension(endButtonsWidthDimension);
         mDpToPx = context.getResources().getDisplayMetrics().density;
     }
 
@@ -192,6 +203,7 @@ public class ContextualSearchBarControl {
         mSearchTermControl.destroy();
         mCaptionControl.destroy();
         mQuickActionControl.destroy();
+        mCardIconControl.destroy();
     }
 
     /**
@@ -239,6 +251,19 @@ public class ContextualSearchBarControl {
         mContextControl.setContextDetails(selection, end);
         resetSearchBarContextOpacity();
         animateDividerLine(false);
+    }
+
+    /**
+     * Updates the Bar to display a dictionary definition card.
+     * @param searchTerm The string that represents the search term to display.
+     */
+    public void updateForDictionaryDefinition(String searchTerm) {
+        if (!mCardIconControl.didUpdateControlsForDefinition(
+                    mContextControl, mImageControl, searchTerm)) {
+            // Can't style, just update with the text to display.
+            setSearchTerm(searchTerm);
+            animateSearchTermResolution();
+        }
     }
 
     /**
@@ -340,7 +365,7 @@ public class ContextualSearchBarControl {
             // TODO(twellington): should the quick action caption be stored separately from the
             // regular caption?
             mCaptionControl.setCaption(mQuickActionControl.getCaption());
-            mImageControl.setQuickActionIconResourceId(mQuickActionControl.getIconResId());
+            mImageControl.setCardIconResourceId(mQuickActionControl.getIconResId());
             animateDividerLine(true);
         }
     }
@@ -384,8 +409,7 @@ public class ContextualSearchBarControl {
      * @return The visibility percentage for the divider line ranging from 0.f to 1.f.
      */
     public float getDividerLineVisibilityPercentage() {
-        return mContextualSearchPanel.useGenericSheetUx() ? DIVIDER_LINE_OPACITY_GENERIC
-                                                          : mDividerLineVisibilityPercentage;
+        return mDividerLineVisibilityPercentage;
     }
 
     /**

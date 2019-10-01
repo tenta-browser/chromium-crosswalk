@@ -17,6 +17,8 @@ class URLRequestContextGetter;
 namespace content {
 
 class AppCacheService;
+class BackgroundSyncContext;
+class DevToolsBackgroundServicesContext;
 class DOMStorageContext;
 class IndexedDBContext;
 class PlatformNotificationContext;
@@ -83,6 +85,11 @@ class TestStoragePartition : public StoragePartition {
   }
   storage::FileSystemContext* GetFileSystemContext() override;
 
+  void set_background_sync_context(BackgroundSyncContext* context) {
+    background_sync_context_ = context;
+  }
+  BackgroundSyncContext* GetBackgroundSyncContext() override;
+
   void set_database_tracker(storage::DatabaseTracker* tracker) {
     database_tracker_ = tracker;
   }
@@ -122,6 +129,13 @@ class TestStoragePartition : public StoragePartition {
     platform_notification_context_ = context;
   }
   PlatformNotificationContext* GetPlatformNotificationContext() override;
+
+  void set_devtools_background_services_context(
+      DevToolsBackgroundServicesContext* context) {
+    devtools_background_services_context_ = context;
+  }
+  DevToolsBackgroundServicesContext* GetDevToolsBackgroundServicesContext()
+      override;
 
 #if !defined(OS_ANDROID)
   void set_host_zoom_map(HostZoomMap* map) { host_zoom_map_ = map; }
@@ -164,7 +178,11 @@ class TestStoragePartition : public StoragePartition {
       const base::Callback<bool(const GURL&)>& url_matcher,
       base::OnceClosure callback) override;
 
-  void ClearCodeCaches(base::OnceClosure callback) override;
+  void ClearCodeCaches(
+      const base::Time begin,
+      const base::Time end,
+      const base::RepeatingCallback<bool(const GURL&)>& url_matcher,
+      base::OnceClosure callback) override;
 
   void Flush() override;
 
@@ -182,6 +200,7 @@ class TestStoragePartition : public StoragePartition {
   network::mojom::CookieManager* cookie_manager_for_browser_process_ = nullptr;
   storage::QuotaManager* quota_manager_ = nullptr;
   AppCacheService* app_cache_service_ = nullptr;
+  BackgroundSyncContext* background_sync_context_ = nullptr;
   storage::FileSystemContext* file_system_context_ = nullptr;
   storage::DatabaseTracker* database_tracker_ = nullptr;
   DOMStorageContext* dom_storage_context_ = nullptr;
@@ -191,6 +210,8 @@ class TestStoragePartition : public StoragePartition {
   CacheStorageContext* cache_storage_context_ = nullptr;
   GeneratedCodeCacheContext* generated_code_cache_context_ = nullptr;
   PlatformNotificationContext* platform_notification_context_ = nullptr;
+  DevToolsBackgroundServicesContext* devtools_background_services_context_ =
+      nullptr;
 #if !defined(OS_ANDROID)
   HostZoomMap* host_zoom_map_ = nullptr;
   HostZoomLevelContext* host_zoom_level_context_ = nullptr;

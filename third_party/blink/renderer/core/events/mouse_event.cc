@@ -34,6 +34,8 @@
 #include "third_party/blink/renderer/core/input/input_device_capabilities.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
+#include "third_party/blink/renderer/core/page/page.h"
+#include "third_party/blink/renderer/core/page/pointer_lock_controller.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
 #include "third_party/blink/renderer/core/svg/svg_element.h"
@@ -45,9 +47,10 @@ namespace blink {
 namespace {
 
 DoubleSize ContentsScrollOffset(AbstractView* abstract_view) {
-  if (!abstract_view || !abstract_view->IsLocalDOMWindow())
+  auto* local_dom_window = DynamicTo<LocalDOMWindow>(abstract_view);
+  if (!local_dom_window)
     return DoubleSize();
-  LocalFrame* frame = ToLocalDOMWindow(abstract_view)->GetFrame();
+  LocalFrame* frame = local_dom_window->GetFrame();
   if (!frame)
     return DoubleSize();
   ScrollableArea* scrollable_area = frame->View()->LayoutViewport();
@@ -59,9 +62,10 @@ DoubleSize ContentsScrollOffset(AbstractView* abstract_view) {
 }
 
 float PageZoomFactor(const UIEvent* event) {
-  if (!event->view() || !event->view()->IsLocalDOMWindow())
+  auto* local_dom_window = DynamicTo<LocalDOMWindow>(event->view());
+  if (!local_dom_window)
     return 1;
-  LocalFrame* frame = ToLocalDOMWindow(event->view())->GetFrame();
+  LocalFrame* frame = local_dom_window->GetFrame();
   if (!frame)
     return 1;
   return frame->PageZoomFactor();
@@ -77,29 +81,24 @@ const LayoutObject* FindTargetLayoutObject(Node*& target_node) {
     layout_object = layout_object->Parent();
   // Update the target node to point to the SVG root.
   target_node = layout_object->GetNode();
+  auto* svg_element = DynamicTo<SVGElement>(target_node);
   DCHECK(!target_node ||
-         (target_node->IsSVGElement() &&
-          ToSVGElement(*target_node).IsOutermostSVGSVGElement()));
+         (svg_element && svg_element->IsOutermostSVGSVGElement()));
   return layout_object;
 }
 
-unsigned ButtonsToWebInputEventModifiers(unsigned short buttons) {
+unsigned ButtonsToWebInputEventModifiers(uint16_t buttons) {
   unsigned modifiers = 0;
 
-  if (buttons &
-      static_cast<unsigned short>(WebPointerProperties::Buttons::kLeft))
+  if (buttons & static_cast<uint16_t>(WebPointerProperties::Buttons::kLeft))
     modifiers |= WebInputEvent::kLeftButtonDown;
-  if (buttons &
-      static_cast<unsigned short>(WebPointerProperties::Buttons::kRight))
+  if (buttons & static_cast<uint16_t>(WebPointerProperties::Buttons::kRight))
     modifiers |= WebInputEvent::kRightButtonDown;
-  if (buttons &
-      static_cast<unsigned short>(WebPointerProperties::Buttons::kMiddle))
+  if (buttons & static_cast<uint16_t>(WebPointerProperties::Buttons::kMiddle))
     modifiers |= WebInputEvent::kMiddleButtonDown;
-  if (buttons &
-      static_cast<unsigned short>(WebPointerProperties::Buttons::kBack))
+  if (buttons & static_cast<uint16_t>(WebPointerProperties::Buttons::kBack))
     modifiers |= WebInputEvent::kBackButtonDown;
-  if (buttons &
-      static_cast<unsigned short>(WebPointerProperties::Buttons::kForward))
+  if (buttons & static_cast<uint16_t>(WebPointerProperties::Buttons::kForward))
     modifiers |= WebInputEvent::kForwardButtonDown;
 
   return modifiers;
@@ -223,17 +222,26 @@ void MouseEvent::SetCoordinatesFromWebPointerProperties(
     const LocalDOMWindow* dom_window,
     MouseEventInit* initializer) {
   FloatPoint client_point;
+  FloatPoint screen_point = web_pointer_properties.PositionInScreen();
   float scale_factor = 1.0f;
   if (dom_window && dom_window->GetFrame() && dom_window->GetFrame()->View()) {
     LocalFrame* frame = dom_window->GetFrame();
-    FloatPoint page_point = frame->View()->ConvertFromRootFrame(
-        web_pointer_properties.PositionInWidget());
+    FloatPoint root_frame_point = web_pointer_properties.PositionInWidget();
+    if (Page* p = frame->GetPage()) {
+      if (p->GetPointerLockController().GetElement() &&
+          !p->GetPointerLockController().LockPending()) {
+        p->GetPointerLockController().GetPointerLockPosition(&root_frame_point,
+                                                             &screen_point);
+      }
+    }
+    FloatPoint frame_point =
+        frame->View()->ConvertFromRootFrame(root_frame_point);
     scale_factor = 1.0f / frame->PageZoomFactor();
-    client_point = page_point.ScaledBy(scale_factor);
+    client_point = frame_point.ScaledBy(scale_factor);
   }
 
-  initializer->setScreenX(web_pointer_properties.PositionInScreen().x);
-  initializer->setScreenY(web_pointer_properties.PositionInScreen().y);
+  initializer->setScreenX(screen_point.X());
+  initializer->setScreenY(screen_point.Y());
   initializer->setClientX(client_point.X());
   initializer->setClientY(client_point.Y());
 
@@ -248,26 +256,21 @@ void MouseEvent::SetCoordinatesFromWebPointerProperties(
 
 MouseEvent::~MouseEvent() = default;
 
-unsigned short MouseEvent::WebInputEventModifiersToButtons(unsigned modifiers) {
-  unsigned short buttons = 0;
+uint16_t MouseEvent::WebInputEventModifiersToButtons(unsigned modifiers) {
+  uint16_t buttons = 0;
 
   if (modifiers & WebInputEvent::kLeftButtonDown)
-    buttons |=
-        static_cast<unsigned short>(WebPointerProperties::Buttons::kLeft);
+    buttons |= static_cast<uint16_t>(WebPointerProperties::Buttons::kLeft);
   if (modifiers & WebInputEvent::kRightButtonDown) {
-    buttons |=
-        static_cast<unsigned short>(WebPointerProperties::Buttons::kRight);
+    buttons |= static_cast<uint16_t>(WebPointerProperties::Buttons::kRight);
   }
   if (modifiers & WebInputEvent::kMiddleButtonDown) {
-    buttons |=
-        static_cast<unsigned short>(WebPointerProperties::Buttons::kMiddle);
+    buttons |= static_cast<uint16_t>(WebPointerProperties::Buttons::kMiddle);
   }
   if (modifiers & WebInputEvent::kBackButtonDown)
-    buttons |=
-        static_cast<unsigned short>(WebPointerProperties::Buttons::kBack);
+    buttons |= static_cast<uint16_t>(WebPointerProperties::Buttons::kBack);
   if (modifiers & WebInputEvent::kForwardButtonDown) {
-    buttons |=
-        static_cast<unsigned short>(WebPointerProperties::Buttons::kForward);
+    buttons |= static_cast<uint16_t>(WebPointerProperties::Buttons::kForward);
   }
 
   return buttons;
@@ -287,9 +290,9 @@ void MouseEvent::initMouseEvent(ScriptState* script_state,
                                 bool alt_key,
                                 bool shift_key,
                                 bool meta_key,
-                                short button,
+                                int16_t button,
                                 EventTarget* related_target,
-                                unsigned short buttons) {
+                                uint16_t buttons) {
   if (IsBeingDispatched())
     return;
 
@@ -314,10 +317,10 @@ void MouseEvent::InitMouseEventInternal(
     double client_x,
     double client_y,
     WebInputEvent::Modifiers modifiers,
-    short button,
+    int16_t button,
     EventTarget* related_target,
     InputDeviceCapabilities* source_capabilities,
-    unsigned short buttons) {
+    uint16_t buttons) {
   InitUIEventInternal(type, bubbles, cancelable, related_target, view, detail,
                       source_capabilities);
 
@@ -340,7 +343,7 @@ bool MouseEvent::IsMouseEvent() const {
   return true;
 }
 
-short MouseEvent::button() const {
+int16_t MouseEvent::button() const {
   const AtomicString& event_name = type();
   if (button_ == -1 || event_name == event_type_names::kMousemove ||
       event_name == event_type_names::kMouseleave ||
@@ -451,9 +454,8 @@ DispatchEventResult MouseEvent::DispatchEvent(EventDispatcher& dispatcher) {
 }
 
 void MouseEvent::ComputePageLocation() {
-  LocalFrame* frame = view() && view()->IsLocalDOMWindow()
-                          ? ToLocalDOMWindow(view())->GetFrame()
-                          : nullptr;
+  auto* local_dom_window = DynamicTo<LocalDOMWindow>(view());
+  LocalFrame* frame = local_dom_window ? local_dom_window->GetFrame() : nullptr;
   DoublePoint scaled_page_location =
       page_location_.ScaledBy(PageZoomFactor(this));
   if (frame && frame->View()) {
@@ -478,12 +480,12 @@ void MouseEvent::ComputeRelativePosition() {
   float inverse_zoom_factor = 1 / PageZoomFactor(this);
 
   // Must have an updated layout tree for this math to work correctly.
-  target_node->GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
+  target_node->GetDocument().UpdateStyleAndLayout();
 
   // Adjust offsetLocation to be relative to the target's padding box.
   if (const LayoutObject* layout_object = FindTargetLayoutObject(target_node)) {
-    FloatPoint local_pos = layout_object->AbsoluteToLocal(
-        FloatPoint(AbsoluteLocation()), kUseTransforms);
+    FloatPoint local_pos = layout_object->AbsoluteToLocalFloatPoint(
+        FloatPoint(AbsoluteLocation()));
 
     // Adding this here to address crbug.com/570666. Basically we'd like to
     // find the local coordinates relative to the padding box not the border
@@ -516,8 +518,8 @@ void MouseEvent::ComputeRelativePosition() {
     // FIXME: Does this differ from PaintLayer::ConvertToLayerCoords?
     for (PaintLayer* layer = n->GetLayoutObject()->EnclosingLayer(); layer;
          layer = layer->ContainingLayer()) {
-      layer_location_ -= DoubleSize(layer->Location().X().ToDouble(),
-                                    layer->Location().Y().ToDouble());
+      layer_location_ -= DoubleSize(layer->Location().left.ToDouble(),
+                                    layer->Location().top.ToDouble());
     }
     if (inverse_zoom_factor != 1.0f)
       layer_location_.Scale(inverse_zoom_factor, inverse_zoom_factor);

@@ -13,8 +13,7 @@
 #include "base/optional.h"
 #include "base/stl_util.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_string_resource.h"
-#include "third_party/blink/renderer/core/streams/retain_wrapper_during_construction.h"
-#include "third_party/blink/renderer/core/streams/transform_stream_default_controller.h"
+#include "third_party/blink/renderer/core/streams/transform_stream_default_controller_interface.h"
 #include "third_party/blink/renderer/core/streams/transform_stream_transformer.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_typed_array.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
@@ -37,10 +36,8 @@ class TextEncoderStream::Transformer final : public TransformStreamTransformer {
   // Implements the "encode and enqueue a chunk" algorithm. For efficiency, only
   // the characters at the end of chunks are special-cased.
   void Transform(v8::Local<v8::Value> chunk,
-                 TransformStreamDefaultController* controller,
+                 TransformStreamDefaultControllerInterface* controller,
                  ExceptionState& exception_state) override {
-    // Let |input| be the result of converting |chunk| to a DOMString. If this
-    // throws an exception, then return a promise rejected with that exception.
     V8StringResource<> input_resource = chunk;
     if (!input_resource.Prepare(script_state_->GetIsolate(), exception_state))
       return;
@@ -73,7 +70,7 @@ class TextEncoderStream::Transformer final : public TransformStreamTransformer {
   }
 
   // Implements the "encode and flush" algorithm.
-  void Flush(TransformStreamDefaultController* controller,
+  void Flush(TransformStreamDefaultControllerInterface* controller,
              ExceptionState& exception_state) override {
     if (!pending_high_surrogate_.has_value())
       return;
@@ -86,6 +83,8 @@ class TextEncoderStream::Transformer final : public TransformStreamTransformer {
              script_state_),
         exception_state);
   }
+
+  ScriptState* GetScriptState() override { return script_state_; }
 
   void Trace(Visitor* visitor) override {
     visitor->Trace(script_state_);
@@ -186,11 +185,6 @@ void TextEncoderStream::Trace(Visitor* visitor) {
 TextEncoderStream::TextEncoderStream(ScriptState* script_state,
                                      ExceptionState& exception_state)
     : transform_(MakeGarbageCollected<TransformStream>()) {
-  if (!RetainWrapperDuringConstruction(this, script_state)) {
-    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
-                                      "Cannot queue task to retain wrapper");
-    return;
-  }
   transform_->Init(MakeGarbageCollected<Transformer>(script_state),
                    script_state, exception_state);
 }

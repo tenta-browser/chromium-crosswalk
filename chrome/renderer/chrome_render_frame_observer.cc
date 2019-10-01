@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
@@ -28,6 +29,7 @@
 #include "components/crash/core/common/crash_key.h"
 #include "components/offline_pages/buildflags/buildflags.h"
 #include "components/translate/content/renderer/translate_helper.h"
+#include "components/web_cache/renderer/web_cache_impl.h"
 #include "content/public/common/bindings_policy.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_view.h"
@@ -136,10 +138,12 @@ SkBitmap Downscale(const SkBitmap& image,
 }  // namespace
 
 ChromeRenderFrameObserver::ChromeRenderFrameObserver(
-    content::RenderFrame* render_frame)
+    content::RenderFrame* render_frame,
+    web_cache::WebCacheImpl* web_cache_impl)
     : content::RenderFrameObserver(render_frame),
       translate_helper_(nullptr),
-      phishing_classifier_(nullptr) {
+      phishing_classifier_(nullptr),
+      web_cache_impl_(web_cache_impl) {
   render_frame->GetAssociatedInterfaceRegistry()->AddInterface(
       base::Bind(&ChromeRenderFrameObserver::OnRenderFrameObserverRequest,
                  base::Unretained(this)));
@@ -215,7 +219,7 @@ void ChromeRenderFrameObserver::RequestReloadImageForContextNode() {
   // TODO(dglazkov): This code is clearly in the wrong place. Need
   // to investigate what it is doing and fix (http://crbug.com/606164).
   WebNode context_node = frame->ContextMenuNode();
-  if (!context_node.IsNull() && context_node.IsElementNode()) {
+  if (!context_node.IsNull()) {
     frame->ReloadImage(context_node);
   }
 }
@@ -288,8 +292,7 @@ void ChromeRenderFrameObserver::GetWebApplicationInfo(
         blink::mojom::ConsoleMessageLevel::kWarning,
         "<meta name=\"apple-mobile-web-app-capable\" content=\"yes\"> is "
         "deprecated. Please include <meta name=\"mobile-web-app-capable\" "
-        "content=\"yes\"> - "
-        "http://developers.google.com/chrome/mobile/docs/installtohomescreen");
+        "content=\"yes\">");
     frame->AddMessageToConsole(message);
   }
 
@@ -358,7 +361,8 @@ void ChromeRenderFrameObserver::DidCreateNewDocument() {
   blink::WebDocumentLoader* doc_loader =
       render_frame()->GetWebFrame()->GetDocumentLoader();
   DCHECK(doc_loader);
-  if (!doc_loader->IsArchive())
+
+  if (!doc_loader->HasBeenLoadedAsWebArchive())
     return;
 
   // Connect to Mojo service on browser to notify it of the page's archive
@@ -369,13 +373,18 @@ void ChromeRenderFrameObserver::DidCreateNewDocument() {
   DCHECK(mhtml_notifier);
   blink::WebArchiveInfo info = doc_loader->GetArchiveInfo();
 
-  mhtml_notifier->NotifyIsMhtmlPage(info.url, info.date);
+  mhtml_notifier->NotifyMhtmlPageLoadAttempted(info.load_result, info.url,
+                                               info.date);
 #endif
 }
 
-void ChromeRenderFrameObserver::DidStartProvisionalLoad(
-    WebDocumentLoader* document_loader,
-    bool is_content_initiated) {
+void ChromeRenderFrameObserver::ReadyToCommitNavigation(
+    WebDocumentLoader* document_loader) {
+  // Execute cache clear operations that were postponed until a navigation
+  // event (including tab reload).
+  if (render_frame()->IsMainFrame() && web_cache_impl_)
+    web_cache_impl_->ExecutePendingClearCache();
+
   // Let translate_helper do any preparatory work for loading a URL.
   if (!translate_helper_)
     return;

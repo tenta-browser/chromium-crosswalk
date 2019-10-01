@@ -28,7 +28,7 @@ const char* V8VoidCallbackFunctionTestInterfaceSequenceArg::NameInHeapSnapshot()
   return "V8VoidCallbackFunctionTestInterfaceSequenceArg";
 }
 
-v8::Maybe<void> V8VoidCallbackFunctionTestInterfaceSequenceArg::Invoke(ScriptWrappable* callback_this_value, const HeapVector<Member<TestInterfaceImplementation>>& arg) {
+v8::Maybe<void> V8VoidCallbackFunctionTestInterfaceSequenceArg::Invoke(bindings::V8ValueOrScriptWrappableAdapter callback_this_value, const HeapVector<Member<TestInterfaceImplementation>>& arg) {
   ScriptState* callback_relevant_script_state =
       CallbackRelevantScriptStateOrThrowException(
           "VoidCallbackFunctionTestInterfaceSequenceArg",
@@ -62,6 +62,11 @@ v8::Maybe<void> V8VoidCallbackFunctionTestInterfaceSequenceArg::Invoke(ScriptWra
   v8::Context::BackupIncumbentScope backup_incumbent_scope(
       IncumbentScriptState()->GetContext());
 
+  if (UNLIKELY(ScriptForbiddenScope::IsScriptForbidden())) {
+    ScriptForbiddenScope::ThrowScriptForbiddenException(GetIsolate());
+    return v8::Nothing<void>();
+  }
+
   v8::Local<v8::Function> function;
   // callback function's invoke:
   // step 4. If ! IsCallable(F) is false:
@@ -71,7 +76,12 @@ v8::Maybe<void> V8VoidCallbackFunctionTestInterfaceSequenceArg::Invoke(ScriptWra
   function = CallbackFunction();
 
   v8::Local<v8::Value> this_arg;
-  this_arg = ToV8(callback_this_value, callback_relevant_script_state);
+  if (callback_this_value.IsEmpty()) {
+    // step 2. If thisArg was not given, let thisArg be undefined.
+    this_arg = v8::Undefined(GetIsolate());
+  } else {
+    this_arg = callback_this_value.V8Value(callback_relevant_script_state);
+  }
 
   // step: Let esArgs be the result of converting args to an ECMAScript
   //   arguments list. If this throws an exception, set completion to the
@@ -104,7 +114,7 @@ v8::Maybe<void> V8VoidCallbackFunctionTestInterfaceSequenceArg::Invoke(ScriptWra
   return v8::JustVoid();
 }
 
-void V8VoidCallbackFunctionTestInterfaceSequenceArg::InvokeAndReportException(ScriptWrappable* callback_this_value, const HeapVector<Member<TestInterfaceImplementation>>& arg) {
+void V8VoidCallbackFunctionTestInterfaceSequenceArg::InvokeAndReportException(bindings::V8ValueOrScriptWrappableAdapter callback_this_value, const HeapVector<Member<TestInterfaceImplementation>>& arg) {
   v8::TryCatch try_catch(GetIsolate());
   try_catch.SetVerbose(true);
 
@@ -114,12 +124,12 @@ void V8VoidCallbackFunctionTestInterfaceSequenceArg::InvokeAndReportException(Sc
   ALLOW_UNUSED_LOCAL(maybe_result);
 }
 
-v8::Maybe<void> V8PersistentCallbackFunction<V8VoidCallbackFunctionTestInterfaceSequenceArg>::Invoke(ScriptWrappable* callback_this_value, const HeapVector<Member<TestInterfaceImplementation>>& arg) {
+v8::Maybe<void> V8PersistentCallbackFunction<V8VoidCallbackFunctionTestInterfaceSequenceArg>::Invoke(bindings::V8ValueOrScriptWrappableAdapter callback_this_value, const HeapVector<Member<TestInterfaceImplementation>>& arg) {
   return Proxy()->Invoke(
       callback_this_value, arg);
 }
 
-void V8PersistentCallbackFunction<V8VoidCallbackFunctionTestInterfaceSequenceArg>::InvokeAndReportException(ScriptWrappable* callback_this_value, const HeapVector<Member<TestInterfaceImplementation>>& arg) {
+void V8PersistentCallbackFunction<V8VoidCallbackFunctionTestInterfaceSequenceArg>::InvokeAndReportException(bindings::V8ValueOrScriptWrappableAdapter callback_this_value, const HeapVector<Member<TestInterfaceImplementation>>& arg) {
   Proxy()->InvokeAndReportException(
       callback_this_value, arg);
 }

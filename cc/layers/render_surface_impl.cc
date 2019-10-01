@@ -153,7 +153,7 @@ const FilterOperations& RenderSurfaceImpl::BackdropFilters() const {
   return OwningEffectNode()->backdrop_filters;
 }
 
-const gfx::RectF& RenderSurfaceImpl::BackdropFilterBounds() const {
+base::Optional<gfx::RRectF> RenderSurfaceImpl::BackdropFilterBounds() const {
   return OwningEffectNode()->backdrop_filter_bounds;
 }
 
@@ -403,7 +403,7 @@ void RenderSurfaceImpl::AppendQuads(DrawMode draw_mode,
   viz::SharedQuadState* shared_quad_state =
       render_pass->CreateAndAppendSharedQuadState();
   shared_quad_state->SetAll(
-      draw_transform(), content_rect(), content_rect(),
+      draw_transform(), content_rect(), content_rect(), rounded_corner_bounds(),
       draw_properties_.clip_rect, draw_properties_.is_clipped, contents_opaque,
       draw_properties_.draw_opacity, BlendMode(), sorting_context_id);
 
@@ -573,7 +573,7 @@ void RenderSurfaceImpl::TileMaskLayer(
 
     constexpr float backdrop_filter_quality = 1.0;
     switch (temp_quad->material) {
-      case viz::DrawQuad::TILED_CONTENT: {
+      case viz::DrawQuad::Material::kTiledContent: {
         DCHECK_EQ(1U, temp_quad->resources.count);
         // When the |temp_quad| is actually a texture, we need to calculate
         // |mask_uv_rect|. The |mask_uv_rect| is the normalized sub-rect for
@@ -622,7 +622,7 @@ void RenderSurfaceImpl::TileMaskLayer(
                      !layer_tree_impl_->settings().enable_edge_anti_aliasing,
                      backdrop_filter_quality);
       } break;
-      case viz::DrawQuad::SOLID_COLOR: {
+      case viz::DrawQuad::Material::kSolidColor: {
         SkColor temp_color =
             viz::SolidColorDrawQuad::MaterialCast(temp_quad)->color;
         // Check the alpha channel of the color. We apply the mask by
@@ -642,7 +642,7 @@ void RenderSurfaceImpl::TileMaskLayer(
                      !layer_tree_impl_->settings().enable_edge_anti_aliasing,
                      backdrop_filter_quality);
       } break;
-      case viz::DrawQuad::DEBUG_BORDER:
+      case viz::DrawQuad::Material::kDebugBorder:
         NOTIMPLEMENTED();
         break;
       default:

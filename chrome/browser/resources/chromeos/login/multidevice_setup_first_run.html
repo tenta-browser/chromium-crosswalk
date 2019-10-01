@@ -5,6 +5,7 @@
 <link rel="import" href="chrome://resources/html/polymer.html">
 
 <link rel="import" href="chrome://oobe/custom_elements.html">
+<link rel="import" href="chrome://resources/cr_components/chromeos/multidevice_setup/mojo_api.html">
 <link rel="import" href="chrome://resources/cr_components/chromeos/multidevice_setup/multidevice_setup_shared_css.html">
 <link rel="import" href="chrome://resources/cr_components/chromeos/multidevice_setup/multidevice_setup.html">
 <link rel="import" href="chrome://resources/html/i18n_behavior.html">
@@ -83,17 +84,19 @@
         min-height: 0;
       }
     </style>
-    <multidevice-setup delegate="[[delegate_]]"
+    <multidevice-setup id="multideviceSetup"
+        delegate="[[delegate_]]"
         on-setup-exited="onExitRequested_"
-        forward-button-text="{{forwardButtonText_}}"
+        on-forward-button-focus-requested="onForwardButtonFocusRequested_"
+        forward-button-text-id="{{forwardButtonTextId_}}"
         forward-button-disabled="{{forwardButtonDisabled_}}"
-        cancel-button-text="{{cancelButtonText_}}">
+        cancel-button-text-id="{{cancelButtonTextId_}}">
       <oobe-text-button slot="cancel-button">
-        <div>[[cancelButtonText_]]</div>
+        <div>[[i18nDynamic(locale, cancelButtonTextId_)]]</div>
       </oobe-text-button>
-      <oobe-next-button id="next-button" slot="forward-button"
+      <oobe-next-button id="nextButton" slot="forward-button"
           disabled$="[[forwardButtonDisabled_]]">
-        <div>[[forwardButtonText_]]</div>
+        <div>[[i18nDynamic(locale, forwardButtonTextId_)]]</div>
       </oobe-next-button>
     </multidevice-setup>
 

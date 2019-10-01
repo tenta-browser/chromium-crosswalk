@@ -6,7 +6,9 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/system/sys_info.h"
 #include "base/task/post_task.h"
@@ -18,6 +20,8 @@
 #include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/context_support.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
+#include "gpu/command_buffer/client/shared_image_interface.h"
+#include "gpu/command_buffer/common/gpu_memory_buffer_support.h"
 #include "gpu/command_buffer/common/mailbox.h"
 #include "gpu/command_buffer/common/mailbox_holder.h"
 #include "gpu/ipc/client/gpu_channel_host.h"
@@ -179,7 +183,7 @@ void MailboxToSurfaceBridge::OnContextAvailableOnUiThread(
     // The client is responsible for running BindContextProviderToCurrentThread
     // before use.
     constructor_thread_task_runner_->PostTask(
-        FROM_HERE, base::ResetAndReturn(&on_context_provider_ready_));
+        FROM_HERE, std::move(on_context_provider_ready_));
   } else {
     DCHECK(on_context_bound_);
     constructor_thread_task_runner_->PostTask(
@@ -212,7 +216,7 @@ void MailboxToSurfaceBridge::BindContextProviderToCurrentThread() {
 
   DVLOG(1) << __FUNCTION__ << ": Context ready";
   if (on_context_bound_) {
-    base::ResetAndReturn(&on_context_bound_).Run();
+    std::move(on_context_bound_).Run();
   }
 }
 
@@ -225,7 +229,8 @@ void MailboxToSurfaceBridge::CreateSurface(
   surface_ = std::make_unique<gl::ScopedJavaSurface>(surface_texture);
   surface_handle_ =
       tracker->AddSurfaceForNativeWidget(gpu::GpuSurfaceTracker::SurfaceRecord(
-          window, surface_->j_surface().obj()));
+          window, surface_->j_surface().obj(),
+          false /* can_be_used_with_surface_control */));
   // Unregistering happens in the destructor.
   ANativeWindow_release(window);
 }
@@ -354,46 +359,34 @@ void MailboxToSurfaceBridge::CreateGpuFence(
   gl_->DestroyGpuFenceCHROMIUM(id);
 }
 
-uint32_t MailboxToSurfaceBridge::CreateMailboxTexture(gpu::Mailbox* mailbox) {
+gpu::MailboxHolder MailboxToSurfaceBridge::CreateSharedImage(
+    gpu::GpuMemoryBufferImplAndroidHardwareBuffer* buffer,
+    const gfx::ColorSpace& color_space,
+    uint32_t usage) {
   TRACE_EVENT0("gpu", __FUNCTION__);
   DCHECK(IsConnected());
 
-  GLuint tex = 0;
-  gl_->GenTextures(1, &tex);
-  gl_->BindTexture(GL_TEXTURE_2D, tex);
-  gl_->ProduceTextureDirectCHROMIUM(tex, mailbox->name);
+  auto* sii = context_provider_->SharedImageInterface();
+  DCHECK(sii);
 
-  return tex;
+  gpu::MailboxHolder mailbox_holder;
+  mailbox_holder.mailbox =
+      sii->CreateSharedImage(buffer, nullptr, color_space, usage);
+  mailbox_holder.sync_token = sii->GenVerifiedSyncToken();
+  DCHECK(!gpu::NativeBufferNeedsPlatformSpecificTextureTarget(
+      buffer->GetFormat()));
+  mailbox_holder.texture_target = GL_TEXTURE_2D;
+  return mailbox_holder;
 }
 
-uint32_t MailboxToSurfaceBridge::BindSharedBufferImage(
-    gfx::GpuMemoryBuffer* buffer,
-    const gfx::Size& size,
-    gfx::BufferFormat format,
-    gfx::BufferUsage usage,
-    uint32_t texture_id) {
+void MailboxToSurfaceBridge::DestroySharedImage(
+    const gpu::MailboxHolder& mailbox_holder) {
   TRACE_EVENT0("gpu", __FUNCTION__);
   DCHECK(IsConnected());
 
-  auto img = gl_->CreateImageCHROMIUM(buffer->AsClientBuffer(), size.width(),
-                                      size.height(), GL_RGBA);
-
-  gl_->BindTexture(GL_TEXTURE_2D, texture_id);
-  gl_->BindTexImage2DCHROMIUM(GL_TEXTURE_2D, img);
-  gl_->BindTexture(GL_TEXTURE_2D, 0);
-
-  return img;
-}
-
-void MailboxToSurfaceBridge::UnbindSharedBuffer(GLuint image_id,
-                                                GLuint texture_id) {
-  TRACE_EVENT0("gpu", __FUNCTION__);
-  DCHECK(IsConnected());
-
-  gl_->BindTexture(GL_TEXTURE_2D, texture_id);
-  gl_->ReleaseTexImage2DCHROMIUM(GL_TEXTURE_2D, image_id);
-  gl_->BindTexture(GL_TEXTURE_2D, 0);
-  gl_->DestroyImageCHROMIUM(image_id);
+  auto* sii = context_provider_->SharedImageInterface();
+  DCHECK(sii);
+  sii->DestroySharedImage(mailbox_holder.sync_token, mailbox_holder.mailbox);
 }
 
 void MailboxToSurfaceBridge::DestroyContext() {

@@ -577,10 +577,10 @@ class SandboxSymbolizeHelper {
     //   it cannot be called before the singleton is created.
     SandboxSymbolizeHelper* instance = GetInstance();
 
-    // The assumption here is that iterating over
-    // std::vector<MappedMemoryRegion> using a const_iterator does not allocate
-    // dynamic memory, hence it is async-signal-safe.
-    for (const MappedMemoryRegion& region : instance->regions_) {
+    // Cannot use STL iterators here, since debug iterators use locks.
+    // NOLINTNEXTLINE(modernize-loop-convert)
+    for (size_t i = 0; i < instance->regions_.size(); ++i) {
+      const MappedMemoryRegion& region = instance->regions_[i];
       if (region.start <= pc && pc < region.end) {
         start_address = region.start;
         base_address = region.base;
@@ -803,9 +803,25 @@ bool EnableInProcessStackDumping() {
   return success;
 }
 
-void SetStackDumpFirstChanceCallback(bool (*handler)(int, void*, void*)) {
+bool SetStackDumpFirstChanceCallback(bool (*handler)(int, void*, void*)) {
   DCHECK(try_handle_signal == nullptr || handler == nullptr);
   try_handle_signal = handler;
+
+#if defined(ADDRESS_SANITIZER) || defined(MEMORY_SANITIZER) || \
+    defined(THREAD_SANITIZER) || defined(LEAK_SANITIZER) ||    \
+    defined(UNDEFINED_SANITIZER)
+  struct sigaction installed_handler;
+  CHECK_EQ(sigaction(SIGSEGV, NULL, &installed_handler), 0);
+  // If the installed handler does not point to StackDumpSignalHandler, then
+  // allow_user_segv_handler is 0.
+  if (installed_handler.sa_sigaction != StackDumpSignalHandler) {
+    LOG(WARNING)
+        << "WARNING: sanitizers are preventing signal handler installation. "
+        << "WebAssembly trap handlers are disabled.\n";
+    return false;
+  }
+#endif
+  return true;
 }
 
 size_t CollectStackTrace(void** trace, size_t count) {

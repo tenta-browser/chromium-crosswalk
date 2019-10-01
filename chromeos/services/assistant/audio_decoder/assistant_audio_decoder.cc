@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/threading/thread.h"
 #include "chromeos/services/assistant/audio_decoder/ipc_data_source.h"
 #include "media/base/audio_bus.h"
@@ -135,8 +136,8 @@ void AssistantAudioDecoder::OnBufferDecodedOnThread(
     const int bytes_to_alloc =
         audio_bus->frames() * kBytesPerSample * audio_bus->channels();
     std::vector<uint8_t> buffer(bytes_to_alloc);
-    audio_bus->ToInterleaved(audio_bus->frames(), kBytesPerSample,
-                             buffer.data());
+    audio_bus->ToInterleaved<media::SignedInt16SampleTypeTraits>(
+        audio_bus->frames(), reinterpret_cast<int16_t*>(buffer.data()));
     buffers.emplace_back(buffer);
   }
   client_->OnNewBuffers(buffers);

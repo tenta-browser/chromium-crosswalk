@@ -23,13 +23,13 @@ PermissionRequestImpl::PermissionRequestImpl(
     const GURL& request_origin,
     ContentSettingsType content_settings_type,
     bool has_gesture,
-    const PermissionDecidedCallback& permission_decided_callback,
-    const base::Closure delete_callback)
+    PermissionDecidedCallback permission_decided_callback,
+    base::OnceClosure delete_callback)
     : request_origin_(request_origin),
       content_settings_type_(content_settings_type),
       has_gesture_(has_gesture),
-      permission_decided_callback_(permission_decided_callback),
-      delete_callback_(delete_callback),
+      permission_decided_callback_(std::move(permission_decided_callback)),
+      delete_callback_(std::move(delete_callback)),
       is_finished_(false) {}
 
 PermissionRequestImpl::~PermissionRequestImpl() {
@@ -90,6 +90,40 @@ PermissionRequest::IconId PermissionRequestImpl::GetIconId() const {
 }
 
 #if defined(OS_ANDROID)
+base::string16 PermissionRequestImpl::GetTitleText() const {
+  int message_id;
+  switch (content_settings_type_) {
+    case CONTENT_SETTINGS_TYPE_GEOLOCATION:
+      message_id = IDS_GEOLOCATION_PERMISSION_TITLE;
+      break;
+    case CONTENT_SETTINGS_TYPE_NOTIFICATIONS:
+      message_id = IDS_NOTIFICATIONS_PERMISSION_TITLE;
+      break;
+    case CONTENT_SETTINGS_TYPE_MIDI_SYSEX:
+      message_id = IDS_MIDI_SYSEX_PERMISSION_TITLE;
+      break;
+    case CONTENT_SETTINGS_TYPE_PROTECTED_MEDIA_IDENTIFIER:
+      message_id = IDS_PROTECTED_MEDIA_IDENTIFIER_PERMISSION_TITLE;
+      break;
+    case CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC:
+      message_id = IDS_MEDIA_CAPTURE_AUDIO_ONLY_PERMISSION_TITLE;
+      break;
+    case CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA:
+      message_id = IDS_MEDIA_CAPTURE_VIDEO_ONLY_PERMISSION_TITLE;
+      break;
+    case CONTENT_SETTINGS_TYPE_ACCESSIBILITY_EVENTS:
+      message_id = IDS_ACCESSIBILITY_EVENTS_PERMISSION_TITLE;
+      break;
+    case CONTENT_SETTINGS_TYPE_CLIPBOARD_READ:
+      message_id = IDS_CLIPBOARD_PERMISSION_TITLE;
+      break;
+    default:
+      NOTREACHED();
+      return base::string16();
+  }
+  return l10n_util::GetStringUTF16(message_id);
+}
+
 base::string16 PermissionRequestImpl::GetMessageText() const {
   int message_id;
   switch (content_settings_type_) {
@@ -175,20 +209,20 @@ GURL PermissionRequestImpl::GetOrigin() const {
 }
 
 void PermissionRequestImpl::PermissionGranted() {
-  permission_decided_callback_.Run(CONTENT_SETTING_ALLOW);
+  std::move(permission_decided_callback_).Run(CONTENT_SETTING_ALLOW);
 }
 
 void PermissionRequestImpl::PermissionDenied() {
-  permission_decided_callback_.Run(CONTENT_SETTING_BLOCK);
+  std::move(permission_decided_callback_).Run(CONTENT_SETTING_BLOCK);
 }
 
 void PermissionRequestImpl::Cancelled() {
-  permission_decided_callback_.Run(CONTENT_SETTING_DEFAULT);
+  std::move(permission_decided_callback_).Run(CONTENT_SETTING_DEFAULT);
 }
 
 void PermissionRequestImpl::RequestFinished() {
   is_finished_ = true;
-  delete_callback_.Run();
+  std::move(delete_callback_).Run();
 }
 
 PermissionRequestType PermissionRequestImpl::GetPermissionRequestType()

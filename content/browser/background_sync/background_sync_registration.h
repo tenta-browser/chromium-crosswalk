@@ -8,14 +8,14 @@
 #include <stdint.h>
 
 #include <list>
+#include <string>
 
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/time/time.h"
 #include "content/browser/background_sync/background_sync.pb.h"
-#include "content/browser/background_sync/background_sync_registration_options.h"
 #include "content/common/content_export.h"
-#include "third_party/blink/public/platform/modules/background_sync/background_sync.mojom.h"
+#include "third_party/blink/public/mojom/background_sync/background_sync.mojom.h"
 
 namespace content {
 
@@ -30,9 +30,10 @@ class CONTENT_EXPORT BackgroundSyncRegistration {
   bool Equals(const BackgroundSyncRegistration& other) const;
   bool IsFiring() const;
 
-  const BackgroundSyncRegistrationOptions* options() const { return &options_; }
-  BackgroundSyncRegistrationOptions* options() { return &options_; }
-
+  const blink::mojom::SyncRegistrationOptions* options() const {
+    return &options_;
+  }
+  blink::mojom::SyncRegistrationOptions* options() { return &options_; }
   blink::mojom::BackgroundSyncState sync_state() const { return sync_state_; }
   void set_sync_state(blink::mojom::BackgroundSyncState state) {
     sync_state_ = state;
@@ -40,6 +41,8 @@ class CONTENT_EXPORT BackgroundSyncRegistration {
 
   int num_attempts() const { return num_attempts_; }
   void set_num_attempts(int num_attempts) { num_attempts_ = num_attempts; }
+  int max_attempts() const { return max_attempts_; }
+  void set_max_attempts(int max_attempts) { max_attempts_ = max_attempts; }
 
   base::Time delay_until() const { return delay_until_; }
   void set_delay_until(base::Time delay_until) { delay_until_ = delay_until; }
@@ -49,11 +52,19 @@ class CONTENT_EXPORT BackgroundSyncRegistration {
   bool resolved() const { return resolved_; }
   void set_resolved() { resolved_ = true; }
 
+  // Whether the registration is periodic or one-shot.
+  blink::mojom::BackgroundSyncType sync_type() const {
+    return options_.min_interval >= 0
+               ? blink::mojom::BackgroundSyncType::PERIODIC
+               : blink::mojom::BackgroundSyncType::ONE_SHOT;
+  }
+
  private:
-  BackgroundSyncRegistrationOptions options_;
+  blink::mojom::SyncRegistrationOptions options_;
   blink::mojom::BackgroundSyncState sync_state_ =
       blink::mojom::BackgroundSyncState::PENDING;
   int num_attempts_ = 0;
+  int max_attempts_ = 0;
   base::Time delay_until_;
 
   // This member is not persisted to disk. It should be false until the client

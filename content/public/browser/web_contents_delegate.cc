@@ -47,7 +47,7 @@ bool WebContentsDelegate::ShouldPreserveAbortedURLs(WebContents* source) {
 
 bool WebContentsDelegate::DidAddMessageToConsole(
     WebContents* source,
-    int32_t level,
+    blink::mojom::ConsoleMessageLevel log_level,
     const base::string16& message,
     int32_t line_no,
     const base::string16& source_id) {
@@ -76,14 +76,14 @@ bool WebContentsDelegate::TakeFocus(WebContents* source, bool reverse) {
   return false;
 }
 
-void WebContentsDelegate::CanDownload(
-    const GURL& url,
-    const std::string& request_method,
-    const base::Callback<void(bool)>& callback) {
-  callback.Run(true);
+void WebContentsDelegate::CanDownload(const GURL& url,
+                                      const std::string& request_method,
+                                      base::OnceCallback<void(bool)> callback) {
+  std::move(callback).Run(true);
 }
 
-bool WebContentsDelegate::HandleContextMenu(const ContextMenuParams& params) {
+bool WebContentsDelegate::HandleContextMenu(RenderFrameHost* render_frame_host,
+                                            const ContextMenuParams& params) {
   return false;
 }
 
@@ -143,11 +143,10 @@ std::unique_ptr<BluetoothChooser> WebContentsDelegate::RunBluetoothChooser(
   return nullptr;
 }
 
-std::unique_ptr<SerialChooser> WebContentsDelegate::RunSerialChooser(
+std::unique_ptr<BluetoothScanningPrompt>
+WebContentsDelegate::ShowBluetoothScanningPrompt(
     RenderFrameHost* frame,
-    std::vector<blink::mojom::SerialPortFilterPtr> filters,
-    SerialChooser::Callback callback) {
-  std::move(callback).Run(nullptr);
+    const BluetoothScanningPrompt::EventHandler& event_handler) {
   return nullptr;
 }
 
@@ -218,12 +217,12 @@ bool WebContentsDelegate::ShouldBlockMediaRequest(const GURL& url) {
 }
 #endif
 
-bool WebContentsDelegate::RequestPpapiBrokerPermission(
+void WebContentsDelegate::RequestPpapiBrokerPermission(
     WebContents* web_contents,
     const GURL& url,
     const base::FilePath& plugin_path,
-    const base::Callback<void(bool)>& callback) {
-  return false;
+    base::OnceCallback<void(bool)> callback) {
+  std::move(callback).Run(false);
 }
 
 WebContentsDelegate::~WebContentsDelegate() {
@@ -250,6 +249,10 @@ gfx::Size WebContentsDelegate::GetSizeForNewRenderView(
 }
 
 bool WebContentsDelegate::IsNeverVisible(WebContents* web_contents) {
+  return false;
+}
+
+bool WebContentsDelegate::GuestSaveFrame(WebContents* guest_web_contents) {
   return false;
 }
 

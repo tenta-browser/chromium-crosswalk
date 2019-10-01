@@ -6,10 +6,11 @@
 #define CONTENT_PUBLIC_TEST_CONTENT_BROWSER_TEST_UTILS_H_
 
 #include <map>
+#include <string>
 
 #include "base/callback.h"
 #include "base/macros.h"
-#include "base/memory/ref_counted.h"
+#include "base/run_loop.h"
 #include "content/public/common/page_type.h"
 #include "ui/gfx/native_widget_types.h"
 #include "url/gurl.h"
@@ -19,14 +20,20 @@ class FilePath;
 
 namespace mac {
 class ScopedObjCClassSwizzler;
-}
-}
+}  // namespace mac
+}  // namespace base
 
 namespace gfx {
 class Point;
 class Range;
 class Rect;
-}
+}  // namespace gfx
+
+namespace net {
+namespace test_server {
+class EmbeddedTestServer;
+}  // namespace test_server
+}  // namespace net
 
 // A collections of functions designed for use with content_shell based browser
 // tests.
@@ -34,8 +41,6 @@ class Rect;
 // content\public\test\browser_test_utils.h
 
 namespace content {
-
-class MessageLoopRunner;
 class RenderFrameHost;
 class RenderWidgetHost;
 class Shell;
@@ -127,8 +132,8 @@ class ShellAddedObserver {
  private:
   void ShellCreated(Shell* shell);
 
-  Shell* shell_;
-  scoped_refptr<MessageLoopRunner> runner_;
+  Shell* shell_ = nullptr;
+  std::unique_ptr<base::RunLoop> runner_;
 
   DISALLOW_COPY_AND_ASSIGN(ShellAddedObserver);
 };
@@ -205,6 +210,18 @@ void GetStringFromRangeForRenderWidget(
         result_callback);
 
 #endif
+
+// Adds http://<hostname_to_isolate>/ to the list of origins that require
+// isolation (for each of the hostnames in the |hostnames_to_isolate| vector).
+//
+// To ensure that the isolation applies to subsequent navigations in
+// |web_contents|, this function forces a BrowsingInstance swap by performing
+// one or two browser-initiated navigations in |web_contents| to another,
+// random, guid-based hostname.
+void IsolateOriginsForTesting(
+    net::test_server::EmbeddedTestServer* embedded_test_server,
+    WebContents* web_contents,
+    std::vector<std::string> hostnames_to_isolate);
 
 }  // namespace content
 

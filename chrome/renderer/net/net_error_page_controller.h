@@ -79,8 +79,7 @@ class NetErrorPageController : public gin::Wrappable<NetErrorPageController> {
   explicit NetErrorPageController(base::WeakPtr<Delegate> delegate);
   ~NetErrorPageController() override;
 
-  // Execute a "Show saved copy" button click.
-  bool ShowSavedCopyButtonClick();
+  void ErrorPageLoadedOrUpdated();
 
   // Execute a button click to download page later.
   bool DownloadButtonClick();

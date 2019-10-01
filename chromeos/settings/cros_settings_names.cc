@@ -11,19 +11,16 @@ const char kCrosSettingsPrefix[] = "cros.";
 // All cros.accounts.* settings are stored in SignedSettings.
 const char kAccountsPrefAllowGuest[] = "cros.accounts.allowBWSI";
 const char kAccountsPrefAllowNewUser[] = "cros.accounts.allowGuest";
-const char kAccountsPrefShowUserNamesOnSignIn[]
-    = "cros.accounts.showUserNamesOnSignIn";
+const char kAccountsPrefShowUserNamesOnSignIn[] =
+    "cros.accounts.showUserNamesOnSignIn";
 const char kAccountsPrefUsers[] = "cros.accounts.users";
 const char kAccountsPrefEphemeralUsersEnabled[] =
     "cros.accounts.ephemeralUsersEnabled";
 const char kAccountsPrefDeviceLocalAccounts[] =
     "cros.accounts.deviceLocalAccounts";
-const char kAccountsPrefDeviceLocalAccountsKeyId[] =
-    "id";
-const char kAccountsPrefDeviceLocalAccountsKeyType[] =
-    "type";
-const char kAccountsPrefDeviceLocalAccountsKeyKioskAppId[] =
-    "kiosk_app_id";
+const char kAccountsPrefDeviceLocalAccountsKeyId[] = "id";
+const char kAccountsPrefDeviceLocalAccountsKeyType[] = "type";
+const char kAccountsPrefDeviceLocalAccountsKeyKioskAppId[] = "kiosk_app_id";
 const char kAccountsPrefDeviceLocalAccountsKeyKioskAppUpdateURL[] =
     "kiosk_app_update_url";
 const char kAccountsPrefDeviceLocalAccountsKeyArcKioskPackage[] =
@@ -253,6 +250,10 @@ const char kLoginAuthenticationBehavior[] =
 // device.
 const char kAllowBluetooth[] = "cros.device.allow_bluetooth";
 
+// A boolean pref that indicates whether WiFi should be allowed on the
+// device.
+const char kDeviceWiFiAllowed[] = "cros.device.wifi_allowed";
+
 // A boolean pref to enable any pings or requests to the Quirks Server.
 const char kDeviceQuirksDownloadEnabled[] =
     "cros.device.quirks_download_enabled";
@@ -262,15 +263,11 @@ const char kDeviceQuirksDownloadEnabled[] =
 const char kLoginVideoCaptureAllowedUrls[] =
     "cros.device.login_video_capture_allowed_urls";
 
-// A list pref storing the apps to install on the login page. It is a list of
-// strings, each string contains an extension ID and an update URL, delimited by
-// a semicolon. This preference is set by an admin policy.
-const char kDeviceLoginScreenAppInstallList[] =
-    "cros.device.login_screen_app_install_list";
-
-// A string pref storing the url and cryptographic hash of the image in JSON
-// format allowed to set a device-level wallpaper before any user logs in.
-const char kDeviceWallpaperImage[] = "cros.device_wallpaper_image";
+// A list pref storing the apps or extensions to install on the login page. It
+// is a list of strings, each string contains an extension ID and an update URL,
+// delimited by a semicolon. This preference is set by an admin policy.
+const char kDeviceLoginScreenExtensions[] =
+    "cros.device.login_screen_extensions";
 
 // A list pref specifying the locales allowed on the login screen. Currently
 // only the first value is used, as the single locale allowed on the login
@@ -367,5 +364,28 @@ const char kDeviceUnaffiliatedCrostiniAllowed[] =
 const char kPluginVmAllowed[] = "cros.device.plugin_vm_allowed";
 // A string pref that specifies PluginVm license key for this device.
 const char kPluginVmLicenseKey[] = "cros.device.plugin_vm_license_key";
+
+// An enum pref specifying the case when device needs to reboot on user sign
+// out.
+const char kDeviceRebootOnUserSignout[] = "cros.device.reboot_on_user_signout";
+
+// A boolean pref that indicates whether running wilco diagnostics and telemetry
+// controller on Chrome OS is allowed.
+const char kDeviceWilcoDtcAllowed[] = "cros.device.wilco_dtc_allowed";
+
+// An enum pref that specifies the device dock MAC address source.
+const char kDeviceDockMacAddressSource[] =
+    "cros.device.device_dock_mac_address_source";
+
+// A dictionary pref that mandates the recurring schedule for update checks. The
+// schedule is followed even if the device is suspended, however, it's not
+// respected when the device is shutdown.
+const char kDeviceScheduledUpdateCheck[] =
+    "cros.device.device_scheduled_update_check";
+
+// An enum pref that configures the operation mode of the built-in 2nd factor
+// authenticator.
+const char kDeviceSecondFactorAuthenticationMode[] =
+    "cros.device.device_second_factor_authentication_mode";
 
 }  // namespace chromeos

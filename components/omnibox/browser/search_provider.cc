@@ -23,7 +23,6 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/trace_event/trace_event.h"
-#include "components/data_use_measurement/core/data_use_user_data.h"
 #include "components/history/core/browser/in_memory_database.h"
 #include "components/history/core/browser/keyword_search_term.h"
 #include "components/omnibox/browser/autocomplete_provider_client.h"
@@ -33,6 +32,7 @@
 #include "components/omnibox/browser/omnibox_field_trial.h"
 #include "components/omnibox/browser/suggestion_answer.h"
 #include "components/omnibox/browser/url_prefix.h"
+#include "components/omnibox/common/omnibox_features.h"
 #include "components/search/search.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/strings/grit/components_strings.h"
@@ -374,11 +374,14 @@ void SearchProvider::OnTemplateURLServiceChanged() {
   if (!template_url) {
     CancelLoader(&default_loader_);
     default_results_.Clear();
-    providers_.set(client()
-                       ->GetTemplateURLService()
-                       ->GetDefaultSearchProvider()
-                       ->keyword(),
-                   providers_.keyword_provider());
+
+    base::string16 default_provider;
+    const TemplateURL* default_provider_template_url =
+        client()->GetTemplateURLService()->GetDefaultSearchProvider();
+    if (default_provider_template_url)
+      default_provider = default_provider_template_url->keyword();
+
+    providers_.set(default_provider, providers_.keyword_provider());
   }
   template_url = providers_.GetKeywordProviderURL();
   if (!providers_.keyword_provider().empty() && !template_url) {
@@ -546,7 +549,8 @@ void SearchProvider::EnforceConstraints() {
         (keyword_url != nullptr) &&
         (keyword_url->type() == TemplateURL::OMNIBOX_API_EXTENSION);
     if ((keyword_url != nullptr) && !is_extension_keyword &&
-        (AutocompleteResult::FindTopMatch(&matches_) == matches_.end())) {
+        (AutocompleteResult::FindTopMatch(input_.current_page_classification(),
+                                          matches_) == matches_.end())) {
       // In non-extension keyword mode, disregard the keyword verbatim suggested
       // relevance if necessary, so at least one match is allowed to be default.
       // (In extension keyword mode this is not necessary because the extension
@@ -568,7 +572,8 @@ void SearchProvider::EnforceConstraints() {
       ConvertResultsToAutocompleteMatches();
     }
     if (!is_extension_keyword &&
-        (AutocompleteResult::FindTopMatch(&matches_) == matches_.end())) {
+        (AutocompleteResult::FindTopMatch(input_.current_page_classification(),
+                                          matches_) == matches_.end())) {
       // Guarantee that SearchProvider returns a legal default match (except
       // when in extension-based keyword mode).  The omnibox always needs at
       // least one legal default match, and it relies on SearchProvider in
@@ -583,15 +588,17 @@ void SearchProvider::EnforceConstraints() {
       ConvertResultsToAutocompleteMatches();
     }
     DCHECK(!IsTopMatchSearchWithURLInput());
-    DCHECK(is_extension_keyword ||
-           (AutocompleteResult::FindTopMatch(&matches_) != matches_.end()));
+    DCHECK(is_extension_keyword || (AutocompleteResult::FindTopMatch(
+                                        input_.current_page_classification(),
+                                        matches_) != matches_.end()));
   }
 }
 
 void SearchProvider::RecordTopSuggestion() {
   top_query_suggestion_fill_into_edit_ = base::string16();
   top_navigation_suggestion_ = GURL();
-  auto first_match = AutocompleteResult::FindTopMatch(matches_);
+  auto first_match = AutocompleteResult::FindTopMatch(
+      input_.current_page_classification(), matches_);
   if (first_match != matches_.end()) {
     // Identify if this match came from a query suggestion or a navsuggestion.
     // In either case, extracts the identifying feature of the suggestion
@@ -653,7 +660,7 @@ void SearchProvider::DoHistoryQuery(bool minimal_changes) {
   // now, this seems OK compared with the complexity of a real fix, which would
   // require multiple searches and tracking of "single- vs. multi-word" in the
   // database.
-  int num_matches = kMaxMatches * 5;
+  int num_matches = provider_max_matches_ * 5;
   const TemplateURL* default_url = providers_.GetDefaultProviderURL();
   if (default_url) {
     url_db->GetMostRecentKeywordSearchTerms(default_url->id(),
@@ -692,9 +699,6 @@ void SearchProvider::StartOrStopSuggestQuery(bool minimal_changes) {
     ClearAllResults();
     return;
   }
-
-  if (OmniboxFieldTrial::DisableResultsCaching())
-    ClearAllResults();
 
   // For the minimal_changes case, if we finished the previous query and still
   // have its results, or are allowed to keep running it, just do that, rather
@@ -956,15 +960,11 @@ std::unique_ptr<network::SimpleURLLoader> SearchProvider::CreateSuggestLoader(
   request->url = suggest_url;
   request->load_flags = net::LOAD_DO_NOT_SAVE_COOKIES;
   // Add Chrome experiment state to the request headers.
-  variations::AppendVariationHeadersUnknownSignedIn(
+  variations::AppendVariationsHeaderUnknownSignedIn(
       request->url,
       client()->IsOffTheRecord() ? variations::InIncognito::kYes
                                  : variations::InIncognito::kNo,
-      &request->headers);
-
-  // TODO(https://crbug.com/808498) re-add data use measurement once
-  // SimpleURLLoader supports it.
-  // data_use_measurement::DataUseUserData::OMNIBOX
+      request.get());
 
   std::unique_ptr<network::SimpleURLLoader> loader =
       network::SimpleURLLoader::Create(std::move(request), traffic_annotation);
@@ -1070,13 +1070,13 @@ void SearchProvider::ConvertResultsToAutocompleteMatches() {
                                   &matches);
   }
 
-  // Now add the most relevant matches to |matches_|.  We take up to kMaxMatches
-  // suggest/navsuggest matches, regardless of origin.  We always include in
-  // that set a legal default match if possible.  If Instant Extended is enabled
-  // and we have server-provided (and thus hopefully more accurate) scores for
-  // some suggestions, we allow more of those, until we reach
-  // AutocompleteResult::GetMaxMatches() total matches (that is, enough to fill
-  // the whole popup).
+  // Now add the most relevant matches to |matches_|.  We take up to
+  // provider_max_matches_ suggest/navsuggest matches, regardless of origin.  We
+  // always include in that set a legal default match if possible.  If Instant
+  // Extended is enabled and we have server-provided (and thus hopefully more
+  // accurate) scores for some suggestions, we allow more of those, until we
+  // reach AutocompleteResult::GetMaxMatches() total matches (that is, enough to
+  // fill the whole popup).
   //
   // We will always return any verbatim matches, no matter how we obtained their
   // scores, unless we have already accepted AutocompleteResult::GetMaxMatches()
@@ -1086,7 +1086,8 @@ void SearchProvider::ConvertResultsToAutocompleteMatches() {
   // Guarantee that if there's a legal default match anywhere in the result
   // set that it'll get returned.  The rotate() call does this by moving the
   // default match to the front of the list.
-  auto default_match = AutocompleteResult::FindTopMatch(&matches);
+  auto default_match = AutocompleteResult::FindTopMatch(
+      input_.current_page_classification(), &matches);
   if (default_match != matches.end())
     std::rotate(matches.begin(), default_match, default_match + 1);
 
@@ -1111,7 +1112,7 @@ void SearchProvider::ConvertResultsToAutocompleteMatches() {
         (i->type != AutocompleteMatchType::SEARCH_OTHER_ENGINE)) {
       // If we've already hit the limit on non-server-scored suggestions, and
       // this isn't a server-scored suggestion we can add, skip it.
-      if ((num_suggestions >= kMaxMatches) &&
+      if ((num_suggestions >= provider_max_matches_) &&
           (!search::IsInstantExtendedAPIEnabled() ||
            (i->GetAdditionalInfo(kRelevanceFromServerKey) != kTrue))) {
         continue;
@@ -1120,7 +1121,7 @@ void SearchProvider::ConvertResultsToAutocompleteMatches() {
       ++num_suggestions;
     }
 
-    matches_.push_back(*i);
+    matches_.push_back(std::move(*i));
   }
 }
 
@@ -1138,7 +1139,8 @@ void SearchProvider::RemoveExtraAnswers(ACMatches* matches) {
 }
 
 bool SearchProvider::IsTopMatchSearchWithURLInput() const {
-  auto first_match = AutocompleteResult::FindTopMatch(matches_);
+  auto first_match = AutocompleteResult::FindTopMatch(
+      input_.current_page_classification(), matches_);
   return (input_.type() == metrics::OmniboxInputType::URL) &&
          (first_match != matches_.end()) &&
          (first_match->relevance > CalculateRelevanceForVerbatim()) &&
@@ -1368,17 +1370,12 @@ int SearchProvider::GetVerbatimRelevance(bool* relevance_from_server) const {
 
 bool SearchProvider::ShouldCurbDefaultSuggestions() const {
   // Only curb if the global experimental keyword feature is enabled, we're
-  // in keyword mode and the user selected the mode explicitly. For now, we
-  // consider entering keyword mode with spaces to be unintentional and all
-  // other methods as intentional. In this experimental mode, we don't want
-  // non-keyword suggestions if we're not confident that the user entered
-  // keyword mode explicitly.
-  return OmniboxFieldTrial::IsExperimentalKeywordModeEnabled() &&
-         !keyword_input_.text().empty() && keyword_input_.prefer_keyword() &&
-         keyword_input_.keyword_mode_entry_method() !=
-             OmniboxEventProto::SPACE_AT_END &&
-         keyword_input_.keyword_mode_entry_method() !=
-             OmniboxEventProto::SPACE_IN_MIDDLE;
+  // in keyword mode and we believe the user selected the mode explicitly.
+  if (providers_.has_keyword_provider())
+    return InExplicitExperimentalKeywordMode(input_,
+                                             providers_.keyword_provider());
+  else
+    return false;
 }
 
 int SearchProvider::CalculateRelevanceForVerbatim() const {
@@ -1528,8 +1525,7 @@ AutocompleteMatch SearchProvider::NavigationToMatch(
   match.contents = navigation.match_contents();
   match.contents_class = navigation.match_contents_class();
   match.description = navigation.description();
-  AutocompleteMatch::ClassifyMatchInString(input, match.description,
-      ACMatchClassification::NONE, &match.description_class);
+  match.description_class = navigation.description_class();
 
   match.RecordAdditionalInfo(
       kRelevanceFromServerKey,

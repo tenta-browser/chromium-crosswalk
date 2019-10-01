@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/web_applications/web_app_metrics.h"
 
+#include "base/bind.h"
 #include "base/metrics/histogram_functions.h"
 #include "chrome/browser/engagement/site_engagement_service.h"
 #include "chrome/browser/ui/browser.h"
@@ -101,7 +102,7 @@ void WebAppMetrics::OnEngagementEvent(
     return;
 
   // No HostedAppBrowserController if app is running as a tab in common browser.
-  const bool in_window = !!browser->hosted_app_controller();
+  const bool in_window = !!browser->app_controller();
   const bool from_install_button = tab_helper->IsFromInstallButton();
   const bool user_installed = tab_helper->IsUserInstalled();
 

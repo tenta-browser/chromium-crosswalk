@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/i18n/message_formatter.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
@@ -132,9 +133,13 @@ void EnterpriseStartupDialogView::RunDialogCallback(bool was_accepted) {
   // On mac, we need to stop the modal message loop before returning the result
   // to the caller who controls its own run loop.
   StopModal();
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(std::move(callback_), was_accepted,
-                                can_show_browser_window_));
+  if (can_show_browser_window_) {
+    std::move(callback_).Run(was_accepted, can_show_browser_window_);
+  } else {
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::BindOnce(std::move(callback_), was_accepted,
+                                  can_show_browser_window_));
+  }
 #else
   std::move(callback_).Run(was_accepted, can_show_browser_window_);
 #endif
@@ -151,6 +156,10 @@ bool EnterpriseStartupDialogView::Cancel() {
 
 bool EnterpriseStartupDialogView::Close() {
   return Cancel();
+}
+
+bool EnterpriseStartupDialogView::IsDialogDraggable() const {
+  return true;
 }
 
 bool EnterpriseStartupDialogView::ShouldShowWindowTitle() const {
@@ -173,7 +182,7 @@ views::View* EnterpriseStartupDialogView::CreateExtraView() {
   gfx::Rect logo_bounds = logo_image->GetImageBounds();
   logo_image->SetImageSize(gfx::Size(
       logo_bounds.width() * kLogoHeight / logo_bounds.height(), kLogoHeight));
-  logo_image->SetVerticalAlignment(views::ImageView::CENTER);
+  logo_image->SetVerticalAlignment(views::ImageView::Alignment::kCenter);
   return logo_image;
 #else
   return nullptr;

@@ -59,13 +59,11 @@ ConnectionInfoPopupAndroid::ConnectionInfoPopupAndroid(
       SecurityStateTabHelper::FromWebContents(web_contents);
   DCHECK(helper);
 
-  security_state::SecurityInfo security_info;
-  helper->GetSecurityInfo(&security_info);
-
   presenter_.reset(new PageInfo(
       this, Profile::FromBrowserContext(web_contents->GetBrowserContext()),
       TabSpecificContentSettings::FromWebContents(web_contents), web_contents,
-      nav_entry->GetURL(), security_info));
+      nav_entry->GetURL(), helper->GetSecurityLevel(),
+      *helper->GetVisibleSecurityState()));
 }
 
 ConnectionInfoPopupAndroid::~ConnectionInfoPopupAndroid() {
@@ -145,6 +143,11 @@ void ConnectionInfoPopupAndroid::SetIdentityInfo(
 
 void ConnectionInfoPopupAndroid::SetCookieInfo(
     const CookieInfoList& cookie_info_list) {
+  NOTIMPLEMENTED();
+}
+
+void ConnectionInfoPopupAndroid::SetPageFeatureInfo(
+    const PageFeatureInfo& info) {
   NOTIMPLEMENTED();
 }
 

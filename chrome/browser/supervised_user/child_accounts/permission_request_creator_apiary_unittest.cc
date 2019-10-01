@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/json/json_writer.h"
 #include "base/message_loop/message_loop.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -66,7 +67,7 @@ class PermissionRequestCreatorApiaryTest : public testing::Test {
     network::ResourceResponseHead head;
     std::string headers("HTTP/1.1 200 OK\n\n");
     head.headers = base::MakeRefCounted<net::HttpResponseHeaders>(
-        net::HttpUtil::AssembleRawHeaders(headers.c_str(), headers.size()));
+        net::HttpUtil::AssembleRawHeaders(headers));
     network::URLLoaderCompletionStatus status(error);
     status.decoded_body_length = response.size();
     test_url_loader_factory_.AddResponse(permission_creator_->GetApiUrl(), head,

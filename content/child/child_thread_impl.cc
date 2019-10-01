@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "base/base_switches.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/debug/alias.h"
 #include "base/debug/leak_annotations.h"
@@ -55,6 +56,7 @@
 #include "ipc/ipc_sync_channel.h"
 #include "ipc/ipc_sync_message_filter.h"
 #include "mojo/core/embedder/scoped_ipc_support.h"
+#include "mojo/public/cpp/platform/features.h"
 #include "mojo/public/cpp/platform/named_platform_channel.h"
 #include "mojo/public/cpp/platform/platform_channel.h"
 #include "mojo/public/cpp/platform/platform_channel_endpoint.h"
@@ -69,12 +71,15 @@
 #include "services/service_manager/embedder/switches.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
-#include "services/service_manager/runner/common/client_util.h"
 #include "services/service_manager/sandbox/sandbox_type.h"
 
 #if defined(OS_POSIX)
 #include "base/posix/global_descriptors.h"
 #include "content/public/common/content_descriptors.h"
+#endif
+
+#if defined(OS_MACOSX)
+#include "base/mac/mach_port_rendezvous.h"
 #endif
 
 namespace content {
@@ -173,44 +178,6 @@ class SuicideOnChannelErrorFilter : public IPC::MessageFilter {
 
 #endif  // OS(POSIX)
 
-#if defined(OS_ANDROID)
-// A class that allows for triggering a clean shutdown from another
-// thread through draining the main thread's msg loop.
-class QuitClosure {
- public:
-  QuitClosure();
-  ~QuitClosure() = default;
-
-  void BindToMainThread(base::RepeatingClosure quit_closure);
-  void QuitFromNonMainThread();
-
- private:
-  base::Lock lock_;
-  base::ConditionVariable cond_var_;
-  base::RepeatingClosure closure_;
-};
-
-QuitClosure::QuitClosure() : cond_var_(&lock_) {
-}
-
-void QuitClosure::BindToMainThread(base::RepeatingClosure quit_closure) {
-  base::AutoLock lock(lock_);
-  closure_ = std::move(quit_closure);
-  cond_var_.Signal();
-}
-
-void QuitClosure::QuitFromNonMainThread() {
-  base::AutoLock lock(lock_);
-  while (closure_.is_null())
-    cond_var_.Wait();
-
-  closure_.Run();
-}
-
-base::LazyInstance<QuitClosure>::DestructorAtExit g_quit_closure =
-    LAZY_INSTANCE_INITIALIZER;
-#endif
-
 base::Optional<mojo::IncomingInvitation> InitializeMojoIPCChannel() {
   TRACE_EVENT0("startup", "InitializeMojoIPCChannel");
   mojo::PlatformChannelEndpoint endpoint;
@@ -229,9 +196,30 @@ base::Optional<mojo::IncomingInvitation> InitializeMojoIPCChannel() {
   endpoint = mojo::PlatformChannel::RecoverPassedEndpointFromCommandLine(
       *base::CommandLine::ForCurrentProcess());
 #elif defined(OS_POSIX)
-  endpoint = mojo::PlatformChannelEndpoint(mojo::PlatformHandle(
-      base::ScopedFD(base::GlobalDescriptors::GetInstance()->Get(
-          service_manager::kMojoIPCChannel))));
+
+#if defined(OS_MACOSX)
+  if (base::FeatureList::IsEnabled(mojo::features::kMojoChannelMac)) {
+    auto* client = base::MachPortRendezvousClient::GetInstance();
+    if (!client) {
+      LOG(ERROR) << "Mach rendezvous failed.";
+      return base::nullopt;
+    }
+    auto receive = client->TakeReceiveRight('mojo');
+    if (!receive.is_valid()) {
+      LOG(ERROR) << "Invalid PlatformChannel receive right";
+      return base::nullopt;
+    }
+    endpoint =
+        mojo::PlatformChannelEndpoint(mojo::PlatformHandle(std::move(receive)));
+  } else {
+#endif  // defined(OS_MACOSX)
+    endpoint = mojo::PlatformChannelEndpoint(mojo::PlatformHandle(
+        base::ScopedFD(base::GlobalDescriptors::GetInstance()->Get(
+            service_manager::kMojoIPCChannel))));
+#if defined(OS_MACOSX)
+  }
+#endif
+
 #endif
   // Mojo isn't supported on all child process types.
   // TODO(crbug.com/604282): Support Mojo in the remaining processes.
@@ -252,8 +240,10 @@ class ChannelBootstrapFilter : public ConnectionFilter {
                        const std::string& interface_name,
                        mojo::ScopedMessagePipeHandle* interface_pipe,
                        service_manager::Connector* connector) override {
-    if (source_info.identity.name() != mojom::kBrowserServiceName)
+    if (source_info.identity.name() != mojom::kBrowserServiceName &&
+        source_info.identity.name() != mojom::kSystemServiceName) {
       return;
+    }
 
     if (interface_name == IPC::mojom::ChannelBootstrap::Name_) {
       DCHECK(bootstrap_.is_valid());
@@ -379,7 +369,7 @@ void ChildThreadImpl::OnFieldTrialGroupFinalized(
     const std::string& trial_name,
     const std::string& group_name) {
   mojom::FieldTrialRecorderPtr field_trial_recorder;
-  GetConnector()->BindInterface(mojom::kBrowserServiceName,
+  GetConnector()->BindInterface(mojom::kSystemServiceName,
                                 &field_trial_recorder);
   field_trial_recorder->FieldTrialActivated(trial_name);
 }
@@ -539,10 +529,6 @@ void ChildThreadImpl::Init(const Options& options) {
                      channel_connected_factory_->GetWeakPtr()),
       base::TimeDelta::FromSeconds(connection_timeout));
 
-#if defined(OS_ANDROID)
-  g_quit_closure.Get().BindToMainThread(quit_closure_);
-#endif
-
   // In single-process mode, there is no need to synchronize trials to the
   // browser process (because it's the same process).
   if (!IsInBrowserProcess()) {
@@ -630,7 +616,7 @@ void ChildThreadImpl::ReleaseCachedFonts() {
 
 mojom::FontCacheWin* ChildThreadImpl::GetFontCacheWin() {
   if (!font_cache_win_ptr_) {
-    GetConnector()->BindInterface(mojom::kBrowserServiceName,
+    GetConnector()->BindInterface(mojom::kSystemServiceName,
                                   &font_cache_win_ptr_);
   }
   return font_cache_win_ptr_.get();
@@ -736,6 +722,12 @@ void ChildThreadImpl::SetIPCLoggingEnabled(bool enable) {
 }
 #endif  //  IPC_MESSAGE_LOG_ENABLED
 
+void ChildThreadImpl::RunService(
+    const std::string& service_name,
+    mojo::PendingReceiver<service_manager::mojom::Service> receiver) {
+  DLOG(ERROR) << "Ignoring unhandled request to run service: " << service_name;
+}
+
 void ChildThreadImpl::OnChildControlRequest(
     mojom::ChildControlRequest request) {
   child_control_bindings_.AddBinding(this, std::move(request));
@@ -744,16 +736,6 @@ void ChildThreadImpl::OnChildControlRequest(
 ChildThreadImpl* ChildThreadImpl::current() {
   return g_lazy_child_thread_impl_tls.Pointer()->Get();
 }
-
-#if defined(OS_ANDROID)
-// The method must NOT be called on the child thread itself.
-// It may block the child thread if so.
-void ChildThreadImpl::ShutdownThread() {
-  DCHECK(!ChildThreadImpl::current()) <<
-      "this method should NOT be called from child thread itself";
-  g_quit_closure.Get().QuitFromNonMainThread();
-}
-#endif
 
 void ChildThreadImpl::OnProcessFinalRelease() {
   if (on_channel_error_called_)

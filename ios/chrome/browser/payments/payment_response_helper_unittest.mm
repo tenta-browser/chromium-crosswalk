@@ -13,9 +13,9 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_task_environment.h"
 #include "components/autofill/core/browser/autofill_data_util.h"
-#include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/test_personal_data_manager.h"
 #include "components/payments/core/basic_card_response.h"
 #include "components/payments/core/payment_request_data_util.h"
@@ -134,7 +134,6 @@ TEST_F(PaymentRequestPaymentResponseHelperTest, PaymentResponse) {
                    response.shipping_address->dependent_locality);
          EXPECT_EQ("91111", response.shipping_address->postal_code);
          EXPECT_EQ(std::string(), response.shipping_address->sorting_code);
-         EXPECT_EQ(std::string(), response.shipping_address->language_code);
          EXPECT_EQ("Underworld", response.shipping_address->organization);
          EXPECT_EQ("John H. Doe", response.shipping_address->recipient);
          EXPECT_EQ("16502111111", response.shipping_address->phone);

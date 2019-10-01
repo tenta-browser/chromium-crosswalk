@@ -31,8 +31,6 @@ const char kAlertsInitialized[] = "extensions.alerts.initialized";
 const char kAllowedInstallSites[] = "extensions.allowed_install_sites";
 const char kAllowedTypes[] = "extensions.allowed_types";
 const char kAppFullscreenAllowed[] = "apps.fullscreen.allowed";
-const char kBookmarkAppCreationLaunchType[] =
-    "extensions.bookmark_app_creation_launch_type";
 const char kExtensions[] = "extensions.settings";
 const char kExtensionManagement[] = "extensions.management";
 const char kInsecureExtensionUpdatesEnabled[] =
@@ -40,8 +38,8 @@ const char kInsecureExtensionUpdatesEnabled[] =
 const char kInstallAllowList[] = "extensions.install.allowlist";
 const char kInstallDenyList[] = "extensions.install.denylist";
 const char kInstallForceList[] = "extensions.install.forcelist";
-const char kInstallLoginScreenAppList[] =
-    "extensions.install.login_screen_app_list";
+const char kLoginScreenExtensions[] =
+    "extensions.install.login_screen_extensions";
 const char kLastChromeVersion[] = "extensions.last_chrome_version";
 const char kNativeMessagingBlacklist[] = "native_messaging.blacklist";
 const char kNativeMessagingWhitelist[] = "native_messaging.whitelist";

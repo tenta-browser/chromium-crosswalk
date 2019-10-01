@@ -53,6 +53,14 @@ DecoderBuffer::DecoderBuffer(std::unique_ptr<UnalignedSharedMemory> shm,
       shm_(std::move(shm)),
       is_key_frame_(false) {}
 
+DecoderBuffer::DecoderBuffer(
+    std::unique_ptr<ReadOnlyUnalignedMapping> shared_mem_mapping,
+    size_t size)
+    : size_(size),
+      side_data_size_(0),
+      shared_mem_mapping_(std::move(shared_mem_mapping)),
+      is_key_frame_(false) {}
+
 DecoderBuffer::~DecoderBuffer() {
   // TODO(crbug.com/794740). As a lot of the crashes have |side_data_size_|
   // == 0 yet |side_data| is not null, check that here hoping to get better
@@ -108,14 +116,35 @@ scoped_refptr<DecoderBuffer> DecoderBuffer::CopyFrom(const uint8_t* data,
 }
 
 // static
-scoped_refptr<DecoderBuffer> DecoderBuffer::FromSharedMemoryHandle(
-    const base::SharedMemoryHandle& handle,
+scoped_refptr<DecoderBuffer> DecoderBuffer::FromSharedMemoryRegion(
+    base::subtle::PlatformSharedMemoryRegion region,
     off_t offset,
     size_t size) {
-  auto shm = std::make_unique<UnalignedSharedMemory>(handle, size, true);
+  // TODO(crbug.com/795291): when clients have converted to using
+  // base::ReadOnlySharedMemoryRegion the ugly mode check below will no longer
+  // be necessary.
+  auto shm = std::make_unique<UnalignedSharedMemory>(
+      std::move(region), size,
+      region.GetMode() ==
+              base::subtle::PlatformSharedMemoryRegion::Mode::kReadOnly
+          ? true
+          : false);
   if (size == 0 || !shm->MapAt(offset, size))
     return nullptr;
   return base::WrapRefCounted(new DecoderBuffer(std::move(shm), size));
+}
+
+// static
+scoped_refptr<DecoderBuffer> DecoderBuffer::FromSharedMemoryRegion(
+    base::ReadOnlySharedMemoryRegion region,
+    off_t offset,
+    size_t size) {
+  std::unique_ptr<ReadOnlyUnalignedMapping> unaligned_mapping =
+      std::make_unique<ReadOnlyUnalignedMapping>(region, size, offset);
+  if (!unaligned_mapping->IsValid())
+    return nullptr;
+  return base::WrapRefCounted(
+      new DecoderBuffer(std::move(unaligned_mapping), size));
 }
 
 // static

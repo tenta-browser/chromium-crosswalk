@@ -17,15 +17,16 @@
 #include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/bluetooth_chooser.h"
+#include "content/public/browser/bluetooth_scanning_prompt.h"
 #include "content/public/browser/invalidate_type.h"
 #include "content/public/browser/media_stream_request.h"
 #include "content/public/browser/serial_chooser.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/previews_state.h"
-#include "content/public/common/window_container_type.mojom.h"
+#include "content/public/common/window_container_type.mojom-forward.h"
 #include "third_party/blink/public/common/manifest/web_display_mode.h"
 #include "third_party/blink/public/common/mediastream/media_stream_request.h"
-#include "third_party/blink/public/mojom/color_chooser/color_chooser.mojom.h"
+#include "third_party/blink/public/mojom/choosers/color_chooser.mojom-forward.h"
 #include "third_party/blink/public/platform/web_drag_operation.h"
 #include "third_party/blink/public/platform/web_security_style.h"
 #include "third_party/blink/public/web/web_fullscreen_options.h"
@@ -195,11 +196,12 @@ class CONTENT_EXPORT WebContentsDelegate {
   // A message was added to the console of a frame of the page. Returning true
   // indicates that the delegate handled the message. If false is returned the
   // default logging mechanism will be used for the message.
-  virtual bool DidAddMessageToConsole(WebContents* source,
-                                      int32_t level,
-                                      const base::string16& message,
-                                      int32_t line_no,
-                                      const base::string16& source_id);
+  virtual bool DidAddMessageToConsole(
+      WebContents* source,
+      blink::mojom::ConsoleMessageLevel log_level,
+      const base::string16& message,
+      int32_t line_no,
+      const base::string16& source_id);
 
   // Tells us that we've finished firing this tab's beforeunload event.
   // The proceed bool tells us whether the user chose to proceed closing the
@@ -243,10 +245,11 @@ class CONTENT_EXPORT WebContentsDelegate {
   // Invoking the |callback| synchronously is OK.
   virtual void CanDownload(const GURL& url,
                            const std::string& request_method,
-                           const base::Callback<void(bool)>& callback);
+                           base::OnceCallback<void(bool)> callback);
 
   // Returns true if the context menu operation was handled by the delegate.
-  virtual bool HandleContextMenu(const ContextMenuParams& params);
+  virtual bool HandleContextMenu(RenderFrameHost* render_frame_host,
+                                 const ContextMenuParams& params);
 
   // Allows delegates to handle keyboard events before sending to the renderer.
   // See enum for description of return values.
@@ -395,13 +398,11 @@ class CONTENT_EXPORT WebContentsDelegate {
       RenderFrameHost* frame,
       const BluetoothChooser::EventHandler& event_handler);
 
-  // Shows a chooser for the user to select a serial port.  |callback| will be
-  // run when the prompt is closed. Deleting the returned object will cancel the
-  // prompt.
-  virtual std::unique_ptr<SerialChooser> RunSerialChooser(
+  // Shows a prompt for the user to allow/block Bluetooth scanning. The
+  // observer must live at least as long as the returned prompt object.
+  virtual std::unique_ptr<BluetoothScanningPrompt> ShowBluetoothScanningPrompt(
       RenderFrameHost* frame,
-      std::vector<blink::mojom::SerialPortFilterPtr> filters,
-      SerialChooser::Callback callback);
+      const BluetoothScanningPrompt::EventHandler& event_handler);
 
   // Returns true if the delegate will embed a WebContents-owned fullscreen
   // render widget.  In this case, the delegate may access the widget by calling
@@ -527,14 +528,14 @@ class CONTENT_EXPORT WebContentsDelegate {
   virtual void SetOverlayMode(bool use_overlay_mode) {}
 #endif
 
-  // Requests permission to access the PPAPI broker. The delegate should return
-  // true and call the passed in |callback| with the result, or return false
+  // Requests permission to access the PPAPI broker. The delegate must either
+  // call the passed in |callback| with the result, or call it with false
   // to indicate that it does not support asking for permission.
-  virtual bool RequestPpapiBrokerPermission(
+  virtual void RequestPpapiBrokerPermission(
       WebContents* web_contents,
       const GURL& url,
       const base::FilePath& plugin_path,
-      const base::Callback<void(bool)>& callback);
+      base::OnceCallback<void(bool)> callback);
 
   // Returns the size for the new render view created for the pending entry in
   // |web_contents|; if there's no size, returns an empty size.
@@ -545,6 +546,10 @@ class CONTENT_EXPORT WebContentsDelegate {
 
   // Returns true if the WebContents is never visible.
   virtual bool IsNeverVisible(WebContents* web_contents);
+
+  // Askss |guest_web_contents| to perform the same. If this returns true, the
+  // default behavior is suppressed.
+  virtual bool GuestSaveFrame(WebContents* guest_web_contents);
 
   // Called in response to a request to save a frame. If this returns true, the
   // default behavior is suppressed.

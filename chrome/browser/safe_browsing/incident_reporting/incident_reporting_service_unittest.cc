@@ -267,7 +267,8 @@ class IncidentReportingServiceTest : public testing::Test {
         profile_name, std::move(prefs), base::ASCIIToUTF16(profile_name),
         0,              // avatar_id (unused)
         std::string(),  // supervised_user_id (unused)
-        TestingProfile::TestingFactories());
+        TestingProfile::TestingFactories(),
+        /*override_new_profile=*/base::Optional<bool>(false));
   }
 
   // Configures a callback to run when the next upload is started that will post
@@ -1299,10 +1300,10 @@ TEST_F(IncidentReportingServiceTest, UploadsWithBothDownloadTypes) {
 // Test that a profile's prune state is properly cleaned upon load.
 TEST_F(IncidentReportingServiceTest, CleanLegacyPruneState) {
   CreateIncidentReportingService();
-  const std::string blacklist_load_type(base::IntToString(static_cast<int32_t>(
-      safe_browsing::IncidentType::OBSOLETE_BLACKLIST_LOAD)));
-  const std::string preference_type(base::IntToString(
-      static_cast<int32_t>(safe_browsing::IncidentType::TRACKED_PREFERENCE)));
+  const std::string blacklist_load_type(base::NumberToString(
+      static_cast<int>(safe_browsing::IncidentType::OBSOLETE_BLACKLIST_LOAD)));
+  const std::string preference_type(base::NumberToString(
+      static_cast<int>(safe_browsing::IncidentType::TRACKED_PREFERENCE)));
 
   // Set up a prune state dict with data to be cleared (and not).
   std::unique_ptr<base::DictionaryValue> incidents_sent(

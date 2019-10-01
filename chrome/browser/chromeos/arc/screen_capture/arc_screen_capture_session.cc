@@ -96,7 +96,6 @@ ArcScreenCaptureSession::ArcScreenCaptureSession(
     : binding_(this),
       notifier_(std::move(notifier)),
       size_(size),
-      desktop_window_(nullptr),
       client_native_pixmap_factory_(
           gfx::CreateClientNativePixmapFactoryDmabuf()),
       weak_ptr_factory_(this) {}
@@ -106,13 +105,14 @@ mojom::ScreenCaptureSessionPtr ArcScreenCaptureSession::Initialize(
     const std::string& display_name,
     bool enable_notification) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  desktop_window_ = content::DesktopMediaID::GetAuraWindowById(desktop_id);
-  if (!desktop_window_) {
+  display_root_window_ =
+      content::DesktopMediaID::GetNativeWindowById(desktop_id);
+  if (!display_root_window_) {
     LOG(ERROR) << "Unable to find Aura desktop window";
     return nullptr;
   }
 
-  ui::Layer* layer = desktop_window_->layer();
+  ui::Layer* layer = display_root_window_->layer();
   if (!layer) {
     LOG(ERROR) << "Unable to find layer for the desktop window";
     return nullptr;
@@ -129,7 +129,7 @@ mojom::ScreenCaptureSessionPtr ArcScreenCaptureSession::Initialize(
       gfx::Vector2d(desktop_size.width(), desktop_size.height()),
       gfx::Vector2d(size_.width(), size_.height()), false, true, false);
 
-  desktop_window_->GetHost()->compositor()->AddAnimationObserver(this);
+  display_root_window_->GetHost()->compositor()->AddAnimationObserver(this);
 
   if (enable_notification) {
     // Show the tray notification icon now.
@@ -159,7 +159,10 @@ void ArcScreenCaptureSession::Close() {
 }
 
 ArcScreenCaptureSession::~ArcScreenCaptureSession() {
-  desktop_window_->GetHost()->compositor()->RemoveAnimationObserver(this);
+  if (!display_root_window_)
+    return;
+
+  display_root_window_->GetHost()->compositor()->RemoveAnimationObserver(this);
   ash::Shell::Get()->display_manager()->dec_screen_capture_active_counter();
   ash::Shell::Get()->UpdateCursorCompositingEnabled();
 }
@@ -191,6 +194,8 @@ void ArcScreenCaptureSession::SetOutputBuffer(
 
   gfx::GpuMemoryBufferHandle handle;
   handle.type = gfx::NATIVE_PIXMAP;
+  // Dummy modifier.
+  handle.native_pixmap_handle.modifier = 0;
   base::PlatformFile platform_file;
   MojoResult mojo_result =
       mojo::UnwrapPlatformFile(std::move(graphics_buffer), &platform_file);
@@ -199,13 +204,12 @@ void ArcScreenCaptureSession::SetOutputBuffer(
     std::move(callback).Run();
     return;
   }
-  base::ScopedFD scoped_fd(platform_file);
-  handle.native_pixmap_handle.fds.emplace_back(std::move(scoped_fd));
   handle.native_pixmap_handle.planes.emplace_back(
-      stride * kBytesPerPixel, 0, stride * kBytesPerPixel * size_.height(), 0);
+      stride * kBytesPerPixel, 0, stride * kBytesPerPixel * size_.height(),
+      base::ScopedFD(platform_file));
   std::unique_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer =
       gpu::GpuMemoryBufferImplNativePixmap::CreateFromHandle(
-          client_native_pixmap_factory_.get(), handle, size_,
+          client_native_pixmap_factory_.get(), std::move(handle), size_,
           gfx::BufferFormat::RGBX_8888, gfx::BufferUsage::SCANOUT,
           gpu::GpuMemoryBufferImpl::DestructionCallback());
   if (!gpu_memory_buffer) {
@@ -281,9 +285,10 @@ void ArcScreenCaptureSession::OnDesktopCaptured(
     return;
 
   // Get the source texture
-  GLuint src_texture = gl_helper_->ConsumeMailboxToTexture(
-      result->GetTextureResult()->mailbox,
-      result->GetTextureResult()->sync_token);
+  gl->WaitSyncTokenCHROMIUM(
+      result->GetTextureResult()->sync_token.GetConstData());
+  GLuint src_texture = gl->CreateAndConsumeTextureCHROMIUM(
+      result->GetTextureResult()->mailbox.name);
   std::unique_ptr<viz::SingleReleaseCallback> release_callback =
       result->TakeTextureOwnership();
 
@@ -352,7 +357,7 @@ void ArcScreenCaptureSession::OnAnimationStep(base::TimeTicks timestamp) {
     return;
   }
 
-  ui::Layer* layer = desktop_window_->layer();
+  ui::Layer* layer = display_root_window_->layer();
   if (!layer) {
     LOG(ERROR) << "Unable to find layer for the desktop window";
     return;
@@ -363,7 +368,7 @@ void ArcScreenCaptureSession::OnAnimationStep(base::TimeTicks timestamp) {
           base::BindOnce(&ArcScreenCaptureSession::OnDesktopCaptured,
                          weak_ptr_factory_.GetWeakPtr()));
   // Clip the requested area to the desktop area. See b/118675936.
-  request->set_area(gfx::Rect(desktop_window_->bounds().size()));
+  request->set_area(gfx::Rect(display_root_window_->bounds().size()));
   layer->RequestCopyOfOutput(std::move(request));
 }
 

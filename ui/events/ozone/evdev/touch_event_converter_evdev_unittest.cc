@@ -159,6 +159,8 @@ class MockDeviceEventDispatcherEvdev : public DeviceEventDispatcherEvdev {
       const std::vector<InputDevice>& devices) override {}
   void DispatchTouchpadDevicesUpdated(
       const std::vector<InputDevice>& devices) override {}
+  void DispatchUncategorizedDevicesUpdated(
+      const std::vector<InputDevice>& devices) override {}
   void DispatchDeviceListsComplete() override {}
   void DispatchStylusStateChanged(StylusState stylus_state) override {}
 
@@ -166,7 +168,7 @@ class MockDeviceEventDispatcherEvdev : public DeviceEventDispatcherEvdev {
   void DispatchGamepadEvent(const GamepadEvent& event) override {}
 
   void DispatchGamepadDevicesUpdated(
-      const std::vector<InputDevice>& devices) override {}
+      const std::vector<GamepadDevice>& devices) override {}
 
  private:
   base::RepeatingCallback<void(const GenericEventParams& params)> callback_;

@@ -32,9 +32,8 @@
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/blink/renderer/platform/wtf/ref_counted.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
-
-#include <SkRefCnt.h>
-#include <SkTypeface.h>
+#include "third_party/skia/include/core/SkRefCnt.h"
+#include "third_party/skia/include/core/SkTypeface.h"
 
 class SkFont;
 
@@ -42,6 +41,8 @@ namespace blink {
 
 class PLATFORM_EXPORT OpenTypeVerticalData
     : public RefCounted<OpenTypeVerticalData> {
+  USING_FAST_MALLOC(OpenTypeVerticalData);
+
  public:
   static scoped_refptr<OpenTypeVerticalData> CreateUnscaled(
       sk_sp<SkTypeface> typeface) {

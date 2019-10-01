@@ -12,17 +12,16 @@ import org.chromium.base.metrics.RecordHistogram;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Class to contain metrics recording constants and behaviour for Browser Services.
  */
 public class BrowserServicesMetrics {
-    @Retention(RetentionPolicy.SOURCE)
     @IntDef({VerificationResult.ONLINE_SUCCESS, VerificationResult.ONLINE_FAILURE,
             VerificationResult.OFFLINE_SUCCESS, VerificationResult.OFFLINE_FAILURE,
             VerificationResult.HTTPS_FAILURE, VerificationResult.REQUEST_FAILURE,
             VerificationResult.CACHED_SUCCESS})
+    @Retention(RetentionPolicy.SOURCE)
     public @interface VerificationResult {
         // Don't reuse values or reorder values. If you add something new, change NUM_ENTRIES as
         // well.
@@ -44,6 +43,12 @@ public class BrowserServicesMetrics {
                 "BrowserServices.VerificationResult", result, VerificationResult.NUM_ENTRIES);
     }
 
+    public static void recordVerificationTime(long duration, boolean online) {
+        RecordHistogram.recordTimesHistogram(
+                online ? "BrowserServices.VerificationTime.Online"
+                        : "BrowserServices.VerificationTime.Offline", duration);
+    }
+
     /**
      * Returns a {@link TimingMetric} that records the amount of time spent querying the Android
      * system for ResolveInfos that will deal with a given URL when launching from a background
@@ -59,6 +64,14 @@ public class BrowserServicesMetrics {
      */
     public static TimingMetric getClientAppDataLoadTimingContext() {
         return new TimingMetric("BrowserServices.ClientAppDataLoad");
+    }
+
+    /**
+     * Returns a {@link TimingMetric} that records the amount of time taken to check if a package
+     * handles a Browsable intent.
+     */
+    public static TimingMetric getBrowsableIntentResolutionTimingContext() {
+        return new TimingMetric("BrowserServices.BrowsableIntentCheck");
     }
 
     /**
@@ -80,8 +93,7 @@ public class BrowserServicesMetrics {
         @Override
         public void close() {
             // Use {@link CachedMetrics} so this can be called before native is loaded.
-            new CachedMetrics.MediumTimesHistogramSample(mMetric, TimeUnit.MILLISECONDS)
-                    .record(now() - mStart);
+            new CachedMetrics.MediumTimesHistogramSample(mMetric).record(now() - mStart);
         }
     }
 

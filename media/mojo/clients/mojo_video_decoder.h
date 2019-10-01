@@ -38,6 +38,7 @@ class MojoVideoDecoder final : public VideoDecoder,
                    GpuVideoAcceleratorFactories* gpu_factories,
                    MediaLog* media_log,
                    mojom::VideoDecoderPtr remote_decoder,
+                   VideoDecoderImplementation implementation,
                    const RequestOverlayInfoCB& request_overlay_info_cb,
                    const gfx::ColorSpace& target_color_space);
   ~MojoVideoDecoder() final;
@@ -48,12 +49,11 @@ class MojoVideoDecoder final : public VideoDecoder,
   void Initialize(const VideoDecoderConfig& config,
                   bool low_delay,
                   CdmContext* cdm_context,
-                  const InitCB& init_cb,
+                  InitCB init_cb,
                   const OutputCB& output_cb,
                   const WaitingCB& waiting_cb) final;
-  void Decode(scoped_refptr<DecoderBuffer> buffer,
-              const DecodeCB& decode_cb) final;
-  void Reset(const base::Closure& closure) final;
+  void Decode(scoped_refptr<DecoderBuffer> buffer, DecodeCB decode_cb) final;
+  void Reset(base::OnceClosure closure) final;
   bool NeedsBitstreamConversion() const final;
   bool CanReadWithoutStalling() const final;
   int GetMaxDecodeRequests() const final;
@@ -102,7 +102,7 @@ class MojoVideoDecoder final : public VideoDecoder,
   WaitingCB waiting_cb_;
   uint64_t decode_counter_ = 0;
   std::map<uint64_t, DecodeCB> pending_decodes_;
-  base::Closure reset_cb_;
+  base::OnceClosure reset_cb_;
 
   mojom::VideoDecoderPtr remote_decoder_;
   std::unique_ptr<MojoDecoderBufferWriter> mojo_decoder_buffer_writer_;
@@ -122,6 +122,8 @@ class MojoVideoDecoder final : public VideoDecoder,
   bool needs_bitstream_conversion_ = false;
   bool can_read_without_stalling_ = true;
   int32_t max_decode_requests_ = 1;
+
+  VideoDecoderImplementation video_decoder_implementation_;
 
   base::WeakPtr<MojoVideoDecoder> weak_this_;
   base::WeakPtrFactory<MojoVideoDecoder> weak_factory_;

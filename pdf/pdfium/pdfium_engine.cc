@@ -15,6 +15,7 @@
 #include <utility>
 
 #include "base/auto_reset.h"
+#include "base/bind.h"
 #include "base/i18n/encoding_detection.h"
 #include "base/i18n/icu_string_conversions.h"
 #include "base/logging.h"
@@ -1733,9 +1734,8 @@ bool PDFiumEngine::ExtendSelection(int page_index, int char_index) {
   if (selection_.empty())
     return false;
 
-  PDFiumRange& last_selection = selection_.back();
-  const int last_page_index = last_selection.page_index();
-  const int last_char_index = last_selection.char_index();
+  const int last_page_index = selection_.back().page_index();
+  const int last_char_index = selection_.back().char_index();
   if (last_page_index == page_index) {
     // Selecting within a page.
     int count = char_index - last_char_index;
@@ -1745,9 +1745,14 @@ bool PDFiumEngine::ExtendSelection(int page_index, int char_index) {
     } else {
       --count;
     }
-    last_selection.SetCharCount(count);
+    selection_.back().SetCharCount(count);
   } else if (last_page_index < page_index) {
     // Selecting into the next page.
+
+    // Save the current last selection for use below.
+    // Warning: Do not use references / pointers into |selection_|, as the code
+    // below can modify |selection_| and invalidate those references / pointers.
+    const size_t last_selection_index = selection_.size() - 1;
 
     // First make sure that there are no gaps in selection, i.e. if mousedown on
     // page one but we only get mousemove over page three, we want page two.
@@ -1757,14 +1762,14 @@ bool PDFiumEngine::ExtendSelection(int page_index, int char_index) {
     }
 
     int count = pages_[last_page_index]->GetCharCount();
-    last_selection.SetCharCount(count - last_char_index);
+    selection_[last_selection_index].SetCharCount(count - last_char_index);
     selection_.push_back(PDFiumRange(pages_[page_index].get(), 0, char_index));
   } else {
     // Selecting into the previous page.
     // The selection's char_index is 0-based, so the character count is one
     // more than the index. The character count needs to be negative to
     // indicate a backwards selection.
-    last_selection.SetCharCount(-last_char_index - 1);
+    selection_.back().SetCharCount(-last_char_index - 1);
 
     // First make sure that there are no gaps in selection, i.e. if mousedown on
     // page three but we only get mousemove over page one, we want page two.
@@ -3619,7 +3624,7 @@ bool PDFiumEngine::IsPointInEditableFormTextArea(FPDF_PAGE page,
   if (!annot)
     return false;
 
-  int flags = FPDFAnnot_GetFormFieldFlags(page, annot.get());
+  int flags = FPDFAnnot_GetFormFieldFlags(form(), page, annot.get());
   return CheckIfEditableFormTextArea(flags, form_type);
 }
 

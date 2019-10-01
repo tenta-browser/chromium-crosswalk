@@ -29,6 +29,7 @@
 #include "third_party/blink/renderer/core/layout/layout_block_flow.h"
 #include "third_party/blink/renderer/core/layout/layout_state.h"
 #include "third_party/blink/renderer/core/scroll/scrollable_area.h"
+#include "third_party/blink/renderer/platform/graphics/scroll_types.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 
 namespace blink {
@@ -119,7 +120,7 @@ class CORE_EXPORT LayoutView final : public LayoutBlockFlow {
 
   // See comments for the equivalent method on LayoutObject.
   bool MapToVisualRectInAncestorSpace(const LayoutBoxModelObject* ancestor,
-                                      LayoutRect&,
+                                      PhysicalRect&,
                                       MapCoordinatesFlags mode,
                                       VisualRectFlags) const;
 
@@ -136,25 +137,23 @@ class CORE_EXPORT LayoutView final : public LayoutBlockFlow {
       const LayoutBoxModelObject* ancestor,
       TransformState&,
       VisualRectFlags = kDefaultVisualRectFlags) const override;
-  LayoutSize OffsetForFixedPosition() const;
+  PhysicalOffset OffsetForFixedPosition() const;
 
   void InvalidatePaintForViewAndCompositedLayers();
 
   void Paint(const PaintInfo&) const override;
   void PaintBoxDecorationBackground(
       const PaintInfo&,
-      const LayoutPoint& paint_offset) const override;
+      const PhysicalOffset& paint_offset) const override;
 
   void CommitPendingSelection();
 
-  void AbsoluteRects(Vector<IntRect>&,
-                     const LayoutPoint& accumulated_offset) const override;
   void AbsoluteQuads(Vector<FloatQuad>&,
                      MapCoordinatesFlags mode = 0) const override;
 
-  LayoutRect ViewRect() const override;
-  LayoutRect OverflowClipRect(
-      const LayoutPoint& location,
+  PhysicalRect ViewRect() const override;
+  PhysicalRect OverflowClipRect(
+      const PhysicalOffset& location,
       OverlayScrollbarClipBehavior =
           kIgnorePlatformOverlayScrollbarSize) const override;
 
@@ -215,7 +214,7 @@ class CORE_EXPORT LayoutView final : public LayoutBlockFlow {
   void UpdateCounters();
 
   bool BackgroundIsKnownToBeOpaqueInRect(
-      const LayoutRect& local_rect) const override;
+      const PhysicalRect& local_rect) const override;
 
   // Returns the viewport size in (CSS pixels) that vh and vw units are
   // calculated from.
@@ -229,7 +228,7 @@ class CORE_EXPORT LayoutView final : public LayoutBlockFlow {
     layout_state_ = layout_state_->Next();
   }
 
-  LayoutRect LocalVisualRectIgnoringVisibility() const override;
+  PhysicalRect LocalVisualRectIgnoringVisibility() const override;
 
   // Invalidates paint for the entire view, including composited descendants,
   // but not including child frames.
@@ -238,7 +237,7 @@ class CORE_EXPORT LayoutView final : public LayoutBlockFlow {
 
   bool ShouldPlaceBlockDirectionScrollbarOnLogicalLeft() const override;
 
-  LayoutRect DebugRect() const override;
+  PhysicalRect DebugRect() const override;
 
   // Returns the coordinates of find-in-page scrollbar tickmarks.  These come
   // from DocumentMarkerController, unless overridden by SetTickmarks.
@@ -257,25 +256,26 @@ class CORE_EXPORT LayoutView final : public LayoutBlockFlow {
   // The visible background area, in the local coordinates. The view background
   // will be painted in this rect. It's also the positioning area of fixed-
   // attachment backgrounds.
-  LayoutRect BackgroundRect() const { return OverflowClipRect(LayoutPoint()); }
+  PhysicalRect BackgroundRect() const {
+    return OverflowClipRect(PhysicalOffset());
+  }
 
   // The previous BackgroundRect after the previous paint invalidation.
-  LayoutRect PreviousBackgroundRect() const {
+  PhysicalRect PreviousBackgroundRect() const {
     DCHECK_EQ(GetDocument().Lifecycle().GetState(),
               DocumentLifecycle::kInPrePaint);
     return previous_background_rect_;
   }
-  void SetPreviousBackgroundRect(const LayoutRect& r) const {
+  void SetPreviousBackgroundRect(const PhysicalRect& r) const {
     DCHECK_EQ(GetDocument().Lifecycle().GetState(),
               DocumentLifecycle::kInPrePaint);
     previous_background_rect_ = r;
   }
 
  private:
-  void MapLocalToAncestor(
-      const LayoutBoxModelObject* ancestor,
-      TransformState&,
-      MapCoordinatesFlags = kApplyContainerFlip) const override;
+  void MapLocalToAncestor(const LayoutBoxModelObject* ancestor,
+                          TransformState&,
+                          MapCoordinatesFlags) const override;
 
   const LayoutObject* PushMappingToContainer(
       const LayoutBoxModelObject* ancestor_to_stop_at,
@@ -283,8 +283,6 @@ class CORE_EXPORT LayoutView final : public LayoutBlockFlow {
   void MapAncestorToLocal(const LayoutBoxModelObject*,
                           TransformState&,
                           MapCoordinatesFlags) const override;
-  void ComputeSelfHitTestRects(Vector<LayoutRect>&,
-                               const LayoutPoint& layer_offset) const override;
 
   bool CanHaveChildren() const override;
 
@@ -340,7 +338,7 @@ class CORE_EXPORT LayoutView final : public LayoutBlockFlow {
 
   Vector<IntRect> tickmarks_override_;
 
-  mutable LayoutRect previous_background_rect_;
+  mutable PhysicalRect previous_background_rect_;
 };
 
 DEFINE_LAYOUT_OBJECT_TYPE_CASTS(LayoutView, IsLayoutView());

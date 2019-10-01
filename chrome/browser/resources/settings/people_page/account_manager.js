@@ -61,6 +61,15 @@ Polymer({
   },
 
   /**
+   * @return {boolean} True if secondary account sign-ins are allowed, false
+   *    otherwise.
+   * @private
+   */
+  isSecondaryGoogleAccountSigninAllowed_: function() {
+    return loadTimeData.getBoolean('secondaryGoogleAccountSigninAllowed');
+  },
+
+  /**
    * @param {string} iconUrl
    * @return {string} A CSS image-set for multiple scale factors.
    * @private
@@ -92,12 +101,48 @@ Polymer({
   },
 
   /**
-   * @param {!Event} event
+   * @param {!settings.Account} account
+   * @return {string} An appropriate management status label. e.g.
+   *    "Primary account" for unmanaged accounts, "Managed by <Domain>"
+   *    for Enterprise managed accounts etc.
+   * @private
+   */
+  getManagementLabel_: function(account) {
+    if (account.organization) {
+      return this.i18n('accountManagerManagedLabel', account.organization);
+    }
+
+    return this.i18n('accountManagerUnmanagedLabel');
+  },
+
+  /**
+   * @param {boolean} unmigrated
+   * @private
+   */
+  getAccountManagerSignedOutName_: function(unmigrated) {
+    return this.i18n(unmigrated ? 'accountManagerUnmigratedAccountName'
+                                : 'accountManagerSignedOutAccountName');
+  },
+
+  /**
+   * @param {boolean} unmigrated
+   * @private
+   */
+  getAccountManagerSignedOutLabel_: function(unmigrated) {
+    return this.i18n(unmigrated ? 'accountManagerMigrationLabel'
+                                : 'accountManagerReauthenticationLabel');
+  },
+
+  /**
+   * @param {!CustomEvent<!{model: !{item: !settings.Account}}>} event
    * @private
    */
   onReauthenticationTap_: function(event) {
-    this.browserProxy_.reauthenticateAccount(
-      this.$['account-list'].itemForElement(event.path[0]).email);
+    if (event.model.item.unmigrated) {
+      this.browserProxy_.migrateAccount(event.model.item.email);
+    } else {
+      this.browserProxy_.reauthenticateAccount(event.model.item.email);
+    }
   },
 
   /**

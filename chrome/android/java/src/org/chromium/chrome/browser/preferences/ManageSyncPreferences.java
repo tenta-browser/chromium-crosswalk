@@ -8,8 +8,6 @@ import android.app.DialogFragment;
 import android.app.FragmentManager;
 import android.app.FragmentTransaction;
 import android.content.Context;
-import android.content.Intent;
-import android.net.Uri;
 import android.os.Bundle;
 import android.preference.CheckBoxPreference;
 import android.preference.Preference;
@@ -23,9 +21,9 @@ import android.view.MenuInflater;
 import android.view.MenuItem;
 
 import org.chromium.base.ApiCompatibilityUtils;
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.base.task.PostTask;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.AppHooks;
 import org.chromium.chrome.browser.autofill.PersonalDataManager;
@@ -38,7 +36,8 @@ import org.chromium.chrome.browser.sync.ui.PassphraseDialogFragment;
 import org.chromium.chrome.browser.sync.ui.PassphraseTypeDialogFragment;
 import org.chromium.components.signin.ChromeSigninController;
 import org.chromium.components.sync.ModelType;
-import org.chromium.components.sync.PassphraseType;
+import org.chromium.components.sync.Passphrase;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -69,8 +68,6 @@ public class ManageSyncPreferences extends PreferenceFragment
     private static final String PREF_GOOGLE_ACTIVITY_CONTROLS = "google_activity_controls";
     private static final String PREF_ENCRYPTION = "encryption";
     private static final String PREF_SYNC_MANAGE_DATA = "sync_manage_data";
-
-    private static final String DASHBOARD_URL = "https://www.google.com/settings/chrome/sync";
 
     private final ProfileSyncService mProfileSyncService = ProfileSyncService.get();
 
@@ -118,7 +115,7 @@ public class ManageSyncPreferences extends PreferenceFragment
                 SyncPreferenceUtils.toOnClickListener(this, this::onSyncEncryptionClicked));
         mManageSyncData = findPreference(PREF_SYNC_MANAGE_DATA);
         mManageSyncData.setOnPreferenceClickListener(SyncPreferenceUtils.toOnClickListener(
-                this, this::openDashboardTabInNewActivityStack));
+                this, () -> SyncPreferenceUtils.openSyncDashboard(getActivity())));
 
         mSyncTypePreferences =
                 new CheckBoxPreference[] {mSyncAutofill, mSyncBookmarks, mSyncPaymentsIntegration,
@@ -187,7 +184,7 @@ public class ManageSyncPreferences extends PreferenceFragment
     public boolean onPreferenceChange(Preference preference, Object o) {
         // A change to Preference state hasn't been applied yet. Defer
         // updateSyncStateFromSelectedModelTypes so it gets the updated state from isChecked().
-        ThreadUtils.postOnUiThread(this::updateSyncStateFromSelectedModelTypes);
+        PostTask.postTask(UiThreadTaskTraits.DEFAULT, this::updateSyncStateFromSelectedModelTypes);
         return true;
     }
 
@@ -201,7 +198,7 @@ public class ManageSyncPreferences extends PreferenceFragment
     public void syncStateChanged() {
         // This is invoked synchronously from ProfileSyncService.setChosenDataTypes, postpone the
         // update to let updateSyncStateFromSelectedModelTypes finish saving the state.
-        ThreadUtils.postOnUiThread(this::updateSyncPreferences);
+        PostTask.postTask(UiThreadTaskTraits.DEFAULT, this::updateSyncPreferences);
     }
 
     /**
@@ -230,9 +227,13 @@ public class ManageSyncPreferences extends PreferenceFragment
     private void updateSyncStateFromSelectedModelTypes() {
         mProfileSyncService.setChosenDataTypes(
                 mSyncEverything.isChecked(), getSelectedModelTypes());
-        PersonalDataManager.setPaymentsIntegrationEnabled(mSyncPaymentsIntegration.isChecked());
+        // Note: mSyncPaymentsIntegration should be checked if mSyncEverything is checked, but if
+        // mSyncEverything was just enabled, then that state may not have propagated to
+        // mSyncPaymentsIntegration yet. See crbug.com/972863.
+        PersonalDataManager.setPaymentsIntegrationEnabled(
+                mSyncEverything.isChecked() || mSyncPaymentsIntegration.isChecked());
         // Some calls to setChosenDataTypes don't trigger syncStateChanged, so schedule update here.
-        ThreadUtils.postOnUiThread(this::updateSyncPreferences);
+        PostTask.postTask(UiThreadTaskTraits.DEFAULT, this::updateSyncPreferences);
     }
 
     /**
@@ -364,7 +365,7 @@ public class ManageSyncPreferences extends PreferenceFragment
 
     /** Callback for PassphraseTypeDialogFragment.Listener */
     @Override
-    public void onPassphraseTypeSelected(PassphraseType type) {
+    public void onPassphraseTypeSelected(@Passphrase.Type int type) {
         if (!mProfileSyncService.isEngineInitialized()) {
             // If the engine was shut down since the dialog was opened, do nothing.
             return;
@@ -394,14 +395,6 @@ public class ManageSyncPreferences extends PreferenceFragment
         } else {
             displayPassphraseTypeDialog();
         }
-    }
-
-    /** Opens the Google Dashboard where the user can control the data stored for the account. */
-    private void openDashboardTabInNewActivityStack() {
-        Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(DASHBOARD_URL));
-        intent.setPackage(getActivity().getPackageName());
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        startActivity(intent);
     }
 
     /**

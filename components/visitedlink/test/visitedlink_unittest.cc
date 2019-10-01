@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-#include "base/callback_helpers.h"
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/macros.h"
@@ -549,7 +549,7 @@ class VisitCountingContext : public mojom::VisitedLinkNotificationSink {
 
   void NotifyUpdate() {
     if (!quit_closure_.is_null())
-      base::ResetAndReturn(&quit_closure_).Run();
+      std::move(quit_closure_).Run();
   }
 
   void UpdateVisitedLinks(

@@ -15,6 +15,7 @@ import org.chromium.chrome.browser.customtabs.CustomTabIntentDataProvider;
 import org.chromium.chrome.browser.customtabs.CustomTabTabPersistencePolicy;
 import org.chromium.chrome.browser.dependency_injection.ActivityScope;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabBuilder;
 import org.chromium.chrome.browser.tab.TabDelegateFactory;
 import org.chromium.chrome.browser.tabmodel.ChromeTabCreator;
 import org.chromium.chrome.browser.tabmodel.TabLaunchType;
@@ -92,8 +93,14 @@ public class CustomTabActivityTabFactory {
                 IntentUtils.safeGetIntExtra(intent, IntentHandler.EXTRA_TAB_ID, Tab.INVALID_TAB_ID);
         int parentTabId = IntentUtils.safeGetIntExtra(
                 intent, IntentHandler.EXTRA_PARENT_TAB_ID, Tab.INVALID_TAB_ID);
-        return new Tab(assignedTabId, parentTabId, mIntentDataProvider.isIncognito(),
-                mActivityWindowAndroid.get(), TabLaunchType.FROM_EXTERNAL_APP, null, null);
+        Tab parent = mTabModelSelector != null ? mTabModelSelector.getTabById(parentTabId) : null;
+        return new TabBuilder()
+                .setId(assignedTabId)
+                .setParent(parent)
+                .setIncognito(mIntentDataProvider.isIncognito())
+                .setWindow(mActivityWindowAndroid.get())
+                .setLaunchType(TabLaunchType.FROM_EXTERNAL_APP)
+                .build();
     }
 
     /**

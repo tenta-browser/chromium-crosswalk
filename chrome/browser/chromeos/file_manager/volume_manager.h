@@ -106,6 +106,9 @@ class Volume : public base::SupportsWeakPtr<Volume> {
                                               bool read_only);
   static std::unique_ptr<Volume> CreateForMediaView(
       const std::string& root_document_id);
+  static std::unique_ptr<Volume> CreateMediaViewForTesting(
+      base::FilePath mount_path,
+      const std::string& root_document_id);
   static std::unique_ptr<Volume> CreateForSshfsCrostini(
       const base::FilePath& crostini_path);
   static std::unique_ptr<Volume> CreateForAndroidFiles(
@@ -116,7 +119,8 @@ class Volume : public base::SupportsWeakPtr<Volume> {
       const std::string& document_id,
       const std::string& title,
       const std::string& summary,
-      const GURL& icon_url);
+      const GURL& icon_url,
+      bool read_only);
   static std::unique_ptr<Volume> CreateForTesting(
       const base::FilePath& path,
       VolumeType volume_type,
@@ -143,8 +147,8 @@ class Volume : public base::SupportsWeakPtr<Volume> {
     return mount_condition_;
   }
   MountContext mount_context() const { return mount_context_; }
-  const base::FilePath& system_path_prefix() const {
-    return system_path_prefix_;
+  const base::FilePath& storage_device_path() const {
+    return storage_device_path_;
   }
   const std::string& volume_label() const { return volume_label_; }
   bool is_parent() const { return is_parent_; }
@@ -211,9 +215,9 @@ class Volume : public base::SupportsWeakPtr<Volume> {
   // interaction or not.
   MountContext mount_context_;
 
-  // Path of the system device this device's block is a part of.
+  // Path of the storage device this device's block is a part of.
   // (e.g. /sys/devices/pci0000:00/.../8:0:0:0/)
-  base::FilePath system_path_prefix_;
+  base::FilePath storage_device_path_;
 
   // Label for the volume if the volume is either removable or a provided
   // file system. In case of removables, if disk is a parent, then its label,
@@ -317,23 +321,27 @@ class VolumeManager : public KeyedService,
   // Removes Downloads volume used for testing.
   void RemoveDownloadsDirectoryForTesting();
 
-  // For testing purpose, registers a native local file system pointing to
+  // For testing purposes, registers a native local file system pointing to
   // |path| with DOWNLOADS type, and adds its volume info.
   bool RegisterDownloadsDirectoryForTesting(const base::FilePath& path);
 
-  // For testing purpose, registers a native local file system pointing to
+  // For testing purposes, registers a native local file system pointing to
   // |path| with CROSTINI type, and adds its volume info.
   bool RegisterCrostiniDirectoryForTesting(const base::FilePath& path);
 
-  // For testing purpose, registers a native local file system pointing to
+  // For testing purposes, registers a native local file system pointing to
   // |path| with ANDROID_FILES type, and adds its volume info.
   bool RegisterAndroidFilesDirectoryForTesting(const base::FilePath& path);
 
-  // For testing purpose, removes a registered native local file system
+  // For testing purposes, register a DocumentsProvider root with
+  // VOLUME_TYPE_MEDIA_VIEW, and adds its volume info
+  bool RegisterMediaViewForTesting(const std::string& root_document_id);
+
+  // For testing purposes, removes a registered native local file system
   // pointing to |path| with ANDROID_FILES type, and removes its volume info.
   bool RemoveAndroidFilesDirectoryForTesting(const base::FilePath& path);
 
-  // For testing purpose, adds a volume info pointing to |path|, with TESTING
+  // For testing purposes, adds a volume info pointing to |path|, with TESTING
   // type. Assumes that the mount point is already registered.
   void AddVolumeForTesting(const base::FilePath& path,
                            VolumeType volume_type,
@@ -342,8 +350,16 @@ class VolumeManager : public KeyedService,
                            const base::FilePath& device_path = base::FilePath(),
                            const std::string& drive_label = "");
 
-  // For testing purpose, adds the volume info to the volume manager.
+  // For testing purposes, adds the volume info to the volume manager.
   void AddVolumeForTesting(std::unique_ptr<Volume> volume);
+
+  void RemoveVolumeForTesting(
+      const base::FilePath& path,
+      VolumeType volume_type,
+      chromeos::DeviceType device_type,
+      bool read_only,
+      const base::FilePath& device_path = base::FilePath(),
+      const std::string& drive_label = "");
 
   // drive::DriveIntegrationServiceObserver overrides.
   void OnFileSystemMounted() override;
@@ -393,12 +409,15 @@ class VolumeManager : public KeyedService,
       const storage_monitor::StorageInfo& info) override;
 
   // file_manager::DocumentsProviderRootManager::Observer overrides.
-  void OnDocumentsProviderRootAdded(const std::string& authority,
-                                    const std::string& root_id,
-                                    const std::string& document_id,
-                                    const std::string& title,
-                                    const std::string& summary,
-                                    const GURL& icon_url) override;
+  void OnDocumentsProviderRootAdded(
+      const std::string& authority,
+      const std::string& root_id,
+      const std::string& document_id,
+      const std::string& title,
+      const std::string& summary,
+      const GURL& icon_url,
+      bool read_only,
+      const std::vector<std::string>& mime_types) override;
   void OnDocumentsProviderRootRemoved(const std::string& authority,
                                       const std::string& root_id,
                                       const std::string& document_id) override;
@@ -414,6 +433,7 @@ class VolumeManager : public KeyedService,
                     std::unique_ptr<Volume> volume);
   void DoUnmountEvent(chromeos::MountError error_code, const Volume& volume);
   void OnExternalStorageDisabledChangedUnmountCallback(
+      std::vector<std::string> remaining_mount_paths,
       chromeos::MountError error_code);
 
   // Returns the path of the mount point for drive.

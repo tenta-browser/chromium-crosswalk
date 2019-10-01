@@ -7,8 +7,7 @@
 [
     SecureContext,
     Exposed=Window,
-    OriginTrialEnabled=WebXR
-] interface XRViewerPose {
-  readonly attribute Float32Array poseModelMatrix;
-  readonly attribute FrozenArray<XRView> views;
+    RuntimeEnabled=WebXR
+] interface XRViewerPose : XRPose {
+  [SameObject] readonly attribute FrozenArray<XRView> views;
 };

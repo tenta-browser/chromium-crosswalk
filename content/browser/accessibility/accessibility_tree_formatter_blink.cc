@@ -29,10 +29,18 @@ namespace {
 base::Optional<std::string> GetStringAttribute(
     const BrowserAccessibility& node,
     ax::mojom::StringAttribute attr) {
-  // Language and Font Family are different from other string attributes
-  // in that they inherit.
-  if (attr == ax::mojom::StringAttribute::kFontFamily ||
-      attr == ax::mojom::StringAttribute::kLanguage) {
+  // Language is different from other string attributes as it inherits and has
+  // a method to compute it.
+  if (attr == ax::mojom::StringAttribute::kLanguage) {
+    std::string value = node.node()->GetLanguage();
+    if (value.empty()) {
+      return base::nullopt;
+    }
+    return value;
+  }
+
+  // Font Family is different from other string attributes as it inherits.
+  if (attr == ax::mojom::StringAttribute::kFontFamily) {
     std::string value = node.GetInheritedStringAttribute(attr);
     if (value.empty()) {
       return base::nullopt;
@@ -67,20 +75,30 @@ std::string IntAttrToString(const BrowserAccessibility& node,
       return ui::ToString(static_cast<ax::mojom::DefaultActionVerb>(value));
     case ax::mojom::IntAttribute::kDescriptionFrom:
       return ui::ToString(static_cast<ax::mojom::DescriptionFrom>(value));
+    case ax::mojom::IntAttribute::kDropeffect:
+      return node.GetData().DropeffectBitfieldToString();
     case ax::mojom::IntAttribute::kHasPopup:
       return ui::ToString(static_cast<ax::mojom::HasPopup>(value));
     case ax::mojom::IntAttribute::kInvalidState:
       return ui::ToString(static_cast<ax::mojom::InvalidState>(value));
+    case ax::mojom::IntAttribute::kListStyle:
+      return ui::ToString(static_cast<ax::mojom::ListStyle>(value));
     case ax::mojom::IntAttribute::kNameFrom:
       return ui::ToString(static_cast<ax::mojom::NameFrom>(value));
     case ax::mojom::IntAttribute::kRestriction:
       return ui::ToString(static_cast<ax::mojom::Restriction>(value));
     case ax::mojom::IntAttribute::kSortDirection:
       return ui::ToString(static_cast<ax::mojom::SortDirection>(value));
+    case ax::mojom::IntAttribute::kTextOverlineStyle:
+    case ax::mojom::IntAttribute::kTextStrikethroughStyle:
+    case ax::mojom::IntAttribute::kTextUnderlineStyle:
+      return ui::ToString(static_cast<ax::mojom::TextDecorationStyle>(value));
     case ax::mojom::IntAttribute::kTextDirection:
       return ui::ToString(static_cast<ax::mojom::TextDirection>(value));
     case ax::mojom::IntAttribute::kTextPosition:
       return ui::ToString(static_cast<ax::mojom::TextPosition>(value));
+    case ax::mojom::IntAttribute::kImageAnnotationStatus:
+      return ui::ToString(static_cast<ax::mojom::ImageAnnotationStatus>(value));
     // No pretty printing necessary for these:
     case ax::mojom::IntAttribute::kActivedescendantId:
     case ax::mojom::IntAttribute::kAriaCellColumnIndex:
@@ -98,6 +116,7 @@ std::string IntAttrToString(const BrowserAccessibility& node,
     case ax::mojom::IntAttribute::kNextFocusId:
     case ax::mojom::IntAttribute::kNextOnLineId:
     case ax::mojom::IntAttribute::kPosInSet:
+    case ax::mojom::IntAttribute::kPopupForId:
     case ax::mojom::IntAttribute::kPreviousFocusId:
     case ax::mojom::IntAttribute::kPreviousOnLineId:
     case ax::mojom::IntAttribute::kScrollX:
@@ -135,6 +154,45 @@ AccessibilityTreeFormatterBlink::AccessibilityTreeFormatterBlink()
     : AccessibilityTreeFormatterBrowser() {}
 
 AccessibilityTreeFormatterBlink::~AccessibilityTreeFormatterBlink() {}
+
+void AccessibilityTreeFormatterBlink::AddDefaultFilters(
+    std::vector<PropertyFilter>* property_filters) {
+  // Noisy, perhaps add later:
+  //   editable, focus*, horizontal, linked, richlyEditable, vertical
+  // Too flaky: hovered, offscreen
+  // States
+  AddPropertyFilter(property_filters, "collapsed");
+  AddPropertyFilter(property_filters, "haspopup");
+  AddPropertyFilter(property_filters, "invisible");
+  AddPropertyFilter(property_filters, "multiline");
+  AddPropertyFilter(property_filters, "protected");
+  AddPropertyFilter(property_filters, "required");
+  AddPropertyFilter(property_filters, "select*");
+  AddPropertyFilter(property_filters, "visited");
+  // Other attributes
+  AddPropertyFilter(property_filters, "busy=true");
+  AddPropertyFilter(property_filters, "valueForRange*");
+  AddPropertyFilter(property_filters, "minValueForRange*");
+  AddPropertyFilter(property_filters, "maxValueForRange*");
+  AddPropertyFilter(property_filters, "hierarchicalLevel*");
+  AddPropertyFilter(property_filters, "autoComplete*");
+  AddPropertyFilter(property_filters, "restriction*");
+  AddPropertyFilter(property_filters, "keyShortcuts*");
+  AddPropertyFilter(property_filters, "activedescendantId*");
+  AddPropertyFilter(property_filters, "controlsIds*");
+  AddPropertyFilter(property_filters, "flowtoIds*");
+  AddPropertyFilter(property_filters, "detailsIds*");
+  AddPropertyFilter(property_filters, "invalidState=*");
+  AddPropertyFilter(property_filters, "invalidState=false",
+                    PropertyFilter::DENY);  // Don't show false value
+  AddPropertyFilter(property_filters, "roleDescription=*");
+  AddPropertyFilter(property_filters, "errormessageId=*");
+}
+// static
+std::unique_ptr<AccessibilityTreeFormatter>
+AccessibilityTreeFormatterBlink::CreateBlink() {
+  return std::make_unique<AccessibilityTreeFormatterBlink>();
+}
 
 const char* const TREE_DATA_ATTRIBUTES[] = {"TreeData.textSelStartOffset",
                                             "TreeData.textSelEndOffset"};
@@ -174,8 +232,8 @@ void AccessibilityTreeFormatterBlink::AddProperties(
   dict->SetInteger("boundsWidth", bounds.width());
   dict->SetInteger("boundsHeight", bounds.height());
 
-  bool offscreen = false;
-  gfx::Rect page_bounds = node.GetPageBoundsRect(&offscreen);
+  ui::AXOffscreenResult offscreen_result = ui::AXOffscreenResult::kOnscreen;
+  gfx::Rect page_bounds = node.GetClippedRootFrameBoundsRect(&offscreen_result);
   dict->SetInteger("pageBoundsX", page_bounds.x());
   dict->SetInteger("pageBoundsY", page_bounds.y());
   dict->SetInteger("pageBoundsWidth", page_bounds.width());
@@ -185,7 +243,8 @@ void AccessibilityTreeFormatterBlink::AddProperties(
                    node.GetData().relative_bounds.transform &&
                        !node.GetData().relative_bounds.transform->IsIdentity());
 
-  gfx::Rect unclipped_bounds = node.GetPageBoundsRect(&offscreen, false);
+  gfx::Rect unclipped_bounds =
+      node.GetUnclippedRootFrameBoundsRect(&offscreen_result);
   dict->SetInteger("unclippedBoundsX", unclipped_bounds.x());
   dict->SetInteger("unclippedBoundsY", unclipped_bounds.y());
   dict->SetInteger("unclippedBoundsWidth", unclipped_bounds.width());
@@ -199,7 +258,7 @@ void AccessibilityTreeFormatterBlink::AddProperties(
       dict->SetBoolean(ui::ToString(state), true);
   }
 
-  if (offscreen)
+  if (offscreen_result == ui::AXOffscreenResult::kOffscreen)
     dict->SetBoolean(STATE_OFFSCREEN, true);
 
   for (int32_t attr_index =
@@ -306,7 +365,7 @@ base::string16 AccessibilityTreeFormatterBlink::ProcessTreeForOutput(
   if (show_ids()) {
     int id_value;
     dict.GetInteger("id", &id_value);
-    WriteAttribute(true, base::IntToString16(id_value), &line);
+    WriteAttribute(true, base::NumberToString16(id_value), &line);
   }
 
   base::string16 role_value;
@@ -434,7 +493,7 @@ base::string16 AccessibilityTreeFormatterBlink::ProcessTreeForOutput(
       } else {
         int int_value;
         value->GetInteger(i, &int_value);
-        attr_string += base::IntToString(int_value);
+        attr_string += base::NumberToString(int_value);
       }
     }
     WriteAttribute(false, attr_string, &line);
@@ -502,6 +561,10 @@ const std::string AccessibilityTreeFormatterBlink::GetAllowString() {
 
 const std::string AccessibilityTreeFormatterBlink::GetDenyString() {
   return "@BLINK-DENY:";
+}
+
+const std::string AccessibilityTreeFormatterBlink::GetDenyNodeString() {
+  return "@BLINK-DENY-NODE:";
 }
 
 }  // namespace content

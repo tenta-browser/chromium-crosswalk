@@ -51,7 +51,7 @@ bool CanBeAnchorNode<EditingInFlatTreeStrategy>(Node* node) {
 #endif
 
 template <typename Strategy>
-void PositionTemplate<Strategy>::Trace(blink::Visitor* visitor) {
+void PositionTemplate<Strategy>::Trace(Visitor* visitor) {
   visitor->Trace(anchor_node_);
 }
 
@@ -131,11 +131,9 @@ PositionTemplate<Strategy>::PositionTemplate(const Node* anchor_node,
     DCHECK_EQ(offset, 0);
     return;
   }
-  if (anchor_node_->IsCharacterDataNode()) {
+  if (auto* data = DynamicTo<CharacterData>(anchor_node_.Get())) {
     DCHECK_GE(offset, 0);
-    DCHECK_LE(static_cast<unsigned>(offset),
-              ToCharacterData(anchor_node_)->length())
-        << anchor_node_;
+    DCHECK_LE(static_cast<unsigned>(offset), data->length()) << anchor_node_;
     return;
   }
   DCHECK_GE(offset, 0);
@@ -201,8 +199,8 @@ Node* PositionTemplate<Strategy>::ComputeContainerNode() const {
 
 template <typename Strategy>
 static int MinOffsetForNode(Node* anchor_node, int offset) {
-  if (anchor_node->IsCharacterDataNode())
-    return std::min(offset, static_cast<int>(ToCharacterData(anchor_node)->length()));
+  if (auto* data = DynamicTo<CharacterData>(anchor_node))
+    return std::min(offset, static_cast<int>(data->length()));
 
   int new_offset = 0;
   for (Node* node = Strategy::FirstChild(*anchor_node);
@@ -395,8 +393,8 @@ bool PositionTemplate<Strategy>::IsValidFor(const Document& document) const {
          OffsetInContainerNode() <= LastOffsetInNode(*AnchorNode());
 }
 
-int ComparePositions(const PositionInFlatTree& position_a,
-                     const PositionInFlatTree& position_b) {
+int16_t ComparePositions(const PositionInFlatTree& position_a,
+                         const PositionInFlatTree& position_b) {
   DCHECK(position_a.IsNotNull());
   DCHECK(position_b.IsNotNull());
 
@@ -411,7 +409,7 @@ int ComparePositions(const PositionInFlatTree& position_a,
 }
 
 template <typename Strategy>
-int PositionTemplate<Strategy>::CompareTo(
+int16_t PositionTemplate<Strategy>::CompareTo(
     const PositionTemplate<Strategy>& other) const {
   return ComparePositions(*this, other);
 }
@@ -543,9 +541,10 @@ PositionTemplate<Strategy> PositionTemplate<Strategy>::AfterNode(
 // static
 template <typename Strategy>
 int PositionTemplate<Strategy>::LastOffsetInNode(const Node& node) {
-  return node.IsCharacterDataNode()
-             ? static_cast<int>(ToCharacterData(node).length())
-             : static_cast<int>(Strategy::CountChildren(node));
+  if (auto* data = DynamicTo<CharacterData>(node))
+    return static_cast<int>(data->length());
+
+  return static_cast<int>(Strategy::CountChildren(node));
 }
 
 // static
@@ -702,7 +701,7 @@ String PositionTemplate<Strategy>::ToAnchorTypeAndOffsetString() const {
   return g_empty_string;
 }
 
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
 
 template <typename Strategy>
 void PositionTemplate<Strategy>::ShowTreeForThis() const {
@@ -726,7 +725,7 @@ void PositionTemplate<Strategy>::ShowTreeForThisInFlatTree() const {
             << ToAnchorTypeAndOffsetString().Utf8().data();
 }
 
-#endif
+#endif  // DCHECK_IS_ON()
 
 template <typename PositionType>
 static std::ostream& PrintPosition(std::ostream& ostream,
@@ -769,7 +768,7 @@ template class CORE_TEMPLATE_EXPORT PositionTemplate<EditingInFlatTreeStrategy>;
 
 }  // namespace blink
 
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
 
 void showTree(const blink::Position& pos) {
   pos.ShowTreeForThis();

@@ -314,7 +314,6 @@ bool ParseHeadersForBypassInfo(const net::HttpResponseHeaders& headers,
           headers, kChromeProxyActionBlock, &proxy_info->bypass_duration)) {
     proxy_info->bypass_all = true;
     proxy_info->mark_proxies_as_bad = true;
-    proxy_info->bypass_action = BYPASS_ACTION_TYPE_BLOCK;
     return true;
   }
 
@@ -323,7 +322,6 @@ bool ParseHeadersForBypassInfo(const net::HttpResponseHeaders& headers,
           headers, kChromeProxyActionBypass, &proxy_info->bypass_duration)) {
     proxy_info->bypass_all = false;
     proxy_info->mark_proxies_as_bad = true;
-    proxy_info->bypass_action = BYPASS_ACTION_TYPE_BYPASS;
     return true;
   }
 
@@ -336,7 +334,6 @@ bool ParseHeadersForBypassInfo(const net::HttpResponseHeaders& headers,
     proxy_info->bypass_all = true;
     proxy_info->mark_proxies_as_bad = false;
     proxy_info->bypass_duration = base::TimeDelta();
-    proxy_info->bypass_action = BYPASS_ACTION_TYPE_BLOCK_ONCE;
     return true;
   }
 
@@ -382,11 +379,14 @@ DataReductionProxyBypassType GetDataReductionProxyBypassType(
 
   bool has_via_header = HasDataReductionProxyViaHeader(headers, nullptr);
 
-  if (has_via_header && HasURLRedirectCycle(url_chain)) {
+  // The following logic to detect redirect cycles works only when network
+  // servicification is disabled.
+  if (!base::FeatureList::IsEnabled(
+          features::kDataReductionProxyEnabledWithNetworkService) &&
+      has_via_header && HasURLRedirectCycle(url_chain)) {
     data_reduction_proxy_info->bypass_all = true;
     data_reduction_proxy_info->mark_proxies_as_bad = false;
     data_reduction_proxy_info->bypass_duration = base::TimeDelta();
-    data_reduction_proxy_info->bypass_action = BYPASS_ACTION_TYPE_BLOCK_ONCE;
     return BYPASS_EVENT_TYPE_URL_REDIRECT_CYCLE;
   }
 
@@ -414,22 +414,38 @@ DataReductionProxyBypassType GetDataReductionProxyBypassType(
   // Fall back if a 500, 502 or 503 is returned.
   if (headers.response_code() == net::HTTP_INTERNAL_SERVER_ERROR)
     return BYPASS_EVENT_TYPE_STATUS_500_HTTP_INTERNAL_SERVER_ERROR;
-  if (headers.response_code() == net::HTTP_BAD_GATEWAY)
+  if (headers.response_code() == net::HTTP_BAD_GATEWAY) {
+    if (base::FeatureList::IsEnabled(
+            features::kDataReductionProxyBlockOnBadGatewayResponse)) {
+      // When 502 response is received with no valid directive in Chrome-Proxy
+      // header, it is likely the renderer may have been blocked in receiving
+      // the headers due to CORB, etc. In this case, block-once or a block all
+      // proxies for a small number of seconds can be an alternative.
+      data_reduction_proxy_info->bypass_all = true;
+      data_reduction_proxy_info->bypass_duration =
+          base::TimeDelta::FromSeconds(base::GetFieldTrialParamByFeatureAsInt(
+              features::kDataReductionProxyBlockOnBadGatewayResponse,
+              "block_duration_seconds", 1));
+      return BYPASS_EVENT_TYPE_SHORT;
+    }
     return BYPASS_EVENT_TYPE_STATUS_502_HTTP_BAD_GATEWAY;
+  }
   if (headers.response_code() == net::HTTP_SERVICE_UNAVAILABLE)
     return BYPASS_EVENT_TYPE_STATUS_503_HTTP_SERVICE_UNAVAILABLE;
   // TODO(kundaji): Bypass if Proxy-Authenticate header value cannot be
   // interpreted by data reduction proxy.
   if (headers.response_code() == net::HTTP_PROXY_AUTHENTICATION_REQUIRED &&
       !headers.HasHeader("Proxy-Authenticate")) {
+    // Bypass all proxies for a few RTTs until the config fetch could update the
+    // session key. The value 500 ms is the RTT observed for config fetches.
+    data_reduction_proxy_info->bypass_all = true;
+    data_reduction_proxy_info->bypass_duration =
+        base::TimeDelta::FromMilliseconds(3 * 500);
     return BYPASS_EVENT_TYPE_MALFORMED_407;
   }
 
   bool disable_bypass_on_missing_via_header =
-      params::IsWarmupURLFetchCallbackEnabled() &&
-      GetFieldTrialParamByFeatureAsBool(
-          features::kDataReductionProxyRobustConnection,
-          params::GetMissingViaBypassParamName(), true);
+      params::IsWarmupURLFetchCallbackEnabled();
 
   if (!has_via_header && !disable_bypass_on_missing_via_header &&
       (headers.response_code() != net::HTTP_NOT_MODIFIED)) {
@@ -474,7 +490,8 @@ int64_t GetDataReductionProxyOFCL(const net::HttpResponseHeaders* headers) {
 double EstimateCompressionRatioFromHeaders(
     const network::ResourceResponseHead* response_head) {
   if (!response_head->network_accessed || !response_head->headers ||
-      response_head->headers->GetContentLength() <= 0) {
+      response_head->headers->GetContentLength() <= 0 ||
+      response_head->proxy_server.is_direct()) {
     return 1.0;  // No compression
   }
 

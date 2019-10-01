@@ -29,7 +29,8 @@
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "gpu/GLES2/gl2extchromium.h"
-#include "gpu/command_buffer/client/gles2_interface.h"
+#include "gpu/command_buffer/client/shared_image_interface.h"
+#include "gpu/command_buffer/common/shared_image_usage.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/video/gpu_video_accelerator_factories.h"
 #include "third_party/libyuv/include/libyuv.h"
@@ -70,7 +71,7 @@ class GpuMemoryBufferVideoFramePool::PoolImpl
   // asynchronously posting tasks to |worker_task_runner_|, while
   // |frame_ready_cb| will be called on |media_task_runner_| once all the data
   // has been copied.
-  void CreateHardwareFrame(const scoped_refptr<VideoFrame>& video_frame,
+  void CreateHardwareFrame(scoped_refptr<VideoFrame> video_frame,
                            FrameReadyCB cb);
 
   bool OnMemoryDump(const base::trace_event::MemoryDumpArgs& args,
@@ -95,8 +96,6 @@ class GpuMemoryBufferVideoFramePool::PoolImpl
   struct PlaneResource {
     gfx::Size size;
     std::unique_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer;
-    unsigned texture_id = 0u;
-    unsigned image_id = 0u;
     gpu::Mailbox mailbox;
   };
 
@@ -130,7 +129,7 @@ class GpuMemoryBufferVideoFramePool::PoolImpl
     VideoFrameCopyRequest(scoped_refptr<VideoFrame> video_frame,
                           FrameReadyCB frame_ready_cb,
                           bool passthrough)
-        : video_frame(video_frame),
+        : video_frame(std::move(video_frame)),
           frame_ready_cb(std::move(frame_ready_cb)),
           passthrough(passthrough) {}
     scoped_refptr<VideoFrame> video_frame;
@@ -145,19 +144,18 @@ class GpuMemoryBufferVideoFramePool::PoolImpl
 
   // Copy |video_frame| data into |frame_resources| and calls |frame_ready_cb|
   // when done.
-  void CopyVideoFrameToGpuMemoryBuffers(
-      const scoped_refptr<VideoFrame>& video_frame,
-      FrameResources* frame_resources);
+  void CopyVideoFrameToGpuMemoryBuffers(scoped_refptr<VideoFrame> video_frame,
+                                        FrameResources* frame_resources);
 
   // Called when all the data has been copied.
-  void OnCopiesDone(const scoped_refptr<VideoFrame>& video_frame,
+  void OnCopiesDone(scoped_refptr<VideoFrame> video_frame,
                     FrameResources* frame_resources);
 
   // Prepares GL resources, mailboxes and calls |frame_ready_cb| with the new
   // VideoFrame. This has to be run on |media_task_runner_| where
   // |frame_ready_cb| associated with video_frame will also be run.
   void BindAndCreateMailboxesHardwareFrameResources(
-      const scoped_refptr<VideoFrame>& video_frame,
+      scoped_refptr<VideoFrame> video_frame,
       FrameResources* frame_resources);
 
   // Return true if |resources| can be used to represent a frame for
@@ -179,7 +177,7 @@ class GpuMemoryBufferVideoFramePool::PoolImpl
   // |frame_copy_requests_| and attempts to start another copy if there are
   // other |frame_copy_requests_| elements.
   void CompleteCopyRequestAndMaybeStartNextCopy(
-      const scoped_refptr<VideoFrame>& video_frame);
+      scoped_refptr<VideoFrame> video_frame);
 
   // Callback called when a VideoFrame generated with GetFrameResources is no
   // longer referenced.
@@ -262,40 +260,6 @@ gfx::BufferFormat GpuMemoryBufferFormat(
       break;
   }
   return gfx::BufferFormat::BGRA_8888;
-}
-
-unsigned ImageInternalFormat(GpuVideoAcceleratorFactories::OutputFormat format,
-                             size_t plane) {
-  switch (format) {
-    case GpuVideoAcceleratorFactories::OutputFormat::I420:
-      DCHECK_LE(plane, 2u);
-      return GL_RED_EXT;
-    case GpuVideoAcceleratorFactories::OutputFormat::NV12_DUAL_GMB:
-      DCHECK_LE(plane, 1u);
-      return plane == 0 ? GL_RED_EXT : GL_RG_EXT;
-    case GpuVideoAcceleratorFactories::OutputFormat::NV12_SINGLE_GMB:
-      DCHECK_LE(plane, 1u);
-      return GL_RGB_YCBCR_420V_CHROMIUM;
-    case GpuVideoAcceleratorFactories::OutputFormat::UYVY:
-      DCHECK_EQ(0u, plane);
-      return GL_RGB_YCBCR_422_CHROMIUM;
-    case GpuVideoAcceleratorFactories::OutputFormat::XR30:
-    case GpuVideoAcceleratorFactories::OutputFormat::XB30:
-      DCHECK_EQ(0u, plane);
-      // Technically speaking we should say GL_RGB10_EXT, but that format is not
-      // supported in OpenGLES.
-      return GL_RGB10_A2_EXT;
-    case GpuVideoAcceleratorFactories::OutputFormat::RGBA:
-      DCHECK_EQ(0u, plane);
-      return GL_RGBA;
-    case GpuVideoAcceleratorFactories::OutputFormat::BGRA:
-      DCHECK_EQ(0u, plane);
-      return GL_BGRA_EXT;
-    case GpuVideoAcceleratorFactories::OutputFormat::UNDEFINED:
-      NOTREACHED();
-      break;
-  }
-  return 0;
 }
 
 // The number of output planes to be copied in each iteration.
@@ -415,7 +379,7 @@ void CopyRowsToI420Buffer(int first_row,
 void CopyRowsToNV12Buffer(int first_row,
                           int rows,
                           int bytes_per_row,
-                          const scoped_refptr<VideoFrame>& source_frame,
+                          const VideoFrame* source_frame,
                           uint8_t* dest_y,
                           int dest_stride_y,
                           uint8_t* dest_uv,
@@ -453,7 +417,7 @@ void CopyRowsToNV12Buffer(int first_row,
 void CopyRowsToUYVYBuffer(int first_row,
                           int rows,
                           int width,
-                          const scoped_refptr<VideoFrame>& source_frame,
+                          const VideoFrame* source_frame,
                           uint8_t* output,
                           int dest_stride,
                           base::OnceClosure done) {
@@ -486,7 +450,7 @@ void CopyRowsToRGB10Buffer(bool is_argb,
                            int first_row,
                            int rows,
                            int width,
-                           const scoped_refptr<VideoFrame>& source_frame,
+                           const VideoFrame* source_frame,
                            uint8_t* output,
                            int dest_stride,
                            base::OnceClosure done) {
@@ -545,7 +509,7 @@ void CopyRowsToRGBABuffer(bool is_rgba,
                           int first_row,
                           int rows,
                           int width,
-                          const scoped_refptr<VideoFrame>& source_frame,
+                          const VideoFrame* source_frame,
                           uint8_t* output,
                           int dest_stride,
                           base::OnceClosure done) {
@@ -581,7 +545,7 @@ void CopyRowsToRGBABuffer(bool is_rgba,
            1 /* attenuate, meaning premultiply */);
 }
 
-gfx::Size CodedSize(const scoped_refptr<VideoFrame>& video_frame,
+gfx::Size CodedSize(const VideoFrame* video_frame,
                     GpuVideoAcceleratorFactories::OutputFormat output_format) {
   DCHECK(gfx::Rect(video_frame->coded_size())
              .Contains(video_frame->visible_rect()));
@@ -617,7 +581,7 @@ gfx::Size CodedSize(const scoped_refptr<VideoFrame>& video_frame,
 // |frame_ready_cb|.
 // This has to be called on the thread where |media_task_runner_| is current.
 void GpuMemoryBufferVideoFramePool::PoolImpl::CreateHardwareFrame(
-    const scoped_refptr<VideoFrame>& video_frame,
+    scoped_refptr<VideoFrame> video_frame,
     FrameReadyCB frame_ready_cb) {
   DCHECK(media_task_runner_->BelongsToCurrentThread());
   // Lazily initialize |output_format_| since VideoFrameOutputFormat() has to be
@@ -628,7 +592,7 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::CreateHardwareFrame(
   // Bail if we have a change of GpuVideoAcceleratorFactories::OutputFormat;
   // such changes should not happen in general (see https://crbug.com/875158).
   if (output_format_ != gpu_factories_->VideoFrameOutputFormat(pixel_format)) {
-    std::move(frame_ready_cb).Run(video_frame);
+    std::move(frame_ready_cb).Run(std::move(video_frame));
     return;
   }
 
@@ -702,8 +666,8 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::CreateHardwareFrame(
     passthrough = true;
   }
 
-  frame_copy_requests_.emplace_back(video_frame, std::move(frame_ready_cb),
-                                    passthrough);
+  frame_copy_requests_.emplace_back(std::move(video_frame),
+                                    std::move(frame_ready_cb), passthrough);
   if (frame_copy_requests_.size() == 1u)
     StartCopy();
 }
@@ -752,7 +716,7 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::Abort() {
 }
 
 void GpuMemoryBufferVideoFramePool::PoolImpl::OnCopiesDone(
-    const scoped_refptr<VideoFrame>& video_frame,
+    scoped_refptr<VideoFrame> video_frame,
     FrameResources* frame_resources) {
   for (const auto& plane_resource : frame_resources->plane_resources) {
     if (plane_resource.gpu_memory_buffer) {
@@ -768,7 +732,7 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::OnCopiesDone(
   media_task_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(&PoolImpl::BindAndCreateMailboxesHardwareFrameResources,
-                     this, video_frame, frame_resources));
+                     this, std::move(video_frame), frame_resources));
 }
 
 void GpuMemoryBufferVideoFramePool::PoolImpl::StartCopy() {
@@ -782,10 +746,10 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::StartCopy() {
         request.passthrough
             ? nullptr
             : GetOrCreateFrameResources(
-                  CodedSize(request.video_frame, output_format_),
+                  CodedSize(request.video_frame.get(), output_format_),
                   output_format_);
     if (!frame_resources) {
-      std::move(request.frame_ready_cb).Run(request.video_frame);
+      std::move(request.frame_ready_cb).Run(std::move(request.video_frame));
       frame_copy_requests_.pop_front();
       continue;
     }
@@ -801,12 +765,12 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::StartCopy() {
 // that will be synchronized by a barrier.
 // After the barrier is passed OnCopiesDone will be called.
 void GpuMemoryBufferVideoFramePool::PoolImpl::CopyVideoFrameToGpuMemoryBuffers(
-    const scoped_refptr<VideoFrame>& video_frame,
+    scoped_refptr<VideoFrame> video_frame,
     FrameResources* frame_resources) {
   // Compute the number of tasks to post and create the barrier.
   const size_t num_planes = VideoFrame::NumPlanes(VideoFormat(output_format_));
   const size_t planes_per_copy = PlanesPerCopy(output_format_);
-  const gfx::Size coded_size = CodedSize(video_frame, output_format_);
+  const gfx::Size coded_size = CodedSize(video_frame.get(), output_format_);
   size_t copies = 0;
   for (size_t i = 0; i < num_planes; i += planes_per_copy) {
     const int rows =
@@ -818,6 +782,7 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::CopyVideoFrameToGpuMemoryBuffers(
       ++copies;
   }
 
+  // |barrier| keeps refptr of |video_frame| until all copy tasks are done.
   const base::RepeatingClosure barrier = base::BarrierClosure(
       copies, base::BindOnce(&PoolImpl::OnCopiesDone, this, video_frame,
                              frame_resources));
@@ -862,32 +827,41 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::CopyVideoFrameToGpuMemoryBuffers(
           break;
         }
         case GpuVideoAcceleratorFactories::OutputFormat::NV12_SINGLE_GMB:
+          // Using base::Unretained(video_frame) here is safe because |barrier|
+          // keeps refptr of |video_frame| until all copy tasks are done.
           worker_task_runner_->PostTask(
               FROM_HERE,
               base::BindOnce(
                   &CopyRowsToNV12Buffer, row, rows_to_copy, coded_size.width(),
-                  video_frame, static_cast<uint8_t*>(buffer->memory(0)),
-                  buffer->stride(0), static_cast<uint8_t*>(buffer->memory(1)),
-                  buffer->stride(1), barrier));
+                  base::Unretained(video_frame.get()),
+                  static_cast<uint8_t*>(buffer->memory(0)), buffer->stride(0),
+                  static_cast<uint8_t*>(buffer->memory(1)), buffer->stride(1),
+                  barrier));
           break;
         case GpuVideoAcceleratorFactories::OutputFormat::NV12_DUAL_GMB: {
           gfx::GpuMemoryBuffer* buffer2 =
               frame_resources->plane_resources[1].gpu_memory_buffer.get();
+          // Using base::Unretained(video_frame) here is safe because |barrier|
+          // keeps refptr of |video_frame| until all copy tasks are done.
           worker_task_runner_->PostTask(
               FROM_HERE,
               base::BindOnce(
                   &CopyRowsToNV12Buffer, row, rows_to_copy, coded_size.width(),
-                  video_frame, static_cast<uint8_t*>(buffer->memory(0)),
-                  buffer->stride(0), static_cast<uint8_t*>(buffer2->memory(0)),
-                  buffer2->stride(0), barrier));
+                  base::Unretained(video_frame.get()),
+                  static_cast<uint8_t*>(buffer->memory(0)), buffer->stride(0),
+                  static_cast<uint8_t*>(buffer2->memory(0)), buffer2->stride(0),
+                  barrier));
           break;
         }
 
         case GpuVideoAcceleratorFactories::OutputFormat::UYVY:
+          // Using base::Unretained(video_frame) here is safe because |barrier|
+          // keeps refptr of |video_frame| until all copy tasks are done.
           worker_task_runner_->PostTask(
               FROM_HERE,
               base::BindOnce(&CopyRowsToUYVYBuffer, row, rows_to_copy,
-                             coded_size.width(), video_frame,
+                             coded_size.width(),
+                             base::Unretained(video_frame.get()),
                              static_cast<uint8_t*>(buffer->memory(0)),
                              buffer->stride(0), barrier));
           break;
@@ -896,10 +870,13 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::CopyVideoFrameToGpuMemoryBuffers(
         case GpuVideoAcceleratorFactories::OutputFormat::XB30: {
           const bool is_argb = output_format_ ==
                                GpuVideoAcceleratorFactories::OutputFormat::XR30;
+          // Using base::Unretained(video_frame) here is safe because |barrier|
+          // keeps refptr of |video_frame| until all copy tasks are done.
           worker_task_runner_->PostTask(
               FROM_HERE,
               base::BindOnce(&CopyRowsToRGB10Buffer, is_argb, row, rows_to_copy,
-                             coded_size.width(), video_frame,
+                             coded_size.width(),
+                             base::Unretained(video_frame.get()),
                              static_cast<uint8_t*>(buffer->memory(0)),
                              buffer->stride(0), barrier));
           break;
@@ -909,10 +886,13 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::CopyVideoFrameToGpuMemoryBuffers(
         case GpuVideoAcceleratorFactories::OutputFormat::BGRA: {
           const bool is_rgba = output_format_ ==
                                GpuVideoAcceleratorFactories::OutputFormat::RGBA;
+          // Using base::Unretained(video_frame) here is safe because |barrier|
+          // keeps refptr of |video_frame| until all copy tasks are done.
           worker_task_runner_->PostTask(
               FROM_HERE,
               base::BindOnce(&CopyRowsToRGBABuffer, is_rgba, row, rows_to_copy,
-                             coded_size.width(), video_frame,
+                             coded_size.width(),
+                             base::Unretained(video_frame.get()),
                              static_cast<uint8_t*>(buffer->memory(0)),
                              buffer->stride(0), barrier));
           break;
@@ -927,16 +907,16 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::CopyVideoFrameToGpuMemoryBuffers(
 
 void GpuMemoryBufferVideoFramePool::PoolImpl::
     BindAndCreateMailboxesHardwareFrameResources(
-        const scoped_refptr<VideoFrame>& video_frame,
+        scoped_refptr<VideoFrame> video_frame,
         FrameResources* frame_resources) {
-  gpu::gles2::GLES2Interface* gles2 = gpu_factories_->ContextGL();
-  if (!gles2) {
+  gpu::SharedImageInterface* sii = gpu_factories_->SharedImageInterface();
+  if (!sii) {
     frame_resources->MarkUnused(tick_clock_->NowTicks());
-    CompleteCopyRequestAndMaybeStartNextCopy(video_frame);
+    CompleteCopyRequestAndMaybeStartNextCopy(std::move(video_frame));
     return;
   }
 
-  const gfx::Size coded_size = CodedSize(video_frame, output_format_);
+  const gfx::Size coded_size = CodedSize(video_frame.get(), output_format_);
   gpu::MailboxHolder mailbox_holders[VideoFrame::kMaxPlanes];
   // Set up the planes creating the mailboxes needed to refer to the textures.
   for (size_t i = 0; i < NumGpuMemoryBuffers(output_format_); i++) {
@@ -945,29 +925,26 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::
         GpuMemoryBufferFormat(output_format_, i);
     unsigned texture_target = gpu_factories_->ImageTextureTarget(buffer_format);
     // Bind the texture and create or rebind the image.
-    gles2->BindTexture(texture_target, plane_resource.texture_id);
-    if (plane_resource.gpu_memory_buffer && !plane_resource.image_id) {
-      const size_t width = VideoFrame::Columns(i, VideoFormat(output_format_),
-                                               coded_size.width());
-      const size_t height =
-          VideoFrame::Rows(i, VideoFormat(output_format_), coded_size.height());
-      plane_resource.image_id = gles2->CreateImageCHROMIUM(
-          plane_resource.gpu_memory_buffer->AsClientBuffer(), width, height,
-          ImageInternalFormat(output_format_, i));
-    } else if (plane_resource.image_id) {
-      gles2->ReleaseTexImage2DCHROMIUM(texture_target, plane_resource.image_id);
+    if (plane_resource.gpu_memory_buffer && plane_resource.mailbox.IsZero()) {
+      uint32_t usage =
+          gpu::SHARED_IMAGE_USAGE_GLES2 | gpu::SHARED_IMAGE_USAGE_RASTER |
+          gpu::SHARED_IMAGE_USAGE_DISPLAY | gpu::SHARED_IMAGE_USAGE_SCANOUT;
+      plane_resource.mailbox =
+          sii->CreateSharedImage(plane_resource.gpu_memory_buffer.get(),
+                                 gpu_factories_->GpuMemoryBufferManager(),
+                                 video_frame->ColorSpace(), usage);
+    } else if (!plane_resource.mailbox.IsZero()) {
+      // The sync token was waited on the client side before reuse.
+      sii->UpdateSharedImage(gpu::SyncToken(), plane_resource.mailbox);
     }
-    if (plane_resource.image_id)
-      gles2->BindTexImage2DCHROMIUM(texture_target, plane_resource.image_id);
     mailbox_holders[i] = gpu::MailboxHolder(plane_resource.mailbox,
                                             gpu::SyncToken(), texture_target);
   }
 
   // Insert a sync_token, this is needed to make sure that the textures the
   // mailboxes refer to will be used only after all the previous commands posted
-  // in the command buffer have been processed.
-  gpu::SyncToken sync_token;
-  gles2->GenUnverifiedSyncTokenCHROMIUM(sync_token.GetData());
+  // in the SharedImageInterface have been processed.
+  gpu::SyncToken sync_token = sii->GenUnverifiedSyncToken();
   for (size_t i = 0; i < NumGpuMemoryBuffers(output_format_); i++)
     mailbox_holders[i].sync_token = sync_token;
 
@@ -983,7 +960,7 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::
   if (!frame) {
     frame_resources->MarkUnused(tick_clock_->NowTicks());
     MailboxHoldersReleased(frame_resources, gpu::SyncToken());
-    CompleteCopyRequestAndMaybeStartNextCopy(video_frame);
+    CompleteCopyRequestAndMaybeStartNextCopy(std::move(video_frame));
     return;
   }
   frame->SetReleaseMailboxCB(
@@ -1030,7 +1007,7 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::
   frame->metadata()->SetBoolean(VideoFrameMetadata::READ_LOCK_FENCES_ENABLED,
                                 true);
 
-  CompleteCopyRequestAndMaybeStartNextCopy(frame);
+  CompleteCopyRequestAndMaybeStartNextCopy(std::move(frame));
 }
 
 // Destroy all the resources posting one task per FrameResources
@@ -1090,11 +1067,6 @@ GpuMemoryBufferVideoFramePool::PoolImpl::GetOrCreateFrameResources(
   }
 
   // Create the resources.
-  gpu::gles2::GLES2Interface* gles2 = gpu_factories_->ContextGL();
-  if (!gles2)
-    return nullptr;
-
-  gles2->ActiveTexture(GL_TEXTURE0);
   FrameResources* frame_resources = new FrameResources(size);
   resources_pool_.push_back(frame_resources);
   for (size_t i = 0; i < NumGpuMemoryBuffers(output_format_); i++) {
@@ -1109,26 +1081,17 @@ GpuMemoryBufferVideoFramePool::PoolImpl::GetOrCreateFrameResources(
     plane_resource.gpu_memory_buffer = gpu_factories_->CreateGpuMemoryBuffer(
         plane_resource.size, buffer_format,
         gfx::BufferUsage::SCANOUT_CPU_READ_WRITE);
-
-    unsigned texture_target = gpu_factories_->ImageTextureTarget(buffer_format);
-    gles2->GenTextures(1, &plane_resource.texture_id);
-    gles2->BindTexture(texture_target, plane_resource.texture_id);
-    gles2->TexParameteri(texture_target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    gles2->TexParameteri(texture_target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    gles2->TexParameteri(texture_target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    gles2->TexParameteri(texture_target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    gles2->ProduceTextureDirectCHROMIUM(plane_resource.texture_id,
-                                        plane_resource.mailbox.name);
   }
   return frame_resources;
 }
 
 void GpuMemoryBufferVideoFramePool::PoolImpl::
     CompleteCopyRequestAndMaybeStartNextCopy(
-        const scoped_refptr<VideoFrame>& video_frame) {
+        scoped_refptr<VideoFrame> video_frame) {
   DCHECK(!frame_copy_requests_.empty());
 
-  std::move(frame_copy_requests_.front().frame_ready_cb).Run(video_frame);
+  std::move(frame_copy_requests_.front().frame_ready_cb)
+      .Run(std::move(video_frame));
   frame_copy_requests_.pop_front();
   if (!frame_copy_requests_.empty())
     StartCopy();
@@ -1141,15 +1104,16 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::DeleteFrameResources(
   // TODO(dcastagna): As soon as the context lost is dealt with in media,
   // make sure that we won't execute this callback (use a weak pointer to
   // the old context).
-  gpu::gles2::GLES2Interface* gles2 = gpu_factories->ContextGL();
-  if (!gles2)
+  gpu::SharedImageInterface* sii = gpu_factories->SharedImageInterface();
+  if (!sii)
     return;
 
   for (PlaneResource& plane_resource : frame_resources->plane_resources) {
-    if (plane_resource.image_id)
-      gles2->DestroyImageCHROMIUM(plane_resource.image_id);
-    if (plane_resource.texture_id)
-      gles2->DeleteTextures(1, &plane_resource.texture_id);
+    if (!plane_resource.mailbox.IsZero()) {
+      // The sync token was already waited on the client side in
+      // MailboxHoldersReleased.
+      sii->DestroySharedImage(gpu::SyncToken(), plane_resource.mailbox);
+    }
   }
 }
 
@@ -1234,10 +1198,11 @@ GpuMemoryBufferVideoFramePool::~GpuMemoryBufferVideoFramePool() {
 }
 
 void GpuMemoryBufferVideoFramePool::MaybeCreateHardwareFrame(
-    const scoped_refptr<VideoFrame>& video_frame,
+    scoped_refptr<VideoFrame> video_frame,
     FrameReadyCB frame_ready_cb) {
   DCHECK(video_frame);
-  pool_impl_->CreateHardwareFrame(video_frame, std::move(frame_ready_cb));
+  pool_impl_->CreateHardwareFrame(std::move(video_frame),
+                                  std::move(frame_ready_cb));
 }
 
 void GpuMemoryBufferVideoFramePool::Abort() {

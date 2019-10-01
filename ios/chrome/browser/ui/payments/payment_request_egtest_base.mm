@@ -3,6 +3,9 @@
 // found in the LICENSE file.
 
 #import "ios/chrome/browser/ui/payments/payment_request_egtest_base.h"
+#import "ios/chrome/test/earl_grey/chrome_error_util.h"
+
+#import <EarlGrey/EarlGrey.h>
 
 #include <algorithm>
 #include <memory>
@@ -11,17 +14,18 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
-#include "components/autofill/core/browser/autofill_profile.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/strings/grit/components_strings.h"
 #include "ios/chrome/browser/autofill/personal_data_manager_factory.h"
 #include "ios/chrome/browser/payments/ios_payment_request_cache_factory.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
+#import "ios/chrome/test/earl_grey/chrome_error_util.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
+#import "ios/testing/nserror_util.h"
 #import "ios/web/public/test/http_server/http_server.h"
-#import "ios/web/public/test/web_view_interaction_test_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -80,30 +84,35 @@ const NSTimeInterval kPDMMaxDelaySeconds = 10.0;
 
 #pragma mark - Public methods
 
-- (void)addAutofillProfile:(const autofill::AutofillProfile&)profile {
+- (NSError*)addAutofillProfile:(const autofill::AutofillProfile&)profile {
   _profiles.push_back(profile);
   size_t profile_count = [self personalDataManager]->GetProfiles().size();
   [self personalDataManager]->AddProfile(profile);
-  GREYAssert(base::test::ios::WaitUntilConditionOrTimeout(
-                 kPDMMaxDelaySeconds,
-                 ^bool() {
-                   return profile_count <
-                          [self personalDataManager]->GetProfiles().size();
-                 }),
-             @"Failed to add profile.");
+  bool isProfileAdded = base::test::ios::WaitUntilConditionOrTimeout(
+      kPDMMaxDelaySeconds, ^bool() {
+        return profile_count <
+                   [self personalDataManager] -> GetProfiles().size();
+      });
+  if (!isProfileAdded) {
+    return testing::NSErrorWithLocalizedDescription(@"Failed to add profile.");
+  }
+  return nil;
 }
 
-- (void)addCreditCard:(const autofill::CreditCard&)card {
+- (NSError*)addCreditCard:(const autofill::CreditCard&)card {
   _cards.push_back(card);
   size_t card_count = [self personalDataManager]->GetCreditCards().size();
   [self personalDataManager]->AddCreditCard(card);
-  GREYAssert(base::test::ios::WaitUntilConditionOrTimeout(
-                 kPDMMaxDelaySeconds,
-                 ^bool() {
-                   return card_count <
-                          [self personalDataManager]->GetCreditCards().size();
-                 }),
-             @"Failed to add credit card.");
+  bool isCreditCardAdded = base::test::ios::WaitUntilConditionOrTimeout(
+      kPDMMaxDelaySeconds, ^bool() {
+        return card_count <
+                   [self personalDataManager] -> GetCreditCards().size();
+      });
+  if (!isCreditCardAdded) {
+    return testing::NSErrorWithLocalizedDescription(
+        @"Failed to add credit card.");
+  }
+  return nil;
 }
 
 - (void)addServerCreditCard:(const autofill::CreditCard&)card {
@@ -121,7 +130,8 @@ const NSTimeInterval kPDMMaxDelaySeconds = 10.0;
 
 - (void)waitForWebViewContainingTexts:(const std::vector<std::string>&)texts {
   for (const std::string& text : texts)
-    [ChromeEarlGrey waitForWebViewContainingText:text];
+    CHROME_EG_ASSERT_NO_ERROR(
+        [ChromeEarlGrey waitForWebStateContainingText:text]);
 }
 
 - (autofill::PersonalDataManager*)personalDataManager {
@@ -131,7 +141,8 @@ const NSTimeInterval kPDMMaxDelaySeconds = 10.0;
 - (void)loadTestPage:(const std::string&)page {
   std::string fullPath = base::StringPrintf(
       "https://components/test/data/payments/%s", page.c_str());
-  [ChromeEarlGrey loadURL:web::test::HttpServer::MakeUrl(fullPath)];
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey loadURL:web::test::HttpServer::MakeUrl(fullPath)]);
 }
 
 - (void)payWithCreditCardUsingCVC:(NSString*)cvc {

@@ -28,20 +28,17 @@
 
 #include "third_party/blink/renderer/modules/accessibility/ax_object.h"
 
-#include "SkMatrix44.h"
 #include "third_party/blink/public/platform/web_scroll_into_view_params.h"
 #include "third_party/blink/renderer/core/aom/accessible_node.h"
 #include "third_party/blink/renderer/core/aom/accessible_node_list.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/dom/element_traversal.h"
 #include "third_party/blink/renderer/core/dom/user_gesture_indicator.h"
-#include "third_party/blink/renderer/core/editing/editing_utilities.h"
-#include "third_party/blink/renderer/core/editing/visible_position.h"
-#include "third_party/blink/renderer/core/editing/visible_units.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
+#include "third_party/blink/renderer/core/html/forms/html_select_element.h"
 #include "third_party/blink/renderer/core/html/html_dialog_element.h"
 #include "third_party/blink/renderer/core/html/html_frame_owner_element.h"
 #include "third_party/blink/renderer/core/html/parser/html_parser_idioms.h"
@@ -53,16 +50,17 @@
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/page/chrome_client.h"
 #include "third_party/blink/renderer/core/page/page.h"
+#include "third_party/blink/renderer/core/scroll/scroll_alignment.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_object_cache_impl.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_range.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_sparse_attribute_setter.h"
 #include "third_party/blink/renderer/platform/language.h"
-#include "third_party/blink/renderer/platform/scroll/scroll_alignment.h"
 #include "third_party/blink/renderer/platform/text/platform_locale.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
-#include "third_party/blink/renderer/platform/wtf/not_found.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
+#include "third_party/blink/renderer/platform/wtf/wtf_size_t.h"
+#include "third_party/skia/include/core/SkMatrix44.h"
 
 using blink::WebLocalizedString;
 
@@ -105,6 +103,7 @@ const RoleEntry kRoles[] = {
     {"complementary", ax::mojom::Role::kComplementary},
     {"contentinfo", ax::mojom::Role::kContentInfo},
     {"definition", ax::mojom::Role::kDefinition},
+    {"deletion", ax::mojom::Role::kContentDeletion},
     {"dialog", ax::mojom::Role::kDialog},
     {"directory", ax::mojom::Role::kDirectory},
     // -------------------------------------------------
@@ -168,6 +167,7 @@ const RoleEntry kRoles[] = {
     {"group", ax::mojom::Role::kGroup},
     {"heading", ax::mojom::Role::kHeading},
     {"img", ax::mojom::Role::kImage},
+    {"insertion", ax::mojom::Role::kContentInsertion},
     {"link", ax::mojom::Role::kLink},
     {"list", ax::mojom::Role::kList},
     {"listbox", ax::mojom::Role::kListBox},
@@ -181,6 +181,7 @@ const RoleEntry kRoles[] = {
     {"menuitem", ax::mojom::Role::kMenuItem},
     {"menuitemcheckbox", ax::mojom::Role::kMenuItemCheckBox},
     {"menuitemradio", ax::mojom::Role::kMenuItemRadio},
+    {"meter", ax::mojom::Role::kMeter},
     {"navigation", ax::mojom::Role::kNavigation},
     {"none", ax::mojom::Role::kNone},
     {"note", ax::mojom::Role::kNote},
@@ -645,12 +646,12 @@ void AXObject::GetSparseAXAttributes(
   AXSparseAttributeAOMPropertyClient property_client(*ax_object_cache_,
                                                      sparse_attribute_client);
   HashSet<QualifiedName> shadowed_aria_attributes;
-
   AccessibleNode* accessible_node = GetAccessibleNode();
-  if (accessible_node) {
+
+  // Virtual nodes for AOM are still tied to the AXTree.
+  if (accessible_node && IsVirtualObject())
     accessible_node->GetAllAOMProperties(&property_client,
                                          shadowed_aria_attributes);
-  }
 
   Element* element = GetElement();
   if (!element)
@@ -1228,7 +1229,7 @@ bool AXObject::CanSetValueAttribute() const {
     case ax::mojom::Role::kTextFieldWithComboBox:
     case ax::mojom::Role::kTime:
     case ax::mojom::Role::kSearchBox:
-      return Restriction() == kNone;
+      return Restriction() == kRestrictionNone;
     default:
       break;
   }
@@ -1337,7 +1338,7 @@ bool AXObject::HasIndirectChildren() const {
 
 bool AXObject::CanSetSelectedAttribute() const {
   // Sub-widget elements can be selected if not disabled (native or ARIA)
-  return IsSubWidget() && Restriction() != kDisabled;
+  return IsSubWidget() && Restriction() != kRestrictionDisabled;
 }
 
 bool AXObject::IsSubWidget() const {
@@ -1526,21 +1527,31 @@ String AXObject::AriaTextAlternative(bool recursive,
   if (!in_aria_labelled_by_traversal && !already_visited) {
     name_from = ax::mojom::NameFrom::kRelatedElement;
 
-    // Check AOM property first.
-    HeapVector<Member<Element>> elements;
-    if (HasAOMProperty(AOMRelationListProperty::kLabeledBy, elements)) {
-      if (name_sources) {
-        name_sources->push_back(
-            NameSource(*found_text_alternative, kAriaLabelledbyAttr));
-        name_sources->back().type = name_from;
-      }
+    // Check ARIA attributes.
+    const QualifiedName& attr =
+        HasAttribute(kAriaLabeledbyAttr) && !HasAttribute(kAriaLabelledbyAttr)
+            ? kAriaLabeledbyAttr
+            : kAriaLabelledbyAttr;
+
+    if (name_sources) {
+      name_sources->push_back(NameSource(*found_text_alternative, attr));
+      name_sources->back().type = name_from;
+    }
+
+    const AtomicString& aria_labelledby = GetAttribute(attr);
+    if (!aria_labelledby.IsNull()) {
+      if (name_sources)
+        name_sources->back().attribute_value = aria_labelledby;
 
       // Operate on a copy of |visited| so that if |nameSources| is not null,
       // the set of visited objects is preserved unmodified for future
       // calculations.
       AXObjectSet visited_copy = visited;
+      Vector<String> ids;
       text_alternative =
-          TextFromElements(true, visited_copy, elements, related_objects);
+          TextFromAriaLabelledby(visited_copy, related_objects, ids);
+      if (!ids.IsEmpty())
+        AXObjectCache().UpdateReverseRelations(this, ids);
       if (!text_alternative.IsNull()) {
         if (name_sources) {
           NameSource& source = name_sources->back();
@@ -1554,47 +1565,6 @@ String AXObject::AriaTextAlternative(bool recursive,
         }
       } else if (name_sources) {
         name_sources->back().invalid = true;
-      }
-    } else {
-      // Now check ARIA attribute
-      const QualifiedName& attr =
-          HasAttribute(kAriaLabeledbyAttr) && !HasAttribute(kAriaLabelledbyAttr)
-              ? kAriaLabeledbyAttr
-              : kAriaLabelledbyAttr;
-
-      if (name_sources) {
-        name_sources->push_back(NameSource(*found_text_alternative, attr));
-        name_sources->back().type = name_from;
-      }
-
-      const AtomicString& aria_labelledby = GetAttribute(attr);
-      if (!aria_labelledby.IsNull()) {
-        if (name_sources)
-          name_sources->back().attribute_value = aria_labelledby;
-
-        // Operate on a copy of |visited| so that if |nameSources| is not null,
-        // the set of visited objects is preserved unmodified for future
-        // calculations.
-        AXObjectSet visited_copy = visited;
-        Vector<String> ids;
-        text_alternative =
-            TextFromAriaLabelledby(visited_copy, related_objects, ids);
-        if (!ids.IsEmpty())
-          AXObjectCache().UpdateReverseRelations(this, ids);
-        if (!text_alternative.IsNull()) {
-          if (name_sources) {
-            NameSource& source = name_sources->back();
-            source.type = name_from;
-            source.related_objects = *related_objects;
-            source.text = text_alternative;
-            *found_text_alternative = true;
-          } else {
-            *found_text_alternative = true;
-            return text_alternative;
-          }
-        } else if (name_sources) {
-          name_sources->back().invalid = true;
-        }
       }
     }
   }
@@ -1642,6 +1612,7 @@ String AXObject::TextFromElements(
 
       String result = RecursiveTextAlternative(
           *ax_element, in_aria_labelledby_traversal, visited);
+      visited.insert(ax_element);
       local_related_objects.push_back(
           MakeGarbageCollected<NameSourceRelatedObject>(ax_element, result));
       if (!result.IsEmpty()) {
@@ -1935,10 +1906,10 @@ AXRestriction AXObject::Restriction() const {
                                     is_disabled)) {
     // Has aria-disabled, overrides native markup determining disabled.
     if (is_disabled)
-      return kDisabled;
+      return kRestrictionDisabled;
   } else if (CanSetFocusAttribute() && IsDescendantOfDisabledNode()) {
     // No aria-disabled, but other markup says it's disabled.
-    return kDisabled;
+    return kRestrictionDisabled;
   }
 
   // Check aria-readonly if supported by current role.
@@ -1947,11 +1918,11 @@ AXRestriction AXObject::Restriction() const {
       HasAOMPropertyOrARIAAttribute(AOMBooleanProperty::kReadOnly,
                                     is_read_only)) {
     // ARIA overrides other readonly state markup.
-    return is_read_only ? kReadOnly : kNone;
+    return is_read_only ? kRestrictionReadOnly : kRestrictionNone;
   }
 
   // This is a node that is not readonly and not disabled.
-  return kNone;
+  return kRestrictionNone;
 }
 
 ax::mojom::Role AXObject::DetermineAccessibilityRole() {
@@ -2897,10 +2868,6 @@ bool AXObject::RequestSetSelectedAction(bool selected) {
   return OnNativeSetSelectedAction(selected);
 }
 
-bool AXObject::RequestSetSelectionAction(const AXSelection& selection) {
-  return OnNativeSetSelectionAction(selection);
-}
-
 bool AXObject::RequestSetSequentialFocusNavigationStartingPointAction() {
   return OnNativeSetSequentialFocusNavigationStartingPointAction();
 }
@@ -2949,9 +2916,8 @@ bool AXObject::OnNativeScrollToMakeVisibleWithSubFocusAction(
   LayoutObject* layout_object = node ? node->GetLayoutObject() : nullptr;
   if (!layout_object || !node->isConnected())
     return false;
-  LayoutRect target_rect(
-      layout_object->LocalToAbsoluteQuad(FloatQuad(FloatRect(rect)))
-          .BoundingBox());
+  PhysicalRect target_rect =
+      layout_object->LocalToAbsoluteRect(PhysicalRect(rect));
   // TODO(szager): This scroll alignment is intended to preserve existing
   // behavior to the extent possible, but it's not clear that this behavior is
   // well-spec'ed or optimal.  In particular, it favors centering things in
@@ -2960,7 +2926,7 @@ bool AXObject::OnNativeScrollToMakeVisibleWithSubFocusAction(
   ScrollAlignment scroll_alignment = {
       kScrollAlignmentNoScroll, kScrollAlignmentCenter, kScrollAlignmentCenter};
   layout_object->ScrollRectToVisible(
-      target_rect,
+      target_rect.ToLayoutRect(),
       WebScrollIntoViewParams(scroll_alignment, scroll_alignment,
                               kProgrammaticScroll, false, kScrollBehaviorAuto));
   AXObjectCache().PostNotification(
@@ -3018,10 +2984,6 @@ bool AXObject::OnNativeSetSelectedAction(bool) {
   return false;
 }
 
-bool AXObject::OnNativeSetSelectionAction(const AXSelection& selection) {
-  return false;
-}
-
 bool AXObject::OnNativeShowContextMenuAction() {
   Element* element = GetElement();
   if (!element)
@@ -3041,35 +3003,6 @@ bool AXObject::OnNativeShowContextMenuAction() {
 void AXObject::SelectionChanged() {
   if (AXObject* parent = ParentObjectIfExists())
     parent->SelectionChanged();
-}
-
-int AXObject::LineForPosition(const VisiblePosition& position) const {
-  if (position.IsNull() || !GetNode())
-    return -1;
-
-  // If the position is not in the same editable region as this AX object,
-  // return -1.
-  Node* container_node = position.DeepEquivalent().ComputeContainerNode();
-  if (!container_node->IsShadowIncludingInclusiveAncestorOf(GetNode()) &&
-      !GetNode()->IsShadowIncludingInclusiveAncestorOf(container_node))
-    return -1;
-
-  int line_count = -1;
-  VisiblePosition current_position = position;
-  VisiblePosition previous_position;
-
-  // Move up until we get to the top.
-  // FIXME: This only takes us to the top of the rootEditableElement, not the
-  // top of the top document.
-  do {
-    previous_position = current_position;
-    current_position = PreviousLinePosition(current_position, LayoutUnit(),
-                                            kHasEditableAXRole);
-    ++line_count;
-  } while (current_position.IsNotNull() &&
-           !InSameLine(current_position, previous_position));
-
-  return line_count;
 }
 
 // static
@@ -3112,8 +3045,11 @@ bool AXObject::NameFromSelectedOption(bool recursive) const {
     case ax::mojom::Role::kComboBoxGrouping:
     case ax::mojom::Role::kComboBoxMenuButton:
     case ax::mojom::Role::kListBox:
-    case ax::mojom::Role::kPopUpButton:
       return recursive;
+    // This can be either a button widget with a non-false value of
+    // aria-haspopup or a select element with size of 1.
+    case ax::mojom::Role::kPopUpButton:
+      return ToHTMLSelectElementOrNull(*GetNode()) ? recursive : false;
     default:
       return false;
   }
@@ -3437,10 +3373,6 @@ String AXObject::ToString() const {
              .GetString()
              .EncodeForDebugging() +
          ": " + ComputedName().EncodeForDebugging();
-}
-
-VisiblePosition AXObject::VisiblePositionForIndex(int) const {
-  return VisiblePosition();
 }
 
 bool operator==(const AXObject& first, const AXObject& second) {

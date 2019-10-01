@@ -7,9 +7,8 @@
 #include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
-#include "content/renderer/media/stream/media_stream_audio_processor_options.h"
 #include "content/renderer/media/stream/mock_constraint_factory.h"
-#include "third_party/webrtc/api/media_constraints_interface.h"
+#include "third_party/blink/public/platform/modules/mediastream/media_stream_audio_processor_options.h"
 
 namespace content {
 
@@ -37,7 +36,6 @@ void MockConstraintFactory::DisableDefaultAudioConstraints() {
   basic_.goog_noise_suppression.SetExact(false);
   basic_.goog_noise_suppression.SetExact(false);
   basic_.goog_highpass_filter.SetExact(false);
-  basic_.goog_typing_noise_detection.SetExact(false);
   basic_.goog_experimental_noise_suppression.SetExact(false);
 }
 

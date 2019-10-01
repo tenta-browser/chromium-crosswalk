@@ -13,6 +13,7 @@
 #include <utility>
 
 #include "base/base_switches.h"
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/enterprise_util.h"
@@ -38,11 +39,8 @@
 #include "base/win/win_util.h"
 #include "base/win/wrapped_window_proc.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/conflicts/enumerate_input_method_editors_win.h"
-#include "chrome/browser/conflicts/enumerate_shell_extensions_win.h"
-#include "chrome/browser/conflicts/module_database_win.h"
-#include "chrome/browser/conflicts/module_event_sink_impl_win.h"
 #include "chrome/browser/first_run/first_run.h"
+#include "chrome/browser/memory/memory_pressure_monitor.h"
 #include "chrome/browser/memory/swap_thrashing_monitor.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_shortcut_manager.h"
@@ -53,6 +51,10 @@
 #include "chrome/browser/ui/uninstall_browser_prompt.h"
 #include "chrome/browser/win/browser_util.h"
 #include "chrome/browser/win/chrome_elf_init.h"
+#include "chrome/browser/win/conflicts/enumerate_input_method_editors.h"
+#include "chrome/browser/win/conflicts/enumerate_shell_extensions.h"
+#include "chrome/browser/win/conflicts/module_database.h"
+#include "chrome/browser/win/conflicts/module_event_sink_impl.h"
 #include "chrome/chrome_watcher/chrome_watcher_main_api.h"
 #include "chrome/common/channel_info.h"
 #include "chrome/common/chrome_constants.h"
@@ -80,6 +82,8 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/main_function_params.h"
+#include "content/public/common/service_manager_connection.h"
+#include "services/service_manager/public/cpp/connector.h"
 #include "ui/base/cursor/cursor_loader_win.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/l10n_util_win.h"
@@ -87,12 +91,13 @@
 #include "ui/base/win/hidden_window.h"
 #include "ui/base/win/message_box_win.h"
 #include "ui/display/win/dpi.h"
-#include "ui/gfx/platform_font_win.h"
 #include "ui/gfx/switches.h"
+#include "ui/gfx/system_fonts_win.h"
+#include "ui/gfx/win/crash_id_helper.h"
 #include "ui/strings/grit/app_locale_settings.h"
 
 #if defined(GOOGLE_CHROME_BUILD)
-#include "chrome/browser/conflicts/third_party_conflicts_manager_win.h"
+#include "chrome/browser/win/conflicts/third_party_conflicts_manager.h"
 #endif
 
 namespace {
@@ -114,7 +119,7 @@ void DumpHungRendererProcessImpl(const base::Process& renderer) {
 }
 
 // gfx::Font callbacks
-void AdjustUIFont(gfx::PlatformFontWin::FontAdjustment* font_adjustment) {
+void AdjustUIFont(gfx::win::FontAdjustment* font_adjustment) {
   l10n_util::NeedOverrideDefaultUIFont(&font_adjustment->font_family_override,
                                        &font_adjustment->font_scale);
   font_adjustment->font_scale *= display::win::GetAccessibilityFontScale();
@@ -191,6 +196,33 @@ void DetectFaultTolerantHeap() {
   UMA_HISTOGRAM_ENUMERATION("FaultTolerantHeap", detected, FTH_FLAGS_COUNT);
 }
 
+// Initializes the ModuleDatabase on its owning sequence. Also starts the
+// enumeration of registered modules in the Windows Registry.
+void InitializeModuleDatabase(
+    std::unique_ptr<service_manager::Connector> connector,
+    bool is_third_party_blocking_policy_enabled) {
+  DCHECK(ModuleDatabase::GetTaskRunner()->RunsTasksInCurrentSequence());
+
+  ModuleDatabase::SetInstance(std::make_unique<ModuleDatabase>(
+      std::move(connector), is_third_party_blocking_policy_enabled));
+
+  auto* module_database = ModuleDatabase::GetInstance();
+  module_database->StartDrainingModuleLoadAttemptsLog();
+
+  // Enumerate shell extensions and input method editors. It is safe to use
+  // base::Unretained() here because the ModuleDatabase is never freed.
+  EnumerateShellExtensions(
+      base::BindRepeating(&ModuleDatabase::OnShellExtensionEnumerated,
+                          base::Unretained(module_database)),
+      base::BindOnce(&ModuleDatabase::OnShellExtensionEnumerationFinished,
+                     base::Unretained(module_database)));
+  EnumerateInputMethodEditors(
+      base::BindRepeating(&ModuleDatabase::OnImeEnumerated,
+                          base::Unretained(module_database)),
+      base::BindOnce(&ModuleDatabase::OnImeEnumerationFinished,
+                     base::Unretained(module_database)));
+}
+
 // Notes on the OnModuleEvent() callback.
 //
 // The ModuleDatabase uses the TimeDateStamp value of the DLL to uniquely
@@ -250,7 +282,7 @@ void HandleModuleLoadEventWithoutTimeDateStamp(
   if (!got_time_date_stamp)
     return;
 
-  ModuleDatabase::GetInstance()->OnModuleLoad(
+  ModuleDatabase::HandleModuleLoadEvent(
       content::PROCESS_TYPE_BROWSER, module_path, module_size, time_date_stamp);
 }
 
@@ -330,23 +362,24 @@ bool TryGetModuleTimeDateStamp(void* module_load_address,
 
 // Used as the callback for ModuleWatcher events in this process. Dispatches
 // them to the ModuleDatabase.
+// Note: This callback may be invoked on any thread, even those not owned by the
+//       task scheduler, under the loader lock, directly on the thread where the
+//       DLL is currently loading.
 void OnModuleEvent(const ModuleWatcher::ModuleEvent& event) {
   TRACE_EVENT1("browser", "OnModuleEvent", "module_path",
                event.module_path.BaseName().AsUTF8Unsafe());
 
-  auto* module_database = ModuleDatabase::GetInstance();
-
   switch (event.event_type) {
-    case mojom::ModuleEventType::MODULE_ALREADY_LOADED: {
-      // MODULE_ALREADY_LOADED comes from the enumeration of loaded modules
+    case ModuleWatcher::ModuleEventType::kModuleAlreadyLoaded: {
+      // kModuleAlreadyLoaded comes from the enumeration of loaded modules
       // using CreateToolhelp32Snapshot().
       uint32_t time_date_stamp = 0;
       if (TryGetModuleTimeDateStamp(event.module_load_address,
                                     event.module_path, event.module_size,
                                     &time_date_stamp)) {
-        module_database->OnModuleLoad(content::PROCESS_TYPE_BROWSER,
-                                      event.module_path, event.module_size,
-                                      time_date_stamp);
+        ModuleDatabase::HandleModuleLoadEvent(
+            content::PROCESS_TYPE_BROWSER, event.module_path, event.module_size,
+            time_date_stamp);
       } else {
         // Failed to get the TimeDateStamp directly from memory. The next step
         // to try is to read the file on disk. This must be done in a blocking
@@ -355,45 +388,42 @@ void OnModuleEvent(const ModuleWatcher::ModuleEvent& event) {
             FROM_HERE,
             {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
              base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
-            base::Bind(&HandleModuleLoadEventWithoutTimeDateStamp,
-                       event.module_path, event.module_size));
+            base::BindOnce(&HandleModuleLoadEventWithoutTimeDateStamp,
+                           event.module_path, event.module_size));
       }
-      return;
+      break;
     }
-    case mojom::ModuleEventType::MODULE_LOADED: {
-      module_database->OnModuleLoad(
+    case ModuleWatcher::ModuleEventType::kModuleLoaded: {
+      ModuleDatabase::HandleModuleLoadEvent(
           content::PROCESS_TYPE_BROWSER, event.module_path, event.module_size,
           GetModuleTimeDateStamp(event.module_load_address));
-      return;
+      break;
     }
   }
 }
 
-// Helper function for initializing the module database subsystem. Populates
-// the provided |module_watcher|, and starts the enumeration of registered
-// modules in the Windows Registry.
+// Helper function for initializing the module database subsystem and populating
+// the provided |module_watcher|.
 void SetupModuleDatabase(std::unique_ptr<ModuleWatcher>* module_watcher) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  DCHECK(module_watcher);
 
-  ModuleDatabase::SetInstance(
-      std::make_unique<ModuleDatabase>(base::SequencedTaskRunnerHandle::Get()));
-  auto* module_database = ModuleDatabase::GetInstance();
-  module_database->StartDrainingModuleLoadAttemptsLog();
+  bool third_party_blocking_policy_enabled =
+#if defined(GOOGLE_CHROME_BUILD)
+      ModuleDatabase::IsThirdPartyBlockingPolicyEnabled();
+#else
+      false;
+#endif
+
+  ModuleDatabase::GetTaskRunner()->PostTask(
+      FROM_HERE,
+      base::BindOnce(&InitializeModuleDatabase,
+                     content::ServiceManagerConnection::GetForProcess()
+                         ->GetConnector()
+                         ->Clone(),
+                     third_party_blocking_policy_enabled));
 
   *module_watcher = ModuleWatcher::Create(base::BindRepeating(&OnModuleEvent));
-
-  // Enumerate shell extensions and input method editors. It is safe to use
-  // base::Unretained() here because the ModuleDatabase is never freed.
-  EnumerateShellExtensions(
-      base::BindRepeating(&ModuleDatabase::OnShellExtensionEnumerated,
-                          base::Unretained(module_database)),
-      base::BindOnce(&ModuleDatabase::OnShellExtensionEnumerationFinished,
-                     base::Unretained(module_database)));
-  EnumerateInputMethodEditors(
-      base::BindRepeating(&ModuleDatabase::OnImeEnumerated,
-                          base::Unretained(module_database)),
-      base::BindOnce(&ModuleDatabase::OnImeEnumerationFinished,
-                     base::Unretained(module_database)));
 }
 
 void ShowCloseBrowserFirstMessageBox() {
@@ -469,17 +499,17 @@ int DoUninstallTasks(bool chrome_still_running) {
 
 ChromeBrowserMainPartsWin::ChromeBrowserMainPartsWin(
     const content::MainFunctionParams& parameters,
-    ChromeFeatureListCreator* chrome_feature_list_creator)
-    : ChromeBrowserMainParts(parameters,
-                             chrome_feature_list_creator) {}
+    StartupData* startup_data)
+    : ChromeBrowserMainParts(parameters, startup_data) {}
 
-ChromeBrowserMainPartsWin::~ChromeBrowserMainPartsWin() {
-}
+ChromeBrowserMainPartsWin::~ChromeBrowserMainPartsWin() = default;
 
 void ChromeBrowserMainPartsWin::ToolkitInitialized() {
+  DCHECK_NE(base::PlatformThread::CurrentId(), base::kInvalidThreadId);
+  gfx::CrashIdHelper::RegisterMainThread(base::PlatformThread::CurrentId());
   ChromeBrowserMainParts::ToolkitInitialized();
-  gfx::PlatformFontWin::SetAdjustFontCallback(&AdjustUIFont);
-  gfx::PlatformFontWin::SetGetMinimumFontSizeCallback(&GetMinimumFontSize);
+  gfx::win::SetAdjustFontCallback(&AdjustUIFont);
+  gfx::win::SetGetMinimumFontSizeCallback(&GetMinimumFontSize);
   ui::CursorLoaderWin::SetCursorResourceModule(chrome::kBrowserResourcesDll);
 }
 
@@ -541,7 +571,7 @@ void ChromeBrowserMainPartsWin::PostProfileInit() {
   // cache must be deleted and the browser relaunched.
   if (base::IsMachineExternallyManaged() ||
       !ModuleDatabase::IsThirdPartyBlockingPolicyEnabled() ||
-      !base::FeatureList::IsEnabled(features::kThirdPartyModulesBlocking))
+      !ModuleBlacklistCacheUpdater::IsBlockingEnabled())
     ThirdPartyConflictsManager::DisableThirdPartyModuleBlocking(
         base::CreateTaskRunnerWithTraits(
             {base::TaskPriority::BEST_EFFORT,
@@ -584,7 +614,7 @@ void ChromeBrowserMainPartsWin::PostBrowserStart() {
   // Record UMA data about whether the fault-tolerant heap is enabled.
   // Use a delayed task to minimize the impact on startup time.
   base::PostDelayedTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
-                                  base::Bind(&DetectFaultTolerantHeap),
+                                  base::BindOnce(&DetectFaultTolerantHeap),
                                   base::TimeDelta::FromMinutes(1));
 
   // Start the swap thrashing monitor if it's enabled.
@@ -594,6 +624,9 @@ void ChromeBrowserMainPartsWin::PostBrowserStart() {
   // it easier to experiment with this monitor.
   if (base::FeatureList::IsEnabled(features::kSwapThrashingMonitor))
     memory::SwapThrashingMonitor::Initialize();
+
+  if (base::FeatureList::IsEnabled(features::kNewMemoryPressureMonitor))
+    memory_pressure_monitor_ = memory::MemoryPressureMonitor::Create();
 }
 
 // static

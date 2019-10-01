@@ -6,6 +6,8 @@
 
 #include <inttypes.h>
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/strings/stringprintf.h"
 #include "base/system/sys_info.h"
@@ -13,6 +15,7 @@
 #include "base/trace_event/memory_dump_manager.h"
 #include "cc/paint/image_transfer_cache_entry.h"
 #include "gpu/command_buffer/service/service_discardable_manager.h"
+#include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/gpu/GrBackendSurface.h"
 #include "ui/gl/trace_util.h"
 
@@ -37,6 +40,10 @@ void DumpMemoryForImageTransferCacheEntry(
 
   // Alias the image entry to its skia counterpart, taking ownership of the
   // memory and preventing double counting.
+  //
+  // TODO(andrescj): if entry->image() is backed by multiple textures,
+  // getBackendTexture() would end up flattening them which is undesirable:
+  // figure out how to report memory usage for those cases.
   DCHECK(entry->image());
   GrBackendTexture image_backend_texture =
       entry->image()->getBackendTexture(false /* flushPendingGrContextIO */);
@@ -202,6 +209,35 @@ void ServiceTransferCache::DeleteAllEntriesForDecoder(int decoder_id) {
     }
     it = ForceDeleteEntry(it);
   }
+}
+
+bool ServiceTransferCache::CreateLockedHardwareDecodedImageEntry(
+    int decoder_id,
+    uint32_t entry_id,
+    ServiceDiscardableHandle handle,
+    GrContext* context,
+    std::vector<sk_sp<SkImage>> plane_images,
+    size_t buffer_byte_size,
+    bool needs_mips,
+    sk_sp<SkColorSpace> target_color_space) {
+  EntryKey key(decoder_id, cc::TransferCacheEntryType::kImage, entry_id);
+  auto found = entries_.Peek(key);
+  if (found != entries_.end())
+    return false;
+
+  // Create the service-side image transfer cache entry.
+  auto entry = std::make_unique<cc::ServiceImageTransferCacheEntry>();
+  if (!entry->BuildFromHardwareDecodedImage(context, std::move(plane_images),
+                                            buffer_byte_size, needs_mips,
+                                            std::move(target_color_space))) {
+    return false;
+  }
+
+  // Insert it in the transfer cache.
+  total_size_ += entry->CachedSize();
+  entries_.Put(key, CacheEntryInternal(handle, std::move(entry)));
+  EnforceLimits();
+  return true;
 }
 
 bool ServiceTransferCache::OnMemoryDump(

@@ -5,7 +5,6 @@
 #ifndef BASE_SAMPLING_HEAP_PROFILER_POISSON_ALLOCATION_SAMPLER_H_
 #define BASE_SAMPLING_HEAP_PROFILER_POISSON_ALLOCATION_SAMPLER_H_
 
-#include <memory>
 #include <vector>
 
 #include "base/base_export.h"
@@ -33,7 +32,11 @@ class LockFreeAddressHashSet;
 //
 class BASE_EXPORT PoissonAllocationSampler {
  public:
-  enum AllocatorType : uint32_t { kMalloc, kPartitionAlloc, kBlinkGC, kMax };
+  enum AllocatorType : uint32_t { kMalloc, kPartitionAlloc, kBlinkGC };
+
+  // When the sampler is just enabled it needs to see up to that amount
+  // of allocation sizes before it starts recording samples.
+  static constexpr size_t kWarmupInterval = 1 << 20;  // 1MB.
 
   class SamplesObserver {
    public:
@@ -50,10 +53,13 @@ class BASE_EXPORT PoissonAllocationSampler {
   // within the object scope for the current thread.
   // It allows observers to allocate/deallocate memory while holding a lock
   // without a chance to get into reentrancy problems.
+  // The current implementation doesn't support ScopedMuteThreadSamples nesting.
   class BASE_EXPORT ScopedMuteThreadSamples {
    public:
     ScopedMuteThreadSamples();
     ~ScopedMuteThreadSamples();
+
+    static bool IsMuted();
   };
 
   // Must be called early during the process initialization. It creates and
@@ -73,8 +79,6 @@ class BASE_EXPORT PoissonAllocationSampler {
   void AddSamplesObserver(SamplesObserver*);
   void RemoveSamplesObserver(SamplesObserver*);
 
-  void Start();
-  void Stop();
   void SetSamplingInterval(size_t sampling_interval);
   void SuppressRandomnessForTest(bool suppress);
 
@@ -105,7 +109,6 @@ class BASE_EXPORT PoissonAllocationSampler {
   void BalanceAddressesHashSet();
 
   Lock mutex_;
-  std::vector<std::unique_ptr<LockFreeAddressHashSet>> sampled_addresses_stack_;
   std::vector<SamplesObserver*> observers_;
 
   static PoissonAllocationSampler* instance_;

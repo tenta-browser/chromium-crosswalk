@@ -5,6 +5,7 @@
 #import <EarlGrey/EarlGrey.h>
 #import <XCTest/XCTest.h>
 
+#include "base/bind.h"
 #include "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
 #include "base/test/scoped_feature_list.h"
@@ -12,20 +13,24 @@
 #include "components/feature_engagement/public/feature_constants.h"
 #include "components/feature_engagement/public/tracker.h"
 #include "components/feature_engagement/test/test_tracker.h"
+#include "components/translate/core/browser/translate_prefs.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
-#include "ios/chrome/browser/experimental_flags.h"
 #include "ios/chrome/browser/feature_engagement/tracker_factory.h"
+#include "ios/chrome/browser/system_flags.h"
 #import "ios/chrome/browser/ui/popup_menu/popup_menu_constants.h"
 #import "ios/chrome/browser/ui/tab_grid/tab_grid_egtest_util.h"
 #import "ios/chrome/browser/ui/table_view/table_view_navigation_controller_constants.h"
-#include "ios/chrome/browser/ui/util/ui_util.h"
 #import "ios/chrome/browser/ui/util/uikit_ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
+#import "ios/chrome/test/earl_grey/chrome_error_util.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
+#include "net/test/embedded_test_server/embedded_test_server.h"
+#include "net/test/embedded_test_server/http_response.h"
+#include "net/test/embedded_test_server/request_handler_util.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 #include "url/gurl.h"
@@ -47,6 +52,9 @@ const int kMinChromeOpensRequiredForReadingList = 5;
 // Tip to be shown.
 const int kMinChromeOpensRequiredForNewTabTip = 3;
 
+// URL path for a page with text in French.
+const char kFrenchPageURLPath[] = "/french";
+
 // Matcher for the Reading List Text Badge.
 id<GREYMatcher> ReadingListTextBadge() {
   return grey_allOf(
@@ -54,6 +62,19 @@ id<GREYMatcher> ReadingListTextBadge() {
       grey_ancestor(grey_allOf(grey_accessibilityID(kToolsMenuReadingListId),
                                grey_sufficientlyVisible(), nil)),
       nil);
+}
+
+// Matcher for the Translate Manual Trigger button.
+id<GREYMatcher> TranslateManualTriggerButton() {
+  return grey_allOf(grey_accessibilityID(kToolsMenuTranslateId),
+                    grey_sufficientlyVisible(), nil);
+}
+
+// Matcher for the Translate Manual Trigger badge.
+id<GREYMatcher> TranslateManualTriggerBadge() {
+  return grey_allOf(
+      grey_accessibilityID(@"kToolsMenuTextBadgeAccessibilityIdentifier"),
+      grey_ancestor(TranslateManualTriggerButton()), nil);
 }
 
 // Matcher for the New Tab Tip Bubble.
@@ -118,6 +139,16 @@ void LoadFeatureEngagementTracker() {
 
   feature_engagement::TrackerFactory::GetInstance()->SetTestingFactory(
       browserState, base::BindRepeating(&CreateTestFeatureEngagementTracker));
+
+  // Wait until the feature engagement tracker is initialized.
+  ConditionBlock condition = ^{
+    return feature_engagement::TrackerFactory::GetForBrowserState(
+               chrome_test_util::GetOriginalBrowserState())
+        ->IsInitialized();
+  };
+  GREYAssert(WaitUntilConditionOrTimeout(base::test::ios::kWaitForActionTimeout,
+                                         condition),
+             @"Feature engagement tracker failed to initialize.");
 }
 
 // Enables the Badged Reading List help to be triggered for |feature_list|.
@@ -138,6 +169,25 @@ void EnableBadgedReadingListTriggering(
   feature_list.InitAndEnableFeatureWithParameters(
       feature_engagement::kIPHBadgedReadingListFeature,
       badged_reading_list_params);
+}
+
+// Enables the Badged Translate Manual Trigger feature for |feature_list|.
+void EnableBadgedTranslateManualTrigger(
+    base::test::ScopedFeatureList& feature_list) {
+  std::map<std::string, std::string> badged_translate_manual_trigger_params;
+  badged_translate_manual_trigger_params["availability"] = "any";
+  badged_translate_manual_trigger_params["session_rate"] = "==0";
+  badged_translate_manual_trigger_params["event_used"] =
+      "name:triggered_translate_infobar;comparator:==0;window:360;storage:360";
+  badged_translate_manual_trigger_params["event_trigger"] =
+      "name:badged_translate_manual_trigger_trigger;comparator:==0;window:360;"
+      "storage:360";
+
+  feature_list.InitWithFeaturesAndParameters(
+      {{feature_engagement::kIPHBadgedTranslateManualTriggerFeature,
+        badged_translate_manual_trigger_params},
+       {translate::kTranslateMobileManualTrigger, {}}},
+      {});
 }
 
 // Enables the New Tab Tip to be triggered for |feature_list|.
@@ -196,6 +246,18 @@ void EnableLongPressTipTriggering(base::test::ScopedFeatureList& feature_list) {
       long_press_tip_params);
 }
 
+// net::EmbeddedTestServer handler for kFrenchPageURLPath.
+std::unique_ptr<net::test_server::HttpResponse> LoadFrenchPage(
+    const net::test_server::HttpRequest& request) {
+  std::unique_ptr<net::test_server::BasicHttpResponse> http_response(
+      new net::test_server::BasicHttpResponse);
+  http_response->set_content_type("text/html");
+  http_response->set_content(
+      "Maître Corbeau, sur un arbre perché, Tenait en son bec un fromage. "
+      "Maître Renard, par l’odeur alléché, Lui tint à peu près ce langage");
+  return std::move(http_response);
+}
+
 }  // namespace
 
 // Tests related to the triggering of In Product Help features.
@@ -230,24 +292,15 @@ void EnableLongPressTipTriggering(base::test::ScopedFeatureList& feature_list) {
       assertWithMatcher:grey_notNil()];
 
   // Close tools menu by tapping reload.
-  if (IsUIRefreshPhase1Enabled()) {
-    [[[EarlGrey
-        selectElementWithMatcher:grey_allOf(
-                                     chrome_test_util::ReloadButton(),
-                                     grey_ancestor(grey_accessibilityID(
-                                         kPopupMenuToolsMenuTableViewId)),
-                                     nil)]
-           usingSearchAction:grey_scrollInDirection(kGREYDirectionUp, 150)
-        onElementWithMatcher:grey_accessibilityID(
-                                 kPopupMenuToolsMenuTableViewId)]
-        performAction:grey_tap()];
-  } else {
-    [[[EarlGrey selectElementWithMatcher:chrome_test_util::ReloadButton()]
-           usingSearchAction:grey_scrollInDirection(kGREYDirectionUp, 150)
-        onElementWithMatcher:grey_accessibilityID(
-                                 kPopupMenuToolsMenuTableViewId)]
-        performAction:grey_tap()];
-  }
+  [[[EarlGrey
+      selectElementWithMatcher:grey_allOf(
+                                   chrome_test_util::ReloadButton(),
+                                   grey_ancestor(
+                                       chrome_test_util::ToolsMenuView()),
+                                   nil)]
+         usingSearchAction:grey_scrollInDirection(kGREYDirectionUp, 150)
+      onElementWithMatcher:chrome_test_util::ToolsMenuView()]
+      performAction:grey_tap()];
 
   // Reopen tools menu to verify that the badge does not appear again.
   [ChromeEarlGreyUI openToolsMenu];
@@ -312,6 +365,89 @@ void EnableLongPressTipTriggering(base::test::ScopedFeatureList& feature_list) {
       assertWithMatcher:grey_notVisible()];
 }
 
+// Verifies that the Badged Manual Translate Trigger feature shows only once
+// when the triggering conditions are met.
+- (void)testBadgedTranslateManualTriggerFeatureShouldShowOnce {
+  base::test::ScopedFeatureList scoped_feature_list;
+  EnableBadgedTranslateManualTrigger(scoped_feature_list);
+
+  // Ensure that the FeatureEngagementTracker picks up the new feature
+  // configuration provided by |scoped_feature_list|.
+  LoadFeatureEngagementTracker();
+
+  [ChromeEarlGreyUI openToolsMenu];
+
+  // Make sure the Manual Translate Trigger entry is visible.
+  [[[EarlGrey selectElementWithMatcher:TranslateManualTriggerButton()]
+         usingSearchAction:grey_scrollInDirection(kGREYDirectionDown, 150)
+      onElementWithMatcher:chrome_test_util::ToolsMenuView()]
+      assertWithMatcher:grey_notNil()];
+
+  // Make sure the Manual Translate Trigger entry badge is visible.
+  [[[EarlGrey selectElementWithMatcher:TranslateManualTriggerBadge()]
+         usingSearchAction:grey_scrollInDirection(kGREYDirectionDown, 150)
+      onElementWithMatcher:chrome_test_util::ToolsMenuView()]
+      assertWithMatcher:grey_notNil()];
+
+  // Close tools menu by tapping reload.
+  [[[EarlGrey selectElementWithMatcher:chrome_test_util::ReloadButton()]
+         usingSearchAction:grey_scrollInDirection(kGREYDirectionUp, 150)
+      onElementWithMatcher:chrome_test_util::ToolsMenuView()]
+      performAction:grey_tap()];
+
+  [ChromeEarlGreyUI openToolsMenu];
+
+  // Make sure the Manual Translate Trigger entry is visible.
+  [[[EarlGrey selectElementWithMatcher:TranslateManualTriggerButton()]
+         usingSearchAction:grey_scrollInDirection(kGREYDirectionDown, 150)
+      onElementWithMatcher:chrome_test_util::ToolsMenuView()]
+      assertWithMatcher:grey_notNil()];
+
+  // Verify that the badge does not appear again.
+  [[[EarlGrey selectElementWithMatcher:TranslateManualTriggerBadge()]
+         usingSearchAction:grey_scrollInDirection(kGREYDirectionDown, 150)
+      onElementWithMatcher:chrome_test_util::ToolsMenuView()]
+      assertWithMatcher:grey_notVisible()];
+}
+
+// Verifies that the Badged Manual Translate Trigger feature does not show if
+// the entry has already been used.
+- (void)testBadgedTranslateManualTriggerFeatureAlreadyUsed {
+  // Set up the test server.
+  self.testServer->RegisterDefaultHandler(base::BindRepeating(
+      net::test_server::HandlePrefixedRequest, kFrenchPageURLPath,
+      base::BindRepeating(&LoadFrenchPage)));
+  GREYAssertTrue(self.testServer->Start(), @"Test server failed to start");
+
+  // Load a URL with french text so that language detection is performed.
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey loadURL:self.testServer->GetURL(kFrenchPageURLPath)]);
+
+  base::test::ScopedFeatureList scoped_feature_list;
+  EnableBadgedTranslateManualTrigger(scoped_feature_list);
+
+  // Ensure that the FeatureEngagementTracker picks up the new feature
+  // configuration provided by |scoped_feature_list|.
+  LoadFeatureEngagementTracker();
+
+  // Simulate using the Manual Translate Trigger entry.
+  [chrome_test_util::BrowserCommandDispatcherForMainBVC() showTranslate];
+
+  [ChromeEarlGreyUI openToolsMenu];
+
+  // Make sure the Manual Translate Trigger entry is visible.
+  [[[EarlGrey selectElementWithMatcher:TranslateManualTriggerButton()]
+         usingSearchAction:grey_scrollInDirection(kGREYDirectionDown, 150)
+      onElementWithMatcher:chrome_test_util::ToolsMenuView()]
+      assertWithMatcher:grey_notNil()];
+
+  // Verify that the badge does not appear.
+  [[[EarlGrey selectElementWithMatcher:TranslateManualTriggerBadge()]
+         usingSearchAction:grey_scrollInDirection(kGREYDirectionDown, 150)
+      onElementWithMatcher:chrome_test_util::ToolsMenuView()]
+      assertWithMatcher:grey_notVisible()];
+}
+
 // Verifies that the New Tab Tip appears when all conditions are met.
 - (void)testNewTabTipPromoShouldShow {
   base::test::ScopedFeatureList scoped_feature_list;
@@ -330,7 +466,7 @@ void EnableLongPressTipTriggering(base::test::ScopedFeatureList& feature_list) {
 
   // Navigate to a page other than the NTP to allow for the New Tab Tip to
   // appear.
-  [ChromeEarlGrey loadURL:GURL("chrome://version")];
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:GURL("chrome://version")]);
 
   // Open and close the tab switcher to trigger the New Tab tip.
   OpenAndCloseTabSwitcher();
@@ -342,7 +478,8 @@ void EnableLongPressTipTriggering(base::test::ScopedFeatureList& feature_list) {
 
 // Verifies that the New Tab Tip does not appear if all conditions are met,
 // but the NTP is open.
-- (void)testNewTabTipPromoDoesNotAppearOnNTP {
+// TODO(crbug.com/934248) The test is flaky.
+- (void)DISABLED_testNewTabTipPromoDoesNotAppearOnNTP {
   base::test::ScopedFeatureList scoped_feature_list;
 
   EnableNewTabTipTriggering(scoped_feature_list);
@@ -367,10 +504,8 @@ void EnableLongPressTipTriggering(base::test::ScopedFeatureList& feature_list) {
 
 // Verifies that the bottom toolbar tip is displayed when the phone is in split
 // toolbar mode.
-- (void)testBottomToolbarAppear {
-  if (!IsUIRefreshPhase1Enabled())
-    return;
-
+// TODO(crbug.com/934248) The test is flaky.
+- (void)DISABLED_testBottomToolbarAppear {
   if (!IsSplitToolbarMode())
     return;
 
@@ -401,9 +536,6 @@ void EnableLongPressTipTriggering(base::test::ScopedFeatureList& feature_list) {
 // Verifies that the bottom toolbar tip is not displayed when the phone is not
 // in split toolbar mode.
 - (void)testBottomToolbarDontAppearOnNonSplitToolbar {
-  if (!IsUIRefreshPhase1Enabled())
-    return;
-
   if (IsSplitToolbarMode())
     return;
 
@@ -433,10 +565,8 @@ void EnableLongPressTipTriggering(base::test::ScopedFeatureList& feature_list) {
 
 // Verifies that the LongPress tip is displayed only after the Bottom Toolbar
 // tip is presented.
-- (void)testLongPressTipAppearAfterBottomToolbar {
-  if (!IsUIRefreshPhase1Enabled())
-    return;
-
+// TODO(crbug.com/934248) The test is flaky.
+- (void)DISABLED_testLongPressTipAppearAfterBottomToolbar {
   if (!IsSplitToolbarMode())
     return;
 

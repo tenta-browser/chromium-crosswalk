@@ -38,7 +38,7 @@ public class PaymentRequestFactory implements InterfaceFactory<PaymentRequest> {
         }
 
         @Override
-        public void show(boolean isUserGesture) {
+        public void show(boolean isUserGesture, boolean waitForUpdatedDetails) {
             if (mClient != null) {
                 mClient.onError(PaymentErrorReason.USER_CANCEL);
                 mClient.close();
@@ -61,14 +61,14 @@ public class PaymentRequestFactory implements InterfaceFactory<PaymentRequest> {
         public void retry(PaymentValidationErrors errors) {}
 
         @Override
-        public void canMakePayment() {
+        public void canMakePayment(boolean legacyMode) {
             if (mClient != null) {
                 mClient.onCanMakePayment(CanMakePaymentQueryResult.CANNOT_MAKE_PAYMENT);
             }
         }
 
         @Override
-        public void hasEnrolledInstrument() {
+        public void hasEnrolledInstrument(boolean perMethodQuota) {
             if (mClient != null) {
                 mClient.onHasEnrolledInstrument(
                         HasEnrolledInstrumentQueryResult.HAS_NO_ENROLLED_INSTRUMENT);

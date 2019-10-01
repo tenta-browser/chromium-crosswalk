@@ -15,7 +15,7 @@
 #include "net/base/ip_address.h"
 #include "net/base/port_util.h"
 #include "net/base/privacy_mode.h"
-#include "net/third_party/quic/platform/api/quic_hostname_utils.h"
+#include "net/third_party/quiche/src/quic/platform/api/quic_hostname_utils.h"
 #include "url/gurl.h"
 
 namespace net {
@@ -73,10 +73,9 @@ void AddAlternativeServiceFieldsToDictionaryValue(
                   NextProtoToString(alternative_service.protocol));
 }
 
-std::unique_ptr<base::Value> NetLogCallback(
-    const base::Value* http_server_properties_dict,
-    NetLogCaptureMode capture_mode) {
-  return http_server_properties_dict->CreateDeepCopy();
+base::Value NetLogCallback(const base::Value* http_server_properties_dict,
+                           NetLogCaptureMode capture_mode) {
+  return http_server_properties_dict->Clone();
 }
 
 // A local or temporary data structure to hold preferences for a server.
@@ -226,7 +225,7 @@ bool HttpServerPropertiesManager::SetQuicAlternativeService(
     const url::SchemeHostPort& origin,
     const AlternativeService& alternative_service,
     base::Time expiration,
-    const quic::QuicTransportVersionVector& advertised_versions) {
+    const quic::ParsedQuicVersionVector& advertised_versions) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   const bool changed = http_server_properties_impl_->SetQuicAlternativeService(
       origin, alternative_service, expiration, advertised_versions);
@@ -843,7 +842,7 @@ bool HttpServerPropertiesManager::ParseAlternativeServiceInfoDictOfServer(
                << "server: " << server_str;
       return false;
     }
-    quic::QuicTransportVersionVector advertised_versions;
+    quic::ParsedQuicVersionVector advertised_versions;
     for (const auto& value : *versions_list) {
       int version;
       if (!value.GetAsInteger(&version)) {
@@ -851,7 +850,10 @@ bool HttpServerPropertiesManager::ParseAlternativeServiceInfoDictOfServer(
                  << server_str;
         return false;
       }
-      advertised_versions.push_back(quic::QuicTransportVersion(version));
+      // TODO(nharper): Support ParsedQuicVersions (instead of
+      // QuicTransportVersions) in AlternativeServiceMap.
+      advertised_versions.push_back(quic::ParsedQuicVersion(
+          quic::PROTOCOL_QUIC_CRYPTO, quic::QuicTransportVersion(version)));
     }
     alternative_service_info->set_advertised_versions(advertised_versions);
   }
@@ -1171,12 +1173,12 @@ void HttpServerPropertiesManager::SaveAlternativeServiceToServerPrefs(
     // JSON cannot store int64_t, so expiration is converted to a string.
     alternative_service_dict->SetString(
         kExpirationKey,
-        base::Int64ToString(
+        base::NumberToString(
             alternative_service_info.expiration().ToInternalValue()));
     std::unique_ptr<base::ListValue> advertised_versions_list =
         std::make_unique<base::ListValue>();
     for (const auto& version : alternative_service_info.advertised_versions()) {
-      advertised_versions_list->AppendInteger(version);
+      advertised_versions_list->AppendInteger(version.transport_version);
     }
     alternative_service_dict->SetList(kAdvertisedVersionsKey,
                                       std::move(advertised_versions_list));
@@ -1289,12 +1291,12 @@ void HttpServerPropertiesManager::SaveBrokenAlternativeServicesToPrefs(
         DCHECK(result);
         DCHECK(!entry_dict->HasKey(kBrokenUntilKey));
         entry_dict->SetKey(kBrokenUntilKey,
-                           base::Value(base::Int64ToString(expiration_int64)));
+                           base::Value(base::NumberToString(expiration_int64)));
       } else {
         base::DictionaryValue entry_dict;
         AddAlternativeServiceFieldsToDictionaryValue(alt_service, &entry_dict);
         entry_dict.SetKey(kBrokenUntilKey,
-                          base::Value(base::Int64ToString(expiration_int64)));
+                          base::Value(base::NumberToString(expiration_int64)));
         json_list->GetList().push_back(std::move(entry_dict));
       }
     }

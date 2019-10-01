@@ -38,13 +38,6 @@ SKIP = {
   # instance on GCE.  Swarming doesn't work in that environment yet.
   'Android Cloud Tests',
 
-  # Recipes don't promise execution on jelly bean.  This could work if the
-  # OS dimensions go into the recipe, they're set in the json file, and
-  # jelly bean devices are in the pool.  For now, just blacklist.
-  'Jelly Bean Tester',
-  'Lollipop Consumer Tester',
-  'Lollipop Low-end Tester',
-
   # Android bots need custom dimension_sets entries for swarming, and capacity
   # is not there yet -- so don't let manage.py add swarming automatically there.
   'Android User Builder Tests',
@@ -80,15 +73,19 @@ SKIP_GN_ISOLATE_MAP_TARGETS = {
   # These targets are listed only in build-side recipes.
   'All_syzygy',
   'blink_tests',
+  'captured_sites_interactive_tests',
   'cast_shell',
   'cast_shell_apk',
   'chrome_official_builder',
   'chrome_official_builder_no_unittests',
+  'chrome_sandbox',
   'chromium_builder_asan',
   'chromium_builder_perf',
   'chromiumos_preflight',
+  'linux_symbols',
   'mini_installer',
   'previous_version_mini_installer',
+  'symupload',
 
   # iOS tests are listed in //ios/build/bots.
   'cronet_test',
@@ -99,9 +96,12 @@ SKIP_GN_ISOLATE_MAP_TARGETS = {
   'ios_chrome_reading_list_egtests',
   'ios_chrome_settings_egtests',
   'ios_chrome_smoke_egtests',
+  'ios_chrome_translate_egtests',
   'ios_chrome_ui_egtests',
+  'ios_chrome_unified_consent_egtests',
   'ios_chrome_unittests',
   'ios_chrome_web_egtests',
+  'ios_chrome_smoke_eg2tests',
   'ios_components_unittests',
   'ios_net_unittests',
   "ios_remoting_unittests",
@@ -125,7 +125,9 @@ SKIP_GN_ISOLATE_MAP_TARGETS = {
   'content_junit_tests',
   'device_junit_tests',
   'junit_unit_tests',
+  'keyboard_accessory_junit_tests',
   'media_router_e2e_tests',
+  'media_router_junit_tests',
   'media_router_perf_tests',
   'motopho_latency_test',
   'net_junit_tests',
@@ -178,6 +180,9 @@ SKIP_GN_ISOLATE_MAP_TARGETS = {
 
   # These are defined by an android internal gn_isolate_map.pyl file.
   'chrome_apk',
+
+  # These are used by https://www.chromium.org/developers/cluster-telemetry.
+  'ct_telemetry_perf_tests_without_chrome',
 }
 
 

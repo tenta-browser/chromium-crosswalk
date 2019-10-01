@@ -18,11 +18,11 @@
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/image/image_skia.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/animation/flood_fill_ink_drop_ripple.h"
 #include "ui/views/animation/ink_drop_highlight.h"
 #include "ui/views/animation/ink_drop_impl.h"
 #include "ui/views/animation/ink_drop_mask.h"
-#include "ui/views/background.h"
 #include "ui/views/border.h"
 #include "ui/views/context_menu_controller.h"
 #include "ui/views/controls/button/image_button.h"
@@ -39,8 +39,6 @@ namespace {
 
 constexpr int kInnerPadding = 16;
 
-constexpr int kButtonSizeDip = 48;
-
 // Preferred width of search box.
 constexpr int kSearchBoxPreferredWidth = 544;
 
@@ -55,15 +53,17 @@ constexpr SkColor kZeroQuerySearchboxColor =
 
 }  // namespace
 
-// A background that paints a solid white rounded rect with a thin grey border.
+// A background that paints a solid white rounded rect with a thin grey
+// border.
 class SearchBoxBackground : public views::Background {
  public:
   SearchBoxBackground(int corner_radius, SkColor color)
-      : corner_radius_(corner_radius), color_(color) {}
+      : corner_radius_(corner_radius) {
+    SetNativeControlColor(color);
+  }
   ~SearchBoxBackground() override {}
 
-  void set_corner_radius(int corner_radius) { corner_radius_ = corner_radius; }
-  void set_color(SkColor color) { color_ = color; }
+  void SetCornerRadius(int corner_radius) { corner_radius_ = corner_radius; }
 
  private:
   // views::Background overrides:
@@ -72,12 +72,11 @@ class SearchBoxBackground : public views::Background {
 
     cc::PaintFlags flags;
     flags.setAntiAlias(true);
-    flags.setColor(color_);
+    flags.setColor(get_color());
     canvas->DrawRoundRect(bounds, corner_radius_, flags);
   }
 
   int corner_radius_;
-  SkColor color_;
 
   DISALLOW_COPY_AND_ASSIGN(SearchBoxBackground);
 };
@@ -99,8 +98,8 @@ class SearchBoxImageButton : public views::ImageButton {
     SetInkDropMode(InkDropMode::ON);
 
     SetPreferredSize({kButtonSizeDip, kButtonSizeDip});
-    SetImageAlignment(HorizontalAlignment::ALIGN_CENTER,
-                      VerticalAlignment::ALIGN_MIDDLE);
+    SetImageHorizontalAlignment(ALIGN_CENTER);
+    SetImageVerticalAlignment(ALIGN_MIDDLE);
   }
   ~SearchBoxImageButton() override {}
 
@@ -204,6 +203,15 @@ class SearchBoxTextfield : public views::Textfield {
     // Clear selection and set the caret to the end of the text.
     ClearSelection();
     Textfield::OnBlur();
+
+    // Search box focus announcement overlaps with opening or closing folder
+    // alert, so we ignored the search box in those cases. Now reset the flag
+    // here.
+    auto& accessibility = GetViewAccessibility();
+    if (accessibility.IsIgnored()) {
+      accessibility.OverrideIsIgnored(false);
+      accessibility.NotifyAccessibilityEvent(ax::mojom::Event::kTreeChanged);
+    }
   }
 
   void OnGestureEvent(ui::GestureEvent* event) override {
@@ -238,7 +246,7 @@ SearchBoxViewBase::SearchBoxViewBase(SearchBoxViewDelegate* delegate)
   AddChildView(content_container_);
 
   content_container_->SetBackground(std::make_unique<SearchBoxBackground>(
-      kSearchBoxBorderCornerRadius, background_color_));
+      kSearchBoxBorderCornerRadius, kSearchBoxBackgroundDefault));
 
   box_layout_ =
       content_container_->SetLayoutManager(std::make_unique<views::BoxLayout>(
@@ -247,7 +255,7 @@ SearchBoxViewBase::SearchBoxViewBase(SearchBoxViewDelegate* delegate)
               views::LayoutProvider::Get()->GetDistanceMetric(
                   views::DISTANCE_TEXTFIELD_HORIZONTAL_TEXT_PADDING)));
   box_layout_->set_cross_axis_alignment(
-      views::BoxLayout::CROSS_AXIS_ALIGNMENT_CENTER);
+      views::BoxLayout::CrossAxisAlignment::kCenter);
   box_layout_->set_minimum_cross_axis_size(kSearchBoxPreferredHeight);
 
   search_box_->SetBorder(views::NullBorder());
@@ -272,7 +280,7 @@ SearchBoxViewBase::SearchBoxViewBase(SearchBoxViewDelegate* delegate)
 
   // An invisible space view to align |search_box_| to center.
   search_box_right_space_ = new views::View();
-  search_box_right_space_->SetPreferredSize(gfx::Size(kSearchIconSize, 0));
+  search_box_right_space_->SetPreferredSize(gfx::Size(kIconSize, 0));
   content_container_->AddChildView(search_box_right_space_);
 
   assistant_button_ = new SearchBoxImageButton(this);
@@ -333,7 +341,7 @@ void SearchBoxViewBase::SetSearchBoxActive(bool active,
 
   is_search_box_active_ = active;
   UpdateSearchIcon();
-  UpdateBackgroundColor(background_color_);
+  UpdateBackgroundColor(kSearchBoxBackgroundDefault);
   search_box_->set_placeholder_text_draw_flags(
       active ? (base::i18n::IsRTL() ? gfx::Canvas::TEXT_ALIGN_RIGHT
                                     : gfx::Canvas::TEXT_ALIGN_LEFT)
@@ -372,9 +380,9 @@ gfx::Size SearchBoxViewBase::CalculatePreferredSize() const {
 }
 
 void SearchBoxViewBase::OnEnabledChanged() {
-  search_box_->SetEnabled(enabled());
+  search_box_->SetEnabled(GetEnabled());
   if (close_button_)
-    close_button_->SetEnabled(enabled());
+    close_button_->SetEnabled(GetEnabled());
 }
 
 const char* SearchBoxViewBase::GetClassName() const {
@@ -393,7 +401,7 @@ void SearchBoxViewBase::NotifyGestureEvent() {
   search_box_->DestroyTouchSelection();
 }
 
-ax::mojom::Role SearchBoxViewBase::GetAccessibleWindowRole() const {
+ax::mojom::Role SearchBoxViewBase::GetAccessibleWindowRole() {
   // Default role of root view is ax::mojom::Role::kWindow which traps ChromeVox
   // focus within the root view. Assign ax::mojom::Role::kGroup here to allow
   // the focus to move from elements in search box to app list view.
@@ -462,14 +470,6 @@ void SearchBoxViewBase::NotifyActiveChanged() {
   delegate_->ActiveChanged(this);
 }
 
-// TODO(crbug.com/755219): Unify this with UpdateBackgroundColor.
-void SearchBoxViewBase::SetBackgroundColor(SkColor light_vibrant) {
-  background_color_ =
-      (light_vibrant == SK_ColorTRANSPARENT)
-          ? kSearchBoxBackgroundDefault
-          : color_utils::AlphaBlend(SK_ColorWHITE, light_vibrant, 0.9f);
-}
-
 void SearchBoxViewBase::SetSearchBoxColor(SkColor color) {
   search_box_color_ =
       SK_ColorTRANSPARENT == color ? kDefaultSearchboxColor : color;
@@ -486,9 +486,9 @@ void SearchBoxViewBase::UpdateButtonsVisisbility() {
   const bool should_show_search_box_right_space =
       !(should_show_close_button || should_show_assistant_button);
 
-  if (close_button_->visible() == should_show_close_button &&
-      assistant_button_->visible() == should_show_assistant_button &&
-      search_box_right_space_->visible() ==
+  if (close_button_->GetVisible() == should_show_close_button &&
+      assistant_button_->GetVisible() == should_show_assistant_button &&
+      search_box_right_space_->GetVisible() ==
           should_show_search_box_right_space) {
     return;
   }
@@ -523,11 +523,8 @@ bool SearchBoxViewBase::HandleGestureEvent(
 }
 
 void SearchBoxViewBase::SetSearchBoxBackgroundCornerRadius(int corner_radius) {
-  GetSearchBoxBackground()->set_corner_radius(corner_radius);
-}
-
-void SearchBoxViewBase::SetSearchBoxBackgroundColor(SkColor color) {
-  GetSearchBoxBackground()->set_color(color);
+  static_cast<SearchBoxBackground*>(GetSearchBoxBackground())
+      ->SetCornerRadius(corner_radius);
 }
 
 void SearchBoxViewBase::SetSearchIconImage(gfx::ImageSkia image) {
@@ -560,11 +557,11 @@ void SearchBoxViewBase::HandleSearchBoxEvent(ui::LocatedEvent* located_event) {
 void SearchBoxViewBase::UpdateBackgroundColor(SkColor color) {
   if (is_search_box_active_)
     color = kSearchBoxBackgroundDefault;
-  GetSearchBoxBackground()->set_color(color);
+  GetSearchBoxBackground()->SetNativeControlColor(color);
 }
 
-SearchBoxBackground* SearchBoxViewBase::GetSearchBoxBackground() const {
-  return static_cast<SearchBoxBackground*>(content_container_->background());
+views::Background* SearchBoxViewBase::GetSearchBoxBackground() {
+  return content_container_->background();
 }
 
 }  // namespace search_box

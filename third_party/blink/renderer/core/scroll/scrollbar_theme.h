@@ -28,10 +28,10 @@
 
 #include "third_party/blink/public/platform/web_scrollbar_buttons_placement.h"
 #include "third_party/blink/renderer/core/core_export.h"
+#include "third_party/blink/renderer/core/scroll/scroll_types.h"
 #include "third_party/blink/renderer/core/scroll/scrollbar.h"
 #include "third_party/blink/renderer/platform/geometry/int_rect.h"
 #include "third_party/blink/renderer/platform/graphics/paint/display_item.h"
-#include "third_party/blink/renderer/platform/scroll/scroll_types.h"
 
 namespace blink {
 
@@ -211,6 +211,8 @@ class CORE_EXPORT ScrollbarTheme {
     NOTREACHED();
     return IntRect();
   }
+
+  virtual bool AllowsHitTest() const { return true; }
 
   // Warning: Please call Page::GetScrollbarTheme instead of call this method
   // directly since we support different native scrollbar theme base on page

@@ -65,7 +65,6 @@ content::WebUIDataSource* CreateNetExportHTMLSource() {
   source->SetJsonPath("strings.js");
   source->AddResourcePath(net_log::kNetExportUIJS, IDR_NET_LOG_NET_EXPORT_JS);
   source->SetDefaultResource(IDR_NET_LOG_NET_EXPORT_HTML);
-  source->UseGzip();
   return source;
 }
 
@@ -219,7 +218,7 @@ void NetExportMessageHandler::OnStartNetLog(const base::ListValue* list) {
 
   // Determine the capture mode.
   capture_mode_ = net::NetLogCaptureMode::Default();
-  if (params.size() > 0 && params[0].is_string()) {
+  if (!params.empty() && params[0].is_string()) {
     capture_mode_ = net_log::NetExportFileWriter::CaptureModeFromString(
         params[0].GetString());
   }

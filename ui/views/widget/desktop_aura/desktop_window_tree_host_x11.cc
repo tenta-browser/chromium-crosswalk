@@ -4,8 +4,10 @@
 
 #include "ui/views/widget/desktop_aura/desktop_window_tree_host_x11.h"
 
+#include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/containers/flat_set.h"
 #include "base/location.h"
@@ -63,19 +65,18 @@
 #include "ui/wm/core/compound_event_filter.h"
 #include "ui/wm/core/window_util.h"
 
-DEFINE_UI_CLASS_PROPERTY_TYPE(views::DesktopWindowTreeHostX11*);
+DEFINE_UI_CLASS_PROPERTY_TYPE(views::DesktopWindowTreeHostX11*)
 
 namespace views {
 
-DesktopWindowTreeHostX11* DesktopWindowTreeHostX11::g_current_capture =
-    NULL;
-std::list<XID>* DesktopWindowTreeHostX11::open_windows_ = NULL;
+DesktopWindowTreeHostX11* DesktopWindowTreeHostX11::g_current_capture = nullptr;
+std::list<XID>* DesktopWindowTreeHostX11::open_windows_ = nullptr;
 
-DEFINE_UI_CLASS_PROPERTY_KEY(
-    aura::Window*, kViewsWindowForRootWindow, NULL);
+DEFINE_UI_CLASS_PROPERTY_KEY(aura::Window*, kViewsWindowForRootWindow, NULL)
 
-DEFINE_UI_CLASS_PROPERTY_KEY(
-    DesktopWindowTreeHostX11*, kHostForRootWindow, NULL);
+DEFINE_UI_CLASS_PROPERTY_KEY(DesktopWindowTreeHostX11*,
+                             kHostForRootWindow,
+                             NULL)
 
 namespace {
 
@@ -127,6 +128,44 @@ int IgnoreX11Errors(XDisplay* display, XErrorEvent* error) {
   return 0;
 }
 
+bool SyncSetCounter(XDisplay* display, XID counter, int64_t value) {
+  XSyncValue sync_value;
+  XSyncIntsToValue(&sync_value, value & 0xFFFFFFFF, value >> 32);
+  return XSyncSetCounter(display, counter, sync_value) == x11::True;
+}
+
+class SwapWithNewSizeObserverHelper : public ui::CompositorObserver {
+ public:
+  using HelperCallback = base::RepeatingCallback<void(const gfx::Size&)>;
+  SwapWithNewSizeObserverHelper(ui::Compositor* compositor,
+                                const HelperCallback& callback)
+      : compositor_(compositor), callback_(callback) {
+    compositor_->AddObserver(this);
+  }
+  ~SwapWithNewSizeObserverHelper() override {
+    if (compositor_)
+      compositor_->RemoveObserver(this);
+  }
+
+ private:
+  // ui::CompositorObserver:
+  void OnCompositingCompleteSwapWithNewSize(ui::Compositor* compositor,
+                                            const gfx::Size& size) override {
+    DCHECK_EQ(compositor, compositor_);
+    callback_.Run(size);
+  }
+  void OnCompositingShuttingDown(ui::Compositor* compositor) override {
+    DCHECK_EQ(compositor, compositor_);
+    compositor_->RemoveObserver(this);
+    compositor_ = nullptr;
+  }
+
+  ui::Compositor* compositor_;
+  const HelperCallback callback_;
+
+  DISALLOW_COPY_AND_ASSIGN(SwapWithNewSizeObserverHelper);
+};
+
 }  // namespace
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -136,33 +175,13 @@ DesktopWindowTreeHostX11::DesktopWindowTreeHostX11(
     internal::NativeWidgetDelegate* native_widget_delegate,
     DesktopNativeWidgetAura* desktop_native_widget_aura)
     : xdisplay_(gfx::GetXDisplay()),
-      xwindow_(0),
       x_root_window_(DefaultRootWindow(xdisplay_)),
-      window_mapped_in_server_(false),
-      window_mapped_in_client_(false),
-      is_fullscreen_(false),
-      is_always_on_top_(false),
-      use_native_frame_(false),
-      should_maximize_after_map_(false),
-      use_argb_visual_(false),
-      drag_drop_client_(NULL),
       native_widget_delegate_(native_widget_delegate),
-      desktop_native_widget_aura_(desktop_native_widget_aura),
-      window_parent_(NULL),
-      custom_window_shape_(false),
-      urgency_hint_set_(false),
-      has_pointer_grab_(false),
-      activatable_(true),
-      has_pointer_(false),
-      has_window_focus_(false),
-      has_pointer_focus_(false),
-      modal_dialog_counter_(0),
-      close_widget_factory_(this),
-      weak_factory_(this) {}
+      desktop_native_widget_aura_(desktop_native_widget_aura) {}
 
 DesktopWindowTreeHostX11::~DesktopWindowTreeHostX11() {
   window()->ClearProperty(kHostForRootWindow);
-  wm::SetWindowMoveClient(window(), NULL);
+  wm::SetWindowMoveClient(window(), nullptr);
   desktop_native_widget_aura_->OnDesktopWindowTreeHostDestroyed(this);
   DestroyDispatcher();
 }
@@ -178,7 +197,7 @@ aura::Window* DesktopWindowTreeHostX11::GetContentWindowForXID(XID xid) {
 DesktopWindowTreeHostX11* DesktopWindowTreeHostX11::GetHostForXID(XID xid) {
   aura::WindowTreeHost* host =
       aura::WindowTreeHost::GetForAcceleratedWidget(xid);
-  return host ? host->window()->GetProperty(kHostForRootWindow) : NULL;
+  return host ? host->window()->GetProperty(kHostForRootWindow) : nullptr;
 }
 
 // static
@@ -380,7 +399,7 @@ void DesktopWindowTreeHostX11::CleanUpWindowList(
   }
 
   delete open_windows_;
-  open_windows_ = NULL;
+  open_windows_ = nullptr;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -423,7 +442,7 @@ void DesktopWindowTreeHostX11::OnNativeWidgetCreated(
   SetUseNativeFrame(params.type == Widget::InitParams::TYPE_WINDOW &&
                     !params.remove_standard_frame);
 
-  x11_window_move_client_.reset(new X11DesktopWindowMoveClient);
+  x11_window_move_client_ = std::make_unique<X11DesktopWindowMoveClient>();
   wm::SetWindowMoveClient(window(), x11_window_move_client_.get());
 
   SetWindowTransparency();
@@ -460,8 +479,8 @@ void DesktopWindowTreeHostX11::Close() {
     // may delete ourselves on destroy and the ATL callback would still
     // dereference us when the callback returns).
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&DesktopWindowTreeHostX11::CloseNow,
-                              close_widget_factory_.GetWeakPtr()));
+        FROM_HERE, base::BindOnce(&DesktopWindowTreeHostX11::CloseNow,
+                                  close_widget_factory_.GetWeakPtr()));
   }
 }
 
@@ -475,16 +494,14 @@ void DesktopWindowTreeHostX11::CloseNow() {
   // If we have children, close them. Use a copy for iteration because they'll
   // remove themselves.
   std::set<DesktopWindowTreeHostX11*> window_children_copy = window_children_;
-  for (auto it = window_children_copy.begin(); it != window_children_copy.end();
-       ++it) {
-    (*it)->CloseNow();
-  }
+  for (auto* child : window_children_copy)
+    child->CloseNow();
   DCHECK(window_children_.empty());
 
   // If we have a parent, remove ourselves from its children list.
   if (window_parent_) {
     window_parent_->window_children_.erase(this);
-    window_parent_ = NULL;
+    window_parent_ = nullptr;
   }
 
   // Remove the event listeners we've installed. We need to remove these
@@ -504,6 +521,13 @@ void DesktopWindowTreeHostX11::CloseNow() {
     ui::PlatformEventSource::GetInstance()->RemovePlatformEventDispatcher(this);
   XDestroyWindow(xdisplay_, xwindow_);
   xwindow_ = x11::None;
+
+  if (update_counter_ != x11::None) {
+    XSyncDestroyCounter(xdisplay_, update_counter_);
+    XSyncDestroyCounter(xdisplay_, extended_update_counter_);
+    update_counter_ = x11::None;
+    extended_update_counter_ = x11::None;
+  }
 
   desktop_native_widget_aura_->OnHostClosed();
 }
@@ -674,7 +698,7 @@ gfx::Rect DesktopWindowTreeHostX11::GetRestoredBounds() const {
 }
 
 std::string DesktopWindowTreeHostX11::GetWorkspace() const {
-  return workspace_ ? base::IntToString(workspace_.value()) : std::string();
+  return workspace_ ? base::NumberToString(workspace_.value()) : std::string();
 }
 
 void DesktopWindowTreeHostX11::UpdateWorkspace() {
@@ -735,7 +759,9 @@ void DesktopWindowTreeHostX11::Activate() {
 
   Time timestamp = ui::X11EventSource::GetInstance()->GetTimestamp();
 
-  if (wm_supports_active_window) {
+  // override_redirect windows ignore _NET_ACTIVE_WINDOW.
+  // https://crbug.com/940924
+  if (wm_supports_active_window && !override_redirect_) {
     XEvent xclient;
     memset(&xclient, 0, sizeof(xclient));
     xclient.type = ClientMessage;
@@ -872,10 +898,13 @@ bool DesktopWindowTreeHostX11::IsAlwaysOnTop() const {
 }
 
 void DesktopWindowTreeHostX11::SetVisible(bool visible) {
+  if (is_compositor_set_visible_ == visible)
+    return;
+
+  is_compositor_set_visible_ = visible;
   if (compositor())
     compositor()->SetVisible(visible);
-  if (IsVisible() != visible)
-    native_widget_delegate_->OnNativeWidgetVisibilityChanged(visible);
+  native_widget_delegate_->OnNativeWidgetVisibilityChanged(visible);
 }
 
 void DesktopWindowTreeHostX11::SetVisibleOnAllWorkspaces(bool always_visible) {
@@ -911,7 +940,7 @@ bool DesktopWindowTreeHostX11::IsVisibleOnAllWorkspaces() const {
   // that the window remain in a fixed position even if the viewport scrolls.
   // This is different from the type of workspace that's associated with
   // _NET_WM_DESKTOP.
-  return GetWorkspace() == base::IntToString(kAllDesktops);
+  return GetWorkspace() == base::NumberToString(kAllDesktops);
 }
 
 bool DesktopWindowTreeHostX11::SetWindowTitle(const base::string16& title) {
@@ -997,9 +1026,9 @@ void DesktopWindowTreeHostX11::FrameTypeChanged() {
   // NonClientView::UpdateFrame() to update the frame-view when theme changes,
   // like all other views).
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&DesktopWindowTreeHostX11::DelayedChangeFrameType,
-                            weak_factory_.GetWeakPtr(),
-                            new_type));
+      FROM_HERE,
+      base::BindOnce(&DesktopWindowTreeHostX11::DelayedChangeFrameType,
+                     weak_factory_.GetWeakPtr(), new_type));
 }
 
 void DesktopWindowTreeHostX11::SetFullscreen(bool fullscreen) {
@@ -1200,7 +1229,7 @@ void DesktopWindowTreeHostX11::HideImpl() {
   if (window_mapped_in_client_) {
     XWithdrawWindow(xdisplay_, xwindow_, 0);
     window_mapped_in_client_ = false;
-    native_widget_delegate_->OnNativeWidgetVisibilityChanged(false);
+    SetVisible(false);
   }
 }
 
@@ -1209,13 +1238,7 @@ gfx::Rect DesktopWindowTreeHostX11::GetBoundsInPixels() const {
 }
 
 void DesktopWindowTreeHostX11::SetBoundsInPixels(
-    const gfx::Rect& requested_bounds_in_pixel,
-    const viz::LocalSurfaceIdAllocation& local_surface_id_allocation) {
-  // On desktop-x11, the callers of SetBoundsInPixels() shouldn't need to (or be
-  // able to) allocate LocalSurfaceId for the compositor. Aura itself should
-  // allocate the new ids as needed, instead.
-  DCHECK(!local_surface_id_allocation.IsValid());
-
+    const gfx::Rect& requested_bounds_in_pixel) {
   gfx::Rect bounds_in_pixels(requested_bounds_in_pixel.origin(),
                              AdjustSize(requested_bounds_in_pixel.size()));
   bool origin_changed = bounds_in_pixels_.origin() != bounds_in_pixels.origin();
@@ -1267,7 +1290,7 @@ void DesktopWindowTreeHostX11::SetBoundsInPixels(
   if (origin_changed)
     native_widget_delegate_->AsWidget()->OnNativeWidgetMove();
   if (size_changed) {
-    OnHostResizedInPixels(bounds_in_pixels.size(), local_surface_id_allocation);
+    OnHostResizedInPixels(bounds_in_pixels.size());
     ResetWindowRegion();
   }
 }
@@ -1305,7 +1328,7 @@ void DesktopWindowTreeHostX11::ReleaseCapture() {
     // Release mouse grab asynchronously. A window managed by Chrome is likely
     // the topmost window underneath the mouse so the capture release being
     // asynchronous is likely inconsequential.
-    g_current_capture = NULL;
+    g_current_capture = nullptr;
     ui::UngrabPointer();
     has_pointer_grab_ = false;
 
@@ -1436,7 +1459,8 @@ void DesktopWindowTreeHostX11::InitX11Window(
   if (!activatable_)
     swa.override_redirect = x11::True;
 
-  if (swa.override_redirect)
+  override_redirect_ = swa.override_redirect == x11::True;
+  if (override_redirect_)
     attribute_mask |= CWOverrideRedirect;
 
   bool enable_transparent_visuals;
@@ -1488,7 +1512,8 @@ void DesktopWindowTreeHostX11::InitX11Window(
                     ExposureMask | VisibilityChangeMask |
                     StructureNotifyMask | PropertyChangeMask |
                     PointerMotionMask;
-  xwindow_events_.reset(new ui::XScopedEventSelector(xwindow_, event_mask));
+  xwindow_events_ =
+      std::make_unique<ui::XScopedEventSelector>(xwindow_, event_mask);
   XFlush(xdisplay_);
 
   if (ui::IsXInput2Available())
@@ -1497,14 +1522,32 @@ void DesktopWindowTreeHostX11::InitX11Window(
   // TODO(erg): We currently only request window deletion events. We also
   // should listen for activation events and anything else that GTK+ listens
   // for, and do something useful.
-  XAtom protocols[2];
-  protocols[0] = gfx::GetAtom("WM_DELETE_WINDOW");
-  protocols[1] = gfx::GetAtom("_NET_WM_PING");
-  XSetWMProtocols(xdisplay_, xwindow_, protocols, 2);
+  // Request the _NET_WM_SYNC_REQUEST protocol which is used for synchronizing
+  // between chrome and desktop compositor (or WM) during resizing.
+  // The resizing behavior with _NET_WM_SYNC_REQUEST is:
+  // 1. Desktop compositor (or WM) sends client message _NET_WM_SYNC_REQUEST
+  //    with a 64 bits counter to notify about an incoming resize.
+  // 2. Desktop compositor resizes chrome browser window.
+  // 3. Desktop compositor waits on an alert on value change of XSyncCounter on
+  //    chrome window.
+  // 4. Chrome handles the ConfigureNotify event, and renders a new frame with
+  //    the new size.
+  // 5. Chrome increases the XSyncCounter on chrome window
+  // 6. Desktop compositor gets the alert of counter change, and draws a new
+  //    frame with new content from chrome.
+  // 7. Desktop compositor responses user mouse move events, and starts a new
+  //    resize process, go to step 1.
+  XAtom protocols[] = {
+      gfx::GetAtom("WM_DELETE_WINDOW"),
+      gfx::GetAtom("_NET_WM_PING"),
+      gfx::GetAtom("_NET_WM_SYNC_REQUEST"),
+  };
+  XSetWMProtocols(xdisplay_, xwindow_, protocols, base::size(protocols));
 
   // We need a WM_CLIENT_MACHINE and WM_LOCALE_NAME value so we integrate with
   // the desktop environment.
-  XSetWMProperties(xdisplay_, xwindow_, NULL, NULL, NULL, 0, NULL, NULL, NULL);
+  XSetWMProperties(xdisplay_, xwindow_, nullptr, nullptr, nullptr, 0, nullptr,
+                   nullptr, nullptr);
 
   // Likewise, the X server needs to know this window's pid so it knows which
   // program to kill if the window hangs.
@@ -1551,7 +1594,7 @@ void DesktopWindowTreeHostX11::InitX11Window(
         xdisplay_, xwindow_, params.wm_class_name, params.wm_class_class);
   }
 
-  const char* wm_role_name = NULL;
+  const char* wm_role_name = nullptr;
   // If the widget isn't overriding the role, provide a default value for popup
   // and bubble types.
   if (!params.wm_role_name.empty()) {
@@ -1586,6 +1629,24 @@ void DesktopWindowTreeHostX11::InitX11Window(
                     kDarkGtkThemeVariant, base::size(kDarkGtkThemeVariant) - 1);
   }
 
+  if (ui::IsSyncExtensionAvailable()) {
+    XSyncValue value;
+    XSyncIntToValue(&value, 0);
+    update_counter_ = XSyncCreateCounter(xdisplay_, value);
+    extended_update_counter_ = XSyncCreateCounter(xdisplay_, value);
+    XID counters[2] = {
+        update_counter_,
+        extended_update_counter_,
+    };
+
+    // Set XSyncCounter as window property _NET_WM_SYNC_REQUEST_COUNTER. the
+    // compositor will listen on them during resizing.
+    XChangeProperty(
+        xdisplay_, xwindow_, gfx::GetAtom("_NET_WM_SYNC_REQUEST_COUNTER"),
+        XA_CARDINAL, 32, PropModeReplace,
+        reinterpret_cast<const unsigned char*>(counters), base::size(counters));
+  }
+
   // Always composite Chromium windows if a compositing WM is used.  Sometimes,
   // WMs will not composite fullscreen windows as an optimization, but this can
   // lead to tearing of fullscreen videos.
@@ -1605,9 +1666,7 @@ void DesktopWindowTreeHostX11::InitX11Window(
   // If we have a delegate which is providing a default window icon, use that
   // icon.
   gfx::ImageSkia* window_icon =
-      ViewsDelegate::GetInstance()
-          ? ViewsDelegate::GetInstance()->GetDefaultWindowIcon()
-          : NULL;
+      ViewsDelegate::GetInstance()->GetDefaultWindowIcon();
   if (window_icon) {
     SetWindowIcons(gfx::ImageSkia(), *window_icon);
   }
@@ -1615,6 +1674,13 @@ void DesktopWindowTreeHostX11::InitX11Window(
   // https://crbug.com/442111.
   CreateCompositor(viz::FrameSinkId(),
                    params.type == Widget::InitParams::TYPE_TOOLTIP);
+
+  if (ui::IsSyncExtensionAvailable()) {
+    compositor_observer_ = std::make_unique<SwapWithNewSizeObserverHelper>(
+        compositor(), base::BindRepeating(
+                          &DesktopWindowTreeHostX11::OnCompleteSwapWithNewSize,
+                          base::Unretained(this)));
+  }
   OnAcceleratedWidgetAvailable();
 }
 
@@ -1624,8 +1690,8 @@ gfx::Size DesktopWindowTreeHostX11::AdjustSize(
       display::Screen::GetScreen()->GetAllDisplays();
   // Compare against all monitor sizes. The window manager can move the window
   // to whichever monitor it wants.
-  for (size_t i = 0; i < displays.size(); ++i) {
-    if (requested_size_in_pixels == displays[i].GetSizeInPixel()) {
+  for (const auto& display : displays) {
+    if (requested_size_in_pixels == display.GetSizeInPixel()) {
       return gfx::Size(requested_size_in_pixels.width() - 1,
                        requested_size_in_pixels.height() - 1);
     }
@@ -2004,7 +2070,6 @@ void DesktopWindowTreeHostX11::Relayout() {
     non_client_view->client_view()->InvalidateLayout();
     non_client_view->InvalidateLayout();
   }
-  widget->GetRootView()->Layout();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -2100,6 +2165,16 @@ uint32_t DesktopWindowTreeHostX11::DispatchEvent(
     case ConfigureNotify: {
       DCHECK_EQ(xwindow_, xev->xconfigure.window);
       DCHECK_EQ(xwindow_, xev->xconfigure.event);
+
+      if (pending_counter_value_) {
+        DCHECK(!configure_counter_value_);
+        configure_counter_value_ = pending_counter_value_;
+        configure_counter_value_is_extended_ =
+            pending_counter_value_is_extended_;
+        pending_counter_value_is_extended_ = 0;
+        pending_counter_value_ = 0;
+      }
+
       // It's possible that the X window may be resized by some other means than
       // from within aura (e.g. the X window manager can change the size). Make
       // sure the root window size is maintained properly.
@@ -2262,6 +2337,11 @@ uint32_t DesktopWindowTreeHostX11::DispatchEvent(
           XSendEvent(xdisplay_, reply_event.xclient.window, x11::False,
                      SubstructureRedirectMask | SubstructureNotifyMask,
                      &reply_event);
+        } else if (protocol == gfx::GetAtom("_NET_WM_SYNC_REQUEST")) {
+          pending_counter_value_ =
+              xev->xclient.data.l[2] +
+              (static_cast<int64_t>(xev->xclient.data.l[3]) << 32);
+          pending_counter_value_is_extended_ = xev->xclient.data.l[4] != 0;
         }
       } else if (message_type == gfx::GetAtom("XdndEnter")) {
         drag_drop_client_->OnXdndEnter(xev->xclient);
@@ -2338,6 +2418,15 @@ uint32_t DesktopWindowTreeHostX11::DispatchEvent(
 }
 
 void DesktopWindowTreeHostX11::DelayedResize(const gfx::Size& size_in_pixels) {
+  if (configure_counter_value_is_extended_ &&
+      (current_counter_value_ % 2) == 0) {
+    // Increase the |extended_update_counter_|, so the compositor will know we
+    // are not frozen and re-enable _NET_WM_SYNC_REQUEST, if it was disabled.
+    // Increase the |extended_update_counter_| to an odd number will not trigger
+    // a new resize.
+    SyncSetCounter(xdisplay_, extended_update_counter_,
+                   ++current_counter_value_);
+  }
   OnHostResizedInPixels(size_in_pixels);
   ResetWindowRegion();
   delayed_resize_task_.Cancel();
@@ -2365,8 +2454,7 @@ gfx::Rect DesktopWindowTreeHostX11::ToPixelRect(
   return gfx::ToEnclosingRect(rect_in_pixels);
 }
 
-std::unique_ptr<base::Closure>
-DesktopWindowTreeHostX11::DisableEventListening() {
+base::OnceClosure DesktopWindowTreeHostX11::DisableEventListening() {
   // Allows to open multiple file-pickers. See https://crbug.com/678982
   modal_dialog_counter_++;
   if (modal_dialog_counter_ == 1) {
@@ -2376,9 +2464,8 @@ DesktopWindowTreeHostX11::DisableEventListening() {
         window(), std::make_unique<aura::NullWindowTargeter>());
   }
 
-  return std::make_unique<base::Closure>(
-      base::Bind(&DesktopWindowTreeHostX11::EnableEventListening,
-                 weak_factory_.GetWeakPtr()));
+  return base::BindOnce(&DesktopWindowTreeHostX11::EnableEventListening,
+                        weak_factory_.GetWeakPtr());
 }
 
 void DesktopWindowTreeHostX11::EnableEventListening() {
@@ -2388,15 +2475,55 @@ void DesktopWindowTreeHostX11::EnableEventListening() {
 }
 
 void DesktopWindowTreeHostX11::RestartDelayedResizeTask() {
-  delayed_resize_task_.Reset(
-      base::Bind(&DesktopWindowTreeHostX11::DelayedResize,
-                 close_widget_factory_.GetWeakPtr(), bounds_in_pixels_.size()));
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, delayed_resize_task_.callback());
+  if (update_counter_ == x11::None || configure_counter_value_ == 0) {
+    // WM doesn't support _NET_WM_SYNC_REQUEST.
+    // Or we are too slow, so _NET_WM_SYNC_REQUEST is disabled by the
+    // compositor.
+    delayed_resize_task_.Reset(base::BindOnce(
+        &DesktopWindowTreeHostX11::DelayedResize,
+        close_widget_factory_.GetWeakPtr(), bounds_in_pixels_.size()));
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, delayed_resize_task_.callback());
+    return;
+  }
+
+  if (configure_counter_value_is_extended_) {
+    current_counter_value_ = configure_counter_value_;
+    configure_counter_value_ = 0;
+    // Make sure the counter is even number.
+    if ((current_counter_value_ % 2) == 1)
+      ++current_counter_value_;
+  }
+
+  // If _NET_WM_SYNC_REQUEST is used to synchronize with compositor during
+  // resizing, the compositor will not resize the window, until last resize is
+  // handled, so we don't need accumulate resize events.
+  DelayedResize(bounds_in_pixels_.size());
 }
 
 aura::Window* DesktopWindowTreeHostX11::content_window() {
   return desktop_native_widget_aura_->content_window();
+}
+
+void DesktopWindowTreeHostX11::OnCompleteSwapWithNewSize(
+    const gfx::Size& size) {
+  if (configure_counter_value_is_extended_) {
+    if ((current_counter_value_ % 2) == 1) {
+      // An increase 3 means that the frame was not drawn as fast as possible.
+      // This can trigger different handling from the compositor.
+      // Setting an even number to |extended_update_counter_| will trigger a
+      // new resize.
+      current_counter_value_ += 3;
+      SyncSetCounter(xdisplay_, extended_update_counter_,
+                     current_counter_value_);
+    }
+    return;
+  }
+
+  if (configure_counter_value_ != 0) {
+    SyncSetCounter(xdisplay_, update_counter_, configure_counter_value_);
+    configure_counter_value_ = 0;
+  }
 }
 
 base::flat_map<std::string, std::string>

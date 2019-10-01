@@ -12,7 +12,8 @@
 #include "net/cert/do_nothing_ct_verifier.h"
 #include "net/cert/mock_cert_verifier.h"
 #include "net/cert/x509_certificate.h"
-#include "net/dns/fuzzed_host_resolver.h"
+#include "net/dns/context_host_resolver.h"
+#include "net/dns/fuzzed_host_resolver_util.h"
 #include "net/http/http_server_properties_impl.h"
 #include "net/http/transport_security_state.h"
 #include "net/quic/mock_crypto_client_stream_factory.h"
@@ -23,8 +24,8 @@
 #include "net/socket/socket_tag.h"
 #include "net/ssl/ssl_config_service_defaults.h"
 #include "net/test/gtest_util.h"
-#include "net/third_party/quic/test_tools/mock_clock.h"
-#include "net/third_party/quic/test_tools/mock_random.h"
+#include "net/third_party/quiche/src/quic/test_tools/mock_clock.h"
+#include "net/third_party/quiche/src/quic/test_tools/mock_random.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 
 namespace net {
@@ -83,8 +84,10 @@ static struct Env* env = new Env();
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   base::FuzzedDataProvider data_provider(data, size);
 
-  FuzzedHostResolver host_resolver(HostResolver::Options(), nullptr,
-                                   &data_provider);
+  std::unique_ptr<ContextHostResolver> host_resolver =
+      CreateFuzzedContextHostResolver(HostResolver::ManagerOptions(), nullptr,
+                                      &data_provider,
+                                      true /* enable_caching */);
   FuzzedSocketFactory socket_factory(&data_provider);
 
   // Initialize this on each loop since some options mutate this.
@@ -106,6 +109,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   bool migrate_sessions_early_v2 = false;
   bool migrate_sessions_on_network_change_v2 = false;
   bool retry_on_alternate_network_before_handshake = false;
+  bool migrate_idle_sessions = false;
   bool go_away_on_path_degrading = false;
 
   if (!close_sessions_on_ip_change) {
@@ -116,6 +120,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         migrate_sessions_early_v2 = data_provider.ConsumeBool();
         retry_on_alternate_network_before_handshake =
             data_provider.ConsumeBool();
+        migrate_idle_sessions = data_provider.ConsumeBool();
       }
     }
   }
@@ -125,8 +130,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
   std::unique_ptr<QuicStreamFactory> factory =
       std::make_unique<QuicStreamFactory>(
-          env->net_log.net_log(), &host_resolver, env->ssl_config_service.get(),
-          &socket_factory, &http_server_properties, env->cert_verifier.get(),
+          env->net_log.net_log(), host_resolver.get(),
+          env->ssl_config_service.get(), &socket_factory,
+          &http_server_properties, env->cert_verifier.get(),
           &env->ct_policy_enforcer, &env->transport_security_state,
           env->cert_transparency_verifier.get(), nullptr,
           &env->crypto_client_stream_factory, &env->random_generator,
@@ -135,16 +141,20 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           goaway_sessions_on_ip_change,
           mark_quic_broken_when_network_blackholes,
           kIdleConnectionTimeoutSeconds, quic::kPingTimeoutSecs,
+          kDefaultRetransmittableOnWireTimeoutMillisecs,
           quic::kMaxTimeForCryptoHandshakeSecs, quic::kInitialIdleTimeoutSecs,
           migrate_sessions_on_network_change_v2, migrate_sessions_early_v2,
-          retry_on_alternate_network_before_handshake,
-          race_stale_dns_on_connection, go_away_on_path_degrading,
+          retry_on_alternate_network_before_handshake, migrate_idle_sessions,
+          base::TimeDelta::FromSeconds(
+              kDefaultIdleSessionMigrationPeriodSeconds),
           base::TimeDelta::FromSeconds(kMaxTimeOnNonDefaultNetworkSecs),
           kMaxMigrationsToNonDefaultNetworkOnWriteError,
           kMaxMigrationsToNonDefaultNetworkOnPathDegrading,
-          allow_server_migration, race_cert_verification, estimate_initial_rtt,
-          headers_include_h2_stream_dependency, env->connection_options,
-          env->client_connection_options, enable_socket_recv_optimization);
+          allow_server_migration, race_stale_dns_on_connection,
+          go_away_on_path_degrading, race_cert_verification,
+          estimate_initial_rtt, headers_include_h2_stream_dependency,
+          env->connection_options, env->client_connection_options,
+          enable_socket_recv_optimization, 0);
 
   QuicStreamRequest request(factory.get());
   TestCompletionCallback callback;

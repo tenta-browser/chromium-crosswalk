@@ -95,7 +95,7 @@ static void InertSubtreesChanged(Document& document) {
   document.ClearAXObjectCache();
 }
 
-inline HTMLDialogElement::HTMLDialogElement(Document& document)
+HTMLDialogElement::HTMLDialogElement(Document& document)
     : HTMLElement(kDialogTag, document),
       centering_mode_(kNotCentered),
       centered_position_(0),
@@ -103,10 +103,8 @@ inline HTMLDialogElement::HTMLDialogElement(Document& document)
   UseCounter::Count(document, WebFeature::kDialogElement);
 }
 
-DEFINE_NODE_FACTORY(HTMLDialogElement)
-
 void HTMLDialogElement::close(const String& return_value) {
-  // https://html.spec.whatwg.org/#close-the-dialog
+  // https://html.spec.whatwg.org/C/#close-the-dialog
 
   if (!FastHasAttribute(kOpenAttr))
     return;
@@ -125,7 +123,7 @@ void HTMLDialogElement::close(const String& return_value) {
 
 void HTMLDialogElement::ForceLayoutForCentering() {
   centering_mode_ = kNeedsCentering;
-  GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
+  GetDocument().UpdateStyleAndLayout();
   if (centering_mode_ == kNeedsCentering)
     SetNotCentered();
 }
@@ -143,7 +141,7 @@ void HTMLDialogElement::show() {
 
   // The layout must be updated here because setFocusForDialog calls
   // Element::isFocusable, which requires an up-to-date layout.
-  GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
+  GetDocument().UpdateStyleAndLayout();
 
   SetFocusForDialog(this);
 }

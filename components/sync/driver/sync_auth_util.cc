@@ -6,13 +6,14 @@
 
 #include <vector>
 
+#include "google_apis/gaia/google_service_auth_error.h"
 #include "services/identity/public/cpp/identity_manager.h"
 
 namespace syncer {
 
 SyncAccountInfo::SyncAccountInfo() = default;
 
-SyncAccountInfo::SyncAccountInfo(const AccountInfo& account_info,
+SyncAccountInfo::SyncAccountInfo(const CoreAccountInfo& account_info,
                                  bool is_primary)
     : account_info(account_info), is_primary(is_primary) {}
 
@@ -34,7 +35,7 @@ SyncAccountInfo DetermineAccountToUse(
         identity_manager->GetAccountsInCookieJar().signed_in_accounts;
     if (!cookie_accounts.empty() &&
         identity_manager->HasAccountWithRefreshToken(cookie_accounts[0].id)) {
-      AccountInfo account_info;
+      CoreAccountInfo account_info;
       account_info.account_id = cookie_accounts[0].id;
       account_info.gaia = cookie_accounts[0].gaia_id;
       account_info.email = cookie_accounts[0].email;
@@ -42,6 +43,16 @@ SyncAccountInfo DetermineAccountToUse(
     }
   }
   return SyncAccountInfo();
+}
+
+bool IsWebSignout(const GoogleServiceAuthError& auth_error) {
+  // The identity code sets an account's refresh token to be invalid (error
+  // CREDENTIALS_REJECTED_BY_CLIENT) if the user signs out of that account on
+  // the web.
+  return auth_error ==
+         GoogleServiceAuthError::FromInvalidGaiaCredentialsReason(
+             GoogleServiceAuthError::InvalidGaiaCredentialsReason::
+                 CREDENTIALS_REJECTED_BY_CLIENT);
 }
 
 }  // namespace syncer

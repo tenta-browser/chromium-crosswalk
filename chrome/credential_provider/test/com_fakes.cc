@@ -7,18 +7,72 @@
 #include <sddl.h>  // For ConvertSidToStringSid()
 
 #include "base/logging.h"
+#include "chrome/credential_provider/gaiacp/gaia_credential.h"
+#include "chrome/credential_provider/gaiacp/gaia_credential_other_user.h"
 #include "chrome/credential_provider/gaiacp/os_user_manager.h"
+#include "chrome/credential_provider/gaiacp/reauth_credential.h"
 #include "chrome/credential_provider/gaiacp/stdafx.h"
+#include "chrome/credential_provider/test/test_credential.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace credential_provider {
 
-#define IMPL_IUNKOWN_NOQI_NOREF(cls)                            \
-  IFACEMETHODIMP cls::QueryInterface(REFIID riid, void** ppv) { \
-    return E_NOTIMPL;                                           \
-  }                                                             \
-  ULONG cls::AddRef() { return 0; }                             \
-  ULONG cls::Release(void) { return 0; }
+namespace testing {
+
+// This class is used to implement a test credential based off a
+// CGaiaCredential.
+class ATL_NO_VTABLE CTestGaiaCredential
+    : public CTestCredentialBase<CGaiaCredential> {
+ public:
+  DECLARE_NO_REGISTRY()
+
+  CTestGaiaCredential();
+  ~CTestGaiaCredential();
+
+ private:
+  BEGIN_COM_MAP(CTestGaiaCredential)
+  COM_INTERFACE_ENTRY(IGaiaCredential)
+  COM_INTERFACE_ENTRY(ICredentialProviderCredential)
+  COM_INTERFACE_ENTRY(ITestCredential)
+  END_COM_MAP()
+};
+
+CTestGaiaCredential::CTestGaiaCredential() = default;
+
+CTestGaiaCredential::~CTestGaiaCredential() = default;
+
+// This class is used to implement a test credential based off a
+// COtherUserGaiaCredential.
+class ATL_NO_VTABLE CTestOtherUserGaiaCredential
+    : public CTestCredentialBase<COtherUserGaiaCredential> {
+ public:
+  DECLARE_NO_REGISTRY()
+
+  CTestOtherUserGaiaCredential();
+  ~CTestOtherUserGaiaCredential();
+
+ private:
+  BEGIN_COM_MAP(CTestOtherUserGaiaCredential)
+  COM_INTERFACE_ENTRY(IGaiaCredential)
+  COM_INTERFACE_ENTRY(ICredentialProviderCredential)
+  COM_INTERFACE_ENTRY(ICredentialProviderCredential2)
+  COM_INTERFACE_ENTRY(ITestCredential)
+  END_COM_MAP()
+};
+
+CTestOtherUserGaiaCredential::CTestOtherUserGaiaCredential() = default;
+
+CTestOtherUserGaiaCredential::~CTestOtherUserGaiaCredential() = default;
+
+#define IMPL_IUNKOWN_NOQI_WITH_REF(cls)                               \
+  IFACEMETHODIMP cls::QueryInterface(REFIID riid, void** ppv) {       \
+    return E_NOTIMPL;                                                 \
+  }                                                                   \
+  ULONG cls::AddRef() { return ::InterlockedIncrement(&ref_count_); } \
+  ULONG cls::Release(void) {                                          \
+    DCHECK(ref_count_ > 0);                                           \
+    return ::InterlockedDecrement(&ref_count_);                       \
+  }
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -26,45 +80,46 @@ FakeCredentialProviderUser::FakeCredentialProviderUser(const wchar_t* sid,
                                                        const wchar_t* username)
     : sid_(sid), username_(username) {}
 
-FakeCredentialProviderUser::~FakeCredentialProviderUser() {}
+FakeCredentialProviderUser::~FakeCredentialProviderUser() {
+  EXPECT_EQ(ref_count_, 1u);
+}
 
-HRESULT STDMETHODCALLTYPE FakeCredentialProviderUser::GetSid(wchar_t** sid) {
+HRESULT FakeCredentialProviderUser::GetSid(wchar_t** sid) {
   DWORD length = sid_.length() + 1;
   *sid = static_cast<wchar_t*>(::CoTaskMemAlloc(length * sizeof(wchar_t)));
   EXPECT_EQ(0, wcscpy_s(*sid, length, sid_.c_str()));
   return S_OK;
 }
 
-HRESULT STDMETHODCALLTYPE
-FakeCredentialProviderUser::GetProviderID(GUID* providerID) {
+HRESULT FakeCredentialProviderUser::GetProviderID(GUID* providerID) {
   return E_NOTIMPL;
 }
 
-HRESULT STDMETHODCALLTYPE
-FakeCredentialProviderUser::GetStringValue(REFPROPERTYKEY key,
-                                           wchar_t** value) {
+HRESULT FakeCredentialProviderUser::GetStringValue(REFPROPERTYKEY key,
+                                                   wchar_t** value) {
   if (key != PKEY_Identity_UserName)
     return E_INVALIDARG;
 
   DWORD length = username_.length() + 1;
-  *value =
-      static_cast<wchar_t*>(::CoTaskMemAlloc(length * sizeof(wchar_t)));
+  *value = static_cast<wchar_t*>(::CoTaskMemAlloc(length * sizeof(wchar_t)));
   EXPECT_EQ(0, wcscpy_s(*value, length, username_.c_str()));
   return S_OK;
 }
 
-HRESULT STDMETHODCALLTYPE
-FakeCredentialProviderUser::GetValue(REFPROPERTYKEY key, PROPVARIANT* value) {
+HRESULT FakeCredentialProviderUser::GetValue(REFPROPERTYKEY key,
+                                             PROPVARIANT* value) {
   return E_NOTIMPL;
 }
 
-IMPL_IUNKOWN_NOQI_NOREF(FakeCredentialProviderUser);
+IMPL_IUNKOWN_NOQI_WITH_REF(FakeCredentialProviderUser)
 
 ///////////////////////////////////////////////////////////////////////////////
 
 FakeCredentialProviderUserArray::FakeCredentialProviderUserArray() {}
 
-FakeCredentialProviderUserArray::~FakeCredentialProviderUserArray() {}
+FakeCredentialProviderUserArray::~FakeCredentialProviderUserArray() {
+  EXPECT_EQ(ref_count_, 1u);
+}
 
 HRESULT FakeCredentialProviderUserArray::SetProviderFilter(
     REFGUID guidProviderToFilterTo) {
@@ -72,8 +127,10 @@ HRESULT FakeCredentialProviderUserArray::SetProviderFilter(
 }
 
 HRESULT FakeCredentialProviderUserArray::GetAccountOptions(
-    CREDENTIAL_PROVIDER_ACCOUNT_OPTIONS* credentialProviderAccountOptions) {
-  return E_NOTIMPL;
+    CREDENTIAL_PROVIDER_ACCOUNT_OPTIONS* cpao) {
+  DCHECK(cpao);
+  *cpao = cpao_;
+  return S_OK;
 }
 
 HRESULT FakeCredentialProviderUserArray::GetCount(DWORD* count) {
@@ -85,16 +142,19 @@ HRESULT FakeCredentialProviderUserArray::GetAt(DWORD index,
                                                ICredentialProviderUser** user) {
   EXPECT_LT(index, users_.size());
   *user = &users_[index];
+  (*user)->AddRef();
   return S_OK;
 }
 
-IMPL_IUNKOWN_NOQI_NOREF(FakeCredentialProviderUserArray);
+IMPL_IUNKOWN_NOQI_WITH_REF(FakeCredentialProviderUserArray)
 
 ///////////////////////////////////////////////////////////////////////////////
 
 FakeCredentialProviderEvents::FakeCredentialProviderEvents() {}
 
-FakeCredentialProviderEvents::~FakeCredentialProviderEvents() {}
+FakeCredentialProviderEvents::~FakeCredentialProviderEvents() {
+  EXPECT_EQ(ref_count_, 1u);
+}
 
 HRESULT FakeCredentialProviderEvents::CredentialsChanged(
     UINT_PTR upAdviseContext) {
@@ -102,15 +162,59 @@ HRESULT FakeCredentialProviderEvents::CredentialsChanged(
   return S_OK;
 }
 
-IMPL_IUNKOWN_NOQI_NOREF(FakeCredentialProviderEvents);
+IMPL_IUNKOWN_NOQI_WITH_REF(FakeCredentialProviderEvents)
 
 ///////////////////////////////////////////////////////////////////////////////
 
-FakeGaiaCredentialProvider::FakeGaiaCredentialProvider() {}
+CTestGaiaCredentialProvider::CTestGaiaCredentialProvider() {
+  // Set functions for creating test credentials of all types.
+  SetCredentialCreatorFunctionsForTesting(
+      [](CGaiaCredentialProvider::GaiaCredentialComPtrStorage*
+             cred_ptr_storage) {
+        return CComCreator<CComObject<CTestGaiaCredential>>::CreateInstance(
+            nullptr, IID_IGaiaCredential,
+            reinterpret_cast<void**>(&cred_ptr_storage->gaia_cred));
+      },
+      [](CGaiaCredentialProvider::GaiaCredentialComPtrStorage*
+             cred_ptr_storage) {
+        return CComCreator<CComObject<CTestOtherUserGaiaCredential>>::
+            CreateInstance(
+                nullptr, IID_IGaiaCredential,
+                reinterpret_cast<void**>(&cred_ptr_storage->gaia_cred));
+      },
+      [](CGaiaCredentialProvider::GaiaCredentialComPtrStorage*
+             cred_ptr_storage) {
+        return CComCreator<CComObject<testing::CTestCredentialForInherited<
+            CReauthCredential, IReauthCredential>>>::
+            CreateInstance(
+                nullptr, IID_IGaiaCredential,
+                reinterpret_cast<void**>(&cred_ptr_storage->gaia_cred));
+      });
+}
 
-FakeGaiaCredentialProvider::~FakeGaiaCredentialProvider() {}
+CTestGaiaCredentialProvider::~CTestGaiaCredentialProvider() {}
 
-HRESULT FakeGaiaCredentialProvider::OnUserAuthenticated(
+const CComBSTR& CTestGaiaCredentialProvider::username() const {
+  return username_;
+}
+
+const CComBSTR& CTestGaiaCredentialProvider::password() const {
+  return password_;
+}
+
+const CComBSTR& CTestGaiaCredentialProvider::sid() const {
+  return sid_;
+}
+
+bool CTestGaiaCredentialProvider::credentials_changed_fired() const {
+  return credentials_changed_fired_;
+}
+
+void CTestGaiaCredentialProvider::ResetCredentialsChangedFired() {
+  credentials_changed_fired_ = FALSE;
+}
+
+HRESULT CTestGaiaCredentialProvider::OnUserAuthenticatedImpl(
     IUnknown* credential,
     BSTR username,
     BSTR password,
@@ -120,22 +224,10 @@ HRESULT FakeGaiaCredentialProvider::OnUserAuthenticated(
   password_ = password;
   sid_ = sid;
   credentials_changed_fired_ = fire_credentials_changed;
-  return S_OK;
+  return CGaiaCredentialProvider::OnUserAuthenticatedImpl(
+      credential, username, password, sid, fire_credentials_changed);
 }
 
-HRESULT FakeGaiaCredentialProvider::HasInternetConnection() {
-  return has_internet_connection_ == kHicForceYes ? S_OK : S_FALSE;
-}
-
-// IGaiaCredentialProviderForTesting //////////////////////////////////////////
-
-HRESULT FakeGaiaCredentialProvider::SetHasInternetConnection(
-    HasInternetConnectionCheckType has_internet_connection) {
-  DCHECK(has_internet_connection != kHicCheckAlways);
-  has_internet_connection_ = has_internet_connection;
-  return S_OK;
-}
-
-IMPL_IUNKOWN_NOQI_NOREF(FakeGaiaCredentialProvider);
+}  // namespace testing
 
 }  // namespace credential_provider

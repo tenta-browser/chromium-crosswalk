@@ -8,8 +8,13 @@
 #include <stddef.h>
 
 #include "ash/public/cpp/ash_public_export.h"
+#include "base/callback_forward.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/keycodes/keyboard_codes.h"
+
+namespace ui {
+class Accelerator;
+}
 
 namespace ash {
 
@@ -20,20 +25,6 @@ enum AcceleratorAction {
   BRIGHTNESS_UP,
   CYCLE_BACKWARD_MRU,
   CYCLE_FORWARD_MRU,
-  DEBUG_PRINT_LAYER_HIERARCHY,
-  DEBUG_PRINT_VIEW_HIERARCHY,
-  DEBUG_PRINT_WINDOW_HIERARCHY,
-  DEBUG_SHOW_QUICK_LAUNCH,
-  DEBUG_SHOW_TOAST,
-  DEBUG_TOGGLE_DEVICE_SCALE_FACTOR,
-  DEBUG_TOGGLE_SHOW_DEBUG_BORDERS,
-  DEBUG_TOGGLE_SHOW_FPS_COUNTER,
-  DEBUG_TOGGLE_SHOW_PAINT_RECTS,
-  DEBUG_TOGGLE_TOUCH_PAD,
-  DEBUG_TOGGLE_TOUCH_SCREEN,
-  DEBUG_TOGGLE_TABLET_MODE,
-  DEBUG_TOGGLE_WALLPAPER_MODE,
-  DEBUG_TRIGGER_CRASH,  // Intentionally crash the ash process.
   DEV_ADD_REMOVE_DISPLAY,
   DEV_TOGGLE_UNIFIED_DESKTOP,
   DISABLE_CAPS_LOCK,
@@ -94,6 +85,7 @@ enum AcceleratorAction {
   TAKE_SCREENSHOT,
   TAKE_WINDOW_SCREENSHOT,
   TOGGLE_APP_LIST,
+  TOGGLE_APP_LIST_FULLSCREEN,
   TOGGLE_CAPS_LOCK,
   TOGGLE_DICTATION,
   TOGGLE_DOCKED_MAGNIFIER,
@@ -117,6 +109,22 @@ enum AcceleratorAction {
   WINDOW_CYCLE_SNAP_RIGHT,
   WINDOW_MINIMIZE,
   WINDOW_POSITION_CENTER,
+
+  // Debug accelerators are intentionally at the end, so that if you remove one
+  // you don't need to update tests which check hashes of the ids.
+  DEBUG_PRINT_LAYER_HIERARCHY,
+  DEBUG_PRINT_VIEW_HIERARCHY,
+  DEBUG_PRINT_WINDOW_HIERARCHY,
+  DEBUG_SHOW_TOAST,
+  DEBUG_TOGGLE_DEVICE_SCALE_FACTOR,
+  DEBUG_TOGGLE_SHOW_DEBUG_BORDERS,
+  DEBUG_TOGGLE_SHOW_FPS_COUNTER,
+  DEBUG_TOGGLE_SHOW_PAINT_RECTS,
+  DEBUG_TOGGLE_TOUCH_PAD,
+  DEBUG_TOGGLE_TOUCH_SCREEN,
+  DEBUG_TOGGLE_TABLET_MODE,
+  DEBUG_TOGGLE_WALLPAPER_MODE,
+  DEBUG_TRIGGER_CRASH,  // Intentionally crash the ash process.
 };
 
 struct AcceleratorData {
@@ -133,6 +141,47 @@ ASH_PUBLIC_EXPORT constexpr int kDebugModifier =
 // Accelerators handled by AcceleratorController.
 ASH_PUBLIC_EXPORT extern const AcceleratorData kAcceleratorData[];
 ASH_PUBLIC_EXPORT extern const size_t kAcceleratorDataLength;
+
+// The public-facing interface for accelerator handling, which is Ash's duty to
+// implement.
+class ASH_PUBLIC_EXPORT AcceleratorController {
+ public:
+  // Returns the singleton instance.
+  static AcceleratorController* Get();
+
+  // Called by Chrome to set the closure that should be run when the volume has
+  // been adjusted (playing an audible tone when spoken feedback is enabled).
+  static void SetVolumeAdjustmentSoundCallback(
+      const base::RepeatingClosure& closure);
+
+  // Called by Ash to run the closure from SetVolumeAdjustmentSoundCallback.
+  static void PlayVolumeAdjustmentSound();
+
+  // Activates the target associated with the specified accelerator.
+  // First, AcceleratorPressed handler of the most recently registered target
+  // is called, and if that handler processes the event (i.e. returns true),
+  // this method immediately returns. If not, we do the same thing on the next
+  // target, and so on.
+  // Returns true if an accelerator was activated.
+  virtual bool Process(const ui::Accelerator& accelerator) = 0;
+
+  // Returns true if the |accelerator| is deprecated. Deprecated accelerators
+  // can be consumed by web contents if needed.
+  virtual bool IsDeprecated(const ui::Accelerator& accelerator) const = 0;
+
+  // Performs the specified action if it is enabled. Returns whether the action
+  // was performed successfully.
+  virtual bool PerformActionIfEnabled(AcceleratorAction action,
+                                      const ui::Accelerator& accelerator) = 0;
+
+  // Called by Chrome when a menu item accelerator has been triggered. Returns
+  // true if the menu should close.
+  virtual bool OnMenuAccelerator(const ui::Accelerator& accelerator) = 0;
+
+ protected:
+  AcceleratorController();
+  virtual ~AcceleratorController();
+};
 
 }  // namespace ash
 

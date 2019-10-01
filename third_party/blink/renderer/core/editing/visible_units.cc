@@ -34,12 +34,7 @@
 #include "third_party/blink/renderer/core/editing/editing_utilities.h"
 #include "third_party/blink/renderer/core/editing/ephemeral_range.h"
 #include "third_party/blink/renderer/core/editing/frame_selection.h"
-#include "third_party/blink/renderer/core/editing/iterators/backwards_character_iterator.h"
-#include "third_party/blink/renderer/core/editing/iterators/backwards_text_buffer.h"
 #include "third_party/blink/renderer/core/editing/iterators/character_iterator.h"
-#include "third_party/blink/renderer/core/editing/iterators/forwards_text_buffer.h"
-#include "third_party/blink/renderer/core/editing/iterators/simplified_backwards_text_iterator.h"
-#include "third_party/blink/renderer/core/editing/iterators/text_iterator.h"
 #include "third_party/blink/renderer/core/editing/local_caret_rect.h"
 #include "third_party/blink/renderer/core/editing/position.h"
 #include "third_party/blink/renderer/core/editing/position_iterator.h"
@@ -464,7 +459,9 @@ bool HasRenderedNonAnonymousDescendantsWithHeight(
           (o->IsLayoutInline() && IsEmptyInline(LineLayoutItem(o)) &&
            // TODO(crbug.com/771398): Find alternative ways to check whether an
            // empty LayoutInline is rendered, without checking InlineBox.
-           BoundingBoxLogicalHeight(o, ToLayoutInline(o)->LinesBoundingBox())))
+           BoundingBoxLogicalHeight(
+               o,
+               ToLayoutInline(o)->PhysicalLinesBoundingBox().ToLayoutRect())))
         return true;
     }
   }
@@ -939,7 +936,7 @@ static bool IsVisuallyEquivalentCandidateAlgorithm(
   if (layout_object->IsLayoutBlockFlow() ||
       layout_object->IsFlexibleBoxIncludingNG() ||
       layout_object->IsLayoutGrid()) {
-    if (ToLayoutBlock(layout_object)->LogicalHeight() ||
+    if (To<LayoutBlock>(layout_object)->LogicalHeight() ||
         anchor_node->GetDocument().body() == anchor_node) {
       if (!HasRenderedNonAnonymousDescendantsWithHeight(layout_object))
         return position.AtFirstEditingPositionForNode();
@@ -1000,11 +997,10 @@ static UChar32 CharacterAfterAlgorithm(
       MostForwardCaretPosition(visible_position.DeepEquivalent());
   if (!pos.IsOffsetInAnchor())
     return 0;
-  Node* container_node = pos.ComputeContainerNode();
-  if (!container_node || !container_node->IsTextNode())
+  auto* text_node = DynamicTo<Text>(pos.ComputeContainerNode());
+  if (!text_node)
     return 0;
   unsigned offset = static_cast<unsigned>(pos.OffsetInContainerNode());
-  Text* text_node = ToText(container_node);
   unsigned length = text_node->length();
   if (offset >= length)
     return 0;
@@ -1263,14 +1259,14 @@ IntRect FirstRectForRange(const EphemeralRange& range) {
       CreateVisiblePosition(range.StartPosition()).DeepEquivalent(),
       TextAffinity::kDownstream);
   const IntRect start_caret_rect =
-      AbsoluteCaretRectOfPosition(start_position, &extra_width_to_end_of_line);
+      AbsoluteCaretBoundsOf(start_position, &extra_width_to_end_of_line);
   if (start_caret_rect.IsEmpty())
     return IntRect();
 
   const PositionWithAffinity end_position(
       CreateVisiblePosition(range.EndPosition()).DeepEquivalent(),
       TextAffinity::kUpstream);
-  const IntRect end_caret_rect = AbsoluteCaretRectOfPosition(end_position);
+  const IntRect end_caret_rect = AbsoluteCaretBoundsOf(end_position);
   if (end_caret_rect.IsEmpty())
     return IntRect();
 

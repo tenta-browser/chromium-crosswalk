@@ -34,7 +34,6 @@
 #include "third_party/blink/renderer/core/dom/node_traversal.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/html/custom/custom_element.h"
-#include "third_party/blink/renderer/platform/bindings/trace_wrapper_member.h"
 
 namespace blink {
 
@@ -74,8 +73,7 @@ void TreeScopeAdopter::MoveTreeToNewScope(Node& root) const {
       continue;
     Element& element = ToElement(node);
 
-    if (HeapVector<TraceWrapperMember<Attr>>* attrs =
-            element.GetAttrNodeList()) {
+    if (HeapVector<Member<Attr>>* attrs = element.GetAttrNodeList()) {
       for (const auto& attr : *attrs)
         MoveTreeToNewScope(*attr);
     }
@@ -115,8 +113,7 @@ void TreeScopeAdopter::MoveTreeToNewDocument(Node& root,
       continue;
     Element& element = ToElement(node);
 
-    if (HeapVector<TraceWrapperMember<Attr>>* attrs =
-            element.GetAttrNodeList()) {
+    if (HeapVector<Member<Attr>>* attrs = element.GetAttrNodeList()) {
       for (const auto& attr : *attrs)
         MoveTreeToNewDocument(*attr, old_document, new_document);
     }
@@ -168,8 +165,8 @@ inline void TreeScopeAdopter::MoveNodeToNewDocument(
                                           new_document);
   }
 
-  if (node.IsShadowRoot())
-    ToShadowRoot(node).SetDocument(new_document);
+  if (auto* shadow_root = DynamicTo<ShadowRoot>(node))
+    shadow_root->SetDocument(new_document);
 
 #if DCHECK_IS_ON()
   g_did_move_to_new_document_was_called = false;

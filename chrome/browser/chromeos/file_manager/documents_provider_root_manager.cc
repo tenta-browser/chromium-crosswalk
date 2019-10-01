@@ -12,6 +12,7 @@
 #include <utility>
 
 #include "base/base64.h"
+#include "base/bind.h"
 #include "base/strings/string_util.h"
 #include "chrome/browser/chromeos/arc/fileapi/arc_file_system_operation_runner.h"
 #include "chrome/browser/profiles/profile.h"
@@ -188,6 +189,9 @@ void DocumentsProviderRootManager::OnGetRoots(
       root_info.summary = root->summary.value();
     if (root->icon.has_value())
       root_info.icon = root->icon.value();
+    root_info.supports_create = root->supports_create;
+    if (root->mime_types.has_value())
+      root_info.mime_types = root->mime_types.value();
 
     roots_info.emplace_back(std::move(root_info));
   }
@@ -227,7 +231,8 @@ void DocumentsProviderRootManager::NotifyRootAdded(const RootInfo& info) {
     observer.OnDocumentsProviderRootAdded(
         info.authority, info.root_id, info.document_id, info.title,
         info.summary,
-        !info.icon.empty() ? EncodeIconAsUrl(info.icon) : GURL::EmptyGURL());
+        !info.icon.empty() ? EncodeIconAsUrl(info.icon) : GURL::EmptyGURL(),
+        !info.supports_create, info.mime_types);
   }
 }
 

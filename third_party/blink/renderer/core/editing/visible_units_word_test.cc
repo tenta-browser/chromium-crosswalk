@@ -14,7 +14,7 @@ class VisibleUnitsWordTest : public EditingTestBase {
  protected:
   std::string DoStartOfWord(
       const std::string& selection_text,
-      EWordSide word_side = EWordSide::kNextWordIfOnBoundary) {
+      WordSide word_side = WordSide::kNextWordIfOnBoundary) {
     const Position position = SetSelectionTextToBody(selection_text).Base();
     return GetCaretTextFromBody(
         StartOfWord(CreateVisiblePosition(position), word_side)
@@ -23,7 +23,7 @@ class VisibleUnitsWordTest : public EditingTestBase {
 
   std::string DoEndOfWord(
       const std::string& selection_text,
-      EWordSide word_side = EWordSide::kNextWordIfOnBoundary) {
+      WordSide word_side = WordSide::kNextWordIfOnBoundary) {
     const Position position = SetSelectionTextToBody(selection_text).Base();
     return GetCaretTextFromBody(
         EndOfWord(CreateVisiblePosition(position), word_side).DeepEquivalent());
@@ -70,9 +70,9 @@ class ParameterizedVisibleUnitsWordTest
   bool LayoutNGEnabled() const { return GetParam(); }
 };
 
-INSTANTIATE_TEST_CASE_P(All,
-                        ParameterizedVisibleUnitsWordTest,
-                        ::testing::Bool());
+INSTANTIATE_TEST_SUITE_P(All,
+                         ParameterizedVisibleUnitsWordTest,
+                         ::testing::Bool());
 
 TEST_P(ParameterizedVisibleUnitsWordTest, StartOfWordBasic) {
   EXPECT_EQ("<p> |(1) abc def</p>", DoStartOfWord("<p>| (1) abc def</p>"));
@@ -95,46 +95,46 @@ TEST_P(ParameterizedVisibleUnitsWordTest,
        StartOfWordPreviousWordIfOnBoundaryBasic) {
   EXPECT_EQ("<p> |(1) abc def</p>",
             DoStartOfWord("<p>| (1) abc def</p>",
-                          EWordSide::kPreviousWordIfOnBoundary));
+                          WordSide::kPreviousWordIfOnBoundary));
   EXPECT_EQ("<p> |(1) abc def</p>",
             DoStartOfWord("<p> |(1) abc def</p>",
-                          EWordSide::kPreviousWordIfOnBoundary));
+                          WordSide::kPreviousWordIfOnBoundary));
   EXPECT_EQ("<p> |(1) abc def</p>",
             DoStartOfWord("<p> (|1) abc def</p>",
-                          EWordSide::kPreviousWordIfOnBoundary));
+                          WordSide::kPreviousWordIfOnBoundary));
   EXPECT_EQ("<p> (|1) abc def</p>",
             DoStartOfWord("<p> (1|) abc def</p>",
-                          EWordSide::kPreviousWordIfOnBoundary));
+                          WordSide::kPreviousWordIfOnBoundary));
   EXPECT_EQ("<p> (1|) abc def</p>",
             DoStartOfWord("<p> (1)| abc def</p>",
-                          EWordSide::kPreviousWordIfOnBoundary));
+                          WordSide::kPreviousWordIfOnBoundary));
   EXPECT_EQ("<p> (1)| abc def</p>",
             DoStartOfWord("<p> (1) |abc def</p>",
-                          EWordSide::kPreviousWordIfOnBoundary));
+                          WordSide::kPreviousWordIfOnBoundary));
   EXPECT_EQ("<p> (1) |abc def</p>",
             DoStartOfWord("<p> (1) a|bc def</p>",
-                          EWordSide::kPreviousWordIfOnBoundary));
+                          WordSide::kPreviousWordIfOnBoundary));
   EXPECT_EQ("<p> (1) |abc def</p>",
             DoStartOfWord("<p> (1) ab|c def</p>",
-                          EWordSide::kPreviousWordIfOnBoundary));
+                          WordSide::kPreviousWordIfOnBoundary));
   EXPECT_EQ("<p> (1) |abc def</p>",
             DoStartOfWord("<p> (1) abc| def</p>",
-                          EWordSide::kPreviousWordIfOnBoundary));
+                          WordSide::kPreviousWordIfOnBoundary));
   EXPECT_EQ("<p> (1) abc| def</p>",
             DoStartOfWord("<p> (1) abc |def</p>",
-                          EWordSide::kPreviousWordIfOnBoundary));
+                          WordSide::kPreviousWordIfOnBoundary));
   EXPECT_EQ("<p> (1) abc |def</p>",
             DoStartOfWord("<p> (1) abc d|ef</p>",
-                          EWordSide::kPreviousWordIfOnBoundary));
+                          WordSide::kPreviousWordIfOnBoundary));
   EXPECT_EQ("<p> (1) abc |def</p>",
             DoStartOfWord("<p> (1) abc de|f</p>",
-                          EWordSide::kPreviousWordIfOnBoundary));
+                          WordSide::kPreviousWordIfOnBoundary));
   EXPECT_EQ("<p> (1) abc |def</p>",
             DoStartOfWord("<p> (1) abc def|</p>",
-                          EWordSide::kPreviousWordIfOnBoundary));
+                          WordSide::kPreviousWordIfOnBoundary));
   EXPECT_EQ("<p> (1) abc |def</p>",
             DoStartOfWord("<p> (1) abc def</p>|",
-                          EWordSide::kPreviousWordIfOnBoundary));
+                          WordSide::kPreviousWordIfOnBoundary));
 }
 
 TEST_P(ParameterizedVisibleUnitsWordTest, StartOfWordCrossing) {
@@ -266,28 +266,28 @@ TEST_P(ParameterizedVisibleUnitsWordTest,
        StartOfWordPreviousWordIfOnBoundaryTextControl) {
   EXPECT_EQ("|foo<input value=\"bla\">bar",
             DoStartOfWord("|foo<input value=\"bla\">bar",
-                          EWordSide::kPreviousWordIfOnBoundary));
+                          WordSide::kPreviousWordIfOnBoundary));
   EXPECT_EQ("|foo<input value=\"bla\">bar",
             DoStartOfWord("f|oo<input value=\"bla\">bar",
-                          EWordSide::kPreviousWordIfOnBoundary));
+                          WordSide::kPreviousWordIfOnBoundary));
   EXPECT_EQ("|foo<input value=\"bla\">bar",
             DoStartOfWord("fo|o<input value=\"bla\">bar",
-                          EWordSide::kPreviousWordIfOnBoundary));
+                          WordSide::kPreviousWordIfOnBoundary));
   EXPECT_EQ("|foo<input value=\"bla\">bar",
             DoStartOfWord("foo|<input value=\"bla\">bar",
-                          EWordSide::kPreviousWordIfOnBoundary));
+                          WordSide::kPreviousWordIfOnBoundary));
   EXPECT_EQ("foo|<input value=\"bla\">bar",
             DoStartOfWord("foo<input value=\"bla\">|bar",
-                          EWordSide::kPreviousWordIfOnBoundary));
+                          WordSide::kPreviousWordIfOnBoundary));
   EXPECT_EQ("foo<input value=\"bla\">|bar",
             DoStartOfWord("foo<input value=\"bla\">b|ar",
-                          EWordSide::kPreviousWordIfOnBoundary));
+                          WordSide::kPreviousWordIfOnBoundary));
   EXPECT_EQ("foo<input value=\"bla\">|bar",
             DoStartOfWord("foo<input value=\"bla\">ba|r",
-                          EWordSide::kPreviousWordIfOnBoundary));
+                          WordSide::kPreviousWordIfOnBoundary));
   EXPECT_EQ("foo<input value=\"bla\">|bar",
             DoStartOfWord("foo<input value=\"bla\">bar|",
-                          EWordSide::kPreviousWordIfOnBoundary));
+                          WordSide::kPreviousWordIfOnBoundary));
 }
 
 TEST_P(ParameterizedVisibleUnitsWordTest, EndOfWordBasic) {
@@ -309,48 +309,48 @@ TEST_P(ParameterizedVisibleUnitsWordTest, EndOfWordBasic) {
 
 TEST_P(ParameterizedVisibleUnitsWordTest,
        EndOfWordPreviousWordIfOnBoundaryBasic) {
-  EXPECT_EQ("<p> |(1) abc def</p>",
-            DoEndOfWord("<p>| (1) abc def</p>",
-                        EWordSide::kPreviousWordIfOnBoundary));
-  EXPECT_EQ("<p> |(1) abc def</p>",
-            DoEndOfWord("<p> |(1) abc def</p>",
-                        EWordSide::kPreviousWordIfOnBoundary));
-  EXPECT_EQ("<p> (|1) abc def</p>",
-            DoEndOfWord("<p> (|1) abc def</p>",
-                        EWordSide::kPreviousWordIfOnBoundary));
-  EXPECT_EQ("<p> (1|) abc def</p>",
-            DoEndOfWord("<p> (1|) abc def</p>",
-                        EWordSide::kPreviousWordIfOnBoundary));
-  EXPECT_EQ("<p> (1)| abc def</p>",
-            DoEndOfWord("<p> (1)| abc def</p>",
-                        EWordSide::kPreviousWordIfOnBoundary));
-  EXPECT_EQ("<p> (1) |abc def</p>",
-            DoEndOfWord("<p> (1) |abc def</p>",
-                        EWordSide::kPreviousWordIfOnBoundary));
-  EXPECT_EQ("<p> (1) abc| def</p>",
-            DoEndOfWord("<p> (1) a|bc def</p>",
-                        EWordSide::kPreviousWordIfOnBoundary));
-  EXPECT_EQ("<p> (1) abc| def</p>",
-            DoEndOfWord("<p> (1) ab|c def</p>",
-                        EWordSide::kPreviousWordIfOnBoundary));
-  EXPECT_EQ("<p> (1) abc| def</p>",
-            DoEndOfWord("<p> (1) abc| def</p>",
-                        EWordSide::kPreviousWordIfOnBoundary));
-  EXPECT_EQ("<p> (1) abc |def</p>",
-            DoEndOfWord("<p> (1) abc |def</p>",
-                        EWordSide::kPreviousWordIfOnBoundary));
-  EXPECT_EQ("<p> (1) abc def|</p>",
-            DoEndOfWord("<p> (1) abc d|ef</p>",
-                        EWordSide::kPreviousWordIfOnBoundary));
-  EXPECT_EQ("<p> (1) abc def|</p>",
-            DoEndOfWord("<p> (1) abc de|f</p>",
-                        EWordSide::kPreviousWordIfOnBoundary));
-  EXPECT_EQ("<p> (1) abc def|</p>",
-            DoEndOfWord("<p> (1) abc def|</p>",
-                        EWordSide::kPreviousWordIfOnBoundary));
-  EXPECT_EQ("<p> (1) abc def|</p>",
-            DoEndOfWord("<p> (1) abc def</p>|",
-                        EWordSide::kPreviousWordIfOnBoundary));
+  EXPECT_EQ(
+      "<p> |(1) abc def</p>",
+      DoEndOfWord("<p>| (1) abc def</p>", WordSide::kPreviousWordIfOnBoundary));
+  EXPECT_EQ(
+      "<p> |(1) abc def</p>",
+      DoEndOfWord("<p> |(1) abc def</p>", WordSide::kPreviousWordIfOnBoundary));
+  EXPECT_EQ(
+      "<p> (|1) abc def</p>",
+      DoEndOfWord("<p> (|1) abc def</p>", WordSide::kPreviousWordIfOnBoundary));
+  EXPECT_EQ(
+      "<p> (1|) abc def</p>",
+      DoEndOfWord("<p> (1|) abc def</p>", WordSide::kPreviousWordIfOnBoundary));
+  EXPECT_EQ(
+      "<p> (1)| abc def</p>",
+      DoEndOfWord("<p> (1)| abc def</p>", WordSide::kPreviousWordIfOnBoundary));
+  EXPECT_EQ(
+      "<p> (1) |abc def</p>",
+      DoEndOfWord("<p> (1) |abc def</p>", WordSide::kPreviousWordIfOnBoundary));
+  EXPECT_EQ(
+      "<p> (1) abc| def</p>",
+      DoEndOfWord("<p> (1) a|bc def</p>", WordSide::kPreviousWordIfOnBoundary));
+  EXPECT_EQ(
+      "<p> (1) abc| def</p>",
+      DoEndOfWord("<p> (1) ab|c def</p>", WordSide::kPreviousWordIfOnBoundary));
+  EXPECT_EQ(
+      "<p> (1) abc| def</p>",
+      DoEndOfWord("<p> (1) abc| def</p>", WordSide::kPreviousWordIfOnBoundary));
+  EXPECT_EQ(
+      "<p> (1) abc |def</p>",
+      DoEndOfWord("<p> (1) abc |def</p>", WordSide::kPreviousWordIfOnBoundary));
+  EXPECT_EQ(
+      "<p> (1) abc def|</p>",
+      DoEndOfWord("<p> (1) abc d|ef</p>", WordSide::kPreviousWordIfOnBoundary));
+  EXPECT_EQ(
+      "<p> (1) abc def|</p>",
+      DoEndOfWord("<p> (1) abc de|f</p>", WordSide::kPreviousWordIfOnBoundary));
+  EXPECT_EQ(
+      "<p> (1) abc def|</p>",
+      DoEndOfWord("<p> (1) abc def|</p>", WordSide::kPreviousWordIfOnBoundary));
+  EXPECT_EQ(
+      "<p> (1) abc def|</p>",
+      DoEndOfWord("<p> (1) abc def</p>|", WordSide::kPreviousWordIfOnBoundary));
 }
 
 TEST_P(ParameterizedVisibleUnitsWordTest, EndOfWordShadowDOM) {
@@ -455,28 +455,28 @@ TEST_P(ParameterizedVisibleUnitsWordTest,
        EndOfWordPreviousWordIfOnBoundaryTextControl) {
   EXPECT_EQ("|foo<input value=\"bla\">bar",
             DoEndOfWord("|foo<input value=\"bla\">bar",
-                        EWordSide::kPreviousWordIfOnBoundary));
+                        WordSide::kPreviousWordIfOnBoundary));
   EXPECT_EQ("foo|<input value=\"bla\">bar",
             DoEndOfWord("f|oo<input value=\"bla\">bar",
-                        EWordSide::kPreviousWordIfOnBoundary));
+                        WordSide::kPreviousWordIfOnBoundary));
   EXPECT_EQ("foo|<input value=\"bla\">bar",
             DoEndOfWord("fo|o<input value=\"bla\">bar",
-                        EWordSide::kPreviousWordIfOnBoundary));
+                        WordSide::kPreviousWordIfOnBoundary));
   EXPECT_EQ("foo|<input value=\"bla\">bar",
             DoEndOfWord("foo|<input value=\"bla\">bar",
-                        EWordSide::kPreviousWordIfOnBoundary));
+                        WordSide::kPreviousWordIfOnBoundary));
   EXPECT_EQ("foo<input value=\"bla\">|bar",
             DoEndOfWord("foo<input value=\"bla\">|bar",
-                        EWordSide::kPreviousWordIfOnBoundary));
+                        WordSide::kPreviousWordIfOnBoundary));
   EXPECT_EQ("foo<input value=\"bla\">bar|",
             DoEndOfWord("foo<input value=\"bla\">b|ar",
-                        EWordSide::kPreviousWordIfOnBoundary));
+                        WordSide::kPreviousWordIfOnBoundary));
   EXPECT_EQ("foo<input value=\"bla\">bar|",
             DoEndOfWord("foo<input value=\"bla\">ba|r",
-                        EWordSide::kPreviousWordIfOnBoundary));
+                        WordSide::kPreviousWordIfOnBoundary));
   EXPECT_EQ("foo<input value=\"bla\">bar|",
             DoEndOfWord("foo<input value=\"bla\">bar|",
-                        EWordSide::kPreviousWordIfOnBoundary));
+                        WordSide::kPreviousWordIfOnBoundary));
 }
 
 TEST_P(ParameterizedVisibleUnitsWordTest, NextWordBasic) {
@@ -501,7 +501,13 @@ TEST_F(VisibleUnitsWordTest, NextWordCrossingBlock) {
   EXPECT_EQ("<p>abc</p><p>def|</p>", DoNextWord("<p>abc|</p><p>def</p>"));
 }
 
-TEST_F(VisibleUnitsWordTest, NextWordMixedEditability) {
+TEST_P(ParameterizedVisibleUnitsWordTest, NextWordCrossingPlaceholderBR) {
+  // TODO(crbug.com/122304): NextWordPosition should respect paragraph
+  // boundaries. On Windows, it should move to "|abc".
+  EXPECT_EQ("<p><br></p><p>abc|</p>", DoNextWord("<p>|<br></p><p>abc</p>"));
+}
+
+TEST_P(ParameterizedVisibleUnitsWordTest, NextWordMixedEditability) {
   EXPECT_EQ(
       "<p contenteditable>"
       "abc<b contenteditable=\"false\">def ghi</b>|jkl mno</p>",

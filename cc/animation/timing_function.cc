@@ -57,12 +57,12 @@ TimingFunction::Type CubicBezierTimingFunction::GetType() const {
   return Type::CUBIC_BEZIER;
 }
 
-float CubicBezierTimingFunction::GetValue(double x) const {
-  return static_cast<float>(bezier_.Solve(x));
+double CubicBezierTimingFunction::GetValue(double x) const {
+  return bezier_.Solve(x);
 }
 
-float CubicBezierTimingFunction::Velocity(double x) const {
-  return static_cast<float>(bezier_.Slope(x));
+double CubicBezierTimingFunction::Velocity(double x) const {
+  return bezier_.Slope(x);
 }
 
 std::unique_ptr<TimingFunction> CubicBezierTimingFunction::Clone() const {
@@ -84,21 +84,27 @@ TimingFunction::Type StepsTimingFunction::GetType() const {
   return Type::STEPS;
 }
 
-float StepsTimingFunction::GetValue(double t) const {
-  return static_cast<float>(GetPreciseValue(t));
+double StepsTimingFunction::GetValue(double t) const {
+  return GetPreciseValue(t, TimingFunction::LimitDirection::RIGHT);
 }
 
 std::unique_ptr<TimingFunction> StepsTimingFunction::Clone() const {
   return base::WrapUnique(new StepsTimingFunction(*this));
 }
 
-float StepsTimingFunction::Velocity(double x) const {
-  return 0.0f;
+double StepsTimingFunction::Velocity(double x) const {
+  return 0;
 }
 
-double StepsTimingFunction::GetPreciseValue(double t) const {
+double StepsTimingFunction::GetPreciseValue(double t,
+                                            LimitDirection direction) const {
   const double steps = static_cast<double>(steps_);
   double current_step = std::floor((steps * t) + GetStepsStartOffset());
+  // Adjust step if using a left limit at a discontinuous step boundary.
+  if (direction == LimitDirection::LEFT &&
+      steps * t - std::floor(steps * t) == 0) {
+    current_step -= 1;
+  }
   if (t >= 0 && current_step < 0)
     current_step = 0;
   if (t <= 1 && current_step > steps)
@@ -110,46 +116,12 @@ float StepsTimingFunction::GetStepsStartOffset() const {
   switch (step_position_) {
     case StepPosition::START:
       return 1;
-    case StepPosition::MIDDLE:
-      return 0.5;
     case StepPosition::END:
       return 0;
     default:
       NOTREACHED();
       return 1;
   }
-}
-
-std::unique_ptr<FramesTimingFunction> FramesTimingFunction::Create(int frames) {
-  return base::WrapUnique(new FramesTimingFunction(frames));
-}
-
-FramesTimingFunction::FramesTimingFunction(int frames) : frames_(frames) {}
-
-FramesTimingFunction::~FramesTimingFunction() = default;
-
-TimingFunction::Type FramesTimingFunction::GetType() const {
-  return Type::FRAMES;
-}
-
-float FramesTimingFunction::GetValue(double t) const {
-  return static_cast<float>(GetPreciseValue(t));
-}
-
-std::unique_ptr<TimingFunction> FramesTimingFunction::Clone() const {
-  return base::WrapUnique(new FramesTimingFunction(*this));
-}
-
-float FramesTimingFunction::Velocity(double x) const {
-  return 0.0f;
-}
-
-double FramesTimingFunction::GetPreciseValue(double t) const {
-  const double frames = static_cast<double>(frames_);
-  double output_progress = std::floor(frames * t) / (frames - 1);
-  if (t <= 1 && output_progress > 1)
-    output_progress = 1;
-  return output_progress;
 }
 
 }  // namespace cc

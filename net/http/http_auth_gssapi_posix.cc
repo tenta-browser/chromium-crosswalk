@@ -77,6 +77,8 @@ gss_OID GSS_C_NT_EXPORT_NAME = &GSS_C_NT_EXPORT_NAME_VAL;
 
 namespace net {
 
+using DelegationType = HttpAuth::DelegationType;
+
 // Exported mechanism for GSSAPI. We always use SPNEGO:
 
 // iso.org.dod.internet.security.mechanism.snego (1.3.6.1.5.5.2)
@@ -123,7 +125,7 @@ std::string DisplayCode(GSSAPILibrary* gssapi_lib,
       int msg_len = (msg.length > kMaxMsgLength) ?
           static_cast<int>(kMaxMsgLength) :
           static_cast<int>(msg.length);
-      if (msg_len > 0 && msg.value != NULL) {
+      if (msg_len > 0 && msg.value != nullptr) {
         rv += base::StringPrintf(" %.*s", msg_len,
                                  static_cast<char*>(msg.value));
       }
@@ -240,7 +242,7 @@ std::string DescribeOid(GSSAPILibrary* gssapi_lib, const gss_OID oid) {
   if (char_length > kMaxCharsToPrint) {
     // This might be a plain ASCII string.
     // Check if the first |kMaxCharsToPrint| characters
-    // contain only printable characters and are NULL terminated.
+    // contain only printable characters and are NUL terminated.
     const char* str = reinterpret_cast<const char*>(oid);
     size_t str_length = 0;
     for ( ; str_length < kMaxCharsToPrint; ++str_length) {
@@ -378,27 +380,37 @@ std::string DescribeContext(GSSAPILibrary* gssapi_lib,
   return description;
 }
 
+OM_uint32 DelegationTypeToFlag(DelegationType delegation_type) {
+  switch (delegation_type) {
+    case DelegationType::kNone:
+      return 0;
+    case DelegationType::kByKdcPolicy:
+      return GSS_C_DELEG_POLICY_FLAG;
+    case DelegationType::kUnconstrained:
+      return GSS_C_DELEG_FLAG;
+  }
+}
+
 }  // namespace
 
 GSSAPISharedLibrary::GSSAPISharedLibrary(const std::string& gssapi_library_name)
     : initialized_(false),
       gssapi_library_name_(gssapi_library_name),
-      gssapi_library_(NULL),
-      import_name_(NULL),
-      release_name_(NULL),
-      release_buffer_(NULL),
-      display_name_(NULL),
-      display_status_(NULL),
-      init_sec_context_(NULL),
-      wrap_size_limit_(NULL),
-      delete_sec_context_(NULL),
-      inquire_context_(NULL) {
-}
+      gssapi_library_(nullptr),
+      import_name_(nullptr),
+      release_name_(nullptr),
+      release_buffer_(nullptr),
+      display_name_(nullptr),
+      display_status_(nullptr),
+      init_sec_context_(nullptr),
+      wrap_size_limit_(nullptr),
+      delete_sec_context_(nullptr),
+      inquire_context_(nullptr) {}
 
 GSSAPISharedLibrary::~GSSAPISharedLibrary() {
   if (gssapi_library_) {
     base::UnloadNativeLibrary(gssapi_library_);
-    gssapi_library_ = NULL;
+    gssapi_library_ = nullptr;
   }
 }
 
@@ -412,7 +424,7 @@ bool GSSAPISharedLibrary::InitImpl() {
   DCHECK(!initialized_);
 #if defined(DLOPEN_KERBEROS)
   gssapi_library_ = LoadSharedLibrary();
-  if (gssapi_library_ == NULL)
+  if (gssapi_library_ == nullptr)
     return false;
 #endif  // defined(DLOPEN_KERBEROS)
   initialized_ = true;
@@ -464,17 +476,18 @@ base::NativeLibrary GSSAPISharedLibrary::LoadSharedLibrary() {
     }
   }
   LOG(WARNING) << "Unable to find a compatible GSSAPI library";
-  return NULL;
+  return nullptr;
 }
 
 #if defined(DLOPEN_KERBEROS)
-#define BIND(lib, x)                                                    \
-  DCHECK(lib);                                                          \
-  gss_##x##_type x = reinterpret_cast<gss_##x##_type>(                  \
-      base::GetFunctionPointerFromNativeLibrary(lib, "gss_" #x));       \
-  if (x == NULL) {                                                      \
-    LOG(WARNING) << "Unable to bind function \"" << "gss_" #x << "\"";  \
-    return false;                                                       \
+#define BIND(lib, x)                                              \
+  DCHECK(lib);                                                    \
+  gss_##x##_type x = reinterpret_cast<gss_##x##_type>(            \
+      base::GetFunctionPointerFromNativeLibrary(lib, "gss_" #x)); \
+  if (x == nullptr) {                                             \
+    LOG(WARNING) << "Unable to bind function \""                  \
+                 << "gss_" #x << "\"";                            \
+    return false;                                                 \
   }
 #else
 #define BIND(lib, x) gss_##x##_type x = gss_##x
@@ -666,8 +679,7 @@ HttpAuthGSSAPI::HttpAuthGSSAPI(GSSAPILibrary* library,
     : scheme_(scheme),
       gss_oid_(gss_oid),
       library_(library),
-      scoped_sec_context_(library),
-      can_delegate_(false) {
+      scoped_sec_context_(library) {
   DCHECK(library_);
 }
 
@@ -687,8 +699,8 @@ bool HttpAuthGSSAPI::AllowsExplicitCredentials() const {
   return false;
 }
 
-void HttpAuthGSSAPI::Delegate() {
-  can_delegate_ = true;
+void HttpAuthGSSAPI::SetDelegation(DelegationType delegation_type) {
+  delegation_type_ = delegation_type;
 }
 
 HttpAuth::AuthorizationResult HttpAuthGSSAPI::ParseChallenge(
@@ -710,9 +722,9 @@ int HttpAuthGSSAPI::GenerateAuthToken(const AuthCredentials* credentials,
 
   gss_buffer_desc input_token = GSS_C_EMPTY_BUFFER;
   input_token.length = decoded_server_auth_token_.length();
-  input_token.value = (input_token.length > 0) ?
-      const_cast<char*>(decoded_server_auth_token_.data()) :
-      NULL;
+  input_token.value = (input_token.length > 0)
+                          ? const_cast<char*>(decoded_server_auth_token_.data())
+                          : nullptr;
   gss_buffer_desc output_token = GSS_C_EMPTY_BUFFER;
   ScopedBuffer scoped_output_token(&output_token, library_);
   int rv =
@@ -850,9 +862,7 @@ int HttpAuthGSSAPI::GetNextSecurityToken(const std::string& spn,
   ScopedName scoped_name(principal_name, library_);
 
   // Continue creating a security context.
-  OM_uint32 req_flags = 0;
-  if (can_delegate_)
-    req_flags |= GSS_C_DELEG_FLAG;
+  OM_uint32 req_flags = DelegationTypeToFlag(delegation_type_);
   major_status = library_->init_sec_context(
       &minor_status, GSS_C_NO_CREDENTIAL, scoped_sec_context_.receive(),
       principal_name, gss_oid_, req_flags, GSS_C_INDEFINITE,

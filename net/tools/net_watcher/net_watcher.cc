@@ -23,6 +23,7 @@
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/string_split.h"
+#include "base/task/thread_pool/thread_pool.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "net/base/network_change_notifier.h"
@@ -73,9 +74,9 @@ const char* ConnectionTypeToString(
 }
 
 std::string ProxyConfigToString(const net::ProxyConfig& config) {
-  std::unique_ptr<base::Value> config_value(config.ToValue());
+  base::Value config_value = config.ToValue();
   std::string str;
-  base::JSONWriter::Write(*config_value, &str);
+  base::JSONWriter::Write(config_value, &str);
   return str;
 }
 
@@ -149,11 +150,14 @@ int main(int argc, char* argv[]) {
   base::AtExitManager exit_manager;
   base::CommandLine::Init(argc, argv);
   logging::LoggingSettings settings;
-  settings.logging_dest = logging::LOG_TO_SYSTEM_DEBUG_LOG;
+  settings.logging_dest =
+      logging::LOG_TO_SYSTEM_DEBUG_LOG | logging::LOG_TO_STDERR;
   logging::InitLogging(settings);
 
   // Just make the main message loop the network loop.
   base::MessageLoopForIO network_loop;
+
+  base::ThreadPoolInstance::CreateAndStartWithDefaultParams("NetWatcher");
 
   NetWatcher net_watcher;
 

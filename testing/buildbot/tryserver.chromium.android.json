@@ -29,6 +29,7 @@
           "dimension_sets": [
             {
               "device_os": "KTU84P",
+              "device_os_type": "userdebug",
               "device_type": "hammerhead",
               "os": "Android"
             }
@@ -60,6 +61,7 @@
           ],
           "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
         },
+        "name": "webkit_unit_tests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -72,6 +74,7 @@
           "dimension_sets": [
             {
               "device_os": "KTU84P",
+              "device_os_type": "userdebug",
               "device_type": "hammerhead",
               "os": "Android"
             }
@@ -87,7 +90,7 @@
             }
           ]
         },
-        "test": "webkit_unit_tests"
+        "test": "blink_unittests"
       }
     ],
     "isolated_scripts": [
@@ -99,7 +102,7 @@
           "--disable-breakpad",
           "--additional-driver-flag=--use-gpu-in-tests"
         ],
-        "isolate_name": "webkit_layout_tests_exparchive",
+        "isolate_name": "blink_web_tests_exparchive",
         "merge": {
           "args": [
             "--verbose"
@@ -113,6 +116,7 @@
           "dimension_sets": [
             {
               "device_os": "KTU84P",
+              "device_os_type": "userdebug",
               "device_type": "hammerhead",
               "os": "Android"
             }

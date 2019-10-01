@@ -31,6 +31,7 @@ NavigationManager::WebLoadParams::~WebLoadParams() {}
 
 NavigationManager::WebLoadParams::WebLoadParams(const WebLoadParams& other)
     : url(other.url),
+      virtual_url(other.virtual_url),
       referrer(other.referrer),
       transition_type(other.transition_type),
       user_agent_override_option(other.user_agent_override_option),
@@ -41,6 +42,7 @@ NavigationManager::WebLoadParams::WebLoadParams(const WebLoadParams& other)
 NavigationManager::WebLoadParams& NavigationManager::WebLoadParams::operator=(
     const WebLoadParams& other) {
   url = other.url;
+  virtual_url = other.virtual_url;
   referrer = other.referrer;
   is_renderer_initiated = other.is_renderer_initiated;
   transition_type = other.transition_type;
@@ -177,6 +179,25 @@ NavigationItemImpl* NavigationManagerImpl::GetCurrentItemImpl() const {
   return GetLastCommittedItemInCurrentOrRestoredSession();
 }
 
+NavigationItemImpl* NavigationManagerImpl::GetLastCommittedItemImpl() const {
+  // GetLastCommittedItemImpl() should return null while session restoration is
+  // in progress and real item after the first post-restore navigation is
+  // finished. IsRestoreSessionInProgress(), will return true until the first
+  // post-restore is started.
+  if (IsRestoreSessionInProgress())
+    return nullptr;
+
+  NavigationItemImpl* result = GetLastCommittedItemInCurrentOrRestoredSession();
+  if (!result || wk_navigation_util::IsRestoreSessionUrl(result->GetURL())) {
+    // Session restoration has completed, but the first post-restore navigation
+    // has not finished yet, so there is no committed URLs in the navigation
+    // stack.
+    return nullptr;
+  }
+
+  return result;
+}
+
 void NavigationManagerImpl::UpdateCurrentItemForReplaceState(
     const GURL& url,
     NSString* state_object) {
@@ -219,27 +240,21 @@ void NavigationManagerImpl::GoToIndex(int index,
 }
 
 void NavigationManagerImpl::GoToIndex(int index) {
+  // Silently return if still on a restore URL.  This state should only last a
+  // few moments, but may be triggered when a user mashes the back or forward
+  // button quickly.
+  if (web::GetWebClient()->IsSlimNavigationManagerEnabled()) {
+    NavigationItemImpl* item = GetLastCommittedItemInCurrentOrRestoredSession();
+    if (item && wk_navigation_util::IsRestoreSessionUrl(item->GetURL())) {
+      return;
+    }
+  }
   GoToIndex(index, NavigationInitiationType::BROWSER_INITIATED,
             /*has_user_gesture=*/true);
 }
 
 NavigationItem* NavigationManagerImpl::GetLastCommittedItem() const {
-  // GetLastCommittedItem() should return null while session restoration is in
-  // progress and real item after the first post-restore navigation is
-  // finished. IsRestoreSessionInProgress(), will return true until the first
-  // post-restore is started.
-  if (IsRestoreSessionInProgress())
-    return nullptr;
-
-  NavigationItem* result = GetLastCommittedItemInCurrentOrRestoredSession();
-  if (!result || wk_navigation_util::IsRestoreSessionUrl(result->GetURL())) {
-    // Session restoration has completed, but the first post-restore navigation
-    // has not finished yet, so there is no committed URLs in the navigation
-    // stack.
-    return nullptr;
-  }
-
-  return result;
+  return GetLastCommittedItemImpl();
 }
 
 int NavigationManagerImpl::GetLastCommittedItemIndex() const {
@@ -323,7 +338,7 @@ void NavigationManagerImpl::LoadURLWithParams(
     added_item->SetShouldSkipRepostFormConfirmation(true);
   }
 
-  FinishLoadURLWithParams();
+  FinishLoadURLWithParams(initiation_type);
 }
 
 void NavigationManagerImpl::AddTransientURLRewriter(
@@ -441,6 +456,18 @@ void NavigationManagerImpl::WillRestore(size_t item_count) {
   UMA_HISTOGRAM_COUNTS_100(kRestoreNavigationItemCount, item_count);
 }
 
+void NavigationManagerImpl::RewriteItemURLIfNecessary(
+    NavigationItem* item) const {
+  GURL url = item->GetURL();
+  if (web::BrowserURLRewriter::GetInstance()->RewriteURLIfNecessary(
+          &url, browser_state_)) {
+    // |url| must be set first for -SetVirtualURL to not no-op.
+    GURL virtual_url = item->GetURL();
+    item->SetURL(url);
+    item->SetVirtualURL(virtual_url);
+  }
+}
+
 std::unique_ptr<NavigationItemImpl>
 NavigationManagerImpl::CreateNavigationItemWithRewriters(
     const GURL& url,
@@ -506,8 +533,9 @@ void NavigationManagerImpl::FinishReload() {
   delegate_->Reload();
 }
 
-void NavigationManagerImpl::FinishLoadURLWithParams() {
-  delegate_->LoadCurrentItem();
+void NavigationManagerImpl::FinishLoadURLWithParams(
+    NavigationInitiationType initiation_type) {
+  delegate_->LoadCurrentItem(initiation_type);
 }
 
 bool NavigationManagerImpl::IsPlaceholderUrl(const GURL& url) const {

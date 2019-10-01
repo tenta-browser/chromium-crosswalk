@@ -58,15 +58,15 @@ void LayoutTableSection::TableGridRow::UpdateLogicalHeightForCell(
   const Length& cell_logical_height = cell->StyleRef().LogicalHeight();
   if (cell_logical_height.IsPositive()) {
     switch (cell_logical_height.GetType()) {
-      case kPercent:
+      case Length::kPercent:
         // TODO(alancutter): Make this work correctly for calc lengths.
         if (!(logical_height.IsPercentOrCalc()) ||
             (logical_height.IsPercent() &&
              logical_height.Percent() < cell_logical_height.Percent()))
           logical_height = cell_logical_height;
         break;
-      case kFixed:
-        if (logical_height.GetType() < kPercent ||
+      case Length::kFixed:
+        if (logical_height.IsAuto() ||
             (logical_height.IsFixed() &&
              logical_height.Value() < cell_logical_height.Value()))
           logical_height = cell_logical_height;
@@ -810,7 +810,7 @@ void LayoutTableSection::UpdateBaselineForCell(LayoutTableCell* cell,
   }
 }
 
-int LayoutTableSection::VBorderSpacingBeforeFirstRow() const {
+int16_t LayoutTableSection::VBorderSpacingBeforeFirstRow() const {
   // We ignore the border-spacing on any non-top section, as it is already
   // included in the previous section's last row position.
   if (this != Table()->TopSection())
@@ -905,7 +905,7 @@ int LayoutTableSection::CalcRowLogicalHeight() {
         if (cell->HasOverrideLogicalHeight()) {
           cell->ClearIntrinsicPadding();
           cell->ClearOverrideSize();
-          cell->ForceChildLayout();
+          cell->ForceLayout();
         }
 
         if (cell->ResolvedRowSpan() == 1)
@@ -1140,7 +1140,7 @@ int LayoutTableSection::DistributeExtraLogicalHeightToRows(
   return extra_logical_height - remaining_extra_logical_height;
 }
 
-bool CellHasExplicitlySpecifiedHeight(const LayoutTableCell& cell) {
+static bool CellHasExplicitlySpecifiedHeight(const LayoutTableCell& cell) {
   if (cell.StyleRef().LogicalHeight().IsFixed())
     return true;
   LayoutBlock* cb = cell.ContainingBlock();
@@ -1153,6 +1153,9 @@ static bool ShouldFlexCellChild(const LayoutTableCell& cell,
                                 LayoutObject* cell_descendant) {
   if (!CellHasExplicitlySpecifiedHeight(cell))
     return false;
+  // TODO(dgrogan): Delete ShouldFlexCellChild. It's only called when
+  // CellHasExplicitlySpecifiedHeight is false.
+  NOTREACHED() << "This is dead code?";
   if (cell_descendant->StyleRef().OverflowY() == EOverflow::kVisible ||
       cell_descendant->StyleRef().OverflowY() == EOverflow::kHidden)
     return true;
@@ -1177,7 +1180,7 @@ void LayoutTableSection::LayoutRows() {
   // Set the width of our section now.  The rows will also be this width.
   SetLogicalWidth(Table()->ContentLogicalWidth());
 
-  int vspacing = Table()->VBorderSpacing();
+  int16_t vspacing = Table()->VBorderSpacing();
   LayoutState state(*this);
 
   // Set the rows' location and size.
@@ -1394,19 +1397,6 @@ void LayoutTableSection::ComputeVisualOverflowFromDescendants() {
     for (auto* cell = row->FirstCell(); cell; cell = cell->NextCell()) {
       if (cell->HasSelfPaintingLayer())
         continue;
-      // Let the section's self visual overflow cover the cell's whole collapsed
-      // borders. This ensures correct raster invalidation on section border
-      // style change.
-      // TODO(wangxianzhu): When implementing row as DisplayItemClient of
-      // collapsed borders, the following logic should be replaced by
-      // invalidation of rows on section border style change. crbug.com/663208.
-      if (const auto* collapsed_borders = cell->GetCollapsedBorderValues()) {
-        LayoutRect rect = cell->RectForOverflowPropagation(
-            collapsed_borders->LocalVisualRect());
-        rect.MoveBy(cell->Location());
-        AddSelfVisualOverflow(rect);
-      }
-
       if (force_full_paint_ || !cell->HasVisualOverflow())
         continue;
 
@@ -1471,6 +1461,7 @@ bool LayoutTableSection::RecalcLayoutOverflow() {
 }
 
 void LayoutTableSection::RecalcVisualOverflow() {
+  SECURITY_CHECK(!needs_cell_recalc_);
   unsigned total_rows = grid_.size();
   for (unsigned r = 0; r < total_rows; r++) {
     LayoutTableRow* row_layouter = RowLayoutObjectAt(r);
@@ -1496,6 +1487,7 @@ void LayoutTableSection::MarkAllCellsWidthsDirtyAndOrNeedsLayout(
 }
 
 LayoutUnit LayoutTableSection::FirstLineBoxBaseline() const {
+  DCHECK(!NeedsCellRecalc());
   if (!grid_.size())
     return LayoutUnit(-1);
 
@@ -1523,7 +1515,7 @@ LayoutRect LayoutTableSection::LogicalRectForWritingModeAndDirection(
     const LayoutRect& rect) const {
   LayoutRect table_aligned_rect(rect);
 
-  FlipForWritingMode(table_aligned_rect);
+  DeprecatedFlipForWritingMode(table_aligned_rect);
 
   if (!TableStyle().IsHorizontalWritingMode())
     table_aligned_rect = table_aligned_rect.TransposedRect();
@@ -1541,6 +1533,7 @@ void LayoutTableSection::DirtiedRowsAndEffectiveColumns(
     const LayoutRect& damage_rect,
     CellSpan& rows,
     CellSpan& columns) const {
+  DCHECK(!NeedsCellRecalc());
   if (!grid_.size()) {
     rows = CellSpan();
     columns = CellSpan(1, 1);
@@ -1755,6 +1748,7 @@ unsigned LayoutTableSection::NumEffectiveColumns() const {
 LayoutTableCell* LayoutTableSection::OriginatingCellAt(
     unsigned row,
     unsigned effective_column) {
+  SECURITY_CHECK(!needs_cell_recalc_);
   if (effective_column >= NumCols(row))
     return nullptr;
   auto& grid_cell = GridCellAt(row, effective_column);
@@ -1897,7 +1891,7 @@ void LayoutTableSection::SetLogicalPositionForCell(
     LayoutTableCell* cell,
     unsigned effective_column) const {
   LayoutPoint cell_location(0, row_pos_[cell->RowIndex()]);
-  int horizontal_border_spacing = Table()->HBorderSpacing();
+  int16_t horizontal_border_spacing = Table()->HBorderSpacing();
 
   if (!TableStyle().IsLeftToRightDirection()) {
     cell_location.SetX(LayoutUnit(
@@ -1965,7 +1959,7 @@ void LayoutTableSection::RelayoutCellIfFlexed(LayoutTableCell& cell,
   // Alignment within a cell is based off the calculated height, which becomes
   // irrelevant once the cell has been resized based off its percentage.
   cell.SetOverrideLogicalHeightFromRowHeight(LayoutUnit(row_height));
-  cell.ForceChildLayout();
+  cell.ForceLayout();
 
   // If the baseline moved, we may have to update the data for our row. Find
   // out the new baseline.

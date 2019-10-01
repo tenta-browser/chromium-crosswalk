@@ -10,6 +10,7 @@
 #include "ash/public/interfaces/constants.mojom.h"
 #include "ash/public/interfaces/keyboard_controller.mojom.h"
 #include "ash/shell.h"
+#include "base/bind.h"
 #include "base/callback.h"
 #include "chrome/browser/profiles/profile.h"
 #include "services/service_manager/public/cpp/connector.h"
@@ -25,8 +26,7 @@ class ChromeKeyboardControllerClientTestHelper::FakeKeyboardController
   }
 
   // ash::mojom::KeyboardController:
-  void KeyboardContentsLoaded(const base::UnguessableToken& token,
-                              const gfx::Size& size) override {}
+  void KeyboardContentsLoaded(const gfx::Size& size) override {}
   void GetKeyboardConfig(GetKeyboardConfigCallback callback) override {
     std::move(callback).Run(
         keyboard::mojom::KeyboardConfig::New(keyboard_config_));

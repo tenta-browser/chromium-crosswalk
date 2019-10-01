@@ -16,9 +16,13 @@ COMPONENT_EXPORT(DEVICE_FIDO)
 extern const base::Feature kWebAuthUseNativeWinApi;
 #endif  // defined(OS_WIN)
 
-// Controls the proxying of Cryptotoken requests through WebAuthn.
+// Enable support for PIN-based user-verification.
 COMPONENT_EXPORT(DEVICE_FIDO)
-extern const base::Feature kWebAuthProxyCryptotoken;
+extern const base::Feature kWebAuthPINSupport;
+
+// Enable support for resident keys.
+COMPONENT_EXPORT(DEVICE_FIDO)
+extern const base::Feature kWebAuthResidentKeys;
 
 }  // namespace device
 

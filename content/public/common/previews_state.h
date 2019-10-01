@@ -46,12 +46,21 @@ enum PreviewsTypes {
                                    // to a Lite Page server.
   LAZY_IMAGE_LOAD_DEFERRED = 1 << 10,  // Request the placeholder version of an
                                        // image that was deferred by lazyload.
-  PREVIEWS_STATE_LAST = LAZY_IMAGE_LOAD_DEFERRED
+  LAZY_IMAGE_AUTO_RELOAD = 1 << 11,  // Request the full image after previously
+                                     // getting a lazy load placeholder.
+  DEFER_ALL_SCRIPT_ON = 1 << 12,  // Request that script execution be deferred
+                                  // until parsing completes.
+  PREVIEWS_STATE_LAST = DEFER_ALL_SCRIPT_ON
 };
 
 // Combination of all previews that are guaranteed not to provide partial
 // content.
 const PreviewsState PARTIAL_CONTENT_SAFE_PREVIEWS = SERVER_LOFI_ON;
+
+// Combination of all currently supported previews.
+const PreviewsState ALL_SUPPORTED_PREVIEWS =
+    SERVER_LITE_PAGE_ON | NOSCRIPT_ON | RESOURCE_LOADING_HINTS_ON |
+    OFFLINE_PAGE_ON | LITE_PAGE_REDIRECT_ON;
 
 // Ensure that content::PreviewsState and blink::WebURLRequest::PreviewsState
 // are kept in sync.
@@ -77,6 +86,8 @@ STATIC_ASSERT_PREVIEWS_ENUM(LITE_PAGE_REDIRECT_ON,
                             blink::WebURLRequest::kLitePageRedirectOn);
 STATIC_ASSERT_PREVIEWS_ENUM(LAZY_IMAGE_LOAD_DEFERRED,
                             blink::WebURLRequest::kLazyImageLoadDeferred);
+STATIC_ASSERT_PREVIEWS_ENUM(LAZY_IMAGE_AUTO_RELOAD,
+                            blink::WebURLRequest::kLazyImageAutoReload);
 STATIC_ASSERT_PREVIEWS_ENUM(PREVIEWS_STATE_LAST,
                             blink::WebURLRequest::kPreviewsStateLast);
 

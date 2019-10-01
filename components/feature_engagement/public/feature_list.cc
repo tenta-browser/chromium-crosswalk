@@ -18,6 +18,7 @@ const base::Feature* const kAllFeatures[] = {
     &kIPHDummyFeature,  // Ensures non-empty array for all platforms.
 #if defined(OS_ANDROID)
     &kIPHDataSaverDetailFeature,
+    &kIPHDataSaverMilestonePromoFeature,
     &kIPHDataSaverPreviewFeature,
     &kIPHDownloadHomeFeature,
     &kIPHDownloadPageFeature,
@@ -25,7 +26,6 @@ const base::Feature* const kAllFeatures[] = {
     &kIPHChromeDuetFeature,
     &kIPHChromeHomeExpandFeature,
     &kIPHChromeHomePullToRefreshFeature,
-    &kIPHMediaDownloadFeature,
     &kIPHContextualSearchWebSearchFeature,
     &kIPHContextualSearchPromoteTapFeature,
     &kIPHContextualSearchPromotePanelOpenFeature,
@@ -36,15 +36,24 @@ const base::Feature* const kAllFeatures[] = {
     &kIPHDownloadInfoBarDownloadsAreFasterFeature,
     &kIPHHomePageButtonFeature,
     &kIPHHomepageTileFeature,
+    &kIPHIdentityDiscFeature,
+    &kIPHKeyboardAccessoryAddressFillingFeature,
+    &kIPHKeyboardAccessoryPasswordFillingFeature,
+    &kIPHKeyboardAccessoryPaymentFillingFeature,
     &kIPHNewTabPageButtonFeature,
     &kIPHPreviewsOmniboxUIFeature,
+    &kIPHTabGroupsQuicklyComparePagesFeature,
+    &kIPHTabGroupsTapToSeeAnotherTabFeature,
+    &kIPHTabGroupsYourTabsAreTogetherFeature,
     &kIPHTranslateMenuButtonFeature,
+    &kIPHExploreSitesTileFeature,
 #endif  // defined(OS_ANDROID)
 #if BUILDFLAG(ENABLE_DESKTOP_IN_PRODUCT_HELP)
     &kIPHBookmarkFeature,
     &kIPHIncognitoWindowFeature,
     &kIPHNewTabFeature,
     &kIPHReopenTabFeature,
+    &kIPHFocusModeFeature,
 #endif  // BUILDFLAG(ENABLE_DESKTOP_IN_PRODUCT_HELP)
 #if defined(OS_IOS)
     &kIPHBottomToolbarTipFeature,
@@ -52,6 +61,7 @@ const base::Feature* const kAllFeatures[] = {
     &kIPHNewTabTipFeature,
     &kIPHNewIncognitoTabTipFeature,
     &kIPHBadgedReadingListFeature,
+    &kIPHBadgedTranslateManualTriggerFeature,
 #endif  // defined(OS_IOS)
 };
 }  // namespace

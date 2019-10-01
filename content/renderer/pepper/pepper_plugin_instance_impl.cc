@@ -136,7 +136,6 @@
 // nogncheck because dependency on //printing is conditional upon
 // enable_basic_printing flags.
 #include "printing/metafile_skia.h"          // nogncheck
-#include "printing/metafile_skia_wrapper.h"  // nogncheck
 #endif
 
 #if defined(OS_CHROMEOS)
@@ -401,8 +400,8 @@ PepperPluginInstanceImpl* PepperPluginInstanceImpl::Create(
     PluginModule* module,
     WebPluginContainer* container,
     const GURL& plugin_url) {
-  base::Callback<const void*(const char*)> get_plugin_interface_func =
-      base::Bind(&PluginModule::GetPluginInterface, module);
+  base::RepeatingCallback<const void*(const char*)> get_plugin_interface_func =
+      base::BindRepeating(&PluginModule::GetPluginInterface, module);
   PPP_Instance_Combined* ppp_instance_combined =
       PPP_Instance_Combined::Create(std::move(get_plugin_interface_func));
   if (!ppp_instance_combined)
@@ -731,10 +730,8 @@ void PepperPluginInstanceImpl::Paint(cc::PaintCanvas* canvas,
 
 void PepperPluginInstanceImpl::InvalidateRect(const gfx::Rect& rect) {
   if (fullscreen_container_) {
-    if (rect.IsEmpty())
-      fullscreen_container_->Invalidate();
-    else
-      fullscreen_container_->InvalidateRect(rect);
+    // The fullscreen container uses a composited layer, which we invalidate
+    // directly below via SetNeedsDisplay().
   } else {
     if (!container_ || view_data_.rect.size.width == 0 ||
         view_data_.rect.size.height == 0)
@@ -1014,7 +1011,7 @@ bool PepperPluginInstanceImpl::
   // Set the composition target.
   for (size_t i = 0; i < ime_text_spans.size(); ++i) {
     if (ime_text_spans[i].thickness ==
-        ws::mojom::ImeTextSpanThickness::kThick) {
+        ui::mojom::ImeTextSpanThickness::kThick) {
       auto it = std::find(event.composition_segment_offsets.begin(),
                           event.composition_segment_offsets.end(),
                           utf8_offsets[2 * i + 2]);
@@ -1185,11 +1182,16 @@ bool PepperPluginInstanceImpl::HandleInputEvent(
       // gesture after processing has finished here.
       if (WebUserGestureIndicator::IsProcessingUserGesture(
               render_frame_->GetWebFrame())) {
-        pending_user_gesture_ =
-            ppapi::TimeTicksToPPTimeTicks(base::TimeTicks::Now());
-        pending_user_gesture_token_ =
+        auto user_gesture_token =
             WebUserGestureIndicator::CurrentUserGestureToken();
-        WebUserGestureIndicator::ExtendTimeout();
+        // Checking user_gesture_token.HasGestures() to make sure we are
+        // processing user geasture.
+        if (user_gesture_token.HasGestures()) {
+          pending_user_gesture_ =
+              ppapi::TimeTicksToPPTimeTicks(base::TimeTicks::Now());
+          pending_user_gesture_token_ = user_gesture_token;
+          WebUserGestureIndicator::ExtendTimeout();
+        }
       }
 
       // Each input event may generate more than one PP_InputEvent.
@@ -1940,13 +1942,6 @@ bool PepperPluginInstanceImpl::SupportsPrintInterface() {
   return GetPreferredPrintOutputFormat(&format, params);
 }
 
-bool PepperPluginInstanceImpl::IsPrintScalingDisabled() {
-  DCHECK(plugin_print_interface_);
-  if (!plugin_print_interface_)
-    return false;
-  return plugin_print_interface_->IsScalingDisabled(pp_instance()) == PP_TRUE;
-}
-
 int PepperPluginInstanceImpl::PrintBegin(const WebPrintParams& print_params) {
   // Keep a reference on the stack. See NOTE above.
   scoped_refptr<PepperPluginInstanceImpl> ref(this);
@@ -1996,8 +1991,7 @@ void PepperPluginInstanceImpl::PrintPage(int page_number,
   DCHECK(plugin_print_interface_);
 
   // |canvas| should always have an associated metafile.
-  printing::MetafileSkia* metafile =
-      printing::MetafileSkiaWrapper::GetMetafileFromCanvas(canvas);
+  auto* metafile = canvas->GetPrintingMetafile();
   DCHECK(metafile);
 
   // |ranges_| should be empty IFF |metafile_| is not set.
@@ -2404,7 +2398,7 @@ void PepperPluginInstanceImpl::SimulateImeSetCompositionEvent(
     ime_text_span.start_offset = offsets[i];
     ime_text_span.end_offset = offsets[i + 1];
     if (input_event.composition_target_segment == static_cast<int32_t>(i - 2))
-      ime_text_span.thickness = ws::mojom::ImeTextSpanThickness::kThick;
+      ime_text_span.thickness = ui::mojom::ImeTextSpanThickness::kThick;
     ime_text_spans.push_back(ime_text_span);
   }
 
@@ -2962,8 +2956,8 @@ PP_ExternalPluginResult PepperPluginInstanceImpl::ResetAsProxied(
   // can shut it down by calling its DidDestroy in our Delete() method.
   original_instance_interface_ = std::move(instance_interface_);
 
-  base::Callback<const void*(const char*)> get_plugin_interface_func =
-      base::Bind(&PluginModule::GetPluginInterface, module_);
+  base::RepeatingCallback<const void*(const char*)> get_plugin_interface_func =
+      base::BindRepeating(&PluginModule::GetPluginInterface, module_);
   PPP_Instance_Combined* ppp_instance_combined =
       PPP_Instance_Combined::Create(std::move(get_plugin_interface_func));
   if (!ppp_instance_combined) {
@@ -3267,8 +3261,9 @@ void PepperPluginInstanceImpl::SetSizeAttributesForFullscreen() {
 
   blink::WebScreenInfo info = render_frame_->render_view()->GetScreenInfo();
   screen_size_for_fullscreen_ = gfx::Size(info.rect.width, info.rect.height);
-  std::string width = base::IntToString(screen_size_for_fullscreen_.width());
-  std::string height = base::IntToString(screen_size_for_fullscreen_.height());
+  std::string width = base::NumberToString(screen_size_for_fullscreen_.width());
+  std::string height =
+      base::NumberToString(screen_size_for_fullscreen_.height());
 
   WebElement element = container_->GetElement();
   element.SetAttribute(WebString::FromUTF8(kWidth), WebString::FromUTF8(width));

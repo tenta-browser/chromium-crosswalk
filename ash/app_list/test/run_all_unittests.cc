@@ -35,7 +35,6 @@ class AppListTestSuite : public base::TestSuite {
 
     base::TestSuite::Initialize();
     gl::GLSurfaceTestSupport::InitializeOneOff();
-    env_ = aura::Env::CreateInstance();
     ui::RegisterPathProvider();
 
     base::FilePath ui_test_pak_path;
@@ -44,6 +43,7 @@ class AppListTestSuite : public base::TestSuite {
 
     base::DiscardableMemoryAllocator::SetInstance(
         &discardable_memory_allocator_);
+    env_ = aura::Env::CreateInstance();
   }
 
   void Shutdown() override {

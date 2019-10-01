@@ -95,6 +95,9 @@ class FakeServer : public syncer::LoopbackServer::ObserverForTests {
   // was created.
   std::string GetTopLevelPermanentItemId(syncer::ModelType model_type);
 
+  // Returns all keystore keys from the server.
+  const std::vector<std::string>& GetKeystoreKeys() const;
+
   // Adds |entity| to the server's collection of entities. This method makes no
   // guarantees that the added entity will result in successful server
   // operations.
@@ -173,6 +176,11 @@ class FakeServer : public syncer::LoopbackServer::ObserverForTests {
   // Sets a maximum batch size for GetUpdates requests.
   void SetMaxGetUpdatesBatchSize(int batch_size);
 
+  // Sets the bag of chips returned by the server.
+  void SetBagOfChips(const sync_pb::ChipBag& bag_of_chips);
+
+  void TriggerMigrationDoneError(syncer::ModelTypeSet types);
+
   // Implement LoopbackServer::ObserverForTests:
   void OnCommit(const std::string& committer_id,
                 syncer::ModelTypeSet committed_model_types) override;
@@ -205,9 +213,6 @@ class FakeServer : public syncer::LoopbackServer::ObserverForTests {
 
   // If set, the server will return HTTP errors.
   base::Optional<net::HttpStatusCode> http_error_status_code_;
-
-  // All Keystore keys known to the server.
-  std::vector<std::string> keystore_keys_;
 
   // All URLs received via history sync (powered by SESSIONS).
   std::set<std::string> committed_history_urls_;

@@ -27,13 +27,13 @@ import org.chromium.base.ActivityState;
 import org.chromium.base.ApplicationStatus;
 import org.chromium.base.ApplicationStatus.ActivityStateListener;
 import org.chromium.base.Log;
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.DeferredStartupHandler;
+import org.chromium.chrome.browser.appmenu.AppMenuTestSupport;
 import org.chromium.chrome.browser.document.ChromeLauncherActivity;
 import org.chromium.chrome.browser.infobar.InfoBar;
 import org.chromium.chrome.browser.infobar.InfoBarContainer;
@@ -60,6 +60,7 @@ import org.chromium.content_public.browser.test.util.Criteria;
 import org.chromium.content_public.browser.test.util.CriteriaHelper;
 import org.chromium.content_public.browser.test.util.JavaScriptUtils;
 import org.chromium.content_public.browser.test.util.RenderProcessLimit;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.net.test.EmbeddedTestServerRule;
 import org.chromium.ui.KeyboardVisibilityDelegate;
@@ -88,7 +89,6 @@ public class ChromeActivityTestRule<T extends ChromeActivity> extends ActivityTe
 
     private static final long OMNIBOX_FIND_SUGGESTION_TIMEOUT_MS = 10 * 1000;
 
-    protected boolean mSkipClearAppData;
     private Thread.UncaughtExceptionHandler mDefaultUncaughtExceptionHandler;
     private Class<T> mChromeActivityClass;
     private T mSetActivity;
@@ -114,8 +114,7 @@ public class ChromeActivityTestRule<T extends ChromeActivity> extends ActivityTe
             public void evaluate() throws Throwable {
                 mDefaultUncaughtExceptionHandler = Thread.getDefaultUncaughtExceptionHandler();
                 Thread.setDefaultUncaughtExceptionHandler(new ChromeUncaughtExceptionHandler());
-                ApplicationTestUtils.setUp(
-                        InstrumentationRegistry.getTargetContext(), !mSkipClearAppData);
+                ApplicationTestUtils.setUp(InstrumentationRegistry.getTargetContext());
 
                 // Preload Calendar so that it does not trigger ReadFromDisk Strict mode violations
                 // if called on the UI Thread. See https://crbug.com/705477 and
@@ -163,8 +162,8 @@ public class ChromeActivityTestRule<T extends ChromeActivity> extends ActivityTe
 
     /** Retrieves the application Menu */
     public Menu getMenu() throws ExecutionException {
-        return ThreadUtils.runOnUiThreadBlocking(
-                getActivity().getAppMenuHandler().getAppMenu()::getMenu);
+        return TestThreadUtils.runOnUiThreadBlocking(
+                () -> AppMenuTestSupport.getMenu(getActivity()));
     }
 
     /**
@@ -250,11 +249,6 @@ public class ChromeActivityTestRule<T extends ChromeActivity> extends ActivityTe
         }
     }
 
-    /** Convenience function for {@link ApplicationTestUtils#clearAppData(Context)}. */
-    public void clearAppData() {
-        ApplicationTestUtils.clearAppData(InstrumentationRegistry.getTargetContext());
-    }
-
     /**
      * Enables or disables network predictions, i.e. prerendering, prefetching, DNS preresolution,
      * etc. Network predictions are enabled by default.
@@ -312,12 +306,8 @@ public class ChromeActivityTestRule<T extends ChromeActivity> extends ActivityTe
         ChromeTabUtils.waitForTabPageLoaded(tab, url, new Runnable() {
             @Override
             public void run() {
-                ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-                    @Override
-                    public void run() {
-                        result.set(tab.loadUrl(new LoadUrlParams(url, pageTransition)));
-                    }
-                });
+                TestThreadUtils.runOnUiThreadBlocking(
+                        () -> { result.set(tab.loadUrl(new LoadUrlParams(url, pageTransition))); });
             }
         }, secondsToWait);
         ChromeTabUtils.waitForInteractable(tab);
@@ -366,7 +356,7 @@ public class ChromeActivityTestRule<T extends ChromeActivity> extends ActivityTe
             final @TabLaunchType int launchType) throws InterruptedException {
         Tab tab = null;
         try {
-            tab = ThreadUtils.runOnUiThreadBlocking(new Callable<Tab>() {
+            tab = TestThreadUtils.runOnUiThreadBlocking(new Callable<Tab>() {
                 @Override
                 public Tab call() throws Exception {
                     return getActivity().getTabCreator(incognito).launchUrl(url, launchType);
@@ -439,7 +429,7 @@ public class ChromeActivityTestRule<T extends ChromeActivity> extends ActivityTe
 
         ChromeTabUtils.waitForTabPageLoaded(tab, (String) null);
 
-        if (tab != null && NewTabPage.isNTPUrl(tab.getUrl())) {
+        if (tab != null && NewTabPage.isNTPUrl(tab.getUrl()) && !getActivity().isInOverviewMode()) {
             NewTabPageTestUtils.waitForNtpLoaded(tab);
         }
 
@@ -459,8 +449,10 @@ public class ChromeActivityTestRule<T extends ChromeActivity> extends ActivityTe
      */
     public Intent prepareUrlIntent(Intent intent, String url) {
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        intent.setComponent(new ComponentName(
-                InstrumentationRegistry.getTargetContext(), ChromeLauncherActivity.class));
+        if (intent.getComponent() == null) {
+            intent.setComponent(new ComponentName(
+                    InstrumentationRegistry.getTargetContext(), ChromeLauncherActivity.class));
+        }
 
         if (url != null) {
             intent.setData(Uri.parse(url));
@@ -545,7 +537,7 @@ public class ChromeActivityTestRule<T extends ChromeActivity> extends ActivityTe
      * @return The number of tabs currently open.
      */
     public int tabsCount(boolean incognito) {
-        return ThreadUtils.runOnUiThreadBlockingNoException(new Callable<Integer>() {
+        return TestThreadUtils.runOnUiThreadBlockingNoException(new Callable<Integer>() {
             @Override
             public Integer call() {
                 return getActivity().getTabModelSelector().getModel(incognito).getCount();
@@ -568,13 +560,10 @@ public class ChromeActivityTestRule<T extends ChromeActivity> extends ActivityTe
         final UrlBar urlBar = (UrlBar) getActivity().findViewById(R.id.url_bar);
         Assert.assertNotNull(urlBar);
 
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                urlBar.requestFocus();
-                if (!oneCharAtATime) {
-                    urlBar.setText(text);
-                }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            urlBar.requestFocus();
+            if (!oneCharAtATime) {
+                urlBar.setText(text);
             }
         });
 
@@ -592,7 +581,7 @@ public class ChromeActivityTestRule<T extends ChromeActivity> extends ActivityTe
      * Returns the infobars being displayed by the current tab, or null if they don't exist.
      */
     public List<InfoBar> getInfoBars() {
-        return ThreadUtils.runOnUiThreadBlockingNoException(new Callable<List<InfoBar>>() {
+        return TestThreadUtils.runOnUiThreadBlockingNoException(new Callable<List<InfoBar>>() {
             @Override
             public List<InfoBar> call() throws Exception {
                 Tab currentTab = getActivity().getActivityTab();
@@ -647,10 +636,10 @@ public class ChromeActivityTestRule<T extends ChromeActivity> extends ActivityTe
      *     {@code null} if there is no tab for the activity or infobar is available.
      */
     public InfoBarContainer getInfoBarContainer() {
-        return ThreadUtils.runOnUiThreadBlockingNoException(() ->
-            getActivity().getActivityTab() != null
-                    ? InfoBarContainer.get(getActivity().getActivityTab())
-                    : null);
+        return TestThreadUtils.runOnUiThreadBlockingNoException(
+                () -> getActivity().getActivityTab() != null
+                        ? InfoBarContainer.get(getActivity().getActivityTab())
+                        : null);
     }
 
     /**

@@ -10,6 +10,7 @@
 #include "base/optional.h"
 #include "base/trace_event/trace_event.h"
 #include "chrome/browser/android/vr/arcore_device/arcore_java_utils.h"
+#include "chrome/browser/android/vr/arcore_device/type_converters.h"
 #include "device/vr/public/mojom/vr_service.mojom.h"
 #include "third_party/skia/include/core/SkMatrix44.h"
 #include "ui/display/display.h"
@@ -18,6 +19,24 @@
 #include "ui/gfx/transform.h"
 
 using base::android::JavaRef;
+
+namespace {
+
+device::mojom::VRPosePtr GetMojomPoseFromArPose(
+    ArSession* session,
+    device::internal::ScopedArCoreObject<ArPose*> pose) {
+  float pose_raw[7];  // 7 = orientation(4) + position(3).
+  ArPose_getPoseRaw(session, pose.get(), pose_raw);
+
+  device::mojom::VRPosePtr result = device::mojom::VRPose::New();
+
+  result->orientation.emplace(pose_raw, pose_raw + 4);
+  result->position.emplace(pose_raw + 4, pose_raw + 7);
+
+  return result;
+}
+
+}  // namespace
 
 namespace device {
 
@@ -108,8 +127,11 @@ std::vector<float> ArCoreImpl::TransformDisplayUvCoords(
   size_t num_elements = uvs.size();
   DCHECK(num_elements % 2 == 0);
   std::vector<float> uvs_out(num_elements);
-  ArFrame_transformDisplayUvCoords(arcore_session_.get(), arcore_frame_.get(),
-                                   num_elements, &uvs[0], &uvs_out[0]);
+
+  ArFrame_transformCoordinates2d(
+      arcore_session_.get(), arcore_frame_.get(),
+      AR_COORDINATES_2D_VIEW_NORMALIZED, num_elements / 2, &uvs[0],
+      AR_COORDINATES_2D_TEXTURE_NORMALIZED, &uvs_out[0]);
   return uvs_out;
 }
 
@@ -160,27 +182,134 @@ mojom::VRPosePtr ArCoreImpl::Update(bool* camera_updated) {
 
   ArCamera_getDisplayOrientedPose(arcore_session_.get(), arcore_camera.get(),
                                   arcore_pose.get());
-  float pose_raw[7];  // 7 = orientation(4) + position(3).
-  ArPose_getPoseRaw(arcore_session_.get(), arcore_pose.get(), pose_raw);
 
-  mojom::VRPosePtr pose = mojom::VRPose::New();
-  pose->orientation.emplace(pose_raw, pose_raw + 4);
-  pose->position.emplace(pose_raw + 4, pose_raw + 7);
+  return GetMojomPoseFromArPose(arcore_session_.get(), std::move(arcore_pose));
+}
 
-  return pose;
+std::vector<mojom::XRPlaneDataPtr> ArCoreImpl::GetDetectedPlanes() {
+  std::vector<mojom::XRPlaneDataPtr> result;
+
+  if (!arcore_planes_.is_valid()) {
+    ArTrackableList_create(
+        arcore_session_.get(),
+        internal::ScopedArCoreObject<ArTrackableList*>::Receiver(arcore_planes_)
+            .get());
+    DCHECK(arcore_planes_.is_valid());
+  }
+
+  ArTrackableType plane_tracked_type = AR_TRACKABLE_PLANE;
+  ArSession_getAllTrackables(arcore_session_.get(), plane_tracked_type,
+                             arcore_planes_.get());
+
+  int32_t trackable_list_size;
+  ArTrackableList_getSize(arcore_session_.get(), arcore_planes_.get(),
+                          &trackable_list_size);
+
+  for (int i = 0; i < trackable_list_size; i++) {
+    internal::ScopedArCoreObject<ArTrackable*> trackable;
+    ArTrackableList_acquireItem(
+        arcore_session_.get(), arcore_planes_.get(), i,
+        internal::ScopedArCoreObject<ArTrackable*>::Receiver(trackable).get());
+
+    ArTrackingState tracking_state;
+    ArTrackable_getTrackingState(arcore_session_.get(), trackable.get(),
+                                 &tracking_state);
+
+    if (tracking_state != ArTrackingState::AR_TRACKING_STATE_TRACKING) {
+      // Skip all planes that are not currently tracked.
+      continue;
+    }
+
+    ArPlane* ar_plane =
+        ArAsPlane(trackable.get());  // Naked pointer is fine here, ArAsPlane
+                                     // does not increase ref count.
+
+    internal::ScopedArCoreObject<ArPlane*> subsuming_plane;
+    ArPlane_acquireSubsumedBy(
+        arcore_session_.get(), ar_plane,
+        internal::ScopedArCoreObject<ArPlane*>::Receiver(subsuming_plane)
+            .get());
+
+    if (subsuming_plane.is_valid()) {
+      // Current plane was subsumed by other plane, skip this loop iteration.
+      // Subsuming plane will be handled when its turn comes.
+      continue;
+    }
+
+    // orientation
+    ArPlaneType plane_type;
+    ArPlane_getType(arcore_session_.get(), ar_plane, &plane_type);
+
+    // pose
+    internal::ScopedArCoreObject<ArPose*> plane_pose;
+    ArPose_create(
+        arcore_session_.get(), nullptr,
+        internal::ScopedArCoreObject<ArPose*>::Receiver(plane_pose).get());
+    ArPlane_getCenterPose(arcore_session_.get(), ar_plane, plane_pose.get());
+    mojom::VRPosePtr pose =
+        GetMojomPoseFromArPose(arcore_session_.get(), std::move(plane_pose));
+
+    // polygon
+    int32_t polygon_size;
+    ArPlane_getPolygonSize(arcore_session_.get(), ar_plane, &polygon_size);
+    // We are supposed to get 2*N floats describing (x, z) cooridinates of N
+    // points.
+    DCHECK(polygon_size % 2 == 0);
+
+    std::unique_ptr<float[]> vertices_raw =
+        std::make_unique<float[]>(polygon_size);
+    ArPlane_getPolygon(arcore_session_.get(), ar_plane, vertices_raw.get());
+
+    std::vector<mojom::XRPlanePointDataPtr> vertices;
+    for (int i = 0; i < polygon_size; i += 2) {
+      vertices.push_back(
+          mojom::XRPlanePointData::New(vertices_raw[i], vertices_raw[i + 1]));
+    }
+
+    // id
+    int32_t plane_id = CreateOrGetPlaneId(ar_plane);
+
+    result.push_back(mojom::XRPlaneData::New(
+        plane_id,
+        mojo::ConvertTo<device::mojom::XRPlaneOrientation>(plane_type),
+        std::move(pose), std::move(vertices)));
+  }
+
+  return result;
+}
+
+int32_t ArCoreImpl::CreateOrGetPlaneId(void* plane_address) {
+  auto it = ar_plane_address_to_id_.find(plane_address);
+  if (it != ar_plane_address_to_id_.end()) {
+    return it->second;
+  }
+
+  // Make sure that incrementing next_id_ won't cause an overflow.
+  CHECK(next_id_ != std::numeric_limits<int32_t>::max());
+
+  int32_t current_id = next_id_++;
+  ar_plane_address_to_id_[plane_address] = current_id;
+
+  return current_id;
 }
 
 void ArCoreImpl::Pause() {
+  DVLOG(2) << __func__;
+
   DCHECK(IsOnGlThread());
   DCHECK(arcore_session_.is_valid());
+
   ArStatus status = ArSession_pause(arcore_session_.get());
   DLOG_IF(ERROR, status != AR_SUCCESS)
       << "ArSession_pause failed: status = " << status;
 }
 
 void ArCoreImpl::Resume() {
+  DVLOG(2) << __func__;
+
   DCHECK(IsOnGlThread());
   DCHECK(arcore_session_.is_valid());
+
   ArStatus status = ArSession_resume(arcore_session_.get());
   DLOG_IF(ERROR, status != AR_SUCCESS)
       << "ArSession_resume failed: status = " << status;
@@ -210,6 +339,10 @@ gfx::Transform ArCoreImpl::GetProjectionMatrix(float near, float far) {
 bool ArCoreImpl::RequestHitTest(
     const mojom::XRRayPtr& ray,
     std::vector<mojom::XRHitResultPtr>* hit_results) {
+  DVLOG(2) << __func__ << ": ray origin=" << ray->origin.ToString()
+           << ", direction=" << ray->direction.ToString();
+
+  DCHECK(hit_results);
   DCHECK(IsOnGlThread());
   DCHECK(arcore_session_.is_valid());
   DCHECK(arcore_frame_.is_valid());
@@ -237,6 +370,8 @@ bool ArCoreImpl::RequestHitTest(
   int arcore_hit_result_list_size = 0;
   ArHitResultList_getSize(arcore_session_.get(), arcore_hit_result_list.get(),
                           &arcore_hit_result_list_size);
+  DVLOG(2) << __func__
+           << ": arcore_hit_result_list_size=" << arcore_hit_result_list_size;
 
   // Go through the list in reverse order so the first hit we encounter is the
   // furthest.
@@ -273,6 +408,8 @@ bool ArCoreImpl::RequestHitTest(
     // Only consider hits with plane trackables
     // TODO(874985): make this configurable or re-evaluate this decision
     if (AR_TRACKABLE_PLANE != ar_trackable_type) {
+      DVLOG(2) << __func__
+               << ": hit a trackable that is not a plane, ignoring it";
       continue;
     }
 
@@ -295,8 +432,12 @@ bool ArCoreImpl::RequestHitTest(
       ArPlane* ar_plane = ArAsPlane(ar_trackable.get());
       ArPlane_isPoseInPolygon(arcore_session_.get(), ar_plane,
                               arcore_pose.get(), &in_polygon);
-      if (!in_polygon)
+      if (!in_polygon) {
+        DVLOG(2) << __func__
+                 << ": hit a trackable that is not within detected polygon, "
+                    "ignoring it";
         continue;
+      }
     }
 
     mojom::XRHitResultPtr mojo_hit = mojom::XRHitResult::New();
@@ -307,6 +448,8 @@ bool ArCoreImpl::RequestHitTest(
     // Insert new results at head to preserver order from ArCore
     hit_results->insert(hit_results->begin(), std::move(mojo_hit));
   }
+
+  DVLOG(2) << __func__ << ": hit_results->size()=" << hit_results->size();
   return true;
 }
 

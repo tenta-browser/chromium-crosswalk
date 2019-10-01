@@ -2,9 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <fuchsia/modular/cpp/fidl.h>
 #include <fuchsia/sys/cpp/fidl.h>
 
-#include "base/fuchsia/component_context.h"
+#include "base/bind.h"
+#include "base/fuchsia/service_directory_client.h"
+#include "base/test/bind_test_util.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
@@ -19,7 +22,9 @@ namespace {
 
 class WebRunnerSmokeTest : public testing::Test {
  public:
-  WebRunnerSmokeTest() : run_timeout_(TestTimeouts::action_timeout()) {}
+  WebRunnerSmokeTest()
+      : run_timeout_(TestTimeouts::action_timeout(),
+                     base::MakeExpectedNotRunClosure(FROM_HERE)) {}
   void SetUp() final {
     test_server_.RegisterRequestHandler(base::BindRepeating(
         &WebRunnerSmokeTest::HandleRequest, base::Unretained(this)));
@@ -57,13 +62,15 @@ class WebRunnerSmokeTest : public testing::Test {
   net::EmbeddedTestServer test_server_;
 
   base::RunLoop run_loop_;
+
+  DISALLOW_COPY_AND_ASSIGN(WebRunnerSmokeTest);
 };
 
 TEST_F(WebRunnerSmokeTest, RequestHtmlAndImage) {
   fuchsia::sys::LaunchInfo launch_info;
   launch_info.url = test_server_.GetURL("/test.html").spec();
 
-  auto launcher = base::fuchsia::ComponentContext::GetDefault()
+  auto launcher = base::fuchsia::ServiceDirectoryClient::ForCurrentProcess()
                       ->ConnectToServiceSync<fuchsia::sys::Launcher>();
 
   fuchsia::sys::ComponentControllerSyncPtr controller;
@@ -73,6 +80,38 @@ TEST_F(WebRunnerSmokeTest, RequestHtmlAndImage) {
 
   EXPECT_TRUE(test_html_requested_);
   EXPECT_TRUE(test_image_requested_);
+}
+
+TEST_F(WebRunnerSmokeTest, LifecycleTerminate) {
+  fidl::InterfaceHandle<fuchsia::io::Directory> directory;
+
+  fuchsia::sys::LaunchInfo launch_info;
+  launch_info.url = test_server_.GetURL("/test.html").spec();
+  launch_info.directory_request = directory.NewRequest().TakeChannel();
+
+  auto launcher = base::fuchsia::ServiceDirectoryClient::ForCurrentProcess()
+                      ->ConnectToServiceSync<fuchsia::sys::Launcher>();
+
+  fuchsia::sys::ComponentControllerPtr controller;
+  launcher->CreateComponent(std::move(launch_info), controller.NewRequest());
+
+  base::fuchsia::ServiceDirectoryClient component_services(
+      std::move(directory));
+  auto lifecycle =
+      component_services.ConnectToService<fuchsia::modular::Lifecycle>();
+  ASSERT_TRUE(lifecycle);
+
+  // Terminate() the component, and expect that |controller| disconnects us.
+  base::RunLoop loop;
+  controller.set_error_handler(
+      [quit_loop = loop.QuitClosure()](zx_status_t status) {
+        EXPECT_EQ(status, ZX_ERR_PEER_CLOSED);
+        quit_loop.Run();
+      });
+  lifecycle->Terminate();
+  loop.Run();
+
+  EXPECT_FALSE(controller);
 }
 
 }  // anonymous namespace

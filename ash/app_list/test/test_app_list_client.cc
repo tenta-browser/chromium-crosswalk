@@ -4,18 +4,24 @@
 
 #include "ash/app_list/test/test_app_list_client.h"
 
-#include "ash/shell.h"
+#include <utility>
 
 namespace ash {
 
-TestAppListClient::TestAppListClient() : binding_(this) {}
+TestAppListClient::TestAppListClient() = default;
+TestAppListClient::~TestAppListClient() = default;
 
-TestAppListClient::~TestAppListClient() {}
+void TestAppListClient::GetSearchResultContextMenuModel(
+    const std::string& result_id,
+    GetContextMenuModelCallback callback) {
+  std::move(callback).Run(nullptr);
+}
 
-mojom::AppListClientPtr TestAppListClient::CreateInterfacePtrAndBind() {
-  mojom::AppListClientPtr ptr;
-  binding_.Bind(mojo::MakeRequest(&ptr));
-  return ptr;
+void TestAppListClient::GetContextMenuModel(
+    int profile_id,
+    const std::string& id,
+    GetContextMenuModelCallback callback) {
+  std::move(callback).Run(nullptr);
 }
 
 }  // namespace ash

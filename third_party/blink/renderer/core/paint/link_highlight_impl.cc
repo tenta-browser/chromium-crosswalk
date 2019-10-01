@@ -67,26 +67,61 @@
 
 namespace blink {
 
-std::unique_ptr<LinkHighlightImpl> LinkHighlightImpl::Create(Node* node) {
-  return base::WrapUnique(new LinkHighlightImpl(node));
+static constexpr float kStartOpacity = 1;
+
+namespace {
+
+float HighlightTargetOpacity() {
+  // For web tests we don't fade out.
+  return WebTestSupport::IsRunningWebTest() ? kStartOpacity : 0;
+}
+
+}  // namespace
+
+static CompositorElementId NewElementId() {
+  if (RuntimeEnabledFeatures::CompositeAfterPaintEnabled() ||
+      RuntimeEnabledFeatures::BlinkGenPropertyTreesEnabled()) {
+    return CompositorElementIdFromUniqueObjectId(
+        NewUniqueObjectId(), CompositorElementIdNamespace::kPrimaryEffect);
+  }
+  return CompositorElementIdFromUniqueObjectId(NewUniqueObjectId());
 }
 
 LinkHighlightImpl::LinkHighlightImpl(Node* node)
     : node_(node),
       current_graphics_layer_(nullptr),
       is_scrolling_graphics_layer_(false),
+      offset_from_transform_node_(FloatPoint()),
       geometry_needs_update_(false),
       is_animating_(false),
       start_time_(CurrentTimeTicks()),
-      unique_id_(NewUniqueObjectId()) {
+      element_id_(NewElementId()) {
   DCHECK(node_);
-  fragments_.emplace_back(element_id());
+  fragments_.emplace_back();
+
+  // The layer's element id is required for animating layers in layer trees.
+  // When using layer lists, the element id is set on the effect node.
+  if (!RuntimeEnabledFeatures::CompositeAfterPaintEnabled() &&
+      !RuntimeEnabledFeatures::BlinkGenPropertyTreesEnabled())
+    fragments_[0].Layer()->SetElementId(element_id_);
 
   compositor_animation_ = CompositorAnimation::Create();
   DCHECK(compositor_animation_);
   compositor_animation_->SetAnimationDelegate(this);
-  compositor_animation_->AttachElement(element_id());
+  compositor_animation_->AttachElement(element_id_);
   geometry_needs_update_ = true;
+
+  EffectPaintPropertyNode::State state;
+  state.opacity = HighlightTargetOpacity();
+  state.local_transform_space = &TransformPaintPropertyNode::Root();
+  state.compositor_element_id = element_id_;
+  state.direct_compositing_reasons = CompositingReason::kActiveOpacityAnimation;
+  state.has_active_opacity_animation = true;
+  effect_ = EffectPaintPropertyNode::Create(EffectPaintPropertyNode::Root(),
+                                            std::move(state));
+#if DCHECK_IS_ON()
+  effect_->SetDebugName("LinkHighlightEffect");
+#endif
 }
 
 LinkHighlightImpl::~LinkHighlightImpl() {
@@ -124,8 +159,10 @@ void LinkHighlightImpl::AttachLinkHighlightToCompositingLayer(
       node_->GetLayoutObject() != &paint_invalidation_container) {
     is_scrolling_graphics_layer_ = true;
   }
-  if (!new_graphics_layer)
+  if (!new_graphics_layer) {
+    ClearGraphicsLayerLinkHighlightPointer();
     return;
+  }
 
   if (current_graphics_layer_ != new_graphics_layer) {
     if (current_graphics_layer_)
@@ -208,16 +245,17 @@ bool LinkHighlightImpl::ComputeHighlightLayerPathAndPosition(
     absolute_quad.SetP4(FloatPoint(RoundedIntPoint(absolute_quad.P4())));
     FloatQuad transformed_quad =
         paint_invalidation_container.AbsoluteToLocalQuad(
-            absolute_quad, kUseTransforms | kTraverseDocumentBoundaries);
-    FloatPoint offset_to_backing;
+            absolute_quad, kTraverseDocumentBoundaries);
+    PhysicalOffset offset_to_backing;
 
     PaintLayer::MapPointInPaintInvalidationContainerToBacking(
         paint_invalidation_container, offset_to_backing);
 
     // Adjust for offset from LayoutObject.
-    offset_to_backing.Move(-current_graphics_layer_->OffsetFromLayoutObject());
+    offset_to_backing -=
+        PhysicalOffset(current_graphics_layer_->OffsetFromLayoutObject());
 
-    transformed_quad.Move(ToFloatSize(offset_to_backing));
+    transformed_quad.Move(FloatSize(offset_to_backing));
 
     // FIXME: for now, we'll only use rounded paths if we have a single node
     // quad. The reason for this is that we may sometimes get a chain of
@@ -254,27 +292,20 @@ bool LinkHighlightImpl::ComputeHighlightLayerPathAndPosition(
   layer->SetPosition(bounding_rect.Location());
 
   if (RuntimeEnabledFeatures::BlinkGenPropertyTreesEnabled()) {
-    FloatPoint offset(current_graphics_layer_->GetOffsetFromTransformNode());
-    offset.MoveBy(bounding_rect.Location());
-    layer->SetOffsetToTransformParent(gfx::Vector2dF(offset.X(), offset.Y()));
+    offset_from_transform_node_ =
+        FloatPoint(current_graphics_layer_->GetOffsetFromTransformNode());
+    offset_from_transform_node_.MoveBy(bounding_rect.Location());
     SetPaintArtifactCompositorNeedsUpdate();
   }
 
   return path_has_changed;
 }
 
-LinkHighlightImpl::LinkHighlightFragment::LinkHighlightFragment(
-    CompositorElementId element_id) {
+LinkHighlightImpl::LinkHighlightFragment::LinkHighlightFragment() {
   layer_ = cc::PictureLayer::Create(this);
   layer_->SetTransformOrigin(FloatPoint3D());
   layer_->SetIsDrawable(true);
-  layer_->SetOpacity(1);
-
-  // The element id is required for animating layers in layer trees but not
-  // required when using layer lists.
-  if (!RuntimeEnabledFeatures::BlinkGenPropertyTreesEnabled() &&
-      !RuntimeEnabledFeatures::CompositeAfterPaintEnabled())
-    layer_->SetElementId(element_id);
+  layer_->SetOpacity(kStartOpacity);
 }
 
 LinkHighlightImpl::LinkHighlightFragment::~LinkHighlightFragment() {
@@ -314,16 +345,11 @@ void LinkHighlightImpl::StartHighlightAnimationIfNeeded() {
     return;
 
   is_animating_ = true;
-  const float kStartOpacity = 1;
   // FIXME: Should duration be configurable?
   constexpr auto kFadeDuration = TimeDelta::FromMilliseconds(100);
   constexpr auto kMinPreFadeDuration = TimeDelta::FromMilliseconds(100);
 
-  for (auto& fragment : fragments_)
-    fragment.Layer()->SetOpacity(kStartOpacity);
-
-  std::unique_ptr<CompositorFloatAnimationCurve> curve =
-      CompositorFloatAnimationCurve::Create();
+  auto curve = std::make_unique<CompositorFloatAnimationCurve>();
 
   const auto& timing_function = *CubicBezierTimingFunction::Preset(
       CubicBezierTimingFunction::EaseType::EASE);
@@ -338,14 +364,12 @@ void LinkHighlightImpl::StartHighlightAnimationIfNeeded() {
     curve->AddKeyframe(CompositorFloatKeyframe(
         extra_duration_required.InSecondsF(), kStartOpacity, timing_function));
   }
-  // For web tests we don't fade out.
   curve->AddKeyframe(CompositorFloatKeyframe(
       (kFadeDuration + extra_duration_required).InSecondsF(),
-      WebTestSupport::IsRunningWebTest() ? kStartOpacity : 0, timing_function));
+      HighlightTargetOpacity(), timing_function));
 
-  std::unique_ptr<CompositorKeyframeModel> keyframe_model =
-      CompositorKeyframeModel::Create(
-          *curve, compositor_target_property::OPACITY, 0, 0);
+  auto keyframe_model = std::make_unique<CompositorKeyframeModel>(
+      *curve, compositor_target_property::OPACITY, 0, 0);
 
   compositor_animation_->AddKeyframeModel(std::move(keyframe_model));
 
@@ -422,20 +446,8 @@ CompositorAnimation* LinkHighlightImpl::GetCompositorAnimation() const {
   return compositor_animation_.get();
 }
 
-CompositorElementId LinkHighlightImpl::element_id() const {
-  return CompositorElementIdFromUniqueObjectId(unique_id_);
-}
-
-const EffectPaintPropertyNode* LinkHighlightImpl::effect() const {
-  if (!node_)
-    return nullptr;
-
-  if (auto* layout_object = node_->GetLayoutObject()) {
-    if (auto* properties = layout_object->FirstFragment().PaintProperties())
-      return properties->LinkHighlightEffect();
-  }
-
-  return nullptr;
+const EffectPaintPropertyNode& LinkHighlightImpl::Effect() const {
+  return *effect_;
 }
 
 void LinkHighlightImpl::Paint(GraphicsContext& context) {
@@ -461,7 +473,7 @@ void LinkHighlightImpl::Paint(GraphicsContext& context) {
   size_t index = 0;
   for (const auto* fragment = &object->FirstFragment(); fragment;
        fragment = fragment->NextFragment(), ++index) {
-    auto rects = object->PhysicalOutlineRects(
+    auto rects = object->OutlineRects(
         fragment->PaintOffset(), NGOutlineType::kIncludeBlockVisualOverflow);
     if (rects.size() > 1)
       use_rounded_rects = false;
@@ -476,7 +488,7 @@ void LinkHighlightImpl::Paint(GraphicsContext& context) {
     }
 
     if (index == fragments_.size()) {
-      fragments_.emplace_back(element_id());
+      fragments_.emplace_back();
       // PaintArtifactCompositor needs update for the new cc::PictureLayer we
       // just created for the fragment.
       SetPaintArtifactCompositorNeedsUpdate();
@@ -494,17 +506,11 @@ void LinkHighlightImpl::Paint(GraphicsContext& context) {
       layer->SetBounds(gfx::Size(EnclosingIntRect(bounding_rect).Size()));
       layer->SetNeedsDisplay();
     }
-    // Always set offset because it is excluded from the above equality check.
-    layer->SetOffsetToTransformParent(
-        gfx::Vector2dF(bounding_rect.X(), bounding_rect.Y()));
 
     auto property_tree_state = fragment->LocalBorderBoxProperties();
-    DCHECK(fragment->PaintProperties());
-    DCHECK(fragment->PaintProperties()->LinkHighlightEffect());
-    property_tree_state.SetEffect(
-        fragment->PaintProperties()->LinkHighlightEffect());
+    property_tree_state.SetEffect(Effect());
     RecordForeignLayer(context, DisplayItem::kForeignLayerLinkHighlight, layer,
-                       property_tree_state);
+                       bounding_rect.Location(), property_tree_state);
   }
 
   if (index < fragments_.size()) {
@@ -517,8 +523,12 @@ void LinkHighlightImpl::Paint(GraphicsContext& context) {
 
 void LinkHighlightImpl::SetPaintArtifactCompositorNeedsUpdate() {
   DCHECK(node_);
-  if (auto* frame_view = node_->GetDocument().View())
-    frame_view->SetPaintArtifactCompositorNeedsUpdate();
+  if (auto* frame_view = node_->GetDocument().View()) {
+    if (RuntimeEnabledFeatures::CompositeAfterPaintEnabled())
+      frame_view->SetPaintArtifactCompositorNeedsUpdate();
+    else
+      frame_view->GraphicsLayersDidChange();
+  }
 }
 
 }  // namespace blink

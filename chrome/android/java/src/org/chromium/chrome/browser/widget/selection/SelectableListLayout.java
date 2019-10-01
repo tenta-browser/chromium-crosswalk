@@ -11,7 +11,6 @@ import android.graphics.drawable.Drawable;
 import android.support.annotation.Nullable;
 import android.support.annotation.VisibleForTesting;
 import android.support.v4.view.ViewCompat;
-import android.support.v4.widget.DrawerLayout;
 import android.support.v7.widget.LinearLayoutManager;
 import android.support.v7.widget.RecyclerView;
 import android.support.v7.widget.RecyclerView.AdapterDataObserver;
@@ -27,6 +26,8 @@ import android.widget.TextView;
 
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.gesturenav.HistoryNavigationDelegate;
+import org.chromium.chrome.browser.gesturenav.HistoryNavigationLayout;
 import org.chromium.chrome.browser.widget.FadingShadow;
 import org.chromium.chrome.browser.widget.FadingShadowView;
 import org.chromium.chrome.browser.widget.LoadingView;
@@ -54,6 +55,7 @@ public class SelectableListLayout<E>
     private RecyclerView.Adapter mAdapter;
     private ViewStub mToolbarStub;
     private TextView mEmptyView;
+    private View mEmptyViewWrapper;
     private LoadingView mLoadingView;
     private RecyclerView mRecyclerView;
     private ItemAnimator mItemAnimator;
@@ -70,30 +72,25 @@ public class SelectableListLayout<E>
         @Override
         public void onChanged() {
             super.onChanged();
-            if (mAdapter.getItemCount() == 0) {
-                mEmptyView.setVisibility(View.VISIBLE);
-                mRecyclerView.setVisibility(View.GONE);
-            } else {
-                mEmptyView.setVisibility(View.GONE);
-                mRecyclerView.setVisibility(View.VISIBLE);
-            }
+            updateLayout();
             // At inflation, the RecyclerView is set to gone, and the loading view is visible. As
             // long as the adapter data changes, we show the recycler view, and hide loading view.
             mLoadingView.hideLoadingUI();
-
-            mToolbar.setSearchEnabled(mAdapter.getItemCount() != 0);
         }
 
         @Override
         public void onItemRangeInserted(int positionStart, int itemCount) {
             super.onItemRangeInserted(positionStart, itemCount);
-            updateEmptyViewVisibility();
+            updateLayout();
+            // At inflation, the RecyclerView is set to gone, and the loading view is visible. As
+            // long as the adapter data changes, we show the recycler view, and hide loading view.
+            mLoadingView.hideLoadingUI();
         }
 
         @Override
         public void onItemRangeRemoved(int positionStart, int itemCount) {
             super.onItemRangeRemoved(positionStart, itemCount);
-            updateEmptyViewVisibility();
+            updateLayout();
         }
     };
 
@@ -108,6 +105,7 @@ public class SelectableListLayout<E>
         LayoutInflater.from(getContext()).inflate(R.layout.selectable_list_layout, this);
 
         mEmptyView = (TextView) findViewById(R.id.empty_view);
+        mEmptyViewWrapper = findViewById(R.id.empty_view_wrapper);
         mLoadingView = (LoadingView) findViewById(R.id.loading_view);
         mLoadingView.showLoadingUI();
 
@@ -187,7 +185,6 @@ public class SelectableListLayout<E>
      * @param delegate The SelectionDelegate that will inform the toolbar of selection changes.
      * @param titleResId The resource id of the title string. May be 0 if this class shouldn't set
      *                   set a title when the selection is cleared.
-     * @param drawerLayout The DrawerLayout whose navigation icon is displayed in this toolbar.
      * @param normalGroupResId The resource id of the menu group to show when a selection isn't
      *                         established.
      * @param selectedGroupResId The resource id of the menu item to show when a selection is
@@ -200,16 +197,15 @@ public class SelectableListLayout<E>
      * @return The initialized SelectionToolbar.
      */
     public SelectableListToolbar<E> initializeToolbar(int toolbarLayoutId,
-            SelectionDelegate<E> delegate, int titleResId, @Nullable DrawerLayout drawerLayout,
-            int normalGroupResId, int selectedGroupResId,
-            @Nullable OnMenuItemClickListener listener, boolean showShadowOnSelection,
-            boolean updateStatusBarColor) {
+            SelectionDelegate<E> delegate, int titleResId, int normalGroupResId,
+            int selectedGroupResId, @Nullable OnMenuItemClickListener listener,
+            boolean showShadowOnSelection, boolean updateStatusBarColor) {
         mToolbarStub.setLayoutResource(toolbarLayoutId);
         @SuppressWarnings("unchecked")
         SelectableListToolbar<E> toolbar = (SelectableListToolbar<E>) mToolbarStub.inflate();
         mToolbar = toolbar;
-        mToolbar.initialize(delegate, titleResId, drawerLayout, normalGroupResId,
-                selectedGroupResId, updateStatusBarColor);
+        mToolbar.initialize(
+                delegate, titleResId, normalGroupResId, selectedGroupResId, updateStatusBarColor);
 
         if (listener != null) {
             mToolbar.setOnMenuItemClickListener(listener);
@@ -243,6 +239,9 @@ public class SelectableListLayout<E>
 
         mEmptyView.setCompoundDrawablesWithIntrinsicBounds(null, emptyDrawable, null, null);
         mEmptyView.setText(mEmptyStringResId);
+
+        // Dummy listener to have the touch events dispatched to this view tree for navigation UI.
+        mEmptyViewWrapper.setOnTouchListener((v, event) -> true);
 
         return mEmptyView;
     }
@@ -290,6 +289,18 @@ public class SelectableListLayout<E>
     @Override
     public void onSelectionStateChange(List<E> selectedItems) {
         setToolbarShadowVisibility();
+        if (!selectedItems.isEmpty()) {
+            ((HistoryNavigationLayout) findViewById(R.id.list_content)).release();
+        }
+    }
+
+    /**
+     * Sets the delegate object needed for history navigation logic.
+     * @param delegate {@link HistoryNavigationDelegate} object.
+     */
+    public void setHistoryNavigationDelegate(HistoryNavigationDelegate delegate) {
+        HistoryNavigationLayout layout = (HistoryNavigationLayout) findViewById(R.id.list_content);
+        layout.setNavigationDelegate(delegate);
     }
 
     /**
@@ -340,7 +351,20 @@ public class SelectableListLayout<E>
      * view implementation. We need to check it ourselves.
      */
     private void updateEmptyViewVisibility() {
-        mEmptyView.setVisibility(mAdapter.getItemCount() == 0 ? View.VISIBLE : View.GONE);
+        int visible = mAdapter.getItemCount() == 0 ? View.VISIBLE : View.GONE;
+        mEmptyView.setVisibility(visible);
+        mEmptyViewWrapper.setVisibility(visible);
+    }
+
+    private void updateLayout() {
+        updateEmptyViewVisibility();
+        if (mAdapter.getItemCount() == 0) {
+            mRecyclerView.setVisibility(View.GONE);
+        } else {
+            mRecyclerView.setVisibility(View.VISIBLE);
+        }
+
+        mToolbar.setSearchEnabled(mAdapter.getItemCount() != 0);
     }
 
     @VisibleForTesting

@@ -14,7 +14,6 @@
 
 #include "ash/app_list/model/app_list_model_export.h"
 #include "ash/public/cpp/app_list/app_list_types.h"
-#include "ash/public/interfaces/app_list.mojom.h"
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
@@ -121,6 +120,14 @@ class APP_LIST_MODEL_EXPORT SearchResult {
   int percent_downloaded() const { return percent_downloaded_; }
   void SetPercentDownloaded(int percent_downloaded);
 
+  bool notify_visibility_change() const {
+    return metadata_->notify_visibility_change;
+  }
+
+  void set_notify_visibility_change(bool notify_visibility_change) {
+    metadata_->notify_visibility_change = notify_visibility_change;
+  }
+
   bool is_omnibox_search() const { return metadata_->is_omnibox_search; }
   void set_is_omnibox_search(bool is_omnibox_search) {
     metadata_->is_omnibox_search = is_omnibox_search;
@@ -137,9 +144,12 @@ class APP_LIST_MODEL_EXPORT SearchResult {
   // Invokes a custom action on the result. It does nothing by default.
   virtual void InvokeAction(int action_index, int event_flags);
 
-  void SetMetadata(ash::mojom::SearchResultMetadataPtr metadata);
-  ash::mojom::SearchResultMetadataPtr TakeMetadata() {
+  void SetMetadata(std::unique_ptr<ash::SearchResultMetadata> metadata);
+  std::unique_ptr<ash::SearchResultMetadata> TakeMetadata() {
     return std::move(metadata_);
+  }
+  std::unique_ptr<ash::SearchResultMetadata> CloneMetadata() const {
+    return std::make_unique<ash::SearchResultMetadata>(*metadata_);
   }
 
  protected:
@@ -159,7 +169,7 @@ class APP_LIST_MODEL_EXPORT SearchResult {
   int percent_downloaded_ = 0;
   bool is_visible_ = true;
 
-  ash::mojom::SearchResultMetadataPtr metadata_;
+  std::unique_ptr<ash::SearchResultMetadata> metadata_;
 
   base::ObserverList<SearchResultObserver>::Unchecked observers_;
 

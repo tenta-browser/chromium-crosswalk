@@ -10,6 +10,7 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "gpu/vulkan/vulkan_export.h"
+#include "gpu/vulkan/vulkan_fence_helper.h"
 
 namespace gpu {
 
@@ -44,6 +45,16 @@ class VULKAN_EXPORT VulkanCommandBuffer {
   // is finished.
   bool SubmissionFinished();
 
+  void TransitionImageLayout(VkImage image,
+                             VkImageLayout old_layout,
+                             VkImageLayout new_layout);
+  void CopyBufferToImage(VkBuffer buffer,
+                         VkImage image,
+                         uint32_t buffer_width,
+                         uint32_t buffer_height,
+                         uint32_t width,
+                         uint32_t height);
+
  private:
   friend class CommandBufferRecorderBase;
 
@@ -74,7 +85,7 @@ class VULKAN_EXPORT VulkanCommandBuffer {
   VulkanDeviceQueue* device_queue_;
   VulkanCommandPool* command_pool_;
   VkCommandBuffer command_buffer_ = VK_NULL_HANDLE;
-  VkFence submission_fence_ = VK_NULL_HANDLE;
+  VulkanFenceHelper::FenceHandle submission_fence_;
 
   DISALLOW_COPY_AND_ASSIGN(VulkanCommandBuffer);
 };

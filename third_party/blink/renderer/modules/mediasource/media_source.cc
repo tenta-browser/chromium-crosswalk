@@ -33,6 +33,7 @@
 #include <memory>
 
 #include "base/memory/ptr_util.h"
+#include "media/base/logging_override_if_enabled.h"
 #include "third_party/blink/public/platform/web_media_source.h"
 #include "third_party/blink/public/platform/web_source_buffer.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
@@ -46,15 +47,12 @@
 #include "third_party/blink/renderer/modules/mediasource/source_buffer_track_base_supplement.h"
 #include "third_party/blink/renderer/platform/bindings/exception_messages.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/network/mime/content_type.h"
 #include "third_party/blink/renderer/platform/network/mime/mime_type_registry.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/text/cstring.h"
-
-#ifndef BLINK_MSLOG
-#define BLINK_MSLOG DVLOG(3)
-#endif
 
 using blink::WebMediaSource;
 using blink::WebSourceBuffer;
@@ -114,39 +112,41 @@ MediaSource::MediaSource(ExecutionContext* context)
     : ContextLifecycleObserver(context),
       ready_state_(ClosedKeyword()),
       async_event_queue_(
-          EventQueue::Create(context, TaskType::kMediaElementEvent)),
+          MakeGarbageCollected<EventQueue>(context,
+                                           TaskType::kMediaElementEvent)),
       attached_element_(nullptr),
-      source_buffers_(SourceBufferList::Create(GetExecutionContext(),
-                                               async_event_queue_.Get())),
+      source_buffers_(
+          MakeGarbageCollected<SourceBufferList>(GetExecutionContext(),
+                                                 async_event_queue_.Get())),
       active_source_buffers_(
-          SourceBufferList::Create(GetExecutionContext(),
-                                   async_event_queue_.Get())),
-      live_seekable_range_(TimeRanges::Create()),
+          MakeGarbageCollected<SourceBufferList>(GetExecutionContext(),
+                                                 async_event_queue_.Get())),
+      live_seekable_range_(MakeGarbageCollected<TimeRanges>()),
       added_to_registry_counter_(0) {
-  BLINK_MSLOG << __func__ << " this=" << this;
+  DVLOG(1) << __func__ << " this=" << this;
 }
 
 MediaSource::~MediaSource() {
-  BLINK_MSLOG << __func__ << " this=" << this;
+  DVLOG(1) << __func__ << " this=" << this;
 }
 
 void MediaSource::LogAndThrowDOMException(ExceptionState& exception_state,
                                           DOMExceptionCode error,
                                           const String& message) {
-  BLINK_MSLOG << __func__ << " (error=" << ToExceptionCode(error)
-              << ", message=" << message << ")";
+  DVLOG(1) << __func__ << " (error=" << ToExceptionCode(error)
+           << ", message=" << message << ")";
   exception_state.ThrowDOMException(error, message);
 }
 
 void MediaSource::LogAndThrowTypeError(ExceptionState& exception_state,
                                        const String& message) {
-  BLINK_MSLOG << __func__ << " (message=" << message << ")";
+  DVLOG(1) << __func__ << " (message=" << message << ")";
   exception_state.ThrowTypeError(message);
 }
 
 SourceBuffer* MediaSource::addSourceBuffer(const String& type,
                                            ExceptionState& exception_state) {
-  BLINK_MSLOG << __func__ << " this=" << this << " type=" << type;
+  DVLOG(2) << __func__ << " this=" << this << " type=" << type;
 
   // 2.2
   // https://www.w3.org/TR/media-source/#dom-mediasource-addsourcebuffer
@@ -214,14 +214,14 @@ SourceBuffer* MediaSource::addSourceBuffer(const String& type,
   }
 
   // 9. Return the new object to the caller.
-  BLINK_MSLOG << __func__ << " this=" << this << " type=" << type << " -> "
-              << buffer;
+  DVLOG(3) << __func__ << " this=" << this << " type=" << type << " -> "
+           << buffer;
   return buffer;
 }
 
 void MediaSource::removeSourceBuffer(SourceBuffer* buffer,
                                      ExceptionState& exception_state) {
-  BLINK_MSLOG << __func__ << " this=" << this << " buffer=" << buffer;
+  DVLOG(2) << __func__ << " this=" << this << " buffer=" << buffer;
 
   // 2.2
   // https://dvcs.w3.org/hg/html-media/raw-file/default/media-source/media-source.html#widl-MediaSource-removeSourceBuffer-void-SourceBuffer-sourceBuffer
@@ -292,7 +292,7 @@ bool MediaSource::isTypeSupported(const String& type) {
   // https://dvcs.w3.org/hg/html-media/raw-file/tip/media-source/media-source.html#widl-MediaSource-isTypeSupported-boolean-DOMString-type
   // 1. If type is an empty string, then return false.
   if (type.IsEmpty()) {
-    BLINK_MSLOG << __func__ << "(" << type << ") -> false (empty input)";
+    DVLOG(1) << __func__ << "(" << type << ") -> false (empty input)";
     return false;
   }
 
@@ -301,7 +301,7 @@ bool MediaSource::isTypeSupported(const String& type) {
 
   // 2. If type does not contain a valid MIME type string, then return false.
   if (content_type.GetType().IsEmpty()) {
-    BLINK_MSLOG << __func__ << "(" << type << ") -> false (invalid mime type)";
+    DVLOG(1) << __func__ << "(" << type << ") -> false (invalid mime type)";
     return false;
   }
 
@@ -311,8 +311,8 @@ bool MediaSource::isTypeSupported(const String& type) {
   // HTMLMediaElement knows it cannot play.
   if (HTMLMediaElement::GetSupportsType(content_type) ==
       MIMETypeRegistry::kIsNotSupported) {
-    BLINK_MSLOG << __func__ << "(" << type
-                << ") -> false (not supported by HTMLMediaElement)";
+    DVLOG(1) << __func__ << "(" << type
+             << ") -> false (not supported by HTMLMediaElement)";
     return false;
   }
 
@@ -325,8 +325,7 @@ bool MediaSource::isTypeSupported(const String& type) {
   // 6. Return true.
   bool result = MIMETypeRegistry::IsSupportedMediaSourceMIMEType(
       content_type.GetType(), codecs);
-  BLINK_MSLOG << __func__ << "(" << type << ") -> "
-              << (result ? "true" : "false");
+  DVLOG(2) << __func__ << "(" << type << ") -> " << (result ? "true" : "false");
   return result;
 }
 
@@ -384,7 +383,7 @@ TimeRanges* MediaSource::Buffered() const {
   // 1. If activeSourceBuffers.length equals 0 then return an empty TimeRanges
   //    object and abort these steps.
   if (ranges.IsEmpty())
-    return TimeRanges::Create();
+    return MakeGarbageCollected<TimeRanges>();
 
   // 2. Let active ranges be the ranges returned by buffered for each
   //    SourceBuffer object in activeSourceBuffers.
@@ -399,11 +398,12 @@ TimeRanges* MediaSource::Buffered() const {
 
   // Return an empty range if all ranges are empty.
   if (highest_end_time < 0)
-    return TimeRanges::Create();
+    return MakeGarbageCollected<TimeRanges>();
 
   // 4. Let intersection ranges equal a TimeRange object containing a single
   //    range from 0 to highest end time.
-  TimeRanges* intersection_ranges = TimeRanges::Create(0, highest_end_time);
+  auto* intersection_ranges =
+      MakeGarbageCollected<TimeRanges>(0, highest_end_time);
 
   // 5. For each SourceBuffer object in activeSourceBuffers run the following
   //    steps:
@@ -440,7 +440,7 @@ TimeRanges* MediaSource::Seekable() const {
   double source_duration = duration();
   // If duration equals NaN: Return an empty TimeRanges object.
   if (std::isnan(source_duration))
-    return TimeRanges::Create();
+    return MakeGarbageCollected<TimeRanges>();
 
   // If duration equals positive Infinity:
   if (source_duration == std::numeric_limits<double>::infinity()) {
@@ -454,12 +454,12 @@ TimeRanges* MediaSource::Seekable() const {
       //      earliest start time in union ranges and an end time equal to
       //      the highest end time in union ranges and abort these steps.
       if (buffered->length() == 0) {
-        return TimeRanges::Create(
+        return MakeGarbageCollected<TimeRanges>(
             live_seekable_range_->start(0, ASSERT_NO_EXCEPTION),
             live_seekable_range_->end(0, ASSERT_NO_EXCEPTION));
       }
 
-      return TimeRanges::Create(
+      return MakeGarbageCollected<TimeRanges>(
           std::min(live_seekable_range_->start(0, ASSERT_NO_EXCEPTION),
                    buffered->start(0, ASSERT_NO_EXCEPTION)),
           std::max(live_seekable_range_->end(0, ASSERT_NO_EXCEPTION),
@@ -468,18 +468,18 @@ TimeRanges* MediaSource::Seekable() const {
     // 2. If the HTMLMediaElement.buffered attribute returns an empty TimeRanges
     //    object, then return an empty TimeRanges object and abort these steps.
     if (buffered->length() == 0)
-      return TimeRanges::Create();
+      return MakeGarbageCollected<TimeRanges>();
 
     // 3. Return a single range with a start time of 0 and an end time equal to
     //    the highest end time reported by the HTMLMediaElement.buffered
     //    attribute.
-    return TimeRanges::Create(
+    return MakeGarbageCollected<TimeRanges>(
         0, buffered->end(buffered->length() - 1, ASSERT_NO_EXCEPTION));
   }
 
   // 3. Otherwise: Return a single range with a start time of 0 and an end time
   //    equal to duration.
-  return TimeRanges::Create(0, source_duration);
+  return MakeGarbageCollected<TimeRanges>(0, source_duration);
 }
 
 void MediaSource::OnTrackChanged(TrackBase* track) {
@@ -505,7 +505,7 @@ void MediaSource::OnTrackChanged(TrackBase* track) {
 
 void MediaSource::setDuration(double duration,
                               ExceptionState& exception_state) {
-  BLINK_MSLOG << __func__ << " this=" << this << " : duration=" << duration;
+  DVLOG(3) << __func__ << " this=" << this << " : duration=" << duration;
 
   // 2.1 https://www.w3.org/TR/media-source/#widl-MediaSource-duration
   // 1. If the value being set is negative or NaN then throw a TypeError
@@ -608,8 +608,8 @@ void MediaSource::SetReadyState(const AtomicString& state) {
          state == EndedKeyword());
 
   AtomicString old_state = readyState();
-  BLINK_MSLOG << __func__ << " this=" << this << " : " << old_state << " -> "
-              << state;
+  DVLOG(3) << __func__ << " this=" << this << " : " << old_state << " -> "
+           << state;
 
   if (state == ClosedKeyword()) {
     web_media_source_.reset();
@@ -628,7 +628,7 @@ void MediaSource::endOfStream(const AtomicString& error,
   DEFINE_STATIC_LOCAL(const AtomicString, network, ("network"));
   DEFINE_STATIC_LOCAL(const AtomicString, decode, ("decode"));
 
-  BLINK_MSLOG << __func__ << " this=" << this << " : error=" << error;
+  DVLOG(3) << __func__ << " this=" << this << " : error=" << error;
 
   // https://www.w3.org/TR/media-source/#dom-mediasource-endofstream
   // 1. If the readyState attribute is not in the "open" state then throw an
@@ -655,8 +655,8 @@ void MediaSource::endOfStream(ExceptionState& exception_state) {
 void MediaSource::setLiveSeekableRange(double start,
                                        double end,
                                        ExceptionState& exception_state) {
-  BLINK_MSLOG << __func__ << " this=" << this << " : start=" << start
-              << ", end=" << end;
+  DVLOG(3) << __func__ << " this=" << this << " : start=" << start
+           << ", end=" << end;
 
   // http://w3c.github.io/media-source/#widl-MediaSource-setLiveSeekableRange-void-double-start-double-end
   // 1. If the readyState attribute is not "open" then throw an
@@ -683,11 +683,11 @@ void MediaSource::setLiveSeekableRange(double start,
   // 4. Set live seekable range to be a new normalized TimeRanges object
   //    containing a single range whose start position is start and end
   //    position is end.
-  live_seekable_range_ = TimeRanges::Create(start, end);
+  live_seekable_range_ = MakeGarbageCollected<TimeRanges>(start, end);
 }
 
 void MediaSource::clearLiveSeekableRange(ExceptionState& exception_state) {
-  BLINK_MSLOG << __func__ << " this=" << this;
+  DVLOG(3) << __func__ << " this=" << this;
 
   // http://w3c.github.io/media-source/#widl-MediaSource-clearLiveSeekableRange-void
   // 1. If the readyState attribute is not "open" then throw an
@@ -703,7 +703,7 @@ void MediaSource::clearLiveSeekableRange(ExceptionState& exception_state) {
   // 3. If live seekable range contains a range, then set live seekable range
   //    to be a new empty TimeRanges object.
   if (live_seekable_range_->length() != 0)
-    live_seekable_range_ = TimeRanges::Create();
+    live_seekable_range_ = MakeGarbageCollected<TimeRanges>();
 }
 
 bool MediaSource::IsOpen() const {

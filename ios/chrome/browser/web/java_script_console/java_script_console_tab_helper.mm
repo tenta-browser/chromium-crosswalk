@@ -6,9 +6,10 @@
 
 #import <Foundation/Foundation.h>
 
+#include "base/bind.h"
 #include "base/values.h"
 #include "ios/chrome/browser/web/java_script_console/java_script_console_message.h"
-#include "ios/web/public/web_state/web_frame.h"
+#include "ios/web/public/js_messaging/web_frame.h"
 #include "url/gurl.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -80,3 +81,5 @@ JavaScriptConsoleTabHelper::~JavaScriptConsoleTabHelper() {
     web_state_ = nullptr;
   }
 }
+
+WEB_STATE_USER_DATA_KEY_IMPL(JavaScriptConsoleTabHelper)

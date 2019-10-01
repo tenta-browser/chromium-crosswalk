@@ -9,6 +9,9 @@
 
 namespace ash {
 
+// The time duration for transformation animations.
+constexpr base::TimeDelta kTransition = base::TimeDelta::FromMilliseconds(300);
+
 // In the conceptual overview table, the window margin is the space reserved
 // around the window within the cell. This margin does not overlap so the
 // closest distance between adjacent windows will be twice this amount.
@@ -33,6 +36,10 @@ constexpr int kOverviewWindowRoundingDp = 4;
 // mode.
 constexpr float kWallpaperBlurSigma = 10.f;
 constexpr float kWallpaperClearBlurSigma = 0.f;
+
+// Amount of time we wait to unpause the occlusion tracker after a overview item
+// is finished dragging. Waits a bit longer than the overview item animation.
+constexpr int kOcclusionPauseDurationForDragMs = 300;
 
 }  // namespace ash
 

@@ -8,19 +8,22 @@ import android.app.Activity;
 import android.app.Application;
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.os.Bundle;
 import android.support.annotation.Nullable;
-import android.support.v7.app.AppCompatDelegate;
 
 import org.chromium.base.ActivityState;
 import org.chromium.base.ApplicationState;
 import org.chromium.base.ApplicationStatus;
 import org.chromium.base.BuildConfig;
+import org.chromium.base.BuildInfo;
+import org.chromium.base.CommandLine;
 import org.chromium.base.CommandLineInitUtil;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.DiscardableReferencePool;
+import org.chromium.base.EarlyTraceEvent;
+import org.chromium.base.JNIUtils;
 import org.chromium.base.Log;
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.TraceEvent;
 import org.chromium.base.annotations.MainDex;
 import org.chromium.base.library_loader.ProcessInitException;
@@ -31,6 +34,7 @@ import org.chromium.build.BuildHooks;
 import org.chromium.build.BuildHooksAndroid;
 import org.chromium.build.BuildHooksConfig;
 import org.chromium.chrome.browser.crash.ApplicationStatusTracker;
+import org.chromium.chrome.browser.crash.FirebaseConfig;
 import org.chromium.chrome.browser.crash.PureJavaExceptionHandler;
 import org.chromium.chrome.browser.crash.PureJavaExceptionReporter;
 import org.chromium.chrome.browser.customtabs.CustomTabsConnection;
@@ -40,8 +44,8 @@ import org.chromium.chrome.browser.dependency_injection.DaggerChromeAppComponent
 import org.chromium.chrome.browser.dependency_injection.ModuleFactoryOverrides;
 import org.chromium.chrome.browser.init.InvalidStartupDialog;
 import org.chromium.chrome.browser.metrics.UmaUtils;
+import org.chromium.chrome.browser.night_mode.SystemNightModeMonitor;
 import org.chromium.chrome.browser.preferences.ChromePreferenceManager;
-import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.chrome.browser.vr.OnExitVrRequestListener;
 import org.chromium.chrome.browser.vr.VrModuleProvider;
 import org.chromium.components.embedder_support.application.FontPreloadingWorkaround;
@@ -55,22 +59,49 @@ public class ChromeApplication extends Application {
     private static final String COMMAND_LINE_FILE = "chrome-command-line";
     private static final String TAG = "ChromiumApplication";
 
-    private DiscardableReferencePool mReferencePool;
+    private final DiscardableReferencePool mReferencePool = new DiscardableReferencePool();
+    private static ChromeApplication sInstance;
+    private static EarlyTraceEvent.Event sFirstTraceEvent;
 
+    /** Lock on creation of sComponent. */
+    private static final Object sLock = new Object();
     @Nullable
-    private static ChromeAppComponent sComponent;
+    private static volatile ChromeAppComponent sComponent;
 
     @Override
     public void onCreate() {
+        EarlyTraceEvent.Event onCreateEvent =
+                new EarlyTraceEvent.Event("ChromeApplication.onCreate");
         super.onCreate();
+        // Cannot go in attachBaseContext() because it accesses SharedPreferences, which tests
+        // want to mock out.
+        // TODO(crbug.com/957569): Accessing SharedPreferences (via maybeEnableEarlyTracing) might
+        //     by slowing down start-up.
+        boolean isBrowserProcess = isBrowserProcess();
+        if (isBrowserProcess) {
+            TraceEvent.maybeEnableEarlyTracing();
+            EarlyTraceEvent.addEvent(sFirstTraceEvent);
+        }
+        sFirstTraceEvent = null;
+
+        // These can't go in attachBaseContext because Context.getApplicationContext() (which they
+        // use under-the-hood) does not work until after it returns.
         FontPreloadingWorkaround.maybeInstallWorkaround(this);
+        MemoryPressureMonitor.INSTANCE.registerComponentCallbacks();
+
+        if (isBrowserProcess) {
+            onCreateEvent.end();
+            EarlyTraceEvent.addEvent(onCreateEvent);
+        }
     }
 
     // Called by the framework for ALL processes. Runs before ContentProviders are created.
     // Quirk: context.getApplicationContext() returns null during this method.
     @Override
     protected void attachBaseContext(Context context) {
-        boolean isBrowserProcess = !ContextUtils.getProcessName().contains(":");
+        sFirstTraceEvent = new EarlyTraceEvent.Event("ChromeApplication.attachBaseContext");
+        sInstance = this;
+        boolean isBrowserProcess = isBrowserProcess();
         if (isBrowserProcess) UmaUtils.recordMainEntryPointTime();
         super.attachBaseContext(context);
         ContextUtils.initApplicationContext(this);
@@ -85,10 +116,7 @@ public class ChromeApplication extends Application {
             // (see ChildProcessService.java).
             CommandLineInitUtil.initCommandLine(
                     COMMAND_LINE_FILE, ChromeApplication::shouldUseDebugFlags);
-
-            // Requires command-line flags.
-            TraceEvent.maybeEnableEarlyTracing();
-            TraceEvent.begin("ChromeApplication.attachBaseContext");
+            AppHooks.get().initCommandLine(CommandLine.getInstance());
 
             // Register for activity lifecycle callbacks. Must be done before any activities are
             // created and is needed only by processes that use the ApplicationStatus api (which for
@@ -108,15 +136,16 @@ public class ChromeApplication extends Application {
             ApplicationStatus.registerApplicationStateListener(
                     ChromeApplication::updateMemoryPressurePolling);
 
-            // Not losing much to not cover the below conditional since it just has simple setters.
-            TraceEvent.end("ChromeApplication.attachBaseContext");
+            // Record via UMA all modules that have been requested and are currently installed. This
+            // will tell us the install penetration of each module over time.
+            ModuleInstaller.recordModuleAvailability();
         }
 
         // Write installed modules to crash keys. This needs to be done as early as possible so that
         // these values are set before any crashes are reported.
         ModuleInstaller.updateCrashKeys();
 
-        MemoryPressureMonitor.INSTANCE.registerComponentCallbacks();
+        BuildInfo.setFirebaseAppId(FirebaseConfig.getFirebaseAppId());
 
         if (!ContextUtils.isIsolatedProcess()) {
             // Incremental install disables process isolation, so things in this block will actually
@@ -128,11 +157,17 @@ public class ChromeApplication extends Application {
             }
         }
         AsyncTask.takeOverAndroidThreadPool();
+        JNIUtils.setClassLoader(getClassLoader());
+        sFirstTraceEvent.end();
     }
 
     private static Boolean shouldUseDebugFlags() {
         return ChromePreferenceManager.getInstance().readBoolean(
                 ChromePreferenceManager.COMMAND_LINE_ON_NON_ROOTED_ENABLED_KEY, false);
+    }
+
+    private static boolean isBrowserProcess() {
+        return !ContextUtils.getProcessName().contains(":");
     }
 
     private static void updateMemoryPressurePolling(@ApplicationState int newState) {
@@ -189,12 +224,8 @@ public class ChromeApplication extends Application {
      * @return The DiscardableReferencePool for the application.
      */
     @MainDex
-    public DiscardableReferencePool getReferencePool() {
-        ThreadUtils.assertOnUiThread();
-        if (mReferencePool == null) {
-            mReferencePool = new DiscardableReferencePool();
-        }
-        return mReferencePool;
+    public static DiscardableReferencePool getReferencePool() {
+        return sInstance.mReferencePool;
     }
 
     @Override
@@ -224,18 +255,23 @@ public class ChromeApplication extends Application {
         });
     }
 
-    // TODO(huayinz): move this to somewhere else.
-    public void initDefaultNightMode() {
-        if (FeatureUtilities.isNightModeAvailable()) {
-            // TODO(huayinz): Initialize default night mode based on settings.
-            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES);
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        // TODO(huayinz): Add observer pattern for application configuration changes.
+        if (isBrowserProcess()) {
+            SystemNightModeMonitor.getInstance().onApplicationConfigurationChanged();
         }
     }
 
     /** Returns the application-scoped component. */
     public static ChromeAppComponent getComponent() {
         if (sComponent == null) {
-            sComponent = createComponent();
+            synchronized (sLock) {
+                if (sComponent == null) {
+                    sComponent = createComponent();
+                }
+            }
         }
         return sComponent;
     }

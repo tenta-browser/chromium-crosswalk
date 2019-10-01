@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/macros.h"
@@ -46,9 +47,14 @@ const int kLoadFlagsIgnoreCookies = net::LOAD_DO_NOT_SEND_COOKIES |
 
 const size_t kMaxMessageSize = 1024 * 1024;  // 1MB
 
+constexpr char kBadAuthenticationError[] = "BadAuthentication";
+constexpr char kBadAuthenticationShortError[] = "badauth";
+constexpr char kServiceUnavailableError[] = "ServiceUnavailable";
+constexpr char kServiceUnavailableShortError[] = "ire";
+
 std::unique_ptr<const GaiaAuthConsumer::ClientOAuthResult>
 ExtractOAuth2TokenPairResponse(const std::string& data) {
-  std::unique_ptr<base::Value> value = base::JSONReader::Read(data);
+  std::unique_ptr<base::Value> value = base::JSONReader::ReadDeprecated(data);
   if (!value.get() || value->type() != base::Value::Type::DICTIONARY)
     return nullptr;
 
@@ -88,7 +94,7 @@ GetTokenRevocationStatusFromResponseData(const std::string& data,
   if (response_code == net::HTTP_INTERNAL_SERVER_ERROR)
     return GaiaAuthConsumer::TokenRevocationStatus::kServerError;
 
-  std::unique_ptr<base::Value> value = base::JSONReader::Read(data);
+  std::unique_ptr<base::Value> value = base::JSONReader::ReadDeprecated(data);
   if (!value.get() || value->type() != base::Value::Type::DICTIONARY)
     return GaiaAuthConsumer::TokenRevocationStatus::kUnknownError;
 
@@ -177,12 +183,7 @@ const char GaiaAuthFetcher::kAccountDeletedError[] = "AccountDeleted";
 // static
 const char GaiaAuthFetcher::kAccountDisabledError[] = "AccountDisabled";
 // static
-const char GaiaAuthFetcher::kBadAuthenticationError[] = "BadAuthentication";
-// static
 const char GaiaAuthFetcher::kCaptchaError[] = "CaptchaRequired";
-// static
-const char GaiaAuthFetcher::kServiceUnavailableError[] =
-    "ServiceUnavailable";
 // static
 const char GaiaAuthFetcher::kErrorParam[] = "Error";
 // static
@@ -227,6 +228,8 @@ GaiaAuthFetcher::GaiaAuthFetcher(
       list_accounts_gurl_(
           GaiaUrls::GetInstance()->ListAccountsURLWithSource(source_)),
       logout_gurl_(GaiaUrls::GetInstance()->LogOutURLWithSource(source_)),
+      logout_with_continue_gurl_(
+          GaiaUrls::GetInstance()->LogOutURLWithSourceAndContinueURL(source_)),
       get_check_connection_info_url_(
           GaiaUrls::GetInstance()->GetCheckConnectionInfoURLWithSource(
               source_)) {}
@@ -282,10 +285,6 @@ void GaiaAuthFetcher::CreateAndStartGaiaFetcher(
   // services.  Where such mixing is desired (MergeSession or OAuthLogin), it
   // will be done explicitly.
   resource_request->load_flags = load_flags;
-
-  // Use raw headers as the cookies are filtered-out of the response when
-  // serialized at the IPC layer.
-  resource_request->report_raw_headers = true;
 
   url_loader_ = network::SimpleURLLoader::Create(std::move(resource_request),
                                                  traffic_annotation);
@@ -750,7 +749,8 @@ void GaiaAuthFetcher::StartListAccounts() {
 }
 
 void GaiaAuthFetcher::StartOAuthMultilogin(
-    const std::vector<MultiloginTokenIDPair>& accounts) {
+    const std::vector<MultiloginTokenIDPair>& accounts,
+    const std::string& external_cc_result) {
   DCHECK(!fetch_pending_) << "Tried to fetch two things at once!";
 
   UMA_HISTOGRAM_COUNTS_100("Signin.Multilogin.NumberOfAccounts",
@@ -766,8 +766,13 @@ void GaiaAuthFetcher::StartOAuthMultilogin(
       kOAuthMultiBearerHeaderFormat,
       base::JoinString(authorization_header_parts, ",").c_str());
 
-  std::string parameters = base::StringPrintf(
-      "?source=%s", net::EscapeUrlEncodedData(source_, true).c_str());
+  std::string source_string = net::EscapeUrlEncodedData(source_, true);
+  std::string parameters =
+      external_cc_result.empty()
+          ? base::StringPrintf("?source=%s", source_string.c_str())
+          : base::StringPrintf(
+                "?source=%s&externalCcResult=%s", source_string.c_str(),
+                net::EscapeUrlEncodedData(external_cc_result, true).c_str());
 
   net::NetworkTrafficAnnotationTag traffic_annotation =
       net::DefineNetworkTrafficAnnotation("gaia_auth_multilogin", R"(
@@ -804,6 +809,14 @@ void GaiaAuthFetcher::StartOAuthMultilogin(
 }
 
 void GaiaAuthFetcher::StartLogOut() {
+  StartLogOutInternal(logout_gurl_);
+}
+
+void GaiaAuthFetcher::StartLogOutWithBlankContinueURL() {
+  StartLogOutInternal(logout_with_continue_gurl_);
+}
+
+void GaiaAuthFetcher::StartLogOutInternal(const GURL& logout_gurl) {
   DCHECK(!fetch_pending_) << "Tried to fetch two things at once!";
 
   net::NetworkTrafficAnnotationTag traffic_annotation =
@@ -833,7 +846,7 @@ void GaiaAuthFetcher::StartLogOut() {
             }
           }
         })");
-  CreateAndStartGaiaFetcher(std::string(), std::string(), logout_gurl_,
+  CreateAndStartGaiaFetcher(std::string(), std::string(), logout_gurl,
                             net::LOAD_NORMAL, traffic_annotation);
 }
 
@@ -906,13 +919,15 @@ GoogleServiceAuthError GaiaAuthFetcher::GenerateAuthError(
     return GoogleServiceAuthError(GoogleServiceAuthError::ACCOUNT_DELETED);
   if (error == kAccountDisabledError)
     return GoogleServiceAuthError(GoogleServiceAuthError::ACCOUNT_DISABLED);
-  if (error == kBadAuthenticationError) {
+  if (error == kBadAuthenticationShortError ||
+      error == kBadAuthenticationError) {
     return GoogleServiceAuthError(
         GoogleServiceAuthError::FromInvalidGaiaCredentialsReason(
             GoogleServiceAuthError::InvalidGaiaCredentialsReason::
                 CREDENTIALS_REJECTED_BY_SERVER));
   }
-  if (error == kServiceUnavailableError) {
+  if (error == kServiceUnavailableShortError ||
+      error == kServiceUnavailableError) {
     return GoogleServiceAuthError(
         GoogleServiceAuthError::SERVICE_UNAVAILABLE);
   }
@@ -1074,11 +1089,10 @@ void GaiaAuthFetcher::OnGetCheckConnectionInfoFetched(const std::string& data,
 void GaiaAuthFetcher::OnOAuthMultiloginFetched(const std::string& data,
                                                net::Error net_error,
                                                int response_code) {
-  GoogleServiceAuthError auth_error = GoogleServiceAuthError::AuthErrorNone();
   OAuthMultiloginResult result =
       (net_error == net::Error::OK)
           ? OAuthMultiloginResult(data)
-          : OAuthMultiloginResult(GenerateAuthError(data, net_error));
+          : OAuthMultiloginResult(OAuthMultiloginResponseStatus::kRetry);
   consumer_->OnOAuthMultiloginFinished(result);
 }
 
@@ -1088,22 +1102,16 @@ void GaiaAuthFetcher::OnURLLoadComplete(
   std::string data = response_body ? std::move(*response_body) : "";
 
   int response_code = 0;
-  network::HttpRawRequestResponseInfo::HeadersVector headers;
   if (url_loader_->ResponseInfo()) {
     if (url_loader_->ResponseInfo()->headers)
       response_code = url_loader_->ResponseInfo()->headers->response_code();
-    if (url_loader_->ResponseInfo()->raw_request_response_info) {
-      headers = url_loader_->ResponseInfo()
-                    ->raw_request_response_info->response_headers;
-    }
   }
-  OnURLLoadCompleteInternal(net_error, response_code, headers, data);
+  OnURLLoadCompleteInternal(net_error, response_code, data);
 }
 
 void GaiaAuthFetcher::OnURLLoadCompleteInternal(
     net::Error net_error,
     int response_code,
-    const network::HttpRawRequestResponseInfo::HeadersVector& headers,
     std::string data) {
   fetch_pending_ = false;
 
@@ -1137,7 +1145,7 @@ void GaiaAuthFetcher::DispatchFetchedRequest(
     OnOAuth2RevokeTokenFetched(data, net_error, response_code);
   } else if (url == list_accounts_gurl_) {
     OnListAccountsFetched(data, net_error, response_code);
-  } else if (url == logout_gurl_) {
+  } else if (url == logout_gurl_ || url == logout_with_continue_gurl_) {
     OnLogOutFetched(data, net_error, response_code);
   } else if (url == get_check_connection_info_url_) {
     OnGetCheckConnectionInfoFetched(data, net_error, response_code);

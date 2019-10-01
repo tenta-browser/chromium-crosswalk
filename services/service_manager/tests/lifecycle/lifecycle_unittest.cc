@@ -25,7 +25,6 @@
 #include "services/service_manager/public/cpp/service_binding.h"
 #include "services/service_manager/public/cpp/test/test_service_manager.h"
 #include "services/service_manager/public/mojom/constants.mojom.h"
-#include "services/service_manager/public/mojom/service_factory.mojom.h"
 #include "services/service_manager/public/mojom/service_manager.mojom.h"
 #include "services/service_manager/tests/lifecycle/lifecycle.test-mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -58,23 +57,36 @@ const std::vector<Manifest>& GetTestManifests() {
            .Build(),
        ManifestBuilder()
            .WithServiceName(kTestAppName)
+           .WithOptions(ManifestOptionsBuilder()
+                            .WithExecutionMode(
+                                Manifest::ExecutionMode::kStandaloneExecutable)
+                            .WithSandboxType("none")
+                            .Build())
            .ExposeCapability(
                kTestLifecycleControlCapability,
                Manifest::InterfaceList<test::mojom::LifecycleControl>())
            .Build(),
        ManifestBuilder()
            .WithServiceName(kTestParentName)
+           .WithOptions(ManifestOptionsBuilder()
+                            .WithExecutionMode(
+                                Manifest::ExecutionMode::kStandaloneExecutable)
+                            .WithSandboxType("none")
+                            .Build())
            .ExposeCapability(kTestParentCapability,
                              Manifest::InterfaceList<test::mojom::Parent>())
            .RequireCapability(kTestAppName, kTestLifecycleControlCapability)
            .Build(),
        ManifestBuilder()
            .WithServiceName(kTestPackageName)
+           .WithOptions(ManifestOptionsBuilder()
+                            .WithExecutionMode(
+                                Manifest::ExecutionMode::kStandaloneExecutable)
+                            .WithSandboxType("none")
+                            .Build())
            .ExposeCapability(
                kTestLifecycleControlCapability,
                Manifest::InterfaceList<test::mojom::LifecycleControl>())
-           .ExposeCapability("service_manager:service_factory",
-                             Manifest::InterfaceList<mojom::ServiceFactory>())
            .PackageService(
                ManifestBuilder()
                    .WithServiceName(kTestPackageAppNameA)

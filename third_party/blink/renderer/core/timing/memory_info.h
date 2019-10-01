@@ -36,6 +36,10 @@
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/allocator.h"
 
+namespace base {
+class TickClock;
+}
+
 namespace blink {
 
 struct HeapInfo {
@@ -58,9 +62,6 @@ class CORE_EXPORT MemoryInfo final : public ScriptWrappable {
   // time (50 ms). A Bucketized value means that the numbers will be bucketized
   // and cached for a long period of time (20 minutes).
   enum class Precision { Precise, Bucketized };
-  static MemoryInfo* Create(Precision precision) {
-    return MakeGarbageCollected<MemoryInfo>(precision);
-  }
 
   explicit MemoryInfo(Precision precision);
 
@@ -75,6 +76,13 @@ class CORE_EXPORT MemoryInfo final : public ScriptWrappable {
   }
 
  private:
+  FRIEND_TEST_ALL_PREFIXES(MemoryInfoTest, Bucketized);
+  FRIEND_TEST_ALL_PREFIXES(MemoryInfoTest, Precise);
+  friend struct MemoryInfoTestScopedMockTime;
+  // The caller owns the |clock| which must outlive the MemoryInfo.
+  static void SetTickClockForTestingForCurrentThread(
+      const base::TickClock* clock);
+
   HeapInfo info_;
 };
 

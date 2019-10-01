@@ -18,6 +18,7 @@
 #include "base/optional.h"
 #include "build/build_config.h"
 #include "components/history/core/browser/history_types.h"
+#include "components/image_fetcher/core/image_fetcher_impl.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/ntp_tiles/most_visited_sites.h"
 #include "components/ntp_tiles/ntp_tile.h"
@@ -42,6 +43,12 @@ struct ThemeBackgroundInfo;
 namespace content {
 class RenderProcessHost;
 }  // namespace content
+
+namespace ui {
+class DarkModeObserver;
+}  // namespace ui
+
+extern const char kNtpCustomBackgroundMainColor[];
 
 // Tracks render process host IDs that are associated with Instant, i.e.
 // processes that are used to render an NTP. Also responsible for keeping
@@ -84,6 +91,10 @@ class InstantService : public KeyedService,
   void UndoMostVisitedDeletion(const GURL& url);
   // Invoked when the Instant page wants to undo all Most Visited deletions.
   void UndoAllMostVisitedDeletions();
+  // Invoked when the Instant page wants to switch between custom links and Most
+  // Visited. Toggles between the two options each time it's called. Returns
+  // false and does nothing if the profile is using a third-party NTP.
+  bool ToggleMostVisitedOrCustomLinks();
   // Invoked when the Instant page wants to add a custom link.
   bool AddCustomLink(const GURL& url, const std::string& title);
   // Invoked when the Instant page wants to update a custom link.
@@ -95,19 +106,20 @@ class InstantService : public KeyedService,
   // Invoked when the Instant page wants to delete a custom link.
   bool DeleteCustomLink(const GURL& url);
   // Invoked when the Instant page wants to undo the previous custom link
-  // action. Returns false and does nothing if the profile is using a non-Google
-  // search provider.
+  // action. Returns false and does nothing if the profile is using a third-
+  // party NTP.
   bool UndoCustomLinkAction();
   // Invoked when the Instant page wants to delete all custom links and use Most
   // Visited sites instead. Returns false and does nothing if the profile is
-  // using a non-Google search provider.
-  bool ResetCustomLinks();
+  // using a third-party NTP. Marked virtual for mocking in tests.
+  virtual bool ResetCustomLinks();
 
-  // Invoked by the InstantController to update theme information for NTP.
-  //
-  // TODO(kmadhusu): Invoking this from InstantController shouldn't be
-  // necessary. Investigate more and remove this from here.
+  // Invoked to update theme information for the NTP.
   void UpdateThemeInfo();
+
+  // Invoked when a background pref update is received via sync, triggering
+  // an update of theme info.
+  void UpdateBackgroundFromSync();
 
   // Invoked by the InstantController to update most visited items details for
   // NTP.
@@ -129,8 +141,8 @@ class InstantService : public KeyedService,
   // Invoked when a user selected the "Upload an image" option on the NTP.
   void SelectLocalBackgroundImage(const base::FilePath& path);
 
-  // Used for testing.
-  ThemeBackgroundInfo* GetThemeInfoForTesting() { return theme_info_.get(); }
+  // Getter for |theme_info_| that will also initialize it if necessary.
+  ThemeBackgroundInfo* GetInitializedThemeInfo();
 
   // Used for testing.
   void SetDarkModeThemeForTesting(ui::NativeTheme* theme);
@@ -141,6 +153,19 @@ class InstantService : public KeyedService,
   // Check if a custom background has been set by the user.
   bool IsCustomBackgroundSet();
 
+  // Reset all NTP customizations to default. Marked virtual for mocking in
+  // tests.
+  virtual void ResetToDefault();
+
+  // Calculates the most frequent color of the image and stores it in prefs.
+  void UpdateCustomBackgroundColorAsync(
+      const GURL& image_url,
+      const gfx::Image& fetched_image,
+      const image_fetcher::RequestMetadata& metadata);
+
+  // Fetches the image for the given |fetch_url|.
+  void FetchCustomBackground(const GURL& image_url, const GURL& fetch_url);
+
  private:
   class SearchProviderObserver;
 
@@ -148,10 +173,14 @@ class InstantService : public KeyedService,
 
   friend class InstantExtendedTest;
   friend class InstantUnitTestBase;
+  friend class LocalNTPBackgroundsAndDarkModeTest;
+  friend class TestInstantService;
 
   FRIEND_TEST_ALL_PREFIXES(InstantExtendedTest, ProcessIsolation);
   FRIEND_TEST_ALL_PREFIXES(InstantServiceTest, DeleteThumbnailDataIfExists);
   FRIEND_TEST_ALL_PREFIXES(InstantServiceTest, GetNTPTileSuggestion);
+  FRIEND_TEST_ALL_PREFIXES(InstantServiceTest, IsCustomLinksEnabled);
+  FRIEND_TEST_ALL_PREFIXES(InstantServiceTest, TestNoThemeInfo);
 
   // KeyedService:
   void Shutdown() override;
@@ -166,7 +195,11 @@ class InstantService : public KeyedService,
 
   // Called when the search provider changes. Disables custom links if the
   // search provider is not Google.
-  void OnSearchProviderChanged(bool is_google);
+  void OnSearchProviderChanged();
+
+  // Called when dark mode changes. Updates current theme info as necessary and
+  // notifies that the theme has changed.
+  void OnDarkModeChanged(bool dark_mode);
 
   // Called when dark mode changes. Updates current theme info as necessary and
   // notifies that the theme has changed.
@@ -181,14 +214,18 @@ class InstantService : public KeyedService,
   void NotifyAboutMostVisitedItems();
   void NotifyAboutThemeInfo();
 
+  // Returns true if this is a Google NTP and the user has chosen to show custom
+  // links.
+  bool IsCustomLinksEnabled();
+
   void BuildThemeInfo();
 
   void ApplyOrResetCustomBackgroundThemeInfo();
 
   void ApplyCustomBackgroundThemeInfo();
-  void ApplyCustomBackgroundThemeInfoFromLocalFile(bool file_exists);
 
-  void ResetCustomBackgroundThemeInfo();
+  // Marked virtual for mocking in tests.
+  virtual void ResetCustomBackgroundThemeInfo();
 
   void FallbackToDefaultThemeInfo();
 
@@ -209,6 +246,14 @@ class InstantService : public KeyedService,
   // Update the background pref to point to
   // chrome-search://local-ntp/background.jpg
   void SetBackgroundToLocalResource();
+
+  void CreateDarkModeObserver(ui::NativeTheme* theme);
+
+  // Updates custom background prefs with color for the given |image_url|.
+  void UpdateCustomBackgroundPrefsWithColor(const GURL& image_url,
+                                            SkColor color);
+
+  void SetImageFetcherForTesting(image_fetcher::ImageFetcher* image_fetcher);
 
   Profile* const profile_;
 
@@ -240,7 +285,12 @@ class InstantService : public KeyedService,
 
   PrefService* pref_service_;
 
+  // Keeps track of any changes to system dark mode.
+  std::unique_ptr<ui::DarkModeObserver> dark_mode_observer_;
+
   NtpBackgroundService* background_service_;
+
+  std::unique_ptr<image_fetcher::ImageFetcher> image_fetcher_;
 
   base::WeakPtrFactory<InstantService> weak_ptr_factory_;
 

@@ -10,6 +10,7 @@ cr.define('extensions', function() {
         'addRuntimeHostPermission',
         'deleteActivitiesById',
         'deleteActivitiesFromExtension',
+        'downloadActivities',
         'getExtensionActivityLog',
         'getExtensionsInfo',
         'getExtensionSize',
@@ -30,6 +31,7 @@ cr.define('extensions', function() {
 
       this.itemStateChangedTarget = new FakeChromeEvent();
       this.profileStateChangedTarget = new FakeChromeEvent();
+      this.extensionActivityTarget = new FakeChromeEvent();
 
       /** @type {boolean} */
       this.acceptRuntimeHostPermission = true;
@@ -41,7 +43,7 @@ cr.define('extensions', function() {
       this.forceReloadItemError_ = false;
 
       /** @type {!chrome.activityLogPrivate.ActivityResultSet|undefined} */
-      this.testActivities = undefined;
+      this.testActivities;
     }
 
     /**
@@ -204,6 +206,16 @@ cr.define('extensions', function() {
     deleteActivitiesFromExtension(extensionId) {
       this.methodCalled('deleteActivitiesFromExtension', extensionId);
       return Promise.resolve();
+    }
+
+    /** @override */
+    getOnExtensionActivity() {
+      return this.extensionActivityTarget;
+    }
+
+    /** @override */
+    downloadActivities(rawActivityData, fileName) {
+      this.methodCalled('downloadActivities', [rawActivityData, fileName]);
     }
   }
 

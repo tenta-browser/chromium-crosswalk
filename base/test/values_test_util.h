@@ -42,6 +42,17 @@ void ExpectStringValue(const std::string& expected_str, const Value& actual);
 
 namespace test {
 
+// A custom GMock matcher which matches if a base::Value is a dictionary which
+// has a key |key| that is equal to |value|.
+testing::Matcher<const base::Value&> DictionaryHasValue(
+    const std::string& key,
+    const base::Value& expected_value);
+
+// A custom GMock matcher which matches if a base::Value is a dictionary which
+// contains all key/value pairs from |template_value|.
+testing::Matcher<const base::Value&> DictionaryHasValues(
+    const base::Value& template_value);
+
 // A custom GMock matcher.  For details, see
 // https://github.com/google/googletest/blob/644319b9f06f6ca9bf69fe791be399061044bc3d/googlemock/docs/CookBook.md#writing-new-polymorphic-matchers
 class IsJsonMatcher {
@@ -77,10 +88,16 @@ inline testing::PolymorphicMatcher<IsJsonMatcher> IsJson(const T& value) {
   return testing::MakePolymorphicMatcher(IsJsonMatcher(value));
 }
 
+// Parses |json| as JSON, allowing trailing commas, and returns the resulting
+// value.  If |json| fails to parse, causes an EXPECT failure and returns the
+// Null Value.
+Value ParseJson(StringPiece json);
+
+// DEPRECATED.
 // Parses |json| as JSON, allowing trailing commas, and returns the
 // resulting value.  If the json fails to parse, causes an EXPECT
 // failure and returns the Null Value (but never a NULL pointer).
-std::unique_ptr<Value> ParseJson(base::StringPiece json);
+std::unique_ptr<Value> ParseJsonDeprecated(StringPiece json);
 
 }  // namespace test
 }  // namespace base

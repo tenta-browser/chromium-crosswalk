@@ -12,6 +12,7 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
+#include "base/optional.h"
 #include "components/policy/core/common/cloud/cloud_policy_client.h"
 #include "components/policy/core/common/cloud/cloud_policy_store.h"
 #include "components/policy/policy_export.h"
@@ -38,6 +39,11 @@ class POLICY_EXPORT CloudPolicyService : public CloudPolicyClient::Observer,
     // policy load activity has completed and the CloudPolicyClient has
     // been registered, if possible).
     virtual void OnCloudPolicyServiceInitializationCompleted() = 0;
+
+    // Called when policy refresh finshed. |success| indicates whether refresh
+    // was successful.
+    virtual void OnPolicyRefreshed(bool success) {}
+
     virtual ~Observer() {}
   };
 
@@ -73,6 +79,13 @@ class POLICY_EXPORT CloudPolicyService : public CloudPolicyClient::Observer,
   void ReportValidationResult(CloudPolicyStore* store);
 
   bool IsInitializationComplete() const { return initialization_complete_; }
+
+  // If initial policy refresh was completed returns its result.
+  // This allows ChildPolicyObserver to know whether policy was fetched before
+  // profile creation.
+  base::Optional<bool> initial_policy_refresh_result() const {
+    return initial_policy_refresh_result_;
+  }
 
  private:
   // Helper function that is called when initialization may be complete, and
@@ -122,6 +135,10 @@ class POLICY_EXPORT CloudPolicyService : public CloudPolicyClient::Observer,
   // Set to true once the service is initialized (initial policy load/refresh
   // is complete).
   bool initialization_complete_;
+
+  // Set to true if initial policy refresh was successful. Set to false
+  // otherwise.
+  base::Optional<bool> initial_policy_refresh_result_;
 
   // Observers who will receive notifications when the service has finished
   // initializing.

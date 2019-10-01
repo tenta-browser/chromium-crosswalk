@@ -19,7 +19,6 @@
 #include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context_factory.h"
 #include "third_party/blink/renderer/core/html/canvas/image_data.h"
 #include "third_party/blink/renderer/core/imagebitmap/image_bitmap.h"
-#include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_resource_dispatcher.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_resource_provider.h"
@@ -162,7 +161,7 @@ ImageBitmap* OffscreenCanvas::transferToImageBitmap(
   if (!image) {
     // Undocumented exception (not in spec)
     exception_state.ThrowDOMException(DOMExceptionCode::kUnknownError,
-                                      "Out of memory");
+                                      "ImageBitmap construction failed");
   }
 
   return image;
@@ -220,7 +219,7 @@ CanvasRenderingContext* OffscreenCanvas::GetCanvasRenderingContext(
   // Unknown type.
   if (context_type == CanvasRenderingContext::kContextTypeUnknown ||
       (context_type == CanvasRenderingContext::kContextXRPresent &&
-       !origin_trials::WebXREnabled(execution_context))) {
+       !RuntimeEnabledFeatures::WebXREnabled(execution_context))) {
     return nullptr;
   }
 
@@ -306,7 +305,13 @@ CanvasResourceProvider* OffscreenCanvas::GetOrCreateResourceProvider() {
     bool can_use_gpu = false;
     CanvasResourceProvider::PresentationMode presentation_mode =
         CanvasResourceProvider::kDefaultPresentationMode;
-    if (Is2d()) {
+    if (Is3d()) {
+      if (RuntimeEnabledFeatures::WebGLImageChromiumEnabled()) {
+        presentation_mode =
+            CanvasResourceProvider::kAllowImageChromiumPresentationMode;
+      }
+      can_use_gpu = SharedGpuContext::IsGpuCompositingEnabled();
+    } else {
       if (RuntimeEnabledFeatures::Canvas2dImageChromiumEnabled()) {
         presentation_mode =
             CanvasResourceProvider::kAllowImageChromiumPresentationMode;
@@ -315,12 +320,6 @@ CanvasResourceProvider* OffscreenCanvas::GetOrCreateResourceProvider() {
           RuntimeEnabledFeatures::Accelerated2dCanvasEnabled()) {
         can_use_gpu = true;
       }
-    } else if (Is3d()) {
-      if (RuntimeEnabledFeatures::WebGLImageChromiumEnabled()) {
-        presentation_mode =
-            CanvasResourceProvider::kAllowImageChromiumPresentationMode;
-      }
-      can_use_gpu = SharedGpuContext::IsGpuCompositingEnabled();
     }
 
     IntSize surface_size(width(), height());

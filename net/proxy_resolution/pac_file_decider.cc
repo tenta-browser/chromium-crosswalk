@@ -66,10 +66,10 @@ PacFileDataWithSource::PacFileDataWithSource(const PacFileDataWithSource&) =
 PacFileDataWithSource& PacFileDataWithSource::operator=(
     const PacFileDataWithSource&) = default;
 
-std::unique_ptr<base::Value> PacFileDecider::PacSource::NetLogCallback(
+base::Value PacFileDecider::PacSource::NetLogCallback(
     const GURL* effective_pac_url,
     NetLogCaptureMode /* capture_mode */) const {
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+  base::Value dict(base::Value::Type::DICTIONARY);
   std::string source;
   switch (type) {
     case PacSource::WPAD_DHCP:
@@ -84,8 +84,8 @@ std::unique_ptr<base::Value> PacFileDecider::PacSource::NetLogCallback(
       source += effective_pac_url->possibly_invalid_spec();
       break;
   }
-  dict->SetString("source", source);
-  return std::move(dict);
+  dict.SetStringKey("source", source);
+  return dict;
 }
 
 PacFileDecider::PacFileDecider(PacFileFetcher* pac_file_fetcher,
@@ -271,7 +271,6 @@ int PacFileDecider::DoQuickCheck() {
     return OK;
   }
 
-  quick_check_start_time_ = base::Time::Now();
   std::string host = current_pac_source().url.host();
 
   HostResolver::ResolveHostParameters parameters;
@@ -300,11 +299,6 @@ int PacFileDecider::DoQuickCheck() {
 
 int PacFileDecider::DoQuickCheckComplete(int result) {
   DCHECK(quick_check_enabled_);
-  base::TimeDelta delta = base::Time::Now() - quick_check_start_time_;
-  if (result == OK)
-    UMA_HISTOGRAM_TIMES("Net.WpadQuickCheckSuccess", delta);
-  else
-    UMA_HISTOGRAM_TIMES("Net.WpadQuickCheckFailure", delta);
   resolve_request_.reset();
   quick_check_timer_.Stop();
   if (result != OK)

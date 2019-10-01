@@ -85,6 +85,13 @@ String ExtractTokenOrQuotedString(const String& header_value, unsigned& pos) {
   return result;
 }
 
+// Returns whether the given feature can be activated across navigations. Only
+// features reviewed and approved by security reviewers can be activated across
+// navigations.
+bool IsCrossNavigationFeature(OriginTrialFeature feature) {
+  return origin_trials::GetNavigationOriginTrialFeatures().Contains(feature);
+}
+
 }  // namespace
 
 OriginTrialContext::OriginTrialContext(
@@ -154,12 +161,43 @@ void OriginTrialContext::AddTokens(ExecutionContext* context,
 }
 
 // static
+void OriginTrialContext::ActivateNavigationFeaturesFromInitiator(
+    ExecutionContext* context,
+    const Vector<OriginTrialFeature>* features) {
+  if (!features || features->IsEmpty())
+    return;
+  FromOrCreate(context)->ActivateNavigationFeaturesFromInitiator(*features);
+}
+
+// static
 std::unique_ptr<Vector<String>> OriginTrialContext::GetTokens(
     ExecutionContext* execution_context) {
   const OriginTrialContext* context = From(execution_context);
   if (!context || context->tokens_.IsEmpty())
     return nullptr;
   return std::make_unique<Vector<String>>(context->tokens_);
+}
+
+// static
+std::unique_ptr<Vector<OriginTrialFeature>>
+OriginTrialContext::GetEnabledNavigationFeatures(
+    ExecutionContext* execution_context) {
+  const OriginTrialContext* context = From(execution_context);
+  return context ? context->GetEnabledNavigationFeatures() : nullptr;
+}
+
+std::unique_ptr<Vector<OriginTrialFeature>>
+OriginTrialContext::GetEnabledNavigationFeatures() const {
+  if (enabled_features_.IsEmpty())
+    return nullptr;
+  std::unique_ptr<Vector<OriginTrialFeature>> result =
+      std::make_unique<Vector<OriginTrialFeature>>();
+  for (const OriginTrialFeature& feature : enabled_features_) {
+    if (IsCrossNavigationFeature(feature)) {
+      result->push_back(feature);
+    }
+  }
+  return result->IsEmpty() ? nullptr : std::move(result);
 }
 
 void OriginTrialContext::AddToken(const String& token) {
@@ -191,8 +229,18 @@ void OriginTrialContext::AddTokens(const Vector<String>& tokens) {
   }
 }
 
+void OriginTrialContext::ActivateNavigationFeaturesFromInitiator(
+    const Vector<OriginTrialFeature>& features) {
+  for (const OriginTrialFeature& feature : features) {
+    if (IsCrossNavigationFeature(feature)) {
+      navigation_activated_features_.insert(feature);
+    }
+  }
+  InitializePendingFeatures();
+}
+
 void OriginTrialContext::InitializePendingFeatures() {
-  if (!enabled_trials_.size())
+  if (!enabled_features_.size() && !navigation_activated_features_.size())
     return;
   auto* document = DynamicTo<Document>(GetSupplementable());
   if (!document)
@@ -206,24 +254,59 @@ void OriginTrialContext::InitializePendingFeatures() {
   if (!script_state->ContextIsValid())
     return;
   ScriptState::Scope scope(script_state);
-  for (auto enabled_trial : enabled_trials_) {
-    if (installed_trials_.Contains(enabled_trial))
-      continue;
-    InstallPendingOriginTrialFeature(enabled_trial, script_state);
-    installed_trials_.insert(enabled_trial);
+  for (OriginTrialFeature enabled_feature : enabled_features_) {
+    InstallFeature(enabled_feature, script_state);
+  }
+  for (OriginTrialFeature enabled_feature : navigation_activated_features_) {
+    InstallFeature(enabled_feature, script_state);
   }
 }
 
-void OriginTrialContext::AddFeature(const String& feature) {
-  enabled_trials_.insert(feature);
+void OriginTrialContext::InstallFeature(OriginTrialFeature enabled_feature,
+                                        ScriptState* script_state) {
+  if (installed_features_.Contains(enabled_feature))
+    return;
+  InstallPendingOriginTrialFeature(enabled_feature, script_state);
+  installed_features_.insert(enabled_feature);
+}
+
+void OriginTrialContext::AddFeature(OriginTrialFeature feature) {
+  enabled_features_.insert(feature);
   InitializePendingFeatures();
 }
 
-bool OriginTrialContext::IsTrialEnabled(const String& trial_name) const {
+bool OriginTrialContext::IsFeatureEnabled(OriginTrialFeature feature) const {
   if (!RuntimeEnabledFeatures::OriginTrialsEnabled())
     return false;
 
-  return enabled_trials_.Contains(trial_name);
+  if (enabled_features_.Contains(feature) ||
+      navigation_activated_features_.Contains(feature)) {
+    return true;
+  }
+
+  // HTML imports do not have a browsing context, see:
+  //  - Spec: https://w3c.github.io/webcomponents/spec/imports/#terminology
+  //  - Spec issue: https://github.com/w3c/webcomponents/issues/197
+  // For the purposes of origin trials, we consider imported documents to be
+  // part of the master document. Thus, check if the trial is enabled in the
+  // master document and use that result.
+  auto* document = DynamicTo<Document>(GetSupplementable());
+  if (!document || !document->IsHTMLImport())
+    return false;
+
+  const OriginTrialContext* context =
+      OriginTrialContext::From(&document->MasterDocument());
+  if (!context)
+    return false;
+  return context->IsFeatureEnabled(feature);
+}
+
+bool OriginTrialContext::IsNavigationFeatureActivated(
+    OriginTrialFeature feature) const {
+  if (!RuntimeEnabledFeatures::OriginTrialsEnabled())
+    return false;
+
+  return navigation_activated_features_.Contains(feature);
 }
 
 bool OriginTrialContext::EnableTrialFromToken(const String& token) {
@@ -268,15 +351,21 @@ bool OriginTrialContext::EnableTrialFromToken(const String& token) {
       token_string.AsStringPiece(), origin->ToUrlOrigin(), &trial_name_str,
       base::Time::Now());
   if (token_result == OriginTrialTokenStatus::kSuccess) {
-    valid = true;
     String trial_name =
         String::FromUTF8(trial_name_str.data(), trial_name_str.size());
-    enabled_trials_.insert(trial_name);
-    // Also enable any trials implied by this trial
-    Vector<AtomicString> implied_trials =
-        origin_trials::GetImpliedTrials(trial_name);
-    for (const AtomicString& implied_trial_name : implied_trials) {
-      enabled_trials_.insert(implied_trial_name);
+    if (origin_trials::IsTrialValid(trial_name)) {
+      for (OriginTrialFeature feature :
+           origin_trials::FeaturesForTrial(trial_name)) {
+        if (origin_trials::FeatureEnabledForOS(feature)) {
+          valid = true;
+          enabled_features_.insert(feature);
+          // Also enable any features implied by this feature.
+          for (OriginTrialFeature implied_feature :
+               origin_trials::GetImpliedFeatures(feature)) {
+            enabled_features_.insert(implied_feature);
+          }
+        }
+      }
     }
   }
 

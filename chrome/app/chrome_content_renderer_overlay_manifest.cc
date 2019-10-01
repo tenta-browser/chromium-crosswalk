@@ -23,7 +23,7 @@
 
 #if defined(OS_ANDROID)
 #include "chrome/common/sandbox_status_extension_android.mojom.h"
-#include "third_party/blink/public/platform/modules/document_metadata/copyless_paste.mojom.h"
+#include "third_party/blink/public/mojom/document_metadata/copyless_paste.mojom.h"
 #endif
 
 #if defined(OS_MACOSX)
@@ -32,6 +32,7 @@
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "extensions/common/mojo/app_window.mojom.h"
+#include "extensions/common/mojo/guest_view.mojom.h"
 #endif
 
 const service_manager::Manifest& GetChromeContentRendererOverlayManifest() {
@@ -60,6 +61,7 @@ const service_manager::Manifest& GetChromeContentRendererOverlayManifest() {
                 dom_distiller::mojom::DistillerPageNotifierService,
 #if BUILDFLAG(ENABLE_EXTENSIONS)
                 extensions::mojom::AppWindow,
+                extensions::mojom::MimeHandlerViewContainerManager,
 #endif  // TODO: need gated include back
                 safe_browsing::mojom::ThreatReporter,
 #if defined(FULL_SAFE_BROWSING)
@@ -69,6 +71,8 @@ const service_manager::Manifest& GetChromeContentRendererOverlayManifest() {
                 spellcheck::mojom::SpellCheckPanel,
 #endif
                 subresource_filter::mojom::SubresourceFilterAgent>())
+        .RequireInterfaceFilterCapability_Deprecated(
+            "content_browser", "navigation:frame", "cellular_setup")
         .RequireInterfaceFilterCapability_Deprecated(
             "content_browser", "navigation:frame", "multidevice_setup")
         .Build()

@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "ios/chrome/browser/browser_state/test_chrome_browser_state.h"
@@ -71,7 +72,7 @@ TEST_F(ReSignInInfoBarDelegateTest, TestCreateWhenNotPrompting) {
   AuthenticationService* authentication_service =
       AuthenticationServiceFactory::GetForBrowserState(
           chrome_browser_state_.get());
-  authentication_service->SetPromptForSignIn(false);
+  authentication_service->ResetPromptForSignIn();
   std::unique_ptr<ReSignInInfoBarDelegate> infobar_delegate =
       ReSignInInfoBarDelegate::CreateInfoBarDelegate(
           chrome_browser_state_.get(), nil);
@@ -86,7 +87,7 @@ TEST_F(ReSignInInfoBarDelegateTest, TestCreateWhenNotSignedIn) {
   AuthenticationService* authentication_service =
       AuthenticationServiceFactory::GetForBrowserState(
           chrome_browser_state_.get());
-  authentication_service->SetPromptForSignIn(true);
+  authentication_service->SetPromptForSignIn();
   std::unique_ptr<ReSignInInfoBarDelegate> infobar_delegate =
       ReSignInInfoBarDelegate::CreateInfoBarDelegate(
           chrome_browser_state_.get(), nil);
@@ -101,7 +102,7 @@ TEST_F(ReSignInInfoBarDelegateTest, TestCreateWhenAlreadySignedIn) {
   AuthenticationService* authentication_service =
       AuthenticationServiceFactory::GetForBrowserState(
           chrome_browser_state_.get());
-  authentication_service->SetPromptForSignIn(true);
+  authentication_service->SetPromptForSignIn();
   std::unique_ptr<ReSignInInfoBarDelegate> infobar_delegate =
       ReSignInInfoBarDelegate::CreateInfoBarDelegate(
           chrome_browser_state_.get(), nil);
@@ -116,7 +117,7 @@ TEST_F(ReSignInInfoBarDelegateTest, TestCreateWhenIncognito) {
   AuthenticationService* authentication_service =
       AuthenticationServiceFactory::GetForBrowserState(
           chrome_browser_state_.get());
-  authentication_service->SetPromptForSignIn(true);
+  authentication_service->SetPromptForSignIn();
   std::unique_ptr<ReSignInInfoBarDelegate> infobar_delegate =
       ReSignInInfoBarDelegate::CreateInfoBarDelegate(
           chrome_browser_state_->GetOffTheRecordChromeBrowserState(), nil);
@@ -142,7 +143,7 @@ TEST_F(ReSignInInfoBarDelegateTest, TestAccept) {
   AuthenticationService* authentication_service =
       AuthenticationServiceFactory::GetForBrowserState(
           chrome_browser_state_.get());
-  authentication_service->SetPromptForSignIn(true);
+  authentication_service->SetPromptForSignIn();
 
   id presenter = OCMProtocolMock(@protocol(SigninPresenter));
   [[presenter expect]
@@ -169,7 +170,7 @@ TEST_F(ReSignInInfoBarDelegateTest, TestInfoBarDismissed) {
   AuthenticationService* authentication_service =
       AuthenticationServiceFactory::GetForBrowserState(
           chrome_browser_state_.get());
-  authentication_service->SetPromptForSignIn(true);
+  authentication_service->SetPromptForSignIn();
 
   id presenter = OCMProtocolMock(@protocol(SigninPresenter));
   [[presenter reject] showSignin:[OCMArg any]];

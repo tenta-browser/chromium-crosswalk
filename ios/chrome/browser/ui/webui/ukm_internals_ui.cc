@@ -6,6 +6,7 @@
 
 #include <string>
 
+#include "base/bind.h"
 #include "base/memory/ref_counted_memory.h"
 #include "components/metrics_services_manager/metrics_services_manager.h"
 #include "components/ukm/debug/ukm_debug_data_extractor.h"
@@ -14,9 +15,9 @@
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
 #include "ios/chrome/grit/ios_resources.h"
-#include "ios/web/public/url_data_source_ios.h"
-#include "ios/web/public/web_ui_ios_data_source.h"
+#include "ios/web/public/webui/url_data_source_ios.h"
 #include "ios/web/public/webui/web_ui_ios.h"
+#include "ios/web/public/webui/web_ui_ios_data_source.h"
 #include "ios/web/public/webui/web_ui_ios_message_handler.h"
 
 namespace {
@@ -27,7 +28,6 @@ web::WebUIIOSDataSource* CreateUkmInternalsUIHTMLSource() {
 
   source->AddResourcePath("ukm_internals.js", IDR_IOS_UKM_INTERNALS_JS);
   source->SetDefaultResource(IDR_IOS_UKM_INTERNALS_HTML);
-  source->UseGzip();
   return source;
 }
 

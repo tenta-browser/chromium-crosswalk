@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/lazy_instance.h"
@@ -57,7 +58,8 @@ class URLLoaderFactoryGetter::URLLoaderFactoryForIOThread
       bool is_corb_enabled)
       : factory_getter_(std::move(factory_getter)),
         is_corb_enabled_(is_corb_enabled) {
-    DCHECK_CURRENTLY_ON(BrowserThread::IO);
+    DCHECK(!BrowserThread::IsThreadInitialized(BrowserThread::IO) ||
+           BrowserThread::CurrentlyOn(BrowserThread::IO));
   }
 
   explicit URLLoaderFactoryForIOThread(
@@ -166,7 +168,8 @@ URLLoaderFactoryGetter::GetNetworkFactory() {
 
 scoped_refptr<network::SharedURLLoaderFactory>
 URLLoaderFactoryGetter::GetNetworkFactoryWithCORBEnabled() {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  DCHECK(!BrowserThread::IsThreadInitialized(BrowserThread::IO) ||
+         BrowserThread::CurrentlyOn(BrowserThread::IO));
   return base::MakeRefCounted<URLLoaderFactoryForIOThread>(
       base::WrapRefCounted(this), true);
 }
@@ -199,11 +202,9 @@ network::mojom::URLLoaderFactory* URLLoaderFactoryGetter::GetURLLoaderFactory(
   if (g_get_network_factory_callback.Get() && !test_factory_)
     g_get_network_factory_callback.Get().Run(this);
 
-  // The |is_corb_enabled| case will only be hit for AppCache scenarios, where
-  // the URLLoaderInterceptor's test hooks are sufficiently covered at the
-  // RenderFrameHostImpl level (e.g. intercepting requests coming from the
-  // renderer, rather than requests generated within
-  // AppCacheSubresourceURLFactory.
+  if (is_corb_enabled && test_factory_corb_enabled_)
+    return test_factory_corb_enabled_;
+
   if (!is_corb_enabled && test_factory_)
     return test_factory_;
 
@@ -217,10 +218,16 @@ void URLLoaderFactoryGetter::CloneNetworkFactory(
 }
 
 void URLLoaderFactoryGetter::SetNetworkFactoryForTesting(
-    network::mojom::URLLoaderFactory* test_factory) {
+    network::mojom::URLLoaderFactory* test_factory,
+    bool is_corb_enabled) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  DCHECK(!test_factory_ || !test_factory);
-  test_factory_ = test_factory;
+  if (is_corb_enabled) {
+    DCHECK(!test_factory_corb_enabled_ || !test_factory);
+    test_factory_corb_enabled_ = test_factory;
+  } else {
+    DCHECK(!test_factory_ || !test_factory);
+    test_factory_ = test_factory;
+  }
 }
 
 void URLLoaderFactoryGetter::SetGetNetworkFactoryCallbackForTesting(

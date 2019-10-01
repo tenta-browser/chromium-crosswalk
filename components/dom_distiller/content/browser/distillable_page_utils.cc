@@ -17,18 +17,18 @@
 #include "components/dom_distiller/core/distillable_page_detector.h"
 #include "components/dom_distiller/core/experiments.h"
 #include "components/dom_distiller/core/page_features.h"
+#include "components/dom_distiller/core/resource_utils.h"
 #include "components/grit/components_resources.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
-#include "ui/base/resource/resource_bundle.h"
 
 namespace dom_distiller {
 namespace {
 
 void OnExtractFeaturesJsResult(const DistillablePageDetector* detector,
                                base::Callback<void(bool)> callback,
-                               const base::Value* result) {
-  callback.Run(detector->Classify(CalculateDerivedFeaturesFromJSON(result)));
+                               base::Value result) {
+  callback.Run(detector->Classify(CalculateDerivedFeaturesFromJSON(&result)));
 }
 
 }  // namespace
@@ -43,12 +43,10 @@ void IsDistillablePageForDetector(content::WebContents* web_contents,
     return;
   }
   std::string extract_features_js =
-      ui::ResourceBundle::GetSharedInstance()
-          .GetRawDataResource(IDR_EXTRACT_PAGE_FEATURES_JS)
-          .as_string();
+      GetResourceFromIdAsString(IDR_EXTRACT_PAGE_FEATURES_JS);
   RunIsolatedJavaScript(
       main_frame, extract_features_js,
-      base::Bind(OnExtractFeaturesJsResult, detector, callback));
+      base::BindOnce(OnExtractFeaturesJsResult, detector, callback));
 }
 
 void SetDelegate(content::WebContents* web_contents,

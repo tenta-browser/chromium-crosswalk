@@ -8,6 +8,7 @@
 
 #include <map>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
@@ -30,6 +31,12 @@ namespace syncer {
 namespace syncable {
 namespace {
 
+const char kTestCacheGuid[] = "test_cache_guid";
+
+base::RepeatingCallback<std::string()> TestCacheGuidGenerator() {
+  return base::BindRepeating([]() -> std::string { return kTestCacheGuid; });
+}
+
 // A handler that simply sets |catastrophic_error_handler_was_called| to true.
 void CatastrophicErrorHandler(bool* catastrophic_error_handler_was_called) {
   *catastrophic_error_handler_was_called = true;
@@ -38,7 +45,7 @@ void CatastrophicErrorHandler(bool* catastrophic_error_handler_was_called) {
 // Create a dirty EntryKernel with an ID derived from |id| + |id_suffix|.
 std::unique_ptr<EntryKernel> CreateEntry(int id, const std::string& id_suffix) {
   std::unique_ptr<EntryKernel> entry(new EntryKernel());
-  std::string id_string = base::Int64ToString(id) + id_suffix;
+  std::string id_string = base::NumberToString(id) + id_suffix;
   entry->put(ID, Id::CreateFromClientString(id_string));
   entry->put(META_HANDLE, id);
   entry->mark_dirty(nullptr);
@@ -65,8 +72,9 @@ class MigrationTest : public testing::TestWithParam<int> {
     JournalIndex delete_journals;
     MetahandleSet metahandles_to_purge;
     Directory::KernelLoadInfo kernel_load_info;
-    return dbs->Load(&tmp_handles_map, &delete_journals, &metahandles_to_purge,
-                     &kernel_load_info) == OPENED;
+    DirOpenResult result = dbs->Load(&tmp_handles_map, &delete_journals,
+                                     &metahandles_to_purge, &kernel_load_info);
+    return result == OPENED_NEW || result == OPENED_EXISTING;
   }
 
   void SetUpCorruptedRootDatabase(sql::Database* connection);
@@ -3582,7 +3590,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion79To80) {
   sync_pb::ChipBag chip_bag;
   std::string serialized_chip_bag;
   ASSERT_TRUE(chip_bag.SerializeToString(&serialized_chip_bag));
-  EXPECT_EQ(serialized_chip_bag, load_info.kernel_info.bag_of_chips);
+  EXPECT_EQ(serialized_chip_bag, load_info.kernel_info.legacy_bag_of_chips);
 }
 
 TEST_F(DirectoryBackingStoreTest, MigrateVersion80To81) {
@@ -3594,7 +3602,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion80To81) {
       "SELECT metahandle, server_position_in_parent "
       "FROM metas WHERE unique_server_tag = 'google_chrome'"));
   ASSERT_TRUE(s.Step());
-  ASSERT_EQ(sql::COLUMN_TYPE_INTEGER, s.ColumnType(1));
+  ASSERT_EQ(sql::ColumnType::kInteger, s.GetColumnType(1));
 
   TestDirectoryBackingStore dbs(GetUsername(), &connection);
   EXPECT_TRUE(dbs.MigrateVersion80To81());
@@ -3605,7 +3613,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion80To81) {
       "SELECT metahandle, server_ordinal_in_parent "
       "FROM metas WHERE unique_server_tag = 'google_chrome'"));
   ASSERT_TRUE(new_s.Step());
-  EXPECT_EQ(sql::COLUMN_TYPE_BLOB, new_s.ColumnType(1));
+  EXPECT_EQ(sql::ColumnType::kBlob, new_s.GetColumnType(1));
 
   std::string expected_ordinal = Int64ToNodeOrdinal(1048576).ToInternalValue();
   std::string actual_ordinal;
@@ -3957,9 +3965,10 @@ TEST_P(MigrationTest, ToCurrentVersion) {
   MetahandleSet metahandles_to_purge;
 
   {
-    OnDiskDirectoryBackingStore dbs(GetUsername(), GetDatabasePath());
-    ASSERT_EQ(OPENED, dbs.Load(&handles_map, &delete_journals,
-                               &metahandles_to_purge, &dir_info));
+    OnDiskDirectoryBackingStore dbs(GetUsername(), TestCacheGuidGenerator(),
+                                    GetDatabasePath());
+    ASSERT_EQ(OPENED_EXISTING, dbs.Load(&handles_map, &delete_journals,
+                                        &metahandles_to_purge, &dir_info));
     if (!metahandles_to_purge.empty())
       dbs.DeleteEntries(DirectoryBackingStore::METAS_TABLE,
                         metahandles_to_purge);
@@ -4224,8 +4233,9 @@ TEST_P(MigrationTest, ToCurrentVersion) {
   }
 }
 
-INSTANTIATE_TEST_CASE_P(DirectoryBackingStore, MigrationTest,
-                        testing::Range(67, kCurrentDBVersion + 1));
+INSTANTIATE_TEST_SUITE_P(DirectoryBackingStore,
+                         MigrationTest,
+                         testing::Range(67, kCurrentDBVersion + 1));
 
 TEST_F(DirectoryBackingStoreTest, ModelTypeIds) {
   ModelTypeSet protocol_types = ProtocolTypes();
@@ -4255,9 +4265,11 @@ class OnDiskDirectoryBackingStoreForTest : public OnDiskDirectoryBackingStore {
 
 OnDiskDirectoryBackingStoreForTest::OnDiskDirectoryBackingStoreForTest(
     const std::string& dir_name,
-    const base::FilePath& backing_filepath) :
-  OnDiskDirectoryBackingStore(dir_name, backing_filepath),
-  first_open_failed_(false) { }
+    const base::FilePath& backing_filepath)
+    : OnDiskDirectoryBackingStore(dir_name,
+                                  TestCacheGuidGenerator(),
+                                  backing_filepath),
+      first_open_failed_(false) {}
 
 OnDiskDirectoryBackingStoreForTest::~OnDiskDirectoryBackingStoreForTest() { }
 
@@ -4280,7 +4292,8 @@ bool OnDiskDirectoryBackingStoreForTest::DidFailFirstOpenAttempt() {
 // due to read-only file system), is not tested here.
 TEST_F(DirectoryBackingStoreTest, MinorCorruption) {
   {
-    OnDiskDirectoryBackingStore dbs(GetUsername(), GetDatabasePath());
+    OnDiskDirectoryBackingStore dbs(GetUsername(), TestCacheGuidGenerator(),
+                                    GetDatabasePath());
     EXPECT_TRUE(LoadAndIgnoreReturnedData(&dbs));
   }
 
@@ -4302,7 +4315,8 @@ TEST_F(DirectoryBackingStoreTest, MinorCorruption) {
 
 TEST_F(DirectoryBackingStoreTest, MinorCorruptionAndUpgrade) {
   {
-    OnDiskDirectoryBackingStore dbs(GetUsername(), GetDatabasePath());
+    OnDiskDirectoryBackingStore dbs(GetUsername(), TestCacheGuidGenerator(),
+                                    GetDatabasePath());
     EXPECT_TRUE(LoadAndIgnoreReturnedData(&dbs));
   }
 
@@ -4375,16 +4389,6 @@ TEST_F(DirectoryBackingStoreTest, DeleteEntries) {
   EXPECT_EQ(0U, handles_map.size());
 }
 
-TEST_F(DirectoryBackingStoreTest, GenerateCacheGUID) {
-  const std::string& guid1 = TestDirectoryBackingStore::GenerateCacheGUID();
-  const std::string& guid2 = TestDirectoryBackingStore::GenerateCacheGUID();
-  EXPECT_EQ(24U, guid1.size());
-  EXPECT_EQ(24U, guid2.size());
-  // In theory this test can fail, but it won't before the universe
-  // dies of heat death.
-  EXPECT_NE(guid1, guid2);
-}
-
 TEST_F(DirectoryBackingStoreTest, IncreaseDatabasePageSizeFrom4KTo32K) {
   sql::Database connection;
   ASSERT_TRUE(connection.Open(GetDatabasePath()));
@@ -4398,7 +4402,7 @@ TEST_F(DirectoryBackingStoreTest, IncreaseDatabasePageSizeFrom4KTo32K) {
 
   DirOpenResult open_result = dbs.Load(
       &handles_map, &delete_journals, &metahandles_to_purge, &kernel_load_info);
-  EXPECT_EQ(open_result, OPENED);
+  EXPECT_EQ(open_result, OPENED_EXISTING);
 
   // Set up database's page size to 4096
   EXPECT_TRUE(dbs.db_->Execute("PRAGMA page_size=4096;"));

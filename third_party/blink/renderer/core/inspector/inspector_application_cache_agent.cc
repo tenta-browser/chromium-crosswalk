@@ -45,7 +45,7 @@ InspectorApplicationCacheAgent::InspectorApplicationCacheAgent(
 
 void InspectorApplicationCacheAgent::InnerEnable() {
   enabled_.Set(true);
-  instrumenting_agents_->addInspectorApplicationCacheAgent(this);
+  instrumenting_agents_->AddInspectorApplicationCacheAgent(this);
   GetFrontend()->networkStateUpdated(GetNetworkStateNotifier().OnLine());
 }
 
@@ -62,7 +62,7 @@ Response InspectorApplicationCacheAgent::enable() {
 
 Response InspectorApplicationCacheAgent::disable() {
   enabled_.Clear();
-  instrumenting_agents_->removeInspectorApplicationCacheAgent(this);
+  instrumenting_agents_->RemoveInspectorApplicationCacheAgent(this);
   return Response::OK();
 }
 
@@ -169,7 +169,7 @@ InspectorApplicationCacheAgent::BuildObjectForApplicationCache(
     const ApplicationCacheHost::CacheInfo& application_cache_info) {
   return protocol::ApplicationCache::ApplicationCache::create()
       .setManifestURL(application_cache_info.manifest_.GetString())
-      .setSize(application_cache_info.size_)
+      .setSize(application_cache_info.response_sizes_)
       .setCreationTime(application_cache_info.creation_time_)
       .setUpdateTime(application_cache_info.update_time_)
       .setResources(
@@ -218,7 +218,7 @@ InspectorApplicationCacheAgent::BuildObjectForApplicationCacheResource(
   std::unique_ptr<protocol::ApplicationCache::ApplicationCacheResource> value =
       protocol::ApplicationCache::ApplicationCacheResource::create()
           .setUrl(resource_info.resource_.GetString())
-          .setSize(static_cast<int>(resource_info.size_))
+          .setSize(static_cast<int>(resource_info.response_size_))
           .setType(builder.ToString())
           .build();
   return value;

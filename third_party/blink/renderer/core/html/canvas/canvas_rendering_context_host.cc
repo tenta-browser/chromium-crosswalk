@@ -11,6 +11,7 @@
 #include "third_party/blink/renderer/platform/graphics/gpu/shared_gpu_context.h"
 #include "third_party/blink/renderer/platform/graphics/skia/skia_utils.h"
 #include "third_party/blink/renderer/platform/graphics/static_bitmap_image.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/histogram.h"
 #include "third_party/skia/include/core/SkSurface.h"
 
@@ -96,7 +97,7 @@ CanvasRenderingContextHost::GetOrCreateCanvasResourceProviderImpl(
         CanvasResourceProvider::ResourceUsage usage;
         if (SharedGpuContext::IsGpuCompositingEnabled()) {
           if (LowLatencyEnabled())
-            usage = CanvasResourceProvider::kAcceleratedDirectResourceUsage;
+            usage = CanvasResourceProvider::kAcceleratedDirect3DResourceUsage;
           else
             usage = CanvasResourceProvider::kAcceleratedCompositedResourceUsage;
         } else {
@@ -123,7 +124,7 @@ CanvasRenderingContextHost::GetOrCreateCanvasResourceProviderImpl(
         CanvasResourceProvider::ResourceUsage usage;
         if (want_acceleration) {
           if (LowLatencyEnabled())
-            usage = CanvasResourceProvider::kAcceleratedDirectResourceUsage;
+            usage = CanvasResourceProvider::kAcceleratedDirect2DResourceUsage;
           else
             usage = CanvasResourceProvider::kAcceleratedCompositedResourceUsage;
         } else {
@@ -204,15 +205,14 @@ ScriptPromise CanvasRenderingContextHost::convertToBlob(
   scoped_refptr<StaticBitmapImage> image_bitmap =
       RenderingContext()->GetImage(kPreferNoAcceleration);
   if (image_bitmap) {
-    ScriptPromiseResolver* resolver =
-        ScriptPromiseResolver::Create(script_state);
+    auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
     CanvasAsyncBlobCreator::ToBlobFunctionType function_type =
         CanvasAsyncBlobCreator::kHTMLCanvasConvertToBlobPromise;
     if (this->IsOffscreenCanvas()) {
       function_type =
           CanvasAsyncBlobCreator::kOffscreenCanvasConvertToBlobPromise;
     }
-    CanvasAsyncBlobCreator* async_creator = CanvasAsyncBlobCreator::Create(
+    auto* async_creator = MakeGarbageCollected<CanvasAsyncBlobCreator>(
         image_bitmap, options, function_type, start_time,
         ExecutionContext::From(script_state), resolver);
     async_creator->ScheduleAsyncBlobCreation(options->quality());

@@ -16,7 +16,6 @@
 #include "components/ui_devtools/Protocol.h"
 #include "components/ui_devtools/devtools_client.h"
 #include "components/ui_devtools/devtools_export.h"
-#include "components/ui_devtools/string_util.h"
 #include "services/network/public/cpp/server/http_server.h"
 
 namespace ui_devtools {
@@ -63,7 +62,7 @@ class UI_DEVTOOLS_EXPORT UiDevToolsServer
                                int default_port);
 
   void AttachClient(std::unique_ptr<UiDevToolsClient> client);
-  void SendOverWebSocket(int connection_id, const String& message);
+  void SendOverWebSocket(int connection_id, const protocol::String& message);
 
   int port() const { return port_; }
 
@@ -82,7 +81,7 @@ class UI_DEVTOOLS_EXPORT UiDevToolsServer
   void OnWebSocketRequest(
       int connection_id,
       const network::server::HttpServerRequestInfo& info) override;
-  void OnWebSocketMessage(int connection_id, const std::string& data) override;
+  void OnWebSocketMessage(int connection_id, std::string data) override;
   void OnClose(int connection_id) override;
 
   using ClientsList = std::vector<std::unique_ptr<UiDevToolsClient>>;

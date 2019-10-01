@@ -10,6 +10,8 @@
 #include "android_webview/browser/aw_content_browser_client.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task/post_task.h"
@@ -154,8 +156,7 @@ void RunOnUIThread(base::OnceClosure task) {
 // static
 jlong JNI_AwQuotaManagerBridge_GetDefaultNativeAwQuotaManagerBridge(
     JNIEnv* env) {
-  AwBrowserContext* browser_context =
-      AwContentBrowserClient::GetAwBrowserContext();
+  AwBrowserContext* browser_context = AwBrowserContext::GetDefault();
 
   AwQuotaManagerBridge* bridge = static_cast<AwQuotaManagerBridge*>(
       browser_context->GetQuotaManagerBridge());

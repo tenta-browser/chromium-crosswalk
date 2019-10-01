@@ -21,6 +21,7 @@
 #include "base/strings/sys_string_conversions.h"
 #include "base/system/sys_info.h"
 #include "components/autofill/core/common/autofill_features.h"
+#include "components/autofill/core/common/autofill_payments_features.h"
 #include "components/autofill/core/common/autofill_switches.h"
 #include "components/autofill/ios/browser/autofill_switches.h"
 #include "components/dom_distiller/core/dom_distiller_switches.h"
@@ -33,39 +34,40 @@
 #include "components/invalidation/impl/invalidation_switches.h"
 #include "components/ntp_tiles/switches.h"
 #include "components/omnibox/browser/omnibox_field_trial.h"
+#include "components/omnibox/common/omnibox_features.h"
 #include "components/password_manager/core/common/password_manager_features.h"
 #include "components/payments/core/features.h"
 #include "components/search_provider_logos/switches.h"
 #include "components/security_state/core/features.h"
+#include "components/send_tab_to_self/features.h"
 #include "components/signin/core/browser/account_reconcilor.h"
 #include "components/signin/core/browser/signin_switches.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/sync/driver/sync_driver_switches.h"
 #include "components/translate/core/browser/translate_prefs.h"
+#include "components/ukm/ios/features.h"
 #include "components/unified_consent/feature.h"
 #include "ios/chrome/browser/app_launcher/app_launcher_flags.h"
 #include "ios/chrome/browser/browsing_data/browsing_data_features.h"
 #include "ios/chrome/browser/chrome_switches.h"
 #include "ios/chrome/browser/crash_report/crash_report_flags.h"
-#include "ios/chrome/browser/download/features.h"
 #include "ios/chrome/browser/drag_and_drop/drag_and_drop_flag.h"
-#include "ios/chrome/browser/experimental_flags.h"
 #include "ios/chrome/browser/find_in_page/features.h"
 #include "ios/chrome/browser/ios_chrome_flag_descriptions.h"
-#include "ios/chrome/browser/itunes_urls/itunes_urls_flag.h"
-#include "ios/chrome/browser/search_engines/feature_flags.h"
+#include "ios/chrome/browser/passwords/password_manager_features.h"
+#include "ios/chrome/browser/reading_list/features.h"
 #include "ios/chrome/browser/signin/feature_flags.h"
+#include "ios/chrome/browser/system_flags.h"
 #import "ios/chrome/browser/ui/dialogs/dialog_features.h"
 #import "ios/chrome/browser/ui/fullscreen/fullscreen_features.h"
 #import "ios/chrome/browser/ui/infobars/infobar_feature.h"
-#include "ios/chrome/browser/ui/sad_tab/features.h"
 #import "ios/chrome/browser/ui/toolbar/public/features.h"
 #import "ios/chrome/browser/ui/toolbar_container/toolbar_container_features.h"
 #include "ios/chrome/browser/ui/ui_feature_flags.h"
 #include "ios/chrome/browser/web/features.h"
 #include "ios/chrome/grit/ios_strings.h"
 #include "ios/public/provider/chrome/browser/chrome_browser_provider.h"
-#include "ios/web/public/features.h"
+#include "ios/web/common/features.h"
 #include "ios/web/public/user_agent.h"
 #include "ios/web/public/web_view_creation_util.h"
 
@@ -195,6 +197,24 @@ const FeatureEntry::FeatureVariation kDetectMainThreadFreezeVariations[] = {
     {"9s", kDetectMainThreadFreezeTimeout9s,
      base::size(kDetectMainThreadFreezeTimeout9s), nullptr}};
 
+const FeatureEntry::FeatureParam
+    kAutofillUseMobileLabelDisambiguationShowAll[] = {
+        {autofill::features::kAutofillUseMobileLabelDisambiguationParameterName,
+         autofill::features::
+             kAutofillUseMobileLabelDisambiguationParameterShowAll}};
+const FeatureEntry::FeatureParam
+    kAutofillUseMobileLabelDisambiguationShowOne[] = {
+        {autofill::features::kAutofillUseMobileLabelDisambiguationParameterName,
+         autofill::features::
+             kAutofillUseMobileLabelDisambiguationParameterShowOne}};
+
+const FeatureEntry::FeatureVariation
+    kAutofillUseMobileLabelDisambiguationVariations[] = {
+        {"(show all)", kAutofillUseMobileLabelDisambiguationShowAll,
+         base::size(kAutofillUseMobileLabelDisambiguationShowAll), nullptr},
+        {"(show one)", kAutofillUseMobileLabelDisambiguationShowOne,
+         base::size(kAutofillUseMobileLabelDisambiguationShowOne), nullptr}};
+
 // To add a new entry, add to the end of kFeatureEntries. There are four
 // distinct types of entries:
 // . ENABLE_DISABLE_VALUE: entry is either enabled, disabled, or uses the
@@ -232,9 +252,6 @@ const flags_ui::FeatureEntry kFeatureEntries[] = {
          feature_engagement::kIPHDemoMode,
          feature_engagement::kIPHDemoModeChoiceVariations,
          "IPH_DemoMode")},
-    {"preview-usdz", flag_descriptions::kUsdzPreviewName,
-     flag_descriptions::kUsdzPreviewDescription, flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(download::kUsdzPreview)},
     {"use-ddljson-api", flag_descriptions::kUseDdljsonApiName,
      flag_descriptions::kUseDdljsonApiDescription, flags_ui::kOsIos,
      MULTI_VALUE_TYPE(kUseDdljsonApiChoices)},
@@ -249,9 +266,6 @@ const flags_ui::FeatureEntry kFeatureEntries[] = {
     {"slim-navigation-manager", flag_descriptions::kSlimNavigationManagerName,
      flag_descriptions::kSlimNavigationManagerDescription, flags_ui::kOsIos,
      FEATURE_VALUE_TYPE(web::features::kSlimNavigationManager)},
-    {"memex-tab-switcher", flag_descriptions::kMemexTabSwitcherName,
-     flag_descriptions::kMemexTabSwitcherDescription, flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(kMemexTabSwitcher)},
     {"wk-http-system-cookie-store",
      flag_descriptions::kWKHTTPSystemCookieStoreName,
      flag_descriptions::kWKHTTPSystemCookieStoreName, flags_ui::kOsIos,
@@ -266,20 +280,6 @@ const flags_ui::FeatureEntry kFeatureEntries[] = {
      flags_ui::kOsIos,
      FEATURE_VALUE_TYPE(
          autofill::features::kAutofillDownstreamUseGooglePayBrandingOniOS)},
-    {"enable-autofill-save-credit-card-uses-strike-system",
-     flag_descriptions::kEnableAutofillSaveCreditCardUsesStrikeSystemName,
-     flag_descriptions::
-         kEnableAutofillSaveCreditCardUsesStrikeSystemDescription,
-     flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(
-         autofill::features::kAutofillSaveCreditCardUsesStrikeSystem)},
-    {"enable-autofill-save-credit-card-uses-strike-system-v2",
-     flag_descriptions::kEnableAutofillSaveCreditCardUsesStrikeSystemV2Name,
-     flag_descriptions::
-         kEnableAutofillSaveCreditCardUsesStrikeSystemV2Description,
-     flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(
-         autofill::features::kAutofillSaveCreditCardUsesStrikeSystemV2)},
     {"use-sync-sandbox", flag_descriptions::kSyncSandboxName,
      flag_descriptions::kSyncSandboxDescription, flags_ui::kOsIos,
      SINGLE_VALUE_TYPE_AND_VALUE(
@@ -306,20 +306,9 @@ const flags_ui::FeatureEntry kFeatureEntries[] = {
      flag_descriptions::kNewClearBrowsingDataUIName,
      flag_descriptions::kNewClearBrowsingDataUIDescription, flags_ui::kOsIos,
      FEATURE_VALUE_TYPE(kNewClearBrowsingDataUI)},
-    {"itunes-urls-store-kit-handling",
-     flag_descriptions::kITunesUrlsStoreKitHandlingName,
-     flag_descriptions::kITunesUrlsStoreKitHandlingDescription,
-     flags_ui::kOsIos, FEATURE_VALUE_TYPE(kITunesUrlsStoreKitHandling)},
     {"unified-consent", flag_descriptions::kUnifiedConsentName,
      flag_descriptions::kUnifiedConsentDescription, flags_ui::kOsIos,
      FEATURE_VALUE_TYPE(unified_consent::kUnifiedConsent)},
-    {"autofill-dynamic-forms", flag_descriptions::kAutofillDynamicFormsName,
-     flag_descriptions::kAutofillDynamicFormsDescription, flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(autofill::features::kAutofillDynamicForms)},
-    {"autofill-prefilled-fields",
-     flag_descriptions::kAutofillPrefilledFieldsName,
-     flag_descriptions::kAutofillPrefilledFieldsDescription, flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(autofill::features::kAutofillPrefilledFields)},
     {"autofill-show-all-profiles-on-prefilled-forms",
      flag_descriptions::kAutofillShowAllSuggestionsOnPrefilledFormsName,
      flag_descriptions::kAutofillShowAllSuggestionsOnPrefilledFormsDescription,
@@ -363,11 +352,6 @@ const flags_ui::FeatureEntry kFeatureEntries[] = {
      flags_ui::kOsIos,
      FEATURE_VALUE_TYPE(
          autofill::features::kAutofillEnforceMinRequiredFieldsForUpload)},
-    {"browser-container-fullscreen",
-     flag_descriptions::kBrowserContainerFullscreenName,
-     flag_descriptions::kBrowserContainerFullscreenDescription,
-     flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(web::features::kBrowserContainerFullscreen)},
     {"autofill-cache-query-responses",
      flag_descriptions::kAutofillCacheQueryResponsesName,
      flag_descriptions::kAutofillCacheQueryResponsesDescription,
@@ -384,9 +368,6 @@ const flags_ui::FeatureEntry kFeatureEntries[] = {
      flag_descriptions::kWebPageTextAccessibilityName,
      flag_descriptions::kWebPageTextAccessibilityDescription, flags_ui::kOsIos,
      FEATURE_VALUE_TYPE(web::kWebPageTextAccessibility)},
-    {"web-frame-messaging", flag_descriptions::kWebFrameMessagingName,
-     flag_descriptions::kWebFrameMessagingDescription, flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(web::features::kWebFrameMessaging)},
     {"new-password-form-parsing",
      flag_descriptions::kNewPasswordFormParsingName,
      flag_descriptions::kNewPasswordFormParsingDescription, flags_ui::kOsIos,
@@ -394,18 +375,11 @@ const flags_ui::FeatureEntry kFeatureEntries[] = {
     {"app-launcher-refresh", flag_descriptions::kAppLauncherRefreshName,
      flag_descriptions::kAppLauncherRefreshDescription, flags_ui::kOsIos,
      FEATURE_VALUE_TYPE(kAppLauncherRefresh)},
-    {"sync-standalone-transport",
-     flag_descriptions::kSyncStandaloneTransportName,
-     flag_descriptions::kSyncStandaloneTransportDescription, flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(switches::kSyncStandaloneTransport)},
     {"sync-support-secondary-account",
      flag_descriptions::kSyncSupportSecondaryAccountName,
      flag_descriptions::kSyncSupportSecondaryAccountDescription,
      flags_ui::kOsIos,
      FEATURE_VALUE_TYPE(switches::kSyncSupportSecondaryAccount)},
-    {"out-of-web-fullscreen", flag_descriptions::kOutOfWebFullscreenName,
-     flag_descriptions::kOutOfWebFullscreenDescription, flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(web::features::kOutOfWebFullscreen)},
     {"autofill-manual-fallback-phase-two",
      flag_descriptions::kAutofillManualFallbackPhaseTwoName,
      flag_descriptions::kAutofillManualFallbackPhaseTwoDescription,
@@ -414,18 +388,11 @@ const flags_ui::FeatureEntry kFeatureEntries[] = {
     {"toolbar-container", flag_descriptions::kToolbarContainerName,
      flag_descriptions::kToolbarContainerDescription, flags_ui::kOsIos,
      FEATURE_VALUE_TYPE(toolbar_container::kToolbarContainerEnabled)},
-    {"present-sad-tab-in-view-controller",
-     flag_descriptions::kPresentSadTabInViewControllerName,
-     flag_descriptions::kPresentSadTabInViewControllerDescription,
-     flags_ui::kOsIos, FEATURE_VALUE_TYPE(kPresentSadTabInViewController)},
     {"omnibox-popup-shortcuts",
      flag_descriptions::kOmniboxPopupShortcutIconsInZeroStateName,
      flag_descriptions::kOmniboxPopupShortcutIconsInZeroStateDescription,
      flags_ui::kOsIos,
      FEATURE_VALUE_TYPE(omnibox::kOmniboxPopupShortcutIconsInZeroState)},
-    {"custom-search-engines", flag_descriptions::kCustomSearchEnginesName,
-     flag_descriptions::kCustomSearchEnginesDescription, flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(kCustomSearchEngines)},
     {"use-multilogin-endpoint", flag_descriptions::kUseMultiloginEndpointName,
      flag_descriptions::kUseMultiloginEndpointDescription, flags_ui::kOsIos,
      FEATURE_VALUE_TYPE(kUseMultiloginEndpoint)},
@@ -433,11 +400,6 @@ const flags_ui::FeatureEntry kFeatureEntries[] = {
      flag_descriptions::kClosingLastIncognitoTabName,
      flag_descriptions::kClosingLastIncognitoTabDescription, flags_ui::kOsIos,
      FEATURE_VALUE_TYPE(kClosingLastIncognitoTab)},
-    {"omnibox-tab-switch-suggestions",
-     flag_descriptions::kOmniboxTabSwitchSuggestionsName,
-     flag_descriptions::kOmniboxTabSwitchSuggestionsDescription,
-     flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(omnibox::kOmniboxTabSwitchSuggestions)},
     {"omnibox-ui-max-autocomplete-matches",
      flag_descriptions::kOmniboxUIMaxAutocompleteMatchesName,
      flag_descriptions::kOmniboxUIMaxAutocompleteMatchesDescription,
@@ -449,15 +411,6 @@ const flags_ui::FeatureEntry kFeatureEntries[] = {
     {"fcm-invalidations", flag_descriptions::kFCMInvalidationsName,
      flag_descriptions::kFCMInvalidationsDescription, flags_ui::kOsIos,
      FEATURE_VALUE_TYPE(invalidation::switches::kFCMInvalidations)},
-    {"browser-container-contains-ntp",
-     flag_descriptions::kBrowserContainerContainsNTPName,
-     flag_descriptions::kBrowserContainerContainsNTPDescription,
-     flags_ui::kOsIos, FEATURE_VALUE_TYPE(kBrowserContainerContainsNTP)},
-    {"external-files-loaded-in-web-state",
-     flag_descriptions::kExternalFilesLoadedInWebStateName,
-     flag_descriptions::kExternalFilesLoadedInWebStateDescription,
-     flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(experimental_flags::kExternalFilesLoadedInWebState)},
     {"search-icon-toggle", flag_descriptions::kSearchIconToggleName,
      flag_descriptions::kSearchIconToggleDescription, flags_ui::kOsIos,
      FEATURE_WITH_PARAMS_VALUE_TYPE(kIconForSearchButtonFeature,
@@ -475,37 +428,6 @@ const flags_ui::FeatureEntry kFeatureEntries[] = {
     {"non-modal-dialogs", flag_descriptions::kNonModalDialogsName,
      flag_descriptions::kNonModalDialogsDescription, flags_ui::kOsIos,
      FEATURE_VALUE_TYPE(dialogs::kNonModalDialogs)},
-    {"sync-pseudo-uss-favicons", flag_descriptions::kSyncPseudoUSSFaviconsName,
-     flag_descriptions::kSyncPseudoUSSFaviconsDescription, flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(switches::kSyncPseudoUSSFavicons)},
-    {"sync-pseudo-uss-history-delete-directives",
-     flag_descriptions::kSyncPseudoUSSHistoryDeleteDirectivesName,
-     flag_descriptions::kSyncPseudoUSSHistoryDeleteDirectivesDescription,
-     flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(switches::kSyncPseudoUSSHistoryDeleteDirectives)},
-    {"sync-pseudo-uss-passwords",
-     flag_descriptions::kSyncPseudoUSSPasswordsName,
-     flag_descriptions::kSyncPseudoUSSPasswordsDescription, flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(switches::kSyncPseudoUSSPasswords)},
-    {"sync-pseudo-uss-preferences",
-     flag_descriptions::kSyncPseudoUSSPreferencesName,
-     flag_descriptions::kSyncPseudoUSSPreferencesDescription, flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(switches::kSyncPseudoUSSPreferences)},
-    {"sync-pseudo-uss-priority-preferences",
-     flag_descriptions::kSyncPseudoUSSPriorityPreferencesName,
-     flag_descriptions::kSyncPseudoUSSPriorityPreferencesDescription,
-     flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(switches::kSyncPseudoUSSPriorityPreferences)},
-    {"use-nsurlsession-for-signin",
-     flag_descriptions::kUseNSURLSessionForGaiaSigninRequestsName,
-     flag_descriptions::kUseNSURLSessionForGaiaSigninRequestsDescription,
-     flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(kUseNSURLSessionForGaiaSigninRequests)},
-    {"sync-pseudo-uss-supervised-users",
-     flag_descriptions::kSyncPseudoUSSSupervisedUsersName,
-     flag_descriptions::kSyncPseudoUSSSupervisedUsersDescription,
-     flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(switches::kSyncPseudoUSSSupervisedUsers)},
     {"detect-main-thread-freeze",
      flag_descriptions::kDetectMainThreadFreezeName,
      flag_descriptions::kDetectMainThreadFreezeDescription, flags_ui::kOsIos,
@@ -549,12 +471,6 @@ const flags_ui::FeatureEntry kFeatureEntries[] = {
     {"snapshot-draw-view", flag_descriptions::kSnapshotDrawViewName,
      flag_descriptions::kSnapshotDrawViewDescription, flags_ui::kOsIos,
      FEATURE_VALUE_TYPE(kSnapshotDrawView)},
-    {"enable-autocomplete-data-retention-policy",
-     flag_descriptions::kEnableAutocompleteDataRetentionPolicyName,
-     flag_descriptions::kEnableAutocompleteDataRetentionPolicyDescription,
-     flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(
-         autofill::features::kAutocompleteRetentionPolicyEnabled)},
 #if defined(DCHECK_IS_CONFIGURABLE)
     {"dcheck-is-fatal", flag_descriptions::kDcheckIsFatalName,
      flag_descriptions::kDcheckIsFatalDescription, flags_ui::kOsIos,
@@ -567,6 +483,116 @@ const flags_ui::FeatureEntry kFeatureEntries[] = {
      flag_descriptions::kBrowserContainerKeepsContentViewName,
      flag_descriptions::kBrowserContainerKeepsContentViewDescription,
      flags_ui::kOsIos, FEATURE_VALUE_TYPE(kBrowserContainerKeepsContentView)},
+    {"web-clear-browsing-data", flag_descriptions::kWebClearBrowsingDataName,
+     flag_descriptions::kWebClearBrowsingDataDescription, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(kWebClearBrowsingData)},
+    {"send-uma-cellular", flag_descriptions::kSendUmaOverAnyNetwork,
+     flag_descriptions::kSendUmaOverAnyNetworkDescription, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(kUmaCellular)},
+    {"enable-sync-uss-passwords",
+     flag_descriptions::kEnableSyncUSSPasswordsName,
+     flag_descriptions::kEnableSyncUSSPasswordsDescription, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(switches::kSyncUSSPasswords)},
+    {"offline-page-without-native-content",
+     flag_descriptions::kOfflineVersionWithoutNativeContentName,
+     flag_descriptions::kOfflineVersionWithoutNativeContentDescription,
+     flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(reading_list::kOfflineVersionWithoutNativeContent)},
+    {"store-pending-item-in-context",
+     flag_descriptions::kStorePendingItemInContextName,
+     flag_descriptions::kStorePendingItemInContextDescription, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(web::features::kStorePendingItemInContext)},
+    {"autofill-no-local-save-on-upload-success",
+     flag_descriptions::kAutofillNoLocalSaveOnUploadSuccessName,
+     flag_descriptions::kAutofillNoLocalSaveOnUploadSuccessDescription,
+     flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(
+         autofill::features::kAutofillNoLocalSaveOnUploadSuccess)},
+    {"display-search-engine-favicon",
+     flag_descriptions::kDisplaySearchEngineFaviconName,
+     flag_descriptions::kDisplaySearchEngineFaviconDescription,
+     flags_ui::kOsIos, FEATURE_VALUE_TYPE(kDisplaySearchEngineFavicon)},
+    {"autofill-no-local-save-on-unmask-success",
+     flag_descriptions::kAutofillNoLocalSaveOnUnmaskSuccessName,
+     flag_descriptions::kAutofillNoLocalSaveOnUnmaskSuccessDescription,
+     flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(
+         autofill::features::kAutofillNoLocalSaveOnUnmaskSuccess)},
+    {"password-generation-suggestion",
+     flag_descriptions::kPasswordGenerationName,
+     flag_descriptions::kPasswordGenerationDescription, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(features::kPasswordGeneration)},
+    {"new-omnibox-popup-layout", flag_descriptions::kNewOmniboxPopupLayoutName,
+     flag_descriptions::kNewOmniboxPopupLayoutDescription, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(kNewOmniboxPopupLayout)},
+    {"fill-on-account-select-http",
+     flag_descriptions::kFillOnAccountSelectHttpName,
+     flag_descriptions::kFillOnAccountSelectHttpDescription, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(password_manager::features::kFillOnAccountSelectHttp)},
+    {"enable-send-tab-to-self", flag_descriptions::kSendTabToSelfName,
+     flag_descriptions::kSendTabToSelfDescription, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(switches::kSyncSendTabToSelf)},
+    {"enable-send-tab-to-self-show-sending-ui",
+     flag_descriptions::kSendTabToSelfShowSendingUIName,
+     flag_descriptions::kSendTabToSelfShowSendingUIDescription,
+     flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(send_tab_to_self::kSendTabToSelfShowSendingUI)},
+    {"translate-manual-trigger", flag_descriptions::kTranslateManualTriggerName,
+     flag_descriptions::kTranslateManualTriggerDescription, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(translate::kTranslateMobileManualTrigger)},
+    {"omnibox-use-default-search-engine-favicon",
+     flag_descriptions::kOmniboxUseDefaultSearchEngineFaviconName,
+     flag_descriptions::kOmniboxUseDefaultSearchEngineFaviconDescription,
+     flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(kOmniboxUseDefaultSearchEngineFavicon)},
+    {"enable-autofill-import-dynamic-forms",
+     flag_descriptions::kEnableAutofillImportDynamicFormsName,
+     flag_descriptions::kEnableAutofillImportDynamicFormsDescription,
+     flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(autofill::features::kAutofillImportDynamicForms)},
+    {"enable-autofill-import-non-focusable-credit-card-forms",
+     flag_descriptions::kEnableAutofillImportNonFocusableCreditCardFormsName,
+     flag_descriptions::
+         kEnableAutofillImportNonFocusableCreditCardFormsDescription,
+     flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(
+         autofill::features::kAutofillImportNonFocusableCreditCardForms)},
+    {"enable-autofill-do-not-upload-save-unsupported-cards",
+     flag_descriptions::kEnableAutofillDoNotUploadSaveUnsupportedCardsName,
+     flag_descriptions::
+         kEnableAutofillDoNotUploadSaveUnsupportedCardsDescription,
+     flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(
+         autofill::features::kAutofillDoNotUploadSaveUnsupportedCards)},
+    {"enable-send-tab-to-self-broadcast",
+     flag_descriptions::kSendTabToSelfBroadcastName,
+     flag_descriptions::kSendTabToSelfBroadcastDescription, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(send_tab_to_self::kSendTabToSelfBroadcast)},
+    {"autofill-use-mobile-label-disambiguation",
+     flag_descriptions::kAutofillUseMobileLabelDisambiguationName,
+     flag_descriptions::kAutofillUseMobileLabelDisambiguationDescription,
+     flags_ui::kOsIos,
+     FEATURE_WITH_PARAMS_VALUE_TYPE(
+         autofill::features::kAutofillUseMobileLabelDisambiguation,
+         kAutofillUseMobileLabelDisambiguationVariations,
+         "AutofillUseMobileLabelDisambiguation")},
+    {"enable-autofill-prune-suggestions",
+     flag_descriptions::kAutofillPruneSuggestionsName,
+     flag_descriptions::kAutofillPruneSuggestionsDescription, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(autofill::features::kAutofillPruneSuggestions)},
+    {"language-settings", flag_descriptions::kLanguageSettingsName,
+     flag_descriptions::kLanguageSettingsDescription, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(kLanguageSettings)},
+    {"lock-bottom-toolbar", flag_descriptions::kLockBottomToolbarName,
+     flag_descriptions::kLockBottomToolbarDescription, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(fullscreen::features::kLockBottomToolbar)},
+    {"identity-disc", flag_descriptions::kIdentityDiscName,
+     flag_descriptions::kIdentityDiscDescription, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(kIdentityDisc)},
+    {"enable-send-tab-to-self-history",
+     flag_descriptions::kSendTabToSelfHistoryName,
+     flag_descriptions::kSendTabToSelfHistoryDescription, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(send_tab_to_self::kSendTabToSelfHistory)},
 };
 
 // Add all switches from experimental flags to |command_line|.
@@ -602,6 +628,17 @@ void AppendSwitchesFromExperimentalSettings(base::CommandLine* command_line) {
           [NSString stringWithFormat:@"FreeformCommandLineFlag%d", i];
       NSString* flag = [defaults stringForKey:key];
       if ([flag length]) {
+        // iOS keyboard replaces -- with —, so undo that.
+        flag = [flag stringByReplacingOccurrencesOfString:@"—"
+                                               withString:@"--"
+                                                  options:0
+                                                    range:NSMakeRange(0, 1)];
+        // To make things easier, allow flags with no dashes by prepending them
+        // here. This also allows for flags that just have one dash if they
+        // exist.
+        if (![flag hasPrefix:@"-"]) {
+          flag = [@"--" stringByAppendingString:flag];
+        }
         flags.push_back(base::SysNSStringToUTF8(flag));
       }
     }

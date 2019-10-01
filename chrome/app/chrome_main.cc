@@ -4,6 +4,7 @@
 
 #include <stdint.h>
 
+#include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/command_line.h"
 #include "base/time/time.h"
@@ -23,10 +24,10 @@
 #if defined(OS_WIN)
 #include "base/debug/dump_without_crashing.h"
 #include "base/win/win_util.h"
+#include "chrome/chrome_elf/chrome_elf_main.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/install_static/initialize_from_primary_module.h"
 #include "chrome/install_static/install_details.h"
-#include "chrome_elf/chrome_elf_main.h"
 
 #define DLLEXPORT __declspec(dllexport)
 

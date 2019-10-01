@@ -19,10 +19,6 @@ namespace aura {
 class Window;
 }
 
-namespace base {
-class TimeTicks;
-}
-
 namespace views {
 class TabbedPane;
 class Widget;
@@ -44,14 +40,8 @@ class KeyboardShortcutView : public views::WidgetDelegateView,
   // 1. Show the window if it is not open.
   // 2. Activate the window if it is open but not active.
   // 3. Close the window if it is open and active.
-  // |start_time| is the time of the user gesture that caused the window to
-  // show. Used for metrics.
   // |context| is used to determine which display to place the Window on.
-  // |context| is only necessary when called from within Chrome.
-  // TODO: remove |context|, it's not needed once KeyboardShortcutView is only
-  // launched as an app.
-  static views::Widget* Toggle(base::TimeTicks start_time,
-                               aura::Window* context);
+  static views::Widget* Toggle(aura::Window* context);
 
   // views::View:
   const char* GetClassName() const override;
@@ -95,7 +85,7 @@ class KeyboardShortcutView : public views::WidgetDelegateView,
   views::ClientView* CreateClientView(views::Widget* widget) override;
 
   static KeyboardShortcutView* GetInstanceForTesting();
-  int GetTabCountForTesting() const;
+  size_t GetTabCountForTesting() const;
   const std::vector<std::unique_ptr<KeyboardShortcutItemView>>&
   GetShortcutViewsForTesting() const;
   KSVSearchBoxView* GetSearchBoxViewForTesting();
@@ -125,7 +115,7 @@ class KeyboardShortcutView : public views::WidgetDelegateView,
   bool is_search_box_empty_ = true;
 
   // Cached value of active tab index before entering search mode.
-  int active_tab_index_ = 0;
+  size_t active_tab_index_ = 0;
 
   // Debounce for search queries.
   base::OneShotTimer debounce_timer_;

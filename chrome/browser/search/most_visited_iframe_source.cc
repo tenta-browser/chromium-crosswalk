@@ -5,9 +5,11 @@
 #include "chrome/browser/search/most_visited_iframe_source.h"
 
 #include "base/command_line.h"
+#include "base/feature_list.h"
 #include "base/memory/ref_counted_memory.h"
 #include "build/build_config.h"
 #include "chrome/browser/search/local_files_ntp_source.h"
+#include "chrome/browser/search/ntp_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/local_ntp_resources.h"
@@ -39,7 +41,7 @@ const char kEditMenuSvgPath[] = "/edit_menu.svg";
 // Used in the single-iframe version and the edit custom links dialog iframe.
 const char kAnimationsCSSPath[] = "/animations.css";
 const char kAnimationsJSPath[] = "/animations.js";
-const char kConstantsCSSPath[] = "/constants.css";
+const char kLocalNTPCommonCSSPath[] = "/local-ntp-common.css";
 const char kLocalNTPUtilsJSPath[] = "/utils.js";
 
 }  // namespace
@@ -78,7 +80,11 @@ void MostVisitedIframeSource::StartDataRequest(
 #endif
 
   if (path == kSingleHTMLPath) {
-    SendResource(IDR_MOST_VISITED_SINGLE_HTML, callback);
+    ui::TemplateReplacements replacements;
+    bool disable_fade = base::FeatureList::IsEnabled(
+        features::kDisableInitialMostVisitedFadeIn);
+    replacements["noInitialFade"] = disable_fade ? "no-initial-fade" : "";
+    SendResource(IDR_MOST_VISITED_SINGLE_HTML, callback, &replacements);
   } else if (path == kSingleCSSPath) {
     SendResource(IDR_MOST_VISITED_SINGLE_CSS, callback);
   } else if (path == kSingleJSPath) {
@@ -105,8 +111,8 @@ void MostVisitedIframeSource::StartDataRequest(
     SendResource(IDR_CUSTOM_LINKS_ADD_WHITE_SVG, callback);
   } else if (path == kEditMenuSvgPath) {
     SendResource(IDR_CUSTOM_LINKS_EDIT_MENU_SVG, callback);
-  } else if (path == kConstantsCSSPath) {
-    SendResource(IDR_LOCAL_NTP_CONSTANTS_CSS, callback);
+  } else if (path == kLocalNTPCommonCSSPath) {
+    SendResource(IDR_LOCAL_NTP_COMMON_CSS, callback);
   } else if (path == kAnimationsCSSPath) {
     SendResource(IDR_LOCAL_NTP_ANIMATIONS_CSS, callback);
   } else if (path == kAnimationsJSPath) {
@@ -125,6 +131,6 @@ bool MostVisitedIframeSource::ServesPath(const std::string& path) const {
          path == kCommonCSSPath || path == kEditHTMLPath ||
          path == kEditCSSPath || path == kEditJSPath || path == kAddSvgPath ||
          path == kAddWhiteSvgPath || path == kEditMenuSvgPath ||
-         path == kConstantsCSSPath || path == kAnimationsCSSPath ||
+         path == kLocalNTPCommonCSSPath || path == kAnimationsCSSPath ||
          path == kAnimationsJSPath || path == kLocalNTPUtilsJSPath;
 }

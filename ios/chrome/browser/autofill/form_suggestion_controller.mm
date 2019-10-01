@@ -10,7 +10,7 @@
 #include "base/mac/scoped_block.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/autofill/core/browser/autofill_popup_delegate.h"
+#include "components/autofill/core/browser/ui/autofill_popup_delegate.h"
 #import "components/autofill/ios/browser/form_suggestion.h"
 #import "components/autofill/ios/browser/form_suggestion_provider.h"
 #include "components/autofill/ios/form_util/form_activity_params.h"
@@ -20,10 +20,10 @@
 #import "ios/chrome/browser/autofill/form_suggestion_view.h"
 #import "ios/chrome/browser/passwords/password_generation_utils.h"
 #include "ios/chrome/browser/ui/util/ui_util.h"
+#import "ios/web/public/deprecated/crw_js_injection_receiver.h"
+#import "ios/web/public/js_messaging/web_frames_manager.h"
 #import "ios/web/public/url_scheme_util.h"
-#import "ios/web/public/web_state/js/crw_js_injection_receiver.h"
 #import "ios/web/public/web_state/ui/crw_web_view_proxy.h"
-#import "ios/web/public/web_state/web_frames_manager.h"
 #import "ios/web/public/web_state/web_state.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -62,7 +62,7 @@ AutofillSuggestionState::AutofillSuggestionState(
 
 }  // namespace
 
-@interface FormSuggestionController ()<FormInputSuggestionsProvider> {
+@interface FormSuggestionController () {
   // Callback to update the accessory view.
   FormSuggestionsReadyCompletion accessoryViewUpdateBlock_;
 
@@ -76,6 +76,9 @@ AutofillSuggestionState::AutofillSuggestionState(
   // Access to WebView from the CRWWebController.
   id<CRWWebViewProxy> _webViewProxy;
 }
+
+// Unique id of the last request.
+@property(nonatomic, assign) NSUInteger requestIdentifier;
 
 // Updates keyboard for |suggestionState|.
 - (void)updateKeyboard:(AutofillSuggestionState*)suggestionState;
@@ -174,6 +177,9 @@ AutofillSuggestionState::AutofillSuggestionState(
 
 - (void)retrieveSuggestionsForForm:(const autofill::FormActivityParams&)params
                           webState:(web::WebState*)webState {
+  self.requestIdentifier += 1;
+  NSUInteger requestIdentifier = self.requestIdentifier;
+
   __weak FormSuggestionController* weakSelf = self;
   NSString* strongFormName = base::SysUTF8ToNSString(params.form_name);
   NSString* strongFieldIdentifier =
@@ -225,6 +231,10 @@ AutofillSuggestionState::AutofillSuggestionState(
 
   // Once a provider is found, use it to retrieve suggestions.
   passwords::PipelineCompletionBlock completion = ^(NSUInteger providerIndex) {
+    // Ignore outdated results.
+    if (weakSelf.requestIdentifier != requestIdentifier) {
+      return;
+    }
     if (providerIndex == NSNotFound) {
       [weakSelf onNoSuggestionsAvailable];
       return;

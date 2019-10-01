@@ -7,11 +7,11 @@
 #include <algorithm>
 #include <memory>
 
+#include "ash/app_list/app_list_metrics.h"
 #include "ash/app_list/app_list_view_delegate.h"
 #include "ash/app_list/model/app_list_folder_item.h"
 #include "ash/app_list/model/app_list_item.h"
 #include "ash/app_list/model/app_list_model.h"
-#include "ash/app_list/pagination_model.h"
 #include "ash/app_list/views/app_list_folder_view.h"
 #include "ash/app_list/views/app_list_item_view.h"
 #include "ash/app_list/views/apps_container_view.h"
@@ -20,8 +20,8 @@
 #include "ash/app_list/views/search_box_view.h"
 #include "ash/app_list/views/search_result_base_view.h"
 #include "ash/app_list/views/search_result_page_view.h"
-#include "ash/public/cpp/app_list/app_list_constants.h"
 #include "ash/public/cpp/app_list/app_list_features.h"
+#include "ash/public/cpp/pagination/pagination_model.h"
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/files/file_path.h"
@@ -71,7 +71,7 @@ void AppListMainView::Init(int initial_apps_page,
   AddContentsViews();
 
   // Switch the apps grid view to the specified page.
-  app_list::PaginationModel* pagination_model = GetAppsPaginationModel();
+  ash::PaginationModel* pagination_model = GetAppsPaginationModel();
   if (pagination_model->is_valid_page(initial_apps_page))
     pagination_model->SelectPage(initial_apps_page, false);
 }
@@ -104,7 +104,7 @@ void AppListMainView::ShowAppListWhenReady() {
 }
 
 void AppListMainView::ResetForShow() {
-  contents_view_->SetActiveState(ash::AppListState::kStateStart);
+  contents_view_->SetActiveState(ash::AppListState::kStateApps);
   contents_view_->GetAppsContainerView()->ResetForShowApps();
   // We clear the search when hiding so when app list appears it is not showing
   // search results.
@@ -132,7 +132,7 @@ void AppListMainView::SetDragAndDropHostOfCurrentAppList(
   contents_view_->SetDragAndDropHostOfCurrentAppList(drag_and_drop_host);
 }
 
-PaginationModel* AppListMainView::GetAppsPaginationModel() {
+ash::PaginationModel* AppListMainView::GetAppsPaginationModel() {
   return contents_view_->GetAppsContainerView()
       ->apps_grid_view()
       ->pagination_model();
@@ -164,9 +164,8 @@ void AppListMainView::ActivateApp(AppListItem* item, int event_flags) {
                               kFullscreenAppListFolders, kMaxFolderOpened);
   } else {
     base::RecordAction(base::UserMetricsAction("AppList_ClickOnApp"));
-    delegate_->ActivateItem(item->id(), event_flags);
-    UMA_HISTOGRAM_BOOLEAN(kAppListAppLaunchedFullscreen,
-                          false /*not a suggested app*/);
+    delegate_->ActivateItem(item->id(), event_flags,
+                            ash::AppListLaunchedFrom::kLaunchedFromGrid);
   }
 }
 

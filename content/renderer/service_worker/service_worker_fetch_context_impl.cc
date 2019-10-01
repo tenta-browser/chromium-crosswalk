@@ -5,6 +5,7 @@
 #include "content/renderer/service_worker/service_worker_fetch_context_impl.h"
 
 #include "base/feature_list.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/common/content_constants_internal.h"
 #include "content/public/common/content_features.h"
 #include "content/public/renderer/url_loader_throttle_provider.h"
@@ -19,22 +20,20 @@
 namespace content {
 
 ServiceWorkerFetchContextImpl::ServiceWorkerFetchContextImpl(
-    RendererPreferences renderer_preferences,
+    const blink::mojom::RendererPreferences& renderer_preferences,
     const GURL& worker_script_url,
     std::unique_ptr<network::SharedURLLoaderFactoryInfo>
         url_loader_factory_info,
     std::unique_ptr<network::SharedURLLoaderFactoryInfo>
         script_loader_factory_info,
-    int service_worker_provider_id,
     std::unique_ptr<URLLoaderThrottleProvider> throttle_provider,
     std::unique_ptr<WebSocketHandshakeThrottleProvider>
         websocket_handshake_throttle_provider,
-    mojom::RendererPreferenceWatcherRequest preference_watcher_request)
-    : renderer_preferences_(std::move(renderer_preferences)),
+    blink::mojom::RendererPreferenceWatcherRequest preference_watcher_request)
+    : renderer_preferences_(renderer_preferences),
       worker_script_url_(worker_script_url),
       url_loader_factory_info_(std::move(url_loader_factory_info)),
       script_loader_factory_info_(std::move(script_loader_factory_info)),
-      service_worker_provider_id_(service_worker_provider_id),
       throttle_provider_(std::move(throttle_provider)),
       websocket_handshake_throttle_provider_(
           std::move(websocket_handshake_throttle_provider)),
@@ -96,11 +95,10 @@ ServiceWorkerFetchContextImpl::GetScriptLoaderFactory() {
 void ServiceWorkerFetchContextImpl::WillSendRequest(
     blink::WebURLRequest& request) {
   if (renderer_preferences_.enable_do_not_track) {
-    request.SetHTTPHeaderField(blink::WebString::FromUTF8(kDoNotTrackHeader),
+    request.SetHttpHeaderField(blink::WebString::FromUTF8(kDoNotTrackHeader),
                                "1");
   }
   auto extra_data = std::make_unique<RequestExtraData>();
-  extra_data->set_service_worker_provider_id(service_worker_provider_id_);
   extra_data->set_originated_from_service_worker(true);
   extra_data->set_initiated_in_secure_context(true);
   if (throttle_provider_) {
@@ -110,7 +108,7 @@ void ServiceWorkerFetchContextImpl::WillSendRequest(
   request.SetExtraData(std::move(extra_data));
 
   if (!renderer_preferences_.enable_referrers) {
-    request.SetHTTPReferrer(blink::WebString(),
+    request.SetHttpReferrer(blink::WebString(),
                             network::mojom::ReferrerPolicy::kDefault);
   }
 }
@@ -128,20 +126,26 @@ blink::WebURL ServiceWorkerFetchContextImpl::SiteForCookies() const {
   return worker_script_url_;
 }
 
+base::Optional<blink::WebSecurityOrigin>
+ServiceWorkerFetchContextImpl::TopFrameOrigin() const {
+  return base::nullopt;
+}
+
 std::unique_ptr<blink::WebSocketHandshakeThrottle>
-ServiceWorkerFetchContextImpl::CreateWebSocketHandshakeThrottle() {
+ServiceWorkerFetchContextImpl::CreateWebSocketHandshakeThrottle(
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
   if (!websocket_handshake_throttle_provider_)
     return nullptr;
   return websocket_handshake_throttle_provider_->CreateThrottle(
-      MSG_ROUTING_NONE);
+      MSG_ROUTING_NONE, std::move(task_runner));
 }
 
 void ServiceWorkerFetchContextImpl::NotifyUpdate(
-    const RendererPreferences& new_prefs) {
+    blink::mojom::RendererPreferencesPtr new_prefs) {
   DCHECK(accept_languages_watcher_);
-  if (renderer_preferences_.accept_languages != new_prefs.accept_languages)
+  if (renderer_preferences_.accept_languages != new_prefs->accept_languages)
     accept_languages_watcher_->NotifyUpdate();
-  renderer_preferences_ = new_prefs;
+  renderer_preferences_ = *new_prefs;
 }
 
 blink::WebString ServiceWorkerFetchContextImpl::GetAcceptLanguages() const {

@@ -122,17 +122,14 @@ KeyboardLockInteractiveBrowserTest::~KeyboardLockInteractiveBrowserTest() =
 
 void KeyboardLockInteractiveBrowserTest::SetUpCommandLine(
     base::CommandLine* command_line) {
-  // Ensure the KeyboardLockAPI is enabled and system keyboard lock is disabled.
   // It is important to disable system keyboard lock as the low-level test
   // utility functions install a keyboard hook to listen for key events and the
   // keyboard lock hook can interfere with it.
-  scoped_feature_list_.InitWithFeatures({features::kKeyboardLockAPI},
-                                        {features::kSystemKeyboardLock});
+  scoped_feature_list_.InitWithFeatures({}, {features::kSystemKeyboardLock});
 }
 
 void KeyboardLockInteractiveBrowserTest::SetUpOnMainThread() {
-  GetEmbeddedTestServer()->AddDefaultHandlers(
-      base::FilePath(FILE_PATH_LITERAL("chrome/test/data")));
+  GetEmbeddedTestServer()->AddDefaultHandlers(GetChromeTestDataDir());
   ASSERT_TRUE(GetEmbeddedTestServer()->Start());
   FullscreenKeyboardBrowserTestBase::SetUpOnMainThread();
 }

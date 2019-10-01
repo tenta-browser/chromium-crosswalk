@@ -17,6 +17,7 @@ import org.chromium.chrome.browser.tabmodel.TabCreatorManager;
 import org.chromium.chrome.browser.tabmodel.TabLaunchType;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
+import org.chromium.chrome.browser.tasks.tab_management.GridTabSwitcher;
 import org.chromium.ui.resources.dynamics.DynamicResourceLoader;
 
 /**
@@ -29,10 +30,12 @@ public class LayoutManagerChromePhone extends LayoutManagerChrome {
 
     /**
      * Creates an instance of a {@link LayoutManagerChromePhone}.
-     * @param host            A {@link LayoutManagerHost} instance.
+     * @param host                A {@link LayoutManagerHost} instance.
+     * @param gridTabSwitcher An interface to talk to the Grid Tab Switcher. If it's NULL, VTS
+     *                        should be used, otherwise GTS should be used.
      */
-    public LayoutManagerChromePhone(LayoutManagerHost host) {
-        super(host, true);
+    public LayoutManagerChromePhone(LayoutManagerHost host, GridTabSwitcher gridTabSwitcher) {
+        super(host, true, gridTabSwitcher);
         Context context = host.getContext();
         LayoutRenderHost renderHost = host.getLayoutRenderHost();
 
@@ -49,11 +52,11 @@ public class LayoutManagerChromePhone extends LayoutManagerChrome {
             TabContentManager content, ViewGroup androidContentContainer,
             ContextualSearchManagementDelegate contextualSearchDelegate,
             DynamicResourceLoader dynamicResourceLoader) {
-        // Initialize Layouts
-        mSimpleAnimationLayout.setTabModelSelector(selector, content);
-
         super.init(selector, creator, content, androidContentContainer, contextualSearchDelegate,
                 dynamicResourceLoader);
+
+        // Initialize Layouts
+        mSimpleAnimationLayout.setTabModelSelector(selector, content);
     }
 
     @Override
@@ -108,7 +111,7 @@ public class LayoutManagerChromePhone extends LayoutManagerChrome {
         if (nextTab != null) nextTab.requestFocus();
         boolean animate = !tabRemoved && animationsEnabled();
         if (getActiveLayout() != overviewLayout && showOverview && !animate) {
-            startShowing(overviewLayout, false);
+            showOverview(false);
         }
     }
 

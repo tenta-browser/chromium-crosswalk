@@ -13,6 +13,7 @@
 #include "base/sequence_checker.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "components/invalidation/impl/channels_states.h"
 #include "components/invalidation/impl/per_user_topic_registration_request.h"
 #include "components/invalidation/public/identity_provider.h"
 #include "components/invalidation/public/invalidation_export.h"
@@ -46,7 +47,7 @@ class INVALIDATION_EXPORT PerUserTopicRegistrationManager {
   class Observer {
    public:
     virtual void OnSubscriptionChannelStateChanged(
-        InvalidatorState invalidator_state) = 0;
+        SubscriptionChannelState state) = 0;
   };
 
   PerUserTopicRegistrationManager(
@@ -54,13 +55,14 @@ class INVALIDATION_EXPORT PerUserTopicRegistrationManager {
       PrefService* local_state,
       network::mojom::URLLoaderFactory* url_loader_factory,
       const ParseJSONCallback& parse_json,
-      const std::string& project_id);
+      const std::string& project_id,
+      bool migrate_prefs);
 
   virtual ~PerUserTopicRegistrationManager();
 
   static void RegisterProfilePrefs(PrefRegistrySimple* registry);
 
-  virtual void UpdateRegisteredTopics(const TopicSet& ids,
+  virtual void UpdateRegisteredTopics(const Topics& ids,
                                       const std::string& token);
 
   virtual void Init();
@@ -71,11 +73,14 @@ class INVALIDATION_EXPORT PerUserTopicRegistrationManager {
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
 
-  std::unique_ptr<base::DictionaryValue> CollectDebugData() const;
+  base::DictionaryValue CollectDebugData() const;
 
   bool HaveAllRequestsFinishedForTest() const {
     return registration_statuses_.empty();
   }
+
+  virtual base::Optional<Topic> LookupRegisteredPublicTopicByPrivateTopic(
+      const std::string& private_topic) const;
 
  private:
   struct RegistrationEntry;
@@ -105,12 +110,14 @@ class INVALIDATION_EXPORT PerUserTopicRegistrationManager {
 
   void DropAllSavedRegistrationsOnTokenChange(
       const std::string& instance_id_token);
-  void NotifySubscriptionChannelStateChange(InvalidatorState invalidator_state);
+  void NotifySubscriptionChannelStateChange(
+      SubscriptionChannelState invalidator_state);
 
   std::map<Topic, std::unique_ptr<RegistrationEntry>> registration_statuses_;
 
   // For registered ids it maps the id value to the topic value.
   std::map<Topic, std::string> topic_to_private_topic_;
+  std::map<std::string, Topic> private_topic_to_topic_;
 
   // Token derrived from GCM IID.
   std::string token_;
@@ -129,9 +136,11 @@ class INVALIDATION_EXPORT PerUserTopicRegistrationManager {
   network::mojom::URLLoaderFactory* url_loader_factory_;
 
   const std::string project_id_;
+  const bool migrate_prefs_;
 
   base::ObserverList<Observer>::Unchecked observers_;
-  InvalidatorState last_issued_state_ = TRANSIENT_INVALIDATION_ERROR;
+  SubscriptionChannelState last_issued_state_ =
+      SubscriptionChannelState::NOT_STARTED;
 
   SEQUENCE_CHECKER(sequence_checker_);
 

@@ -8,7 +8,6 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
@@ -144,13 +143,14 @@ IqRequest::~IqRequest() {
 
 void IqRequest::SetTimeout(base::TimeDelta timeout) {
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE, base::Bind(&IqRequest::OnTimeout, weak_factory_.GetWeakPtr()),
+      FROM_HERE,
+      base::BindOnce(&IqRequest::OnTimeout, weak_factory_.GetWeakPtr()),
       timeout);
 }
 
 void IqRequest::CallCallback(const jingle_xmpp::XmlElement* stanza) {
   if (!callback_.is_null())
-    base::ResetAndReturn(&callback_).Run(this, stanza);
+    std::move(callback_).Run(this, stanza);
 }
 
 void IqRequest::OnTimeout() {
@@ -163,8 +163,8 @@ void IqRequest::OnResponse(const jingle_xmpp::XmlElement* stanza) {
   std::unique_ptr<jingle_xmpp::XmlElement> stanza_copy(new jingle_xmpp::XmlElement(*stanza));
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(&IqRequest::DeliverResponse, weak_factory_.GetWeakPtr(),
-                 base::Passed(&stanza_copy)));
+      base::BindOnce(&IqRequest::DeliverResponse, weak_factory_.GetWeakPtr(),
+                     std::move(stanza_copy)));
 }
 
 void IqRequest::DeliverResponse(std::unique_ptr<jingle_xmpp::XmlElement> stanza) {

@@ -6,7 +6,7 @@
 
 #include <stddef.h>
 
-#include "components/sync/base/cryptographer.h"
+#include "components/sync/nigori/cryptographer.h"
 
 namespace syncer {
 
@@ -113,9 +113,6 @@ void DebugInfoEventListener::OnPassphraseTypeChanged(
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   CreateAndAddEvent(sync_pb::SyncEnums::PASSPHRASE_TYPE_CHANGED);
 }
-
-void DebugInfoEventListener::OnLocalSetPassphraseEncryption(
-    const SyncEncryptionHandler::NigoriState& nigori_state) {}
 
 void DebugInfoEventListener::OnActionableError(
     const SyncProtocolError& sync_error) {

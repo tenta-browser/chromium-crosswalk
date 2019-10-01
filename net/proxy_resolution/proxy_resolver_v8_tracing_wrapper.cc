@@ -16,6 +16,7 @@
 #include "net/log/net_log_event_type.h"
 #include "net/log/net_log_parameters_callback.h"
 #include "net/log/net_log_with_source.h"
+#include "net/proxy_resolution/proxy_host_resolver.h"
 #include "net/proxy_resolution/proxy_resolver_error_observer.h"
 
 namespace net {
@@ -23,20 +24,19 @@ namespace net {
 namespace {
 
 // Returns event parameters for a PAC error message (line number + message).
-std::unique_ptr<base::Value> NetLogErrorCallback(
-    int line_number,
-    const base::string16* message,
-    NetLogCaptureMode /* capture_mode */) {
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-  dict->SetInteger("line_number", line_number);
-  dict->SetString("message", *message);
-  return std::move(dict);
+base::Value NetLogErrorCallback(int line_number,
+                                const base::string16* message,
+                                NetLogCaptureMode /* capture_mode */) {
+  base::Value dict(base::Value::Type::DICTIONARY);
+  dict.SetIntKey("line_number", line_number);
+  dict.SetStringKey("message", *message);
+  return dict;
 }
 
 class BindingsImpl : public ProxyResolverV8Tracing::Bindings {
  public:
   BindingsImpl(ProxyResolverErrorObserver* error_observer,
-               HostResolver* host_resolver,
+               ProxyHostResolver* host_resolver,
                NetLog* net_log,
                const NetLogWithSource& net_log_with_source)
       : error_observer_(error_observer),
@@ -61,7 +61,7 @@ class BindingsImpl : public ProxyResolverV8Tracing::Bindings {
       error_observer_->OnPACScriptError(line_number, message);
   }
 
-  HostResolver* GetHostResolver() override { return host_resolver_; }
+  ProxyHostResolver* GetHostResolver() override { return host_resolver_; }
 
   NetLogWithSource GetNetLogWithSource() override {
     return net_log_with_source_;
@@ -79,7 +79,7 @@ class BindingsImpl : public ProxyResolverV8Tracing::Bindings {
   }
 
   ProxyResolverErrorObserver* error_observer_;
-  HostResolver* host_resolver_;
+  ProxyHostResolver* host_resolver_;
   NetLog* net_log_;
   NetLogWithSource net_log_with_source_;
 };
@@ -89,7 +89,7 @@ class ProxyResolverV8TracingWrapper : public ProxyResolver {
   ProxyResolverV8TracingWrapper(
       std::unique_ptr<ProxyResolverV8Tracing> resolver_impl,
       NetLog* net_log,
-      HostResolver* host_resolver,
+      ProxyHostResolver* host_resolver,
       std::unique_ptr<ProxyResolverErrorObserver> error_observer);
 
   int GetProxyForURL(const GURL& url,
@@ -101,7 +101,7 @@ class ProxyResolverV8TracingWrapper : public ProxyResolver {
  private:
   std::unique_ptr<ProxyResolverV8Tracing> resolver_impl_;
   NetLog* net_log_;
-  HostResolver* host_resolver_;
+  ProxyHostResolver* host_resolver_;
   std::unique_ptr<ProxyResolverErrorObserver> error_observer_;
 
   DISALLOW_COPY_AND_ASSIGN(ProxyResolverV8TracingWrapper);
@@ -110,7 +110,7 @@ class ProxyResolverV8TracingWrapper : public ProxyResolver {
 ProxyResolverV8TracingWrapper::ProxyResolverV8TracingWrapper(
     std::unique_ptr<ProxyResolverV8Tracing> resolver_impl,
     NetLog* net_log,
-    HostResolver* host_resolver,
+    ProxyHostResolver* host_resolver,
     std::unique_ptr<ProxyResolverErrorObserver> error_observer)
     : resolver_impl_(std::move(resolver_impl)),
       net_log_(net_log),
@@ -133,7 +133,7 @@ int ProxyResolverV8TracingWrapper::GetProxyForURL(
 }  // namespace
 
 ProxyResolverFactoryV8TracingWrapper::ProxyResolverFactoryV8TracingWrapper(
-    HostResolver* host_resolver,
+    ProxyHostResolver* host_resolver,
     NetLog* net_log,
     const base::Callback<std::unique_ptr<ProxyResolverErrorObserver>()>&
         error_observer_factory)

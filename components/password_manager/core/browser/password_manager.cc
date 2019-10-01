@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <utility>
@@ -20,6 +21,7 @@
 #include "components/autofill/core/browser/form_structure.h"
 #include "components/autofill/core/common/form_data_predictions.h"
 #include "components/autofill/core/common/password_form_field_prediction_map.h"
+#include "components/autofill/core/common/save_password_progress_logger.h"
 #include "components/password_manager/core/browser/browser_save_password_progress_logger.h"
 #include "components/password_manager/core/browser/form_saver_impl.h"
 #include "components/password_manager/core/browser/keychain_migration_status_mac.h"
@@ -27,7 +29,7 @@
 #include "components/password_manager/core/browser/new_password_form_manager.h"
 #include "components/password_manager/core/browser/password_autofill_manager.h"
 #include "components/password_manager/core/browser/password_form_manager.h"
-#include "components/password_manager/core/browser/password_generation_manager.h"
+#include "components/password_manager/core/browser/password_generation_frame_helper.h"
 #include "components/password_manager/core/browser/password_manager_client.h"
 #include "components/password_manager/core/browser/password_manager_driver.h"
 #include "components/password_manager/core/browser/password_manager_metrics_util.h"
@@ -57,7 +59,7 @@ const char kSpdyProxyRealm[] = "/SpdyProxy";
 
 // Shorten the name to spare line breaks. The code provides enough context
 // already.
-typedef autofill::SavePasswordProgressLogger Logger;
+using Logger = autofill::SavePasswordProgressLogger;
 
 bool URLsEqualUpToScheme(const GURL& a, const GURL& b) {
   return (a.GetContent() == b.GetContent());
@@ -160,7 +162,8 @@ bool ServerPredictionsToPasswordFormPrediction(
 bool IsPredictedTypeNotPasswordPrediction(
     autofill::ServerFieldType field_type) {
   return field_type == autofill::CREDIT_CARD_NUMBER ||
-         field_type == autofill::CREDIT_CARD_VERIFICATION_CODE;
+         field_type == autofill::CREDIT_CARD_VERIFICATION_CODE ||
+         field_type == autofill::NOT_PASSWORD;
 }
 
 bool AreAllFieldsEmpty(const PasswordForm& form) {
@@ -327,11 +330,32 @@ void RecordParsingOnSavingDifference(
   metrics_recorder->RecordParsingOnSavingDifference(result);
 }
 
+bool IsNewFormParsingForFillingEnabled() {
+  return base::FeatureList::IsEnabled(features::kNewPasswordFormParsing);
+}
+
+bool IsNewFormParsingForSavingEnabled() {
+  return base::FeatureList::IsEnabled(
+             features::kNewPasswordFormParsingForSaving) &&
+         base::FeatureList::IsEnabled(features::kNewPasswordFormParsing);
+}
+
+// Returns true if it is turned off using PasswordFormManager in
+// PasswordManager.
+bool IsOnlyNewParserEnabled() {
+  return base::FeatureList::IsEnabled(
+             features::kNewPasswordFormParsingForSaving) &&
+         base::FeatureList::IsEnabled(features::kNewPasswordFormParsing) &&
+         base::FeatureList::IsEnabled(features::kOnlyNewParser);
+}
+
 }  // namespace
 
 // static
 void PasswordManager::RegisterProfilePrefs(
     user_prefs::PrefRegistrySyncable* registry) {
+  registry->RegisterBooleanPref(prefs::kBlacklistedCredentialsNormalized,
+                                false);
   registry->RegisterBooleanPref(
       prefs::kCredentialsEnableService, true,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PRIORITY_PREF);
@@ -371,23 +395,11 @@ void PasswordManager::RegisterLocalPrefs(PrefRegistrySimple* registry) {
 }
 
 PasswordManager::PasswordManager(PasswordManagerClient* client)
-    : client_(client),
-      is_new_form_parsing_for_saving_enabled_(
-          base::FeatureList::IsEnabled(
-              features::kNewPasswordFormParsingForSaving) &&
-          base::FeatureList::IsEnabled(features::kNewPasswordFormParsing)),
-      is_only_new_parser_enabled_(
-          base::FeatureList::IsEnabled(
-              features::kNewPasswordFormParsingForSaving) &&
-          base::FeatureList::IsEnabled(features::kNewPasswordFormParsing) &&
-          base::FeatureList::IsEnabled(features::kOnlyNewParser)) {
+    : client_(client) {
   DCHECK(client_);
 }
 
-PasswordManager::~PasswordManager() {
-  for (LoginModelObserver& observer : observers_)
-    observer.OnLoginModelDestroying();
-}
+PasswordManager::~PasswordManager() = default;
 
 void PasswordManager::GenerationAvailableForForm(const PasswordForm& form) {
   DCHECK(client_->IsSavingAndFillingEnabled(form.origin));
@@ -403,14 +415,10 @@ void PasswordManager::OnPresaveGeneratedPassword(PasswordManagerDriver* driver,
                                                  const PasswordForm& form) {
   DCHECK(client_->IsSavingAndFillingEnabled(form.origin));
   PasswordFormManagerInterface* form_manager = GetMatchedManager(driver, form);
-  if (form_manager) {
+  UMA_HISTOGRAM_BOOLEAN("PasswordManager.GeneratedFormHasNoFormManager",
+                        !form_manager);
+  if (form_manager)
     form_manager->PresaveGeneratedPassword(form);
-    UMA_HISTOGRAM_BOOLEAN("PasswordManager.GeneratedFormHasNoFormManager",
-                          false);
-    return;
-  }
-
-  UMA_HISTOGRAM_BOOLEAN("PasswordManager.GeneratedFormHasNoFormManager", true);
 }
 
 void PasswordManager::OnPasswordNoLongerGenerated(PasswordManagerDriver* driver,
@@ -439,7 +447,7 @@ void PasswordManager::SetGenerationElementAndReasonForForm(
   // If there is no corresponding PasswordFormManager, we create one. This is
   // not the common case, and should only happen when there is a bug in our
   // ability to detect forms. No matched |NewPasswordFormManager| is unlikely.
-  if (!is_new_form_parsing_for_saving_enabled_) {
+  if (!IsNewFormParsingForSavingEnabled()) {
     auto manager = std::make_unique<PasswordFormManager>(
         this, client_, driver->AsWeakPtr(), form,
         std::make_unique<FormSaverImpl>(client_->GetPasswordStore()), nullptr);
@@ -450,7 +458,10 @@ void PasswordManager::SetGenerationElementAndReasonForForm(
 
 void PasswordManager::ProvisionallySavePassword(
     const PasswordForm& form,
-    const password_manager::PasswordManagerDriver* driver) {
+    const PasswordManagerDriver* driver) {
+  if (IsOnlyNewParserEnabled())
+    return;
+
   // If the form was declined by some heuristics, don't show automatic bubble
   // for it, only fallback saving should be available.
   if (form.only_for_fallback)
@@ -479,7 +490,8 @@ void PasswordManager::ProvisionallySavePassword(
     return;
   }
 
-  bool should_block = ShouldBlockPasswordForSameOriginButDifferentScheme(form);
+  bool should_block =
+      ShouldBlockPasswordForSameOriginButDifferentScheme(form.origin);
   metrics_util::LogShouldBlockPasswordForSameOriginButDifferentScheme(
       should_block);
   if (should_block) {
@@ -517,42 +529,30 @@ void PasswordManager::ProvisionallySavePassword(
   // cached and report the difference through UMA.
   main_frame_url_ = client_->GetMainFrameURL();
 
-  // Report SubmittedFormFrame metric.
-  if (driver) {
-    metrics_util::SubmittedFormFrame frame;
-    if (driver->IsMainFrame()) {
-      frame = metrics_util::SubmittedFormFrame::MAIN_FRAME;
-    } else if (form.origin == main_frame_url_) {
-      frame =
-          metrics_util::SubmittedFormFrame::IFRAME_WITH_SAME_URL_AS_MAIN_FRAME;
-    } else {
-      GURL::Replacements rep;
-      rep.SetPathStr("");
-      std::string main_frame_signon_realm =
-          main_frame_url_.ReplaceComponents(rep).spec();
-      frame =
-          (main_frame_signon_realm == form.signon_realm)
-              ? metrics_util::SubmittedFormFrame::
-                    IFRAME_WITH_DIFFERENT_URL_SAME_SIGNON_REALM_AS_MAIN_FRAME
-              : metrics_util::SubmittedFormFrame::
-                    IFRAME_WITH_DIFFERENT_SIGNON_REALM;
-    }
-    metrics_util::LogSubmittedFormFrame(frame);
-  }
+  ReportSubmittedFormFrameMetric(driver, form);
 }
 
 void PasswordManager::DidNavigateMainFrame(bool form_may_be_submitted) {
   pending_login_managers_.clear();
 
-  if (form_may_be_submitted) {
-    for (std::unique_ptr<NewPasswordFormManager>& manager : form_managers_) {
-      if (manager->is_submitted()) {
-        owned_submitted_form_manager_ = std::move(manager);
-        break;
-      }
+  if (client_->IsNewTabPage()) {
+    // On a successful Chrome sign-in the page navigates to the new tab page
+    // (ntp). OnPasswordFormsRendered is not called on ntp. That is why the
+    // standard flow for saving hash does not work. Save a password hash now
+    // since a navigation to ntp is the sign of successful sign-in.
+    PasswordFormManagerInterface* manager = GetSubmittedManager();
+    if (manager &&
+        manager->GetSubmittedForm()->is_gaia_with_skip_save_password_form) {
+      MaybeSavePasswordHash(*manager);
     }
   }
 
+  for (std::unique_ptr<NewPasswordFormManager>& manager : form_managers_) {
+    if (form_may_be_submitted && manager->is_submitted()) {
+      owned_submitted_form_manager_ = std::move(manager);
+      break;
+    }
+  }
   form_managers_.clear();
   predictions_.clear();
   store_password_called_ = false;
@@ -608,35 +608,19 @@ void PasswordManager::DropFormManagers() {
 }
 
 bool PasswordManager::IsPasswordFieldDetectedOnPage() {
-  return !pending_login_managers_.empty();
-}
-
-void PasswordManager::AddObserverAndDeliverCredentials(
-    LoginModelObserver* observer,
-    const PasswordForm& observed_form) {
-  observers_.AddObserver(observer);
-
-  // The observers are responsible for filtering notifications by the observer
-  // signon_realm. Each notification is broadcasted to every observer.
-  observer->set_signon_realm(observed_form.signon_realm);
-
-  std::vector<PasswordForm> observed_forms;
-  observed_forms.push_back(observed_form);
-  OnPasswordFormsParsed(nullptr, observed_forms);
-}
-
-void PasswordManager::RemoveObserver(LoginModelObserver* observer) {
-  observers_.RemoveObserver(observer);
+  return !pending_login_managers_.empty() || !form_managers_.empty();
 }
 
 void PasswordManager::OnPasswordFormSubmitted(
     password_manager::PasswordManagerDriver* driver,
     const PasswordForm& password_form) {
-  if (is_new_form_parsing_for_saving_enabled_)
-    ProvisionallySaveForm(password_form.form_data, driver);
+  if (IsNewFormParsingForSavingEnabled())
+    ProvisionallySaveForm(password_form.form_data, driver, false,
+                          password_form.is_gaia_with_skip_save_password_form);
 
   ProvisionallySavePassword(password_form, driver);
 }
+
 
 void PasswordManager::OnPasswordFormSubmittedNoChecks(
     password_manager::PasswordManagerDriver* driver,
@@ -656,8 +640,10 @@ void PasswordManager::OnPasswordFormSubmittedNoChecks(
     return;
   }
 
-  if (is_new_form_parsing_for_saving_enabled_)
-    ProvisionallySaveForm(password_form.form_data, driver);
+  if (IsNewFormParsingForSavingEnabled()) {
+    ProvisionallySaveForm(password_form.form_data, driver, false,
+                          password_form.is_gaia_with_skip_save_password_form);
+  }
 
   ProvisionallySavePassword(password_form, driver);
 
@@ -670,14 +656,16 @@ void PasswordManager::ShowManualFallbackForSaving(
     const PasswordForm& password_form) {
   if (!client_->GetPasswordStore()->IsAbleToSavePasswords() ||
       !client_->IsSavingAndFillingEnabled(password_form.origin) ||
-      ShouldBlockPasswordForSameOriginButDifferentScheme(password_form) ||
+      ShouldBlockPasswordForSameOriginButDifferentScheme(
+          password_form.origin) ||
       !client_->GetStoreResultFilter()->ShouldSave(password_form))
     return;
 
-  std::unique_ptr<PasswordFormManagerInterface> manager = nullptr;
-  if (is_new_form_parsing_for_saving_enabled_) {
-    NewPasswordFormManager* matched_manager =
-        ProvisionallySaveForm(password_form.form_data, driver);
+  std::unique_ptr<PasswordFormManagerInterface> manager;
+  if (IsNewFormParsingForSavingEnabled()) {
+    NewPasswordFormManager* matched_manager = ProvisionallySaveForm(
+        password_form.form_data, driver, true,
+        password_form.is_gaia_with_skip_save_password_form);
     manager = matched_manager ? matched_manager->Clone() : nullptr;
   } else {
     manager = FindAndCloneMatchedPasswordFormManager(
@@ -714,8 +702,8 @@ void PasswordManager::OnPasswordFormsParsed(
     const std::vector<PasswordForm>& forms) {
   CreatePendingLoginManagers(driver, forms);
 
-  PasswordGenerationManager* password_generation_manager =
-      driver ? driver->GetPasswordGenerationManager() : nullptr;
+  PasswordGenerationFrameHelper* password_generation_manager =
+      driver ? driver->GetPasswordGenerationHelper() : nullptr;
   if (password_generation_manager) {
     password_generation_manager->PrefetchSpec(
         client_->GetLastCommittedEntryURL().GetOrigin());
@@ -732,9 +720,8 @@ void PasswordManager::CreatePendingLoginManagers(
     logger->LogMessage(Logger::STRING_CREATE_LOGIN_MANAGERS_METHOD);
   }
 
-  if (base::FeatureList::IsEnabled(features::kNewPasswordFormParsing)) {
+  if (IsNewFormParsingForFillingEnabled())
     CreateFormManagers(driver, forms);
-  }
 
   // Record whether or not this top-level URL has at least one password field.
   client_->AnnotateNavigationEntry(!forms.empty());
@@ -768,14 +755,7 @@ void PasswordManager::CreatePendingLoginManagers(
                       pending_login_managers_.size());
   }
 
-  bool html_scheme =
-      !forms.empty() && forms[0].scheme == PasswordForm::SCHEME_HTML;
-
-  // Create PasswordFormManager for non-html scheme even if
-  // |is_only_new_parser_enabled_|.
-  // TODO(https://crbug.com/915161) Implement support of non-html schemes in
-  // NewPasswordFormManager.
-  if (html_scheme && is_only_new_parser_enabled_)
+  if (IsOnlyNewParserEnabled())
     return;
 
   for (const PasswordForm& form : forms) {
@@ -844,6 +824,7 @@ void PasswordManager::CreateFormManagers(
       continue;
     if (!client_->IsFillingEnabled(form.origin))
       continue;
+
     NewPasswordFormManager* manager =
         FindMatchedManager(form.form_data, form_managers_, driver);
 
@@ -880,15 +861,18 @@ NewPasswordFormManager* PasswordManager::CreateFormManager(
 
 NewPasswordFormManager* PasswordManager::ProvisionallySaveForm(
     const FormData& submitted_form,
-    PasswordManagerDriver* driver) {
+    PasswordManagerDriver* driver,
+    bool is_manual_fallback,
+    bool is_gaia_with_skip_save_password_form) {
   std::unique_ptr<BrowserSavePasswordProgressLogger> logger;
   if (password_manager_util::IsLoggingActive(client_)) {
     logger.reset(
         new BrowserSavePasswordProgressLogger(client_->GetLogManager()));
+    logger->LogMessage(Logger::STRING_PROVISIONALLY_SAVE_FORM_METHOD);
   }
-  if (!client_->IsSavingAndFillingEnabled(submitted_form.origin)) {
+  if (!client_->IsSavingAndFillingEnabled(submitted_form.url)) {
     RecordProvisionalSaveFailure(
-        PasswordManagerMetricsRecorder::SAVING_DISABLED, submitted_form.origin,
+        PasswordManagerMetricsRecorder::SAVING_DISABLED, submitted_form.url,
         logger.get());
     return nullptr;
   }
@@ -900,8 +884,17 @@ NewPasswordFormManager* PasswordManager::ProvisionallySaveForm(
   // PasswordToSave in NewPasswordFormManager DCHECKs that the password is never
   // empty.
 
-  // TODO(https://crbug.com/831123): Add the
-  // ShouldBlockPasswordForSameOriginButDifferentScheme check.
+  const GURL& origin = submitted_form.url;
+  bool should_block =
+      ShouldBlockPasswordForSameOriginButDifferentScheme(origin);
+  metrics_util::LogShouldBlockPasswordForSameOriginButDifferentScheme(
+      should_block);
+  if (should_block) {
+    RecordProvisionalSaveFailure(
+        PasswordManagerMetricsRecorder::SAVING_ON_HTTP_AFTER_HTTPS, origin,
+        logger.get());
+    return nullptr;
+  }
 
   NewPasswordFormManager* matched_manager =
       GetMatchedManager(driver, submitted_form);
@@ -916,12 +909,19 @@ NewPasswordFormManager* PasswordManager::ProvisionallySaveForm(
 
   if (!matched_manager) {
     RecordProvisionalSaveFailure(
-        PasswordManagerMetricsRecorder::NO_MATCHING_FORM, submitted_form.origin,
+        PasswordManagerMetricsRecorder::NO_MATCHING_FORM, submitted_form.url,
         logger.get());
     matched_manager = CreateFormManager(driver, submitted_form);
   }
 
-  if (!matched_manager->ProvisionallySave(submitted_form, driver))
+  if (is_manual_fallback && matched_manager->GetFormFetcher()->GetState() ==
+                                FormFetcher::State::WAITING) {
+    // In case of manual fallback, the form manager has to be ready for saving.
+    return nullptr;
+  }
+
+  if (!matched_manager->ProvisionallySave(submitted_form, driver,
+                                          is_gaia_with_skip_save_password_form))
     return nullptr;
 
   // Set all other form managers to no submission state.
@@ -929,6 +929,13 @@ NewPasswordFormManager* PasswordManager::ProvisionallySaveForm(
     if (manager.get() != matched_manager)
       manager->set_not_submitted();
   }
+
+  // Cache the user-visible URL (i.e., the one seen in the omnibox). Once the
+  // post-submit navigation concludes, we compare the landing URL against the
+  // cached and report the difference through UMA.
+  main_frame_url_ = client_->GetMainFrameURL();
+
+  ReportSubmittedFormFrameMetric(driver, *matched_manager->GetSubmittedForm());
 
   return matched_manager;
 }
@@ -957,6 +964,43 @@ void PasswordManager::NotifyStorePasswordCalled() {
   store_password_called_ = true;
   DropFormManagers();
 }
+
+#if defined(OS_IOS)
+void PasswordManager::PresaveGeneratedPassword(
+    PasswordManagerDriver* driver,
+    const FormData& form,
+    const base::string16& generated_password,
+    const base::string16& generation_element) {
+  NewPasswordFormManager* form_manager =
+      FindMatchedManager(form, form_managers_, driver);
+  UMA_HISTOGRAM_BOOLEAN("PasswordManager.GeneratedFormHasNoFormManager",
+                        !form_manager);
+
+  // TODO(https://crbug.com/886583): Create form manager if not found.
+  if (form_manager) {
+    form_manager->PresaveGeneratedPassword(driver, form, generated_password,
+                                           generation_element);
+  }
+}
+
+void PasswordManager::UpdateGeneratedPasswordOnUserInput(
+    const base::string16& form_identifier,
+    const base::string16& field_identifier,
+    const base::string16& field_value) {
+  for (std::unique_ptr<NewPasswordFormManager>& manager : form_managers_) {
+    if (manager->UpdateGeneratedPasswordOnUserInput(
+            form_identifier, field_identifier, field_value)) {
+      break;
+    }
+  }
+}
+
+void PasswordManager::OnPasswordNoLongerGenerated(
+    PasswordManagerDriver* driver) {
+  for (std::unique_ptr<NewPasswordFormManager>& manager : form_managers_)
+    manager->PasswordNoLongerGenerated();
+}
+#endif
 
 void PasswordManager::ProvisionallySaveManager(
     const PasswordForm& form,
@@ -1006,12 +1050,10 @@ bool PasswordManager::IsAutomaticSavePromptAvailable() {
 }
 
 bool PasswordManager::ShouldBlockPasswordForSameOriginButDifferentScheme(
-    const PasswordForm& form) const {
+    const GURL& origin) const {
   const GURL& old_origin = main_frame_url_.GetOrigin();
-  const GURL& new_origin = form.origin.GetOrigin();
-  return old_origin.host_piece() == new_origin.host_piece() &&
-         old_origin.SchemeIsCryptographic() &&
-         !new_origin.SchemeIsCryptographic();
+  return old_origin.host_piece() == origin.host_piece() &&
+         old_origin.SchemeIsCryptographic() && !origin.SchemeIsCryptographic();
 }
 
 void PasswordManager::OnPasswordFormsRendered(
@@ -1052,12 +1094,18 @@ void PasswordManager::OnPasswordFormsRendered(
                             visible_forms.begin(),
                             visible_forms.end());
 
-  if (!did_stop_loading)
+  if (!did_stop_loading && !submitted_manager->GetSubmittedForm()
+                                ->is_gaia_with_skip_save_password_form) {
+    // |is_gaia_with_skip_save_password_form| = true means that this is a Chrome
+    // sign-in page. Chrome sign-in pages are redirected to an empty pages, and
+    // for some reasons |did_stop_loading| might be false. So |did_stop_loading|
+    // is ignored for them.
     return;
+  }
 
   // If we see the login form again, then the login failed.
   if (submitted_manager->GetPendingCredentials().scheme ==
-      PasswordForm::SCHEME_HTML) {
+      PasswordForm::Scheme::kHtml) {
     for (const PasswordForm& form : all_visible_forms_) {
       if (IsPasswordFormReappeared(
               form, submitted_manager->GetPendingCredentials())) {
@@ -1078,19 +1126,19 @@ void PasswordManager::OnPasswordFormsRendered(
         return;
       }
     }
-    } else {
-      if (logger)
-        logger->LogMessage(Logger::STRING_PROVISIONALLY_SAVED_FORM_IS_NOT_HTML);
-    }
+  } else {
+    if (logger)
+      logger->LogMessage(Logger::STRING_PROVISIONALLY_SAVED_FORM_IS_NOT_HTML);
+  }
 
-    // Clear all_visible_forms_ after checking all the visible forms.
-    all_visible_forms_.clear();
+  // Clear all_visible_forms_ after checking all the visible forms.
+  all_visible_forms_.clear();
 
-    // Looks like a successful login attempt. Either show an infobar or
-    // automatically save the login data. We prompt when the user hasn't
-    // already given consent, either through previously accepting the infobar
-    // or by having the browser generate the password.
-    OnLoginSuccessful();
+  // Looks like a successful login attempt. Either show an infobar or
+  // automatically save the login data. We prompt when the user hasn't
+  // already given consent, either through previously accepting the infobar
+  // or by having the browser generate the password.
+  OnLoginSuccessful();
 }
 
 void PasswordManager::OnLoginSuccessful() {
@@ -1146,7 +1194,7 @@ void PasswordManager::OnLoginSuccessful() {
 
   // TODO(https://crbug.com/831123): Remove logging when the old form parsing is
   // removed.
-  if (is_new_form_parsing_for_saving_enabled_) {
+  if (IsNewFormParsingForSavingEnabled()) {
     // In this case, |submitted_manager| points to a NewPasswordFormManager and
     // |provisional_save_manager_| to a PasswordFormManager. They use the new
     // and the old FormData parser, respectively. Log the differences using UKM
@@ -1159,10 +1207,10 @@ void PasswordManager::OnLoginSuccessful() {
   }
 
   if (ShouldPromptUserToSavePassword(*submitted_manager)) {
-    bool empty_password =
+    bool empty_username =
         submitted_manager->GetPendingCredentials().username_value.empty();
     UMA_HISTOGRAM_BOOLEAN("PasswordManager.EmptyUsernames.OfferedToSave",
-                          empty_password);
+                          empty_username);
     if (logger)
       logger->LogMessage(Logger::STRING_DECISION_ASK);
     bool update_password = submitted_manager->IsPasswordUpdate();
@@ -1181,13 +1229,11 @@ void PasswordManager::OnLoginSuccessful() {
           submitted_manager->GetPendingCredentials());
     }
 
-    if (submitted_manager->HasGeneratedPassword()) {
+    if (submitted_manager->HasGeneratedPassword())
       client_->AutomaticPasswordSave(MoveOwnedSubmittedManager());
-    } else {
-      provisional_save_manager_.reset();
-      owned_submitted_form_manager_.reset();
-    }
   }
+  provisional_save_manager_.reset();
+  owned_submitted_form_manager_.reset();
 }
 
 void PasswordManager::MaybeSavePasswordHash(
@@ -1242,27 +1288,6 @@ void PasswordManager::MaybeSavePasswordHash(
 #endif
 }
 
-void PasswordManager::AutofillHttpAuth(
-    const std::map<base::string16, const PasswordForm*>& best_matches,
-    const PasswordForm& preferred_match) const {
-  DCHECK_NE(PasswordForm::SCHEME_HTML, preferred_match.scheme);
-
-  std::unique_ptr<BrowserSavePasswordProgressLogger> logger;
-  if (password_manager_util::IsLoggingActive(client_)) {
-    logger.reset(
-        new BrowserSavePasswordProgressLogger(client_->GetLogManager()));
-    logger->LogMessage(Logger::STRING_PASSWORDMANAGER_AUTOFILLHTTPAUTH);
-    logger->LogBoolean(Logger::STRING_LOGINMODELOBSERVER_PRESENT,
-                       observers_.might_have_observers());
-  }
-
-  for (LoginModelObserver& observer : observers_)
-    observer.OnAutofillDataAvailable(preferred_match);
-  DCHECK(!best_matches.empty());
-  client_->PasswordWasAutofilled(best_matches,
-                                 best_matches.begin()->second->origin, nullptr);
-}
-
 void PasswordManager::ProcessAutofillPredictions(
     password_manager::PasswordManagerDriver* driver,
     const std::vector<autofill::FormStructure*>& forms) {
@@ -1271,8 +1296,7 @@ void PasswordManager::ProcessAutofillPredictions(
     logger.reset(
         new BrowserSavePasswordProgressLogger(client_->GetLogManager()));
 
-  if (base::FeatureList::IsEnabled(
-          password_manager::features::kNewPasswordFormParsing)) {
+  if (IsNewFormParsingForFillingEnabled()) {
     for (const autofill::FormStructure* form : forms)
       predictions_[form->form_signature()] = ConvertToFormPredictions(*form);
     for (auto& manager : form_managers_)
@@ -1302,7 +1326,13 @@ void PasswordManager::ProcessAutofillPredictions(
   }
   if (predictions.empty())
     return;
-  driver->AutofillDataReceived(predictions);
+
+  if (driver) {
+    // |driver_| is nullptr on iOS.
+    // TODO(https://crbug.com/831123): Remove propagating predictions to the
+    // renderer when the old parser is gone.
+    driver->AutofillDataReceived(predictions);
+  }
 }
 
 PasswordFormManager* PasswordManager::GetMatchingPendingManager(
@@ -1341,14 +1371,7 @@ PasswordFormManager* PasswordManager::GetMatchingPendingManager(
 }
 
 PasswordFormManagerInterface* PasswordManager::GetSubmittedManager() const {
-  // TODO(https://crbug.com/915161) Implement support of non-html schemes in
-  // NewPasswordFormManager remove using PasswordFormManager for such forms.
-  if (provisional_save_manager_ &&
-      provisional_save_manager_->GetPendingCredentials().scheme !=
-          PasswordForm::SCHEME_HTML)
-    return provisional_save_manager_.get();
-
-  if (!is_new_form_parsing_for_saving_enabled_)
+  if (!IsNewFormParsingForSavingEnabled())
     return provisional_save_manager_.get();
 
   if (owned_submitted_form_manager_)
@@ -1365,14 +1388,7 @@ PasswordFormManagerInterface* PasswordManager::GetSubmittedManager() const {
 
 std::unique_ptr<PasswordFormManagerForUI>
 PasswordManager::MoveOwnedSubmittedManager() {
-  // TODO(https://crbug.com/915161) Implement support of non-html schemes in
-  // NewPasswordFormManager remove using PasswordFormManager for such forms.
-  if (provisional_save_manager_ &&
-      provisional_save_manager_->GetPendingCredentials().scheme !=
-          PasswordForm::SCHEME_HTML)
-    return std::move(provisional_save_manager_);
-
-  if (!is_new_form_parsing_for_saving_enabled_)
+  if (!IsNewFormParsingForSavingEnabled())
     return std::move(provisional_save_manager_);
 
   if (owned_submitted_form_manager_)
@@ -1415,7 +1431,7 @@ PasswordManager::GetMetricRecorderFromNewPasswordFormManager(
 PasswordFormManagerInterface* PasswordManager::GetMatchedManager(
     const PasswordManagerDriver* driver,
     const PasswordForm& form) {
-  if (!is_new_form_parsing_for_saving_enabled_)
+  if (!IsNewFormParsingForSavingEnabled())
     return GetMatchingPendingManager(form);
 
   return GetMatchedManager(driver, form.form_data);
@@ -1429,6 +1445,31 @@ NewPasswordFormManager* PasswordManager::GetMatchedManager(
       return form_manager.get();
   }
   return nullptr;
+}
+
+void PasswordManager::ReportSubmittedFormFrameMetric(
+    const PasswordManagerDriver* driver,
+    const PasswordForm& form) {
+  if (!driver)
+    return;
+  metrics_util::SubmittedFormFrame frame;
+  if (driver->IsMainFrame()) {
+    frame = metrics_util::SubmittedFormFrame::MAIN_FRAME;
+  } else if (form.origin == main_frame_url_) {
+    frame =
+        metrics_util::SubmittedFormFrame::IFRAME_WITH_SAME_URL_AS_MAIN_FRAME;
+  } else {
+    GURL::Replacements rep;
+    rep.SetPathStr("");
+    std::string main_frame_signon_realm =
+        main_frame_url_.ReplaceComponents(rep).spec();
+    frame = (main_frame_signon_realm == form.signon_realm)
+                ? metrics_util::SubmittedFormFrame::
+                      IFRAME_WITH_DIFFERENT_URL_SAME_SIGNON_REALM_AS_MAIN_FRAME
+                : metrics_util::SubmittedFormFrame::
+                      IFRAME_WITH_DIFFERENT_SIGNON_REALM;
+  }
+  metrics_util::LogSubmittedFormFrame(frame);
 }
 
 }  // namespace password_manager

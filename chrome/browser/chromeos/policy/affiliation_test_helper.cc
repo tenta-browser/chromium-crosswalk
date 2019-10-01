@@ -20,13 +20,14 @@
 #include "chrome/browser/chromeos/policy/device_cloud_policy_store_chromeos.h"
 #include "chrome/browser/chromeos/policy/device_policy_builder.h"
 #include "chrome/browser/chromeos/policy/device_policy_cros_browser_test.h"
+#include "chrome/common/chrome_paths.h"
 #include "chromeos/constants/chromeos_switches.h"
 #include "chromeos/cryptohome/cryptohome_parameters.h"
+#include "chromeos/dbus/auth_policy/fake_auth_policy_client.h"
 #include "chromeos/dbus/constants/dbus_paths.h"
-#include "chromeos/dbus/cryptohome_client.h"
-#include "chromeos/dbus/fake_auth_policy_client.h"
-#include "chromeos/dbus/fake_session_manager_client.h"
-#include "chromeos/dbus/session_manager_client.h"
+#include "chromeos/dbus/cryptohome/cryptohome_client.h"
+#include "chromeos/dbus/session_manager/fake_session_manager_client.h"
+#include "chromeos/dbus/session_manager/session_manager_client.h"
 #include "chromeos/login/auth/key.h"
 #include "chromeos/login/auth/user_context.h"
 #include "components/account_id/account_id.h"
@@ -48,6 +49,10 @@ namespace {
 
 // Creates policy key file for the user specified in |user_policy|.
 void SetUserKeys(const policy::UserPolicyBuilder& user_policy) {
+  base::FilePath user_data_dir;
+  if (base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir))
+    chromeos::dbus_paths::RegisterStubPathOverrides(user_data_dir);
+
   const AccountId account_id =
       AccountId::FromUserEmail(user_policy.policy_data().username());
   base::FilePath user_keys_dir;
@@ -100,7 +105,9 @@ AffiliationTestHelper::AffiliationTestHelper(
     chromeos::FakeAuthPolicyClient* fake_auth_policy_client)
     : management_type_(management_type),
       fake_session_manager_client_(fake_session_manager_client),
-      fake_auth_policy_client_(fake_auth_policy_client) {}
+      fake_auth_policy_client_(fake_auth_policy_client) {
+  DCHECK(fake_session_manager_client);
+}
 
 void AffiliationTestHelper::CheckPreconditions() {
   ASSERT_TRUE(fake_session_manager_client_);
@@ -121,8 +128,6 @@ void AffiliationTestHelper::SetDeviceAffiliationIDs(
   if (management_type_ != ManagementType::kActiveDirectory) {
     // Create keys and sign policy. Note that Active Directory policy is
     // unsigned.
-    test_helper->InstallOwnerKey();
-    test_helper->MarkAsEnterpriseOwned();
     device_policy->SetDefaultSigningKey();
   }
   device_policy->Build();
@@ -169,7 +174,7 @@ void AffiliationTestHelper::PreLoginUser(const AccountId& account_id) {
   users_pref->AppendIfNotPresent(
       std::make_unique<base::Value>(account_id.GetUserEmail()));
   if (user_manager::UserManager::IsInitialized())
-    user_manager::known_user::SetProfileEverInitialized(account_id, false);
+    user_manager::known_user::SaveKnownUser(account_id);
 
   chromeos::StartupUtils::MarkOobeCompleted();
 }

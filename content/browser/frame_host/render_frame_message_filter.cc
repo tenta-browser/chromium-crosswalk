@@ -9,8 +9,10 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/debug/alias.h"
+#include "base/feature_list.h"
 #include "base/macros.h"
 #include "base/strings/string_util.h"
 #include "base/syslog_logging.h"
@@ -21,6 +23,7 @@
 #include "content/browser/bad_message.h"
 #include "content/browser/blob_storage/chrome_blob_storage_context.h"
 #include "content/browser/child_process_security_policy_impl.h"
+#include "content/browser/frame_host/ipc_utils.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
 #include "content/browser/gpu/gpu_data_manager_impl.h"
 #include "content/browser/renderer_host/render_widget_helper.h"
@@ -36,13 +39,14 @@
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/common/content_constants.h"
+#include "content/public/common/content_features.h"
 #include "gpu/GLES2/gl2extchromium.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
 #include "mojo/public/cpp/system/message_pipe.h"
-#include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_options.h"
 #include "net/cookies/cookie_store.h"
+#include "net/cookies/cookie_util.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
@@ -52,6 +56,7 @@
 #include "storage/browser/blob/blob_storage_context.h"
 #include "third_party/blink/public/common/frame/frame_owner_element_type.h"
 #include "third_party/blink/public/common/frame/frame_policy.h"
+#include "third_party/blink/public/mojom/web_feature/web_feature.mojom.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -194,6 +199,74 @@ class RenderMessageCompletionCallback {
   IPC::Message* reply_msg_;
 };
 
+// Send deprecation messages to the console about cookies that would be excluded
+// due to either SameSiteByDefaultCookies or CookiesWithoutSameSiteMustBeSecure.
+// TODO(crbug.com/977040): Remove when no longer needed.
+void SendDeprecationMessagesForSameSiteCookiesOnUI(
+    int render_process_id,
+    int render_frame_id,
+    const GURL& url,
+    net::CookieStatusList deprecated_cookies) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  RenderFrameHostImpl* render_frame_host =
+      RenderFrameHostImpl::FromID(render_process_id, render_frame_id);
+  if (!render_frame_host)
+    return;
+
+  // Return early if the frame has already been navigated away from.
+  content::WebContents* web_contents =
+      content::WebContents::FromRenderFrameHost(render_frame_host);
+
+  // |web_contents| will be null on interstitial pages, which means
+  // the frame has been navigated away from and it's safe to return early
+  if (!web_contents)
+    return;
+
+  RenderFrameHostImpl* root_frame_host = render_frame_host;
+  while (root_frame_host->GetParent() != nullptr)
+    root_frame_host = root_frame_host->GetParent();
+  if (root_frame_host != web_contents->GetMainFrame())
+    return;
+
+  bool log_unspecified_treated_as_lax_metric = false;
+  bool log_none_insecure_metric = false;
+
+  bool emit_messages =
+      base::FeatureList::IsEnabled(features::kCookieDeprecationMessages);
+
+  for (const auto& cookie_with_status : deprecated_cookies) {
+    std::string cookie_url = net::cookie_util::CookieOriginToURL(
+                                 cookie_with_status.cookie.Domain(),
+                                 cookie_with_status.cookie.IsSecure())
+                                 .possibly_invalid_spec();
+    if (cookie_with_status.status ==
+        net::CanonicalCookie::CookieInclusionStatus::
+            EXCLUDE_SAMESITE_UNSPECIFIED_TREATED_AS_LAX) {
+      log_unspecified_treated_as_lax_metric = true;
+    }
+    if (cookie_with_status.status ==
+        net::CanonicalCookie::CookieInclusionStatus::
+            EXCLUDE_SAMESITE_NONE_INSECURE) {
+      log_none_insecure_metric = true;
+    }
+
+    if (emit_messages) {
+      root_frame_host->AddSameSiteCookieDeprecationMessage(
+          cookie_url, cookie_with_status.status);
+    }
+  }
+
+  if (log_unspecified_treated_as_lax_metric) {
+    GetContentClient()->browser()->LogWebFeatureForCurrentPage(
+        render_frame_host, blink::mojom::WebFeature::kCookieNoSameSite);
+  }
+  if (log_none_insecure_metric) {
+    GetContentClient()->browser()->LogWebFeatureForCurrentPage(
+        render_frame_host,
+        blink::mojom::WebFeature::kCookieInsecureAndSameSiteNone);
+  }
+}
+
 }  // namespace
 
 #if BUILDFLAG(ENABLE_PLUGINS)
@@ -326,8 +399,6 @@ bool RenderFrameMessageFilter::OnMessageReceived(const IPC::Message& message) {
     IPC_MESSAGE_HANDLER(FrameHostMsg_SaveImageFromDataURL,
                         OnSaveImageFromDataURL)
     IPC_MESSAGE_HANDLER(FrameHostMsg_Are3DAPIsBlocked, OnAre3DAPIsBlocked)
-    IPC_MESSAGE_HANDLER_GENERIC(FrameHostMsg_RenderProcessGone,
-                                OnRenderProcessGone())
 #if BUILDFLAG(ENABLE_PLUGINS)
     IPC_MESSAGE_HANDLER(FrameHostMsg_GetPluginInfo, OnGetPluginInfo)
     IPC_MESSAGE_HANDLER_DELAY_REPLY(FrameHostMsg_OpenChannelToPepperPlugin,
@@ -497,7 +568,8 @@ void RenderFrameMessageFilter::CheckPolicyForCookies(
     const GURL& url,
     const GURL& site_for_cookies,
     GetCookiesCallback callback,
-    const net::CookieList& cookie_list) {
+    const net::CookieList& cookie_list,
+    const net::CookieStatusList& excluded_cookies) {
   if (!resource_context_) {
     std::move(callback).Run(std::string());
     return;
@@ -508,6 +580,32 @@ void RenderFrameMessageFilter::CheckPolicyForCookies(
   if (GetContentClient()->browser()->AllowGetCookie(
           url, site_for_cookies, cookie_list, resource_context_,
           render_process_id_, render_frame_id)) {
+    // Send deprecation messages to the console for cookies that are included,
+    // but would be excluded under SameSiteByDefaultCookies or
+    // CookiesWithoutSameSiteMustBeSecure.
+    net::CookieOptions options;
+    options.set_same_site_cookie_context(
+        net::cookie_util::ComputeSameSiteContextForScriptGet(
+            url, site_for_cookies, base::nullopt));
+    net::CookieStatusList deprecated_cookies;
+    for (const net::CanonicalCookie& cc : cookie_list) {
+      net::CanonicalCookie::CookieInclusionStatus
+          include_but_maybe_would_exclude_status =
+              net::cookie_util::CookieWouldBeExcludedDueToSameSite(cc, options);
+      if (include_but_maybe_would_exclude_status !=
+          net::CanonicalCookie::CookieInclusionStatus::INCLUDE) {
+        deprecated_cookies.push_back(
+            {cc, include_but_maybe_would_exclude_status});
+      }
+    }
+    if (!deprecated_cookies.empty()) {
+      base::PostTaskWithTraits(
+          FROM_HERE, {BrowserThread::UI},
+          base::BindOnce(&SendDeprecationMessagesForSameSiteCookiesOnUI,
+                         render_process_id_, render_frame_id, url,
+                         std::move(deprecated_cookies)));
+    }
+
     std::move(callback).Run(net::CanonicalCookie::BuildCookieLine(cookie_list));
   } else {
     std::move(callback).Run(std::string());
@@ -516,14 +614,9 @@ void RenderFrameMessageFilter::CheckPolicyForCookies(
 
 void RenderFrameMessageFilter::OnDownloadUrl(
     const FrameHostMsg_DownloadUrl_Params& params) {
-  mojo::ScopedMessagePipeHandle blob_url_token_handle(params.blob_url_token);
-  blink::mojom::BlobURLTokenPtrInfo blob_url_token(
-      std::move(blob_url_token_handle), blink::mojom::BlobURLToken::Version_);
-  if (blob_url_token && !params.url.SchemeIsBlob()) {
-    bad_message::ReceivedBadMessage(
-        this, bad_message::RFMF_BLOB_URL_TOKEN_FOR_NON_BLOB_URL);
+  blink::mojom::BlobURLTokenPtrInfo blob_url_token;
+  if (!VerifyDownloadUrlParams(render_process_id_, params, &blob_url_token))
     return;
-  }
 
   DownloadUrl(params.render_view_id, params.render_frame_id, params.url,
               params.referrer, params.initiator_origin, params.suggested_name,
@@ -555,15 +648,6 @@ void RenderFrameMessageFilter::OnAre3DAPIsBlocked(int render_frame_id,
       top_origin_url, render_process_id_, render_frame_id, requester);
 }
 
-void RenderFrameMessageFilter::OnRenderProcessGone() {
-  // FrameHostMessage_RenderProcessGone is a synthetic IPC message used by
-  // RenderProcessHostImpl to clean things up after a crash (it's injected
-  // downstream of this filter). Allowing it to proceed would enable a renderer
-  // to fake its own death; instead, actually kill the renderer.
-  bad_message::ReceivedBadMessage(
-      this, bad_message::RFMF_RENDERER_FAKED_ITS_OWN_DEATH);
-}
-
 void RenderFrameMessageFilter::SetCookie(int32_t render_frame_id,
                                          const GURL& url,
                                          const GURL& site_for_cookies,
@@ -587,6 +671,9 @@ void RenderFrameMessageFilter::SetCookie(int32_t render_frame_id,
   }
 
   net::CookieOptions options;
+  options.set_same_site_cookie_context(
+      net::cookie_util::ComputeSameSiteContextForScriptSet(url,
+                                                           site_for_cookies));
   std::unique_ptr<net::CanonicalCookie> cookie = net::CanonicalCookie::Create(
       url, cookie_line, base::Time::Now(), options);
   if (!cookie) {
@@ -599,6 +686,24 @@ void RenderFrameMessageFilter::SetCookie(int32_t render_frame_id,
           render_frame_id)) {
     std::move(callback).Run();
     return;
+  }
+
+  // Send deprecation messages to the console for cookies that are included,
+  // but would be excluded under SameSiteByDefaultCookies or
+  // CookiesWithoutSameSiteMustBeSecure.
+  net::CanonicalCookie::CookieInclusionStatus
+      include_but_maybe_would_exclude_status =
+          net::cookie_util::CookieWouldBeExcludedDueToSameSite(*cookie,
+                                                               options);
+  if (include_but_maybe_would_exclude_status !=
+      net::CanonicalCookie::CookieInclusionStatus::INCLUDE) {
+    net::CookieStatusList deprecated_cookies = {
+        {*cookie, include_but_maybe_would_exclude_status}};
+    base::PostTaskWithTraits(
+        FROM_HERE, {BrowserThread::UI},
+        base::BindOnce(&SendDeprecationMessagesForSameSiteCookiesOnUI,
+                       render_process_id_, render_frame_id, url,
+                       std::move(deprecated_cookies)));
   }
 
   // If the embedder overrides the cookie store then always use it, even if
@@ -615,22 +720,25 @@ void RenderFrameMessageFilter::SetCookie(int32_t render_frame_id,
 
     // Pass a null callback since we don't care about when the 'set' completes.
     cookie_store->SetCanonicalCookieAsync(
-        std::move(cookie), url.SchemeIsCryptographic(),
-        !options.exclude_httponly(), net::CookieStore::SetCookiesCallback());
+        std::move(cookie), url.scheme(), options,
+        net::CookieStore::SetCookiesCallback());
     return;
   }
 
   // |callback| needs to be fired even if network process crashes as it's for
   // sync IPC.
-  net::CookieStore::SetCookiesCallback net_callback =
-      mojo::WrapCallbackWithDefaultInvokeIfNotRun(
-          base::BindOnce([](SetCookieCallback callback,
-                            bool success) { std::move(callback).Run(); },
-                         std::move(callback)),
-          false);
+  base::OnceCallback<void(net::CanonicalCookie::CookieInclusionStatus)>
+      net_callback = mojo::WrapCallbackWithDefaultInvokeIfNotRun(
+          base::BindOnce(
+              [](SetCookieCallback callback,
+                 net::CanonicalCookie::CookieInclusionStatus success) {
+                std::move(callback).Run();
+              },
+              std::move(callback)),
+          net::CanonicalCookie::CookieInclusionStatus::EXCLUDE_UNKNOWN_ERROR);
+
   (*GetCookieManager())
-      ->SetCanonicalCookie(*cookie, url.SchemeIsCryptographic(),
-                           !options.exclude_httponly(),
+      ->SetCanonicalCookie(*cookie, url.scheme(), options,
                            std::move(net_callback));
 }
 
@@ -656,17 +764,11 @@ void RenderFrameMessageFilter::GetCookies(int render_frame_id,
   }
 
   net::CookieOptions options;
-  if (net::registry_controlled_domains::SameDomainOrHost(
-          url, site_for_cookies,
-          net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES)) {
-    // TODO(mkwst): This check ought to further distinguish between frames
-    // initiated in a strict or lax same-site context.
-    options.set_same_site_cookie_mode(
-        net::CookieOptions::SameSiteCookieMode::INCLUDE_STRICT_AND_LAX);
-  } else {
-    options.set_same_site_cookie_mode(
-        net::CookieOptions::SameSiteCookieMode::DO_NOT_INCLUDE);
-  }
+  // TODO(https://crbug.com/925311): Wire initiator in here properly.
+  options.set_same_site_cookie_context(
+      net::cookie_util::ComputeSameSiteContextForScriptGet(
+          url, site_for_cookies, base::nullopt));
+
   // If the embedder overrides the cookie store then always use it, even if
   // the network service is enabled, instead of the CookieManager associated
   // this process' StoragePartition.
@@ -690,14 +792,17 @@ void RenderFrameMessageFilter::GetCookies(int render_frame_id,
     return;
   }
 
+  auto bound_callback = base::BindOnce(
+      &RenderFrameMessageFilter::CheckPolicyForCookies, this, render_frame_id,
+      url, site_for_cookies, std::move(callback));
+
+  // |callback| needs to be fired even if network process crashes as it's for
+  // sync IPC.
+  auto wrapped_callback = mojo::WrapCallbackWithDefaultInvokeIfNotRun(
+      std::move(bound_callback), net::CookieList(), net::CookieStatusList());
+
   (*GetCookieManager())
-      ->GetCookieList(
-          url, options,
-          mojo::WrapCallbackWithDefaultInvokeIfNotRun(
-              base::BindOnce(&RenderFrameMessageFilter::CheckPolicyForCookies,
-                             this, render_frame_id, url, site_for_cookies,
-                             std::move(callback)),
-              net::CookieList()));
+      ->GetCookieList(url, options, std::move(wrapped_callback));
 }
 
 #if BUILDFLAG(ENABLE_PLUGINS)

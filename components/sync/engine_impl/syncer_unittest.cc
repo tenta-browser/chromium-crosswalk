@@ -26,7 +26,6 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/sync/base/cancelation_signal.h"
-#include "components/sync/base/cryptographer.h"
 #include "components/sync/base/extensions_activity.h"
 #include "components/sync/base/fake_encryptor.h"
 #include "components/sync/base/time.h"
@@ -41,6 +40,7 @@
 #include "components/sync/engine_impl/net/server_connection_manager.h"
 #include "components/sync/engine_impl/sync_scheduler_impl.h"
 #include "components/sync/engine_impl/syncer_proto_util.h"
+#include "components/sync/nigori/cryptographer.h"
 #include "components/sync/protocol/bookmark_specifics.pb.h"
 #include "components/sync/protocol/nigori_specifics.pb.h"
 #include "components/sync/protocol/preference_specifics.pb.h"
@@ -191,13 +191,9 @@ class SyncerTest : public testing::Test,
     scheduler_->OnTypesBackedOff(types);
   }
   bool IsAnyThrottleOrBackoff() override { return false; }
-  void OnReceivedLongPollIntervalUpdate(
+  void OnReceivedPollIntervalUpdate(
       const base::TimeDelta& new_interval) override {
-    last_long_poll_interval_received_ = new_interval;
-  }
-  void OnReceivedShortPollIntervalUpdate(
-      const base::TimeDelta& new_interval) override {
-    last_short_poll_interval_received_ = new_interval;
+    last_poll_interval_received_ = new_interval;
   }
   void OnReceivedCustomNudgeDelays(
       const std::map<ModelType, base::TimeDelta>& delay_map) override {
@@ -271,7 +267,8 @@ class SyncerTest : public testing::Test,
 
     model_type_registry_ = std::make_unique<ModelTypeRegistry>(
         workers_, test_user_share_.user_share(), &mock_nudge_handler_,
-        UssMigrator(), &cancelation_signal_);
+        UssMigrator(), &cancelation_signal_,
+        test_user_share_.keystore_keys_handler());
     model_type_registry_->RegisterDirectoryTypeDebugInfoObserver(
         &debug_info_cache_);
 
@@ -283,11 +280,10 @@ class SyncerTest : public testing::Test,
     context_ = std::make_unique<SyncCycleContext>(
         mock_server_.get(), directory(), extensions_activity_.get(), listeners,
         debug_info_getter_.get(), model_type_registry_.get(),
-        true,   // enable keystore encryption
-        false,  // force enable pre-commit GU avoidance experiment
-        "fake_invalidator_client_id",
-        /*short_poll_interval=*/base::TimeDelta::FromMinutes(30),
-        /*long_poll_interval=*/base::TimeDelta::FromMinutes(180));
+        true,  // enable keystore encryption
+        "fake_invalidator_client_id", mock_server_->store_birthday(),
+        "fake_bag_of_chips",
+        /*poll_interval=*/base::TimeDelta::FromMinutes(30));
     syncer_ = new Syncer(&cancelation_signal_);
     scheduler_ = std::make_unique<SyncSchedulerImpl>(
         "TestSyncScheduler", BackoffDelayProvider::FromDefaults(),
@@ -302,7 +298,6 @@ class SyncerTest : public testing::Test,
     root_id_ = TestIdFactory::root();
     parent_id_ = ids_.MakeServer("parent id");
     child_id_ = ids_.MakeServer("child id");
-    directory()->set_store_birthday(mock_server_->store_birthday());
     mock_server_->SetKeystoreKey("encryption_key");
   }
 
@@ -519,12 +514,10 @@ class SyncerTest : public testing::Test,
   // GetUpdates prior to Commit. This method can be used to ensure a Commit is
   // not preceeded by GetUpdates.
   void ConfigureNoGetUpdatesRequired() {
-    context_->set_server_enabled_pre_commit_update_avoidance(true);
     nudge_tracker_.OnInvalidationsEnabled();
-    nudge_tracker_.RecordSuccessfulSyncCycle();
+    nudge_tracker_.RecordSuccessfulSyncCycle(ProtocolTypes());
 
-    ASSERT_FALSE(context_->ShouldFetchUpdatesBeforeCommit());
-    ASSERT_FALSE(nudge_tracker_.IsGetUpdatesRequired());
+    ASSERT_FALSE(nudge_tracker_.IsGetUpdatesRequired(ProtocolTypes()));
   }
 
   base::test::ScopedTaskEnvironment task_environment_;
@@ -553,8 +546,7 @@ class SyncerTest : public testing::Test,
   std::unique_ptr<ModelTypeRegistry> model_type_registry_;
   std::unique_ptr<SyncSchedulerImpl> scheduler_;
   std::unique_ptr<SyncCycleContext> context_;
-  base::TimeDelta last_short_poll_interval_received_;
-  base::TimeDelta last_long_poll_interval_received_;
+  base::TimeDelta last_poll_interval_received_;
   base::TimeDelta last_sessions_commit_delay_;
   base::TimeDelta last_bookmarks_commit_delay_;
   int last_client_invalidation_hint_buffer_size_;
@@ -3041,7 +3033,7 @@ TEST_F(SyncerTest, CommitManyItemsInOneGo_Success) {
   {
     syncable::WriteTransaction trans(FROM_HERE, UNITTEST, directory());
     for (uint32_t i = 0; i < items_to_commit; i++) {
-      string nameutf8 = base::UintToString(i);
+      string nameutf8 = base::NumberToString(i);
       string name(nameutf8.begin(), nameutf8.end());
       MutableEntry e(&trans, CREATE, BOOKMARKS, trans.root_id(), name);
       e.PutIsUnsynced(true);
@@ -3064,7 +3056,7 @@ TEST_F(SyncerTest, CommitManyItemsInOneGo_PostBufferFail) {
   {
     syncable::WriteTransaction trans(FROM_HERE, UNITTEST, directory());
     for (uint32_t i = 0; i < items_to_commit; i++) {
-      string nameutf8 = base::UintToString(i);
+      string nameutf8 = base::NumberToString(i);
       string name(nameutf8.begin(), nameutf8.end());
       MutableEntry e(&trans, CREATE, BOOKMARKS, trans.root_id(), name);
       e.PutIsUnsynced(true);
@@ -3095,7 +3087,7 @@ TEST_F(SyncerTest, CommitManyItemsInOneGo_CommitConflict) {
   {
     syncable::WriteTransaction trans(FROM_HERE, UNITTEST, directory());
     for (uint32_t i = 0; i < items_to_commit; i++) {
-      string nameutf8 = base::UintToString(i);
+      string nameutf8 = base::NumberToString(i);
       string name(nameutf8.begin(), nameutf8.end());
       MutableEntry e(&trans, CREATE, BOOKMARKS, trans.root_id(), name);
       e.PutIsUnsynced(true);
@@ -3180,18 +3172,18 @@ TEST_F(SyncerTest, SendDebugInfoEventsOnGetUpdates_PostFailsDontDrop) {
 TEST_F(SyncerTest, CommitFailureWithConflict) {
   ConfigureNoGetUpdatesRequired();
   CreateUnsyncedDirectory("X", "id_X");
-  EXPECT_FALSE(nudge_tracker_.IsGetUpdatesRequired());
+  EXPECT_FALSE(nudge_tracker_.IsGetUpdatesRequired(ProtocolTypes()));
 
   EXPECT_TRUE(SyncShareNudge());
-  EXPECT_FALSE(nudge_tracker_.IsGetUpdatesRequired());
+  EXPECT_FALSE(nudge_tracker_.IsGetUpdatesRequired(ProtocolTypes()));
 
   CreateUnsyncedDirectory("Y", "id_Y");
   mock_server_->set_conflict_n_commits(1);
   EXPECT_FALSE(SyncShareNudge());
-  EXPECT_TRUE(nudge_tracker_.IsGetUpdatesRequired());
+  EXPECT_TRUE(nudge_tracker_.IsGetUpdatesRequired(ProtocolTypes()));
 
-  nudge_tracker_.RecordSuccessfulSyncCycle();
-  EXPECT_FALSE(nudge_tracker_.IsGetUpdatesRequired());
+  nudge_tracker_.RecordSuccessfulSyncCycle(ProtocolTypes());
+  EXPECT_FALSE(nudge_tracker_.IsGetUpdatesRequired(ProtocolTypes()));
 }
 
 // Tests that sending debug info events on Commit works.
@@ -3979,8 +3971,7 @@ TEST_F(SyncerTest, TestClientCommandDuringUpdate) {
   mock_server_->SetGUClientCommand(std::move(command));
   EXPECT_TRUE(SyncShareNudge());
 
-  EXPECT_EQ(TimeDelta::FromSeconds(8), last_short_poll_interval_received_);
-  EXPECT_EQ(TimeDelta::FromSeconds(800), last_long_poll_interval_received_);
+  EXPECT_EQ(TimeDelta::FromSeconds(8), last_poll_interval_received_);
   EXPECT_EQ(TimeDelta::FromSeconds(3141), last_sessions_commit_delay_);
   EXPECT_EQ(TimeDelta::FromMilliseconds(950), last_bookmarks_commit_delay_);
   EXPECT_EQ(11, last_client_invalidation_hint_buffer_size_);
@@ -3999,8 +3990,7 @@ TEST_F(SyncerTest, TestClientCommandDuringUpdate) {
   mock_server_->SetGUClientCommand(std::move(command));
   EXPECT_TRUE(SyncShareNudge());
 
-  EXPECT_EQ(TimeDelta::FromSeconds(180), last_short_poll_interval_received_);
-  EXPECT_EQ(TimeDelta::FromSeconds(190), last_long_poll_interval_received_);
+  EXPECT_EQ(TimeDelta::FromSeconds(180), last_poll_interval_received_);
   EXPECT_EQ(TimeDelta::FromSeconds(2718), last_sessions_commit_delay_);
   EXPECT_EQ(TimeDelta::FromMilliseconds(1050), last_bookmarks_commit_delay_);
   EXPECT_EQ(9, last_client_invalidation_hint_buffer_size_);
@@ -4023,8 +4013,7 @@ TEST_F(SyncerTest, TestClientCommandDuringCommit) {
   mock_server_->SetCommitClientCommand(std::move(command));
   EXPECT_TRUE(SyncShareNudge());
 
-  EXPECT_EQ(TimeDelta::FromSeconds(8), last_short_poll_interval_received_);
-  EXPECT_EQ(TimeDelta::FromSeconds(800), last_long_poll_interval_received_);
+  EXPECT_EQ(TimeDelta::FromSeconds(8), last_poll_interval_received_);
   EXPECT_EQ(TimeDelta::FromSeconds(3141), last_sessions_commit_delay_);
   EXPECT_EQ(TimeDelta::FromMilliseconds(950), last_bookmarks_commit_delay_);
   EXPECT_EQ(11, last_client_invalidation_hint_buffer_size_);
@@ -4042,8 +4031,7 @@ TEST_F(SyncerTest, TestClientCommandDuringCommit) {
   mock_server_->SetCommitClientCommand(std::move(command));
   EXPECT_TRUE(SyncShareNudge());
 
-  EXPECT_EQ(TimeDelta::FromSeconds(180), last_short_poll_interval_received_);
-  EXPECT_EQ(TimeDelta::FromSeconds(190), last_long_poll_interval_received_);
+  EXPECT_EQ(TimeDelta::FromSeconds(180), last_poll_interval_received_);
   EXPECT_EQ(TimeDelta::FromSeconds(2718), last_sessions_commit_delay_);
   EXPECT_EQ(TimeDelta::FromMilliseconds(1050), last_bookmarks_commit_delay_);
   EXPECT_EQ(9, last_client_invalidation_hint_buffer_size_);
@@ -4859,36 +4847,28 @@ TEST_F(SyncerTest, ConfigureFailedUnregisteredType) {
 }
 
 TEST_F(SyncerTest, GetKeySuccess) {
-  {
-    syncable::ReadTransaction rtrans(FROM_HERE, directory());
-    EXPECT_TRUE(directory()->GetNigoriHandler()->NeedKeystoreKey(&rtrans));
-  }
+  KeystoreKeysHandler* keystore_keys_handler =
+      model_type_registry_->keystore_keys_handler();
+  EXPECT_TRUE(keystore_keys_handler->NeedKeystoreKey());
 
   SyncShareConfigure();
 
   EXPECT_EQ(SyncerError::SYNCER_OK,
             cycle_->status_controller().last_get_key_result().value());
-  {
-    syncable::ReadTransaction rtrans(FROM_HERE, directory());
-    EXPECT_FALSE(directory()->GetNigoriHandler()->NeedKeystoreKey(&rtrans));
-  }
+  EXPECT_FALSE(keystore_keys_handler->NeedKeystoreKey());
 }
 
 TEST_F(SyncerTest, GetKeyEmpty) {
-  {
-    syncable::ReadTransaction rtrans(FROM_HERE, directory());
-    EXPECT_TRUE(directory()->GetNigoriHandler()->NeedKeystoreKey(&rtrans));
-  }
+  KeystoreKeysHandler* keystore_keys_handler =
+      model_type_registry_->keystore_keys_handler();
+  EXPECT_TRUE(keystore_keys_handler->NeedKeystoreKey());
 
   mock_server_->SetKeystoreKey(std::string());
   SyncShareConfigure();
 
   EXPECT_NE(SyncerError::SYNCER_OK,
             cycle_->status_controller().last_get_key_result().value());
-  {
-    syncable::ReadTransaction rtrans(FROM_HERE, directory());
-    EXPECT_TRUE(directory()->GetNigoriHandler()->NeedKeystoreKey(&rtrans));
-  }
+  EXPECT_TRUE(keystore_keys_handler->NeedKeystoreKey());
 }
 
 // Trigger an update that contains a progress marker only and verify that
@@ -5728,9 +5708,9 @@ class MixedResult : public SyncerTest,
   }
 };
 
-INSTANTIATE_TEST_CASE_P(ExtensionsActivity,
-                        MixedResult,
-                        testing::Range(0, 1 << TEST_PARAM_BIT_COUNT));
+INSTANTIATE_TEST_SUITE_P(ExtensionsActivity,
+                         MixedResult,
+                         testing::Range(0, 1 << TEST_PARAM_BIT_COUNT));
 
 TEST_P(MixedResult, ExtensionsActivity) {
   {

@@ -142,7 +142,11 @@ public class EditorTextField extends FrameLayout implements EditorFieldView, Vie
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
 
             @Override
-            public void onTextChanged(CharSequence s, int start, int before, int count) {}
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                if (mInput.hasFocus()) {
+                    fieldModel.setCustomErrorMessage(null);
+                }
+            }
         });
 
         // Display any autofill suggestions.

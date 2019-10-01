@@ -162,11 +162,6 @@ public class ChildProcessLauncherTest {
             mOnRunMainHelper.notifyCalled();
         }
 
-        @Override
-        public void onDestroy() {
-            Assert.assertEquals(0, mOnDestroyHelper.getCallCount());
-        }
-
         public void waitForOnConnectionSetupCalled() throws InterruptedException, TimeoutException {
             mOnConnectionSetupHelper.waitForCallback(0 /* currentCallCount */);
         }
@@ -356,7 +351,7 @@ public class ChildProcessLauncherTest {
                         new Callable<ChildConnectionAllocator>() {
                             @Override
                             public ChildConnectionAllocator call() {
-                                return ChildConnectionAllocator.createForTest(null,
+                                return ChildConnectionAllocator.createFixedForTesting(null,
                                         "org.chromium.wrong_package", "WrongService",
                                         2 /* serviceCount */, false /* bindToCaller */,
                                         false /* bindAsExternalService */,

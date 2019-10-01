@@ -36,7 +36,7 @@ std::unique_ptr<base::Value> ConvertStringToValue(const std::string& str,
   if (type == base::Value::Type::STRING) {
     value.reset(new base::Value(str));
   } else {
-    value = base::JSONReader::Read(str);
+    value = base::JSONReader::ReadDeprecated(str);
   }
   if (value && value->type() != type)
     return nullptr;
@@ -544,14 +544,11 @@ void ShillToONCTranslator::TranslateNetworkWithState() {
     }
   }
 
-  // 'ErrorState' reflects the most recent error maintained in NetworkState
-  // (which may not match Shill's Error or PreviousError properties). Non
-  // visible networks (with null network_state_) do not set ErrorState.
+  // Non-visible networks (with null network_state_) do not set ErrorState.
   if (network_state_) {
-    std::string error_state = network_state_->GetErrorState();
-    if (!error_state.empty()) {
+    if (!network_state_->GetError().empty()) {
       onc_object_->SetKey(::onc::network_config::kErrorState,
-                          base::Value(error_state));
+                          base::Value(network_state_->GetError()));
     }
   }
 

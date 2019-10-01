@@ -27,7 +27,6 @@
 #include "gpu/command_buffer/service/service_discardable_manager.h"
 #include "gpu/command_buffer/service/shader_translator_cache.h"
 #include "gpu/command_buffer/service/shared_context_state.h"
-#include "gpu/command_buffer/service/shared_image_manager.h"
 #include "gpu/config/gpu_driver_bug_workarounds.h"
 #include "gpu/config/gpu_feature_info.h"
 #include "gpu/config/gpu_preferences.h"
@@ -75,12 +74,14 @@ class GPU_IPC_SERVICE_EXPORT GpuChannelManager
       scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
       Scheduler* scheduler,
       SyncPointManager* sync_point_manager,
+      SharedImageManager* shared_image_manager,
       GpuMemoryBufferFactory* gpu_memory_buffer_factory,
       const GpuFeatureInfo& gpu_feature_info,
       GpuProcessActivityFlags activity_flags,
       scoped_refptr<gl::GLSurface> default_offscreen_surface,
       ImageDecodeAcceleratorWorker* image_decode_accelerator_worker,
-      viz::VulkanContextProvider* vulkan_context_provider = nullptr);
+      viz::VulkanContextProvider* vulkan_context_provider = nullptr,
+      viz::MetalContextProvider* metal_context_provider = nullptr);
   ~GpuChannelManager() override;
 
   GpuChannelManagerDelegate* delegate() const { return delegate_; }
@@ -150,7 +151,7 @@ class GPU_IPC_SERVICE_EXPORT GpuChannelManager
 
   SyncPointManager* sync_point_manager() const { return sync_point_manager_; }
 
-  SharedImageManager* shared_image_manager() { return &shared_image_manager_; }
+  SharedImageManager* shared_image_manager() { return shared_image_manager_; }
 
   // Retrieve GPU Resource consumption statistics for the task manager
   void GetVideoMemoryUsageStats(
@@ -203,7 +204,8 @@ class GPU_IPC_SERVICE_EXPORT GpuChannelManager
   std::unique_ptr<gles2::Outputter> outputter_;
   Scheduler* scheduler_;
   // SyncPointManager guaranteed to outlive running MessageLoop.
-  SyncPointManager* sync_point_manager_;
+  SyncPointManager* const sync_point_manager_;
+  SharedImageManager* const shared_image_manager_;
   std::unique_ptr<gles2::ProgramCache> program_cache_;
   gles2::ShaderTranslatorCache shader_translator_cache_;
   gles2::FramebufferCompletenessCache framebuffer_completeness_cache_;
@@ -212,7 +214,6 @@ class GPU_IPC_SERVICE_EXPORT GpuChannelManager
   GpuFeatureInfo gpu_feature_info_;
   ServiceDiscardableManager discardable_manager_;
   PassthroughDiscardableManager passthrough_discardable_manager_;
-  SharedImageManager shared_image_manager_;
 #if defined(OS_ANDROID)
   // Last time we know the GPU was powered on. Global for tracking across all
   // transport surfaces.
@@ -242,9 +243,13 @@ class GPU_IPC_SERVICE_EXPORT GpuChannelManager
   base::Optional<raster::GrCacheController> gr_cache_controller_;
   scoped_refptr<SharedContextState> shared_context_state_;
 
-  // With --enable-vulkan, the vulkan_context_provider_ will be set from
+  // With --enable-vulkan, |vulkan_context_provider_| will be set from
   // viz::GpuServiceImpl. The raster decoders will use it for rasterization.
   viz::VulkanContextProvider* vulkan_context_provider_ = nullptr;
+
+  // If features::SkiaOnMetad, |metal_context_provider_| will be set from
+  // viz::GpuServiceImpl. The raster decoders will use it for rasterization.
+  viz::MetalContextProvider* metal_context_provider_ = nullptr;
 
   // Member variables should appear before the WeakPtrFactory, to ensure
   // that any WeakPtrs to Controller are invalidated before its members

@@ -18,6 +18,7 @@ import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.UrlConstants;
+import org.chromium.chrome.browser.compositor.layouts.OverviewModeBehavior;
 import org.chromium.chrome.browser.dom_distiller.DomDistillerServiceFactory;
 import org.chromium.chrome.browser.dom_distiller.DomDistillerTabUtils;
 import org.chromium.chrome.browser.native_page.NativePageFactory;
@@ -28,6 +29,7 @@ import org.chromium.chrome.browser.omnibox.UrlBarData;
 import org.chromium.chrome.browser.previews.PreviewsAndroidBridge;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TrustedCdn;
 import org.chromium.chrome.browser.util.ColorUtils;
 import org.chromium.chrome.browser.util.UrlUtilities;
 import org.chromium.components.dom_distiller.core.DomDistillerService;
@@ -48,6 +50,8 @@ public class LocationBarModel implements ToolbarDataProvider {
     private boolean mIsIncognito;
     private int mPrimaryColor;
     private boolean mIsUsingBrandColor;
+    private boolean mShouldShowOmniboxInOverviewMode;
+    private OverviewModeBehavior mOverviewModeBehavior;
 
     private long mNativeLocationBarModelAndroid;
 
@@ -222,7 +226,8 @@ public class LocationBarModel implements ToolbarDataProvider {
             }
 
             OmniboxUrlEmphasizer.emphasizeUrl(spannableDisplayText, mContext.getResources(),
-                    getProfile(), getSecurityLevel(), isInternalPage, shouldUseDarkUrlColors(),
+                    getProfile(), getSecurityLevel(), isInternalPage,
+                    !ColorUtils.shouldUseLightForegroundOnBackground(getPrimaryColor()),
                     shouldEmphasizeHttpsScheme());
         }
 
@@ -237,7 +242,7 @@ public class LocationBarModel implements ToolbarDataProvider {
         // If the toolbar shows the publisher URL, it applies its own formatting for emphasis.
         if (mTab == null) return true;
 
-        return !shouldDisplaySearchTerms() && mTab.getTrustedCdnPublisherUrl() == null;
+        return !shouldDisplaySearchTerms() && TrustedCdn.getPublisherUrl(mTab) == null;
     }
 
     /**
@@ -246,17 +251,6 @@ public class LocationBarModel implements ToolbarDataProvider {
     @VisibleForTesting
     public boolean shouldEmphasizeHttpsScheme() {
         return !isUsingBrandColor() && !isIncognito();
-    }
-
-    private boolean shouldUseDarkUrlColors() {
-        boolean brandColorNeedsLightText = false;
-        if (isUsingBrandColor()) {
-            int currentPrimaryColor = getPrimaryColor();
-            brandColorNeedsLightText =
-                    ColorUtils.shouldUseLightForegroundOnBackground(currentPrimaryColor);
-        }
-
-        return !isIncognito() && (!hasTab() || !brandColorNeedsLightText);
     }
 
     @Override
@@ -272,6 +266,25 @@ public class LocationBarModel implements ToolbarDataProvider {
         return mIsIncognito;
     }
 
+    /**
+     * @return Whether the location bar is showing in overview mode. If the location bar should not
+     *  currently be showing in overview mode, returns false.
+     */
+    @Override
+    public boolean isInOverviewAndShowingOmnibox() {
+        if (!mShouldShowOmniboxInOverviewMode) return false;
+
+        return mOverviewModeBehavior != null && mOverviewModeBehavior.overviewVisible();
+    }
+
+    /**
+     * @return Whether the location bar should show when in overview mode.
+     */
+    @Override
+    public boolean shouldShowLocationBarInOverviewMode() {
+        return mShouldShowOmniboxInOverviewMode;
+    }
+
     @Override
     public Profile getProfile() {
         Profile lastUsedProfile = Profile.getLastUsedProfile();
@@ -280,6 +293,14 @@ public class LocationBarModel implements ToolbarDataProvider {
             return lastUsedProfile.getOffTheRecordProfile();
         }
         return lastUsedProfile.getOriginalProfile();
+    }
+
+    public void setOverviewModeBehavior(OverviewModeBehavior overviewModeBehavior) {
+        mOverviewModeBehavior = overviewModeBehavior;
+    }
+
+    public void setShouldShowOmniboxInOverviewMode(boolean shouldShowOmniboxInOverviewMode) {
+        mShouldShowOmniboxInOverviewMode = shouldShowOmniboxInOverviewMode;
     }
 
     /**
@@ -301,12 +322,17 @@ public class LocationBarModel implements ToolbarDataProvider {
 
     @Override
     public int getPrimaryColor() {
-        return mPrimaryColor;
+        Context context = ContextUtils.getApplicationContext();
+        return isInOverviewAndShowingOmnibox()
+                ? ColorUtils.getDefaultThemeColor(context.getResources(), isIncognito())
+                : mPrimaryColor;
     }
 
     @Override
     public boolean isUsingBrandColor() {
-        return mIsUsingBrandColor;
+        // If the overview is visible, force use of primary color, which is also overridden when the
+        // overview is visible.
+        return isInOverviewAndShowingOmnibox() || mIsUsingBrandColor;
     }
 
     @Override
@@ -322,8 +348,7 @@ public class LocationBarModel implements ToolbarDataProvider {
     @Override
     public int getSecurityLevel() {
         Tab tab = getTab();
-        return getSecurityLevel(
-                tab, isOfflinePage(), tab == null ? null : tab.getTrustedCdnPublisherUrl());
+        return getSecurityLevel(tab, isOfflinePage(), TrustedCdn.getPublisherUrl(tab));
     }
 
     @Override
@@ -362,7 +387,7 @@ public class LocationBarModel implements ToolbarDataProvider {
         if (isPreview) {
             return R.drawable.preview_pin_round;
         } else if (isOfflinePage) {
-            return R.drawable.offline_pin_round;
+            return R.drawable.ic_offline_pin_24dp;
         }
 
         switch (securityLevel) {
@@ -390,7 +415,7 @@ public class LocationBarModel implements ToolbarDataProvider {
 
         if (isIncognito() || needLightIcon) {
             // For a dark theme color, use light icons.
-            return R.color.light_mode_tint;
+            return ColorUtils.getThemedToolbarIconTintRes(true);
         }
 
         if (isPreview()) {
@@ -407,22 +432,23 @@ public class LocationBarModel implements ToolbarDataProvider {
             // For theme colors which are not dark and are also not
             // light enough to warrant an opaque URL bar, use dark
             // icons.
-            return R.color.dark_mode_tint;
+            return ColorUtils.getThemedToolbarIconTintRes(false);
         }
 
+        // TODO(https://crbug.com/940134): Change the color here and also #needLightIcon logic.
         if (securityLevel == ConnectionSecurityLevel.DANGEROUS) {
             // For the default toolbar color, use a green or red icon.
             assert !shouldDisplaySearchTerms();
-            return R.color.google_red_700;
+            return R.color.google_red_600;
         }
 
         if (!shouldDisplaySearchTerms()
                 && (securityLevel == ConnectionSecurityLevel.SECURE
                         || securityLevel == ConnectionSecurityLevel.EV_SECURE)) {
-            return R.color.google_green_700;
+            return R.color.google_green_600;
         }
 
-        return R.color.dark_mode_tint;
+        return ColorUtils.getThemedToolbarIconTintRes(false);
     }
 
     @Override

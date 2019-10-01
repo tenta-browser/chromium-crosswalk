@@ -28,7 +28,7 @@ class ScrollViewExample::ScrollableView : public View {
  public:
   ScrollableView() {
     SetColor(SK_ColorRED, SK_ColorCYAN);
-    AddChildView(new LabelButton(NULL, ASCIIToUTF16("Button")));
+    AddChildView(new LabelButton(nullptr, ASCIIToUTF16("Button")));
     AddChildView(new RadioButton(ASCIIToUTF16("Radio Button"), 0));
   }
 
@@ -37,8 +37,8 @@ class ScrollViewExample::ScrollableView : public View {
     to_color_ = to;
   }
 
-  void PlaceChildY(int index, int y) {
-    View* view = child_at(index);
+  void PlaceChildY(size_t index, int y) {
+    View* view = children()[index];
     gfx::Size size = view->GetPreferredSize();
     view->SetBounds(0, y, size.width(), size.height());
   }
@@ -72,8 +72,7 @@ class ScrollViewExample::ScrollableView : public View {
 ScrollViewExample::ScrollViewExample() : ExampleBase("Scroll View") {
 }
 
-ScrollViewExample::~ScrollViewExample() {
-}
+ScrollViewExample::~ScrollViewExample() = default;
 
 void ScrollViewExample::CreateExampleView(View* container) {
   wide_ = new LabelButton(this, ASCIIToUTF16("Wide"));
@@ -81,9 +80,8 @@ void ScrollViewExample::CreateExampleView(View* container) {
   big_square_ = new LabelButton(this, ASCIIToUTF16("Big Square"));
   small_square_ = new LabelButton(this, ASCIIToUTF16("Small Square"));
   scroll_to_ = new LabelButton(this, ASCIIToUTF16("Scroll to"));
-  scrollable_ = new ScrollableView();
   scroll_view_ = new ScrollView();
-  scroll_view_->SetContents(scrollable_);
+  scrollable_ = scroll_view_->SetContents(std::make_unique<ScrollableView>());
   scrollable_->SetBounds(0, 0, 1000, 100);
   scrollable_->SetColor(SK_ColorYELLOW, SK_ColorCYAN);
 
@@ -99,7 +97,7 @@ void ScrollViewExample::CreateExampleView(View* container) {
 
   // Add control buttons.
   column_set = layout->AddColumnSet(1);
-  for (int i = 0; i < 5; i++) {
+  for (size_t i = 0; i < 5; i++) {
     column_set->AddColumn(GridLayout::FILL, GridLayout::FILL, 1,
                           GridLayout::USE_PREF, 0, 0);
   }
@@ -128,7 +126,7 @@ void ScrollViewExample::ButtonPressed(Button* sender, const ui::Event& event) {
     scroll_view_->contents()->ScrollRectToVisible(
         gfx::Rect(20, 500, 1000, 500));
   }
-  scroll_view_->Layout();
+  scroll_view_->InvalidateLayout();
 }
 
 }  // namespace examples

@@ -80,12 +80,21 @@ public class JourneyLogger {
     }
 
     /**
-     * Records the fact that the merchant called CanMakePayment and records it's return value.
+     * Records the fact that the merchant called CanMakePayment and records its return value.
      *
      * @param value The return value of the CanMakePayment call.
      */
     public void setCanMakePaymentValue(boolean value) {
         nativeSetCanMakePaymentValue(mJourneyLoggerAndroid, value);
+    }
+
+    /**
+     * Records the fact that the merchant called HasEnrolledInstrument and records its return value.
+     *
+     * @param value The return value of the HasEnrolledInstrument call.
+     */
+    public void setHasEnrolledInstrumentValue(boolean value) {
+        nativeSetHasEnrolledInstrumentValue(mJourneyLoggerAndroid, value);
     }
 
     /**
@@ -136,9 +145,8 @@ public class JourneyLogger {
      */
     public void setCompleted() {
         assert !mHasRecorded;
-        assert mWasPaymentRequestTriggered;
 
-        if (!mHasRecorded && mWasPaymentRequestTriggered) {
+        if (!mHasRecorded) {
             mHasRecorded = true;
             nativeSetCompleted(mJourneyLoggerAndroid);
         }
@@ -155,7 +163,7 @@ public class JourneyLogger {
 
         // The abort reasons on Android cascade into each other, so only the first one should be
         // recorded.
-        if (!mHasRecorded && mWasPaymentRequestTriggered) {
+        if (!mHasRecorded) {
             mHasRecorded = true;
             nativeSetAborted(mJourneyLoggerAndroid, reason);
         }
@@ -168,7 +176,6 @@ public class JourneyLogger {
      */
     public void setNotShown(int reason) {
         assert reason < NotShownReason.MAX;
-        assert !mWasPaymentRequestTriggered;
         assert !mHasRecorded;
 
         if (!mHasRecorded) {
@@ -187,6 +194,8 @@ public class JourneyLogger {
     private native void nativeIncrementSelectionEdits(long nativeJourneyLoggerAndroid, int section);
     private native void nativeIncrementSelectionAdds(long nativeJourneyLoggerAndroid, int section);
     private native void nativeSetCanMakePaymentValue(
+            long nativeJourneyLoggerAndroid, boolean value);
+    private native void nativeSetHasEnrolledInstrumentValue(
             long nativeJourneyLoggerAndroid, boolean value);
     private native void nativeSetEventOccurred(long nativeJourneyLoggerAndroid, int event);
     private native void nativeSetRequestedInformation(long nativeJourneyLoggerAndroid,

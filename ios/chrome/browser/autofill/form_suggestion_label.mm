@@ -13,7 +13,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/sys_string_conversions.h"
 #include "components/autofill/core/browser/autofill_data_util.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #import "components/autofill/ios/browser/form_suggestion.h"
 #import "ios/chrome/browser/autofill/form_suggestion_client.h"
 #include "ios/chrome/browser/ui/util/ui_util.h"
@@ -32,9 +32,6 @@ NSString* const kFormSuggestionLabelAccessibilityIdentifier =
 
 namespace {
 
-// The button corner radius.
-const CGFloat kCornerRadius = 2.0f;
-
 // Font size of button titles.
 const CGFloat kIpadFontSize = 15.0f;
 const CGFloat kIphoneFontSize = 14.0f;
@@ -44,7 +41,7 @@ const CGFloat kMainLabelAlpha = 0.87f;
 const CGFloat kDescriptionLabelAlpha = 0.55f;
 
 // The horizontal space between the edge of the background and the text.
-const CGFloat kBorderWidth = 8.0f;
+const CGFloat kBorderWidth = 14.0f;
 // The space between items in the label.
 const CGFloat kSpacing = 4.0f;
 
@@ -125,7 +122,6 @@ UILabel* TextLabel(NSString* text, CGFloat alpha, BOOL bold) {
     if (userInteractionEnabled_) {
       [self setBackgroundColor:UIColorFromRGB(kBackgroundNormalColor)];
     }
-    [[self layer] setCornerRadius:kCornerRadius];
 
     [self setClipsToBounds:YES];
     [self setUserInteractionEnabled:YES];
@@ -135,13 +131,18 @@ UILabel* TextLabel(NSString* text, CGFloat alpha, BOOL bold) {
                                     base::SysNSStringToUTF16(suggestion.value),
                                     base::SysNSStringToUTF16(
                                         suggestion.displayDescription),
-                                    base::IntToString16(index + 1),
-                                    base::IntToString16(numSuggestions))];
+                                    base::NumberToString16(index + 1),
+                                    base::NumberToString16(numSuggestions))];
     [self
         setAccessibilityIdentifier:kFormSuggestionLabelAccessibilityIdentifier];
   }
 
   return self;
+}
+
+- (void)layoutSubviews {
+  [super layoutSubviews];
+  self.layer.cornerRadius = self.bounds.size.height / 2.0;
 }
 
 #pragma mark -

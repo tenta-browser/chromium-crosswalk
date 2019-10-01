@@ -74,7 +74,6 @@ struct OverlapMapContainers {
 };
 
 class CompositingRequirementsUpdater::OverlapMap {
-
  public:
   OverlapMap() {
     // Begin by assuming the root layer will be composited so that there
@@ -183,6 +182,11 @@ static CompositingReasons SubtreeReasonsForCompositing(
   if (layer->ShouldIsolateCompositedDescendants()) {
     DCHECK(layer->GetLayoutObject().StyleRef().IsStackingContext());
     subtree_reasons |= CompositingReason::kIsolateCompositedDescendants;
+  }
+
+  if (layer->GetLayoutObject().StyleRef().GetPosition() == EPosition::kFixed) {
+    subtree_reasons |=
+        CompositingReason::kPositionFixedWithCompositedDescendants;
   }
 
   // A layer with preserve-3d or perspective only needs to be composited if

@@ -13,10 +13,12 @@
 #include "ash/app_list/app_list_export.h"
 #include "ash/app_list/model/app_list_model.h"
 #include "ash/app_list/model/search/search_model.h"
-#include "ash/app_list/pagination_model.h"
-#include "ash/app_list/pagination_model_observer.h"
+#include "ash/public/cpp/pagination/pagination_model.h"
+#include "ash/public/cpp/pagination/pagination_model_observer.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
+#include "base/observer_list.h"
+#include "base/observer_list_types.h"
 #include "ui/views/view.h"
 #include "ui/views/view_model.h"
 
@@ -33,9 +35,9 @@ class AppListFolderItem;
 class AppListMainView;
 class AppsContainerView;
 class AppsGridView;
+class AssistantPageView;
 class ExpandArrowView;
 class HorizontalPageContainer;
-class PaginationModel;
 class SearchBoxView;
 class SearchResultAnswerCardView;
 class SearchResultListView;
@@ -48,8 +50,18 @@ class SearchResultTileItemListView;
 // interface for switching between launcher pages, and animates the transition
 // between them.
 class APP_LIST_EXPORT ContentsView : public views::View,
-                                     public PaginationModelObserver {
+                                     public ash::PaginationModelObserver {
  public:
+  // This class observes the search box Updates.
+  class SearchBoxUpdateObserver : public base::CheckedObserver {
+   public:
+    // Called when search box bounds is updated.
+    virtual void OnSearchBoxBoundsUpdated() = 0;
+
+    // Called when the search box is cleaded and deactivated.
+    virtual void OnSearchBoxClearAndDeactivated() = 0;
+  };
+
   explicit ContentsView(AppListView* app_list_view);
   ~ContentsView() override;
 
@@ -65,11 +77,20 @@ class APP_LIST_EXPORT ContentsView : public views::View,
   void SetDragAndDropHostOfCurrentAppList(
       ApplicationDragAndDropHost* drag_and_drop_host);
 
+  // Called when the target state of AppListView changes.
+  void OnAppListViewTargetStateChanged(ash::AppListViewState target_state);
+
   // Shows/hides the search results. Hiding the search results will cause the
   // app list to return to the page that was displayed before
   // ShowSearchResults(true) was invoked.
   void ShowSearchResults(bool show);
   bool IsShowingSearchResults() const;
+
+  // Shows/hides the Assistant page. Hiding the Assistant page will
+  // cause the app list to return to the page that was displayed before
+  // ShowSearchResults(true) was invoked.
+  void ShowEmbeddedAssistantUI(bool show);
+  bool IsShowingEmbeddedAssistantUI() const;
 
   void ShowFolderContent(AppListFolderItem* folder);
 
@@ -125,7 +146,7 @@ class APP_LIST_EXPORT ContentsView : public views::View,
   ExpandArrowView* expand_arrow_view() const { return expand_arrow_view_; }
 
   // Returns the pagination model for the ContentsView.
-  const PaginationModel& pagination_model() { return pagination_model_; }
+  const ash::PaginationModel& pagination_model() { return pagination_model_; }
 
   // Returns search box bounds to use for content views that do not specify
   // their own custom layout.
@@ -171,12 +192,18 @@ class APP_LIST_EXPORT ContentsView : public views::View,
   // is also applied to search box window.
   float GetAppListMainViewScale() const;
 
+  // Show/hide the expand arrow view button when contents view is in fullscreen
+  // and tablet mode is enabled.
+  void SetExpandArrowViewVisibility(bool show);
+
+  void NotifySearchBoxBoundsUpdated();
+
+  void AddSearchBoxUpdateObserver(SearchBoxUpdateObserver* observer);
+  void RemoveSearchBoxUpdateObserver(SearchBoxUpdateObserver* observer);
+
  private:
-  // Sets the active launcher page, accounting for whether the change is for
-  // search results.
-  void SetActiveStateInternal(int page_index,
-                              bool show_search_results,
-                              bool animate);
+  // Sets the active launcher page.
+  void SetActiveStateInternal(int page_index, bool animate);
 
   // Invoked when active view is changed.
   void ActivePageChanged();
@@ -198,8 +225,11 @@ class APP_LIST_EXPORT ContentsView : public views::View,
                                 ash::AppListState current_state,
                                 ash::AppListState target_state);
 
-  // Updates the expand arrow's focus behavior based on the current state.
-  void UpdateExpandArrowFocusBehavior(ash::AppListState current_state);
+  // Updates the expand arrow's focus behavior based on AppListViewState.
+  void UpdateExpandArrowFocusBehavior(ash::AppListViewState target_state);
+
+  // Updates search box visibility based on the current state.
+  void UpdateSearchBoxVisibility(ash::AppListState current_state);
 
   // Adds |view| as a new page to the end of the list of launcher pages. The
   // view is inserted as a child of the ContentsView. There is no name
@@ -214,7 +244,7 @@ class APP_LIST_EXPORT ContentsView : public views::View,
   // Gets the PaginationModel owned by the AppsGridView.
   // Note: This is different to |pagination_model_|, which manages top-level
   // launcher-page pagination.
-  PaginationModel* GetAppsPaginationModel();
+  ash::PaginationModel* GetAppsPaginationModel();
 
   // Returns true if the |page| requires layout when transitioning from
   // |current_state| to |target_state|.
@@ -229,6 +259,7 @@ class APP_LIST_EXPORT ContentsView : public views::View,
   AppListModel* model_ = nullptr;
 
   // Sub-views of the ContentsView. All owned by the views hierarchy.
+  AssistantPageView* assistant_page_view_ = nullptr;
   HorizontalPageContainer* horizontal_page_container_ = nullptr;
   SearchResultPageView* search_results_page_view_ = nullptr;
   SearchResultAnswerCardView* search_result_answer_card_view_ = nullptr;
@@ -253,8 +284,13 @@ class APP_LIST_EXPORT ContentsView : public views::View,
   // The page that was showing before ShowSearchResults(true) was invoked.
   int page_before_search_ = 0;
 
+  // The page that was showing before ShowEmbeddedAssistantUi(true) was invoked.
+  int page_before_assistant_ = 0;
+
   // Manages the pagination for the launcher pages.
-  PaginationModel pagination_model_;
+  ash::PaginationModel pagination_model_;
+
+  base::ObserverList<SearchBoxUpdateObserver> search_box_observers_;
 
   DISALLOW_COPY_AND_ASSIGN(ContentsView);
 };

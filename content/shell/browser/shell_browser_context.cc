@@ -16,9 +16,13 @@
 #include "base/threading/thread.h"
 #include "build/build_config.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
+#include "components/keyed_service/core/simple_dependency_manager.h"
+#include "components/keyed_service/core/simple_factory_key.h"
+#include "components/keyed_service/core/simple_key_map.h"
 #include "components/network_session_configurator/common/network_switches.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/sms_service.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/common/content_switches.h"
 #include "content/shell/browser/shell_download_manager_delegate.h"
@@ -61,8 +65,16 @@ ShellBrowserContext::ShellBrowserContext(bool off_the_record,
 ShellBrowserContext::~ShellBrowserContext() {
   NotifyWillBeDestroyed(this);
 
-  BrowserContextDependencyManager::GetInstance()->
-      DestroyBrowserContextServices(this);
+  // The SimpleDependencyManager should always be passed after the
+  // BrowserContextDependencyManager. This is because the KeyedService instances
+  // in the BrowserContextDependencyManager's dependency graph can depend on the
+  // ones in the SimpleDependencyManager's graph.
+  DependencyManager::PerformInterlockedTwoPhaseShutdown(
+      BrowserContextDependencyManager::GetInstance(), this,
+      SimpleDependencyManager::GetInstance(), key_.get());
+
+  SimpleKeyMap::GetInstance()->Dissociate(this);
+
   // Need to destruct the ResourceContext before posting tasks which may delete
   // the URLRequestContext because ResourceContext's destructor will remove any
   // outstanding request while URLRequestContext's destructor ensures that there
@@ -92,7 +104,7 @@ void ShellBrowserContext::InitWhileIOAllowed() {
       if (!path_.IsAbsolute())
         path_ = base::MakeAbsoluteFilePath(path_);
       if (!path_.empty()) {
-        BrowserContext::Initialize(this, path_);
+        FinishInitWhileIOAllowed();
         return;
       }
     } else {
@@ -125,7 +137,14 @@ void ShellBrowserContext::InitWhileIOAllowed() {
 
   if (!base::PathExists(path_))
     base::CreateDirectory(path_);
+
+  FinishInitWhileIOAllowed();
+}
+
+void ShellBrowserContext::FinishInitWhileIOAllowed() {
   BrowserContext::Initialize(this, path_);
+  key_ = std::make_unique<SimpleFactoryKey>(path_, off_the_record_);
+  SimpleKeyMap::GetInstance()->Associate(this, key_.get());
 }
 
 #if !defined(OS_ANDROID)
@@ -245,6 +264,12 @@ BackgroundSyncController* ShellBrowserContext::GetBackgroundSyncController() {
 BrowsingDataRemoverDelegate*
 ShellBrowserContext::GetBrowsingDataRemoverDelegate() {
   return nullptr;
+}
+
+SmsService* ShellBrowserContext::GetSmsService() {
+  if (!sms_service_)
+    sms_service_ = content::SmsService::Create();
+  return sms_service_.get();
 }
 
 }  // namespace content

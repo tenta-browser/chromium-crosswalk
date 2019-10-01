@@ -11,11 +11,14 @@
 
 #include "base/android/scoped_java_ref.h"
 #include "base/macros.h"
-#include "chrome/browser/android/autofill_assistant/assistant_carousel_delegate.h"
+#include "chrome/browser/android/autofill_assistant/assistant_form_delegate.h"
 #include "chrome/browser/android/autofill_assistant/assistant_header_delegate.h"
 #include "chrome/browser/android/autofill_assistant/assistant_overlay_delegate.h"
+#include "chrome/browser/android/autofill_assistant/assistant_payment_request_delegate.h"
+#include "components/autofill_assistant/browser/chip.h"
 #include "components/autofill_assistant/browser/client.h"
 #include "components/autofill_assistant/browser/details.h"
+#include "components/autofill_assistant/browser/info_box.h"
 #include "components/autofill_assistant/browser/metrics.h"
 #include "components/autofill_assistant/browser/overlay_state.h"
 #include "components/autofill_assistant/browser/ui_controller.h"
@@ -27,33 +30,56 @@ namespace autofill_assistant {
 // changes to the UI model.
 class UiControllerAndroid : public UiController {
  public:
-  // pointers to |web_contents|, |client| and |ui_delegate| must remain valid
-  // for the lifetime of this instance.
-  UiControllerAndroid(content::WebContents* web_contents,
-                      Client* client,
-                      UiDelegate* ui_delegate);
+  static std::unique_ptr<UiControllerAndroid> CreateFromWebContents(
+      content::WebContents* web_contents);
+
+  // pointers to |web_contents|, |client| must remain valid for the lifetime of
+  // this instance.
+  //
+  // Pointer to |ui_delegate| must remain valid for the lifetime of this
+  // instance or until WillShutdown is called.
+  UiControllerAndroid(JNIEnv* env,
+                      const base::android::JavaRef<jobject>& jactivity);
   ~UiControllerAndroid() override;
 
+  // Attaches the UI to the given client, its web contents and delegate.
+  //
+  // |web_contents| and |client| must remain valid for the lifetime of this
+  // instance or until Attach() is called again, with different pointers.
+  //
+  // |ui_delegate| must remain valid for the lifetime of this instance or until
+  // either Attach() or WillShutdown() are called.
+  void Attach(content::WebContents* web_contents,
+              Client* client,
+              UiDelegate* ui_delegate);
+
   // Called by ClientAndroid.
-  void ShowOnboarding(JNIEnv* env,
-                      const base::android::JavaParamRef<jobject>& on_accept);
+  void ShowOnboarding(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jstring>& jexperiment_ids,
+      const base::android::JavaParamRef<jobject>& on_accept);
 
   // Overrides UiController:
   void OnStateChanged(AutofillAssistantState new_state) override;
   void OnStatusMessageChanged(const std::string& message) override;
-  void Shutdown(Metrics::DropOutReason reason) override;
-  void Close() override;
-  void SetChips(std::unique_ptr<std::vector<Chip>> chips) override;
-  void ClearChips() override;
-  void GetPaymentInformation(
-      payments::mojom::PaymentOptionsPtr payment_options,
-      base::OnceCallback<void(std::unique_ptr<PaymentInformation>)> callback,
-      const std::string& title,
-      const std::vector<std::string>& supported_basic_card_networks) override;
+  void WillShutdown(Metrics::DropOutReason reason) override;
+  void OnSuggestionsChanged(const std::vector<Chip>& suggestions) override;
+  void OnActionsChanged(const std::vector<Chip>& actions) override;
+  void OnPaymentRequestOptionsChanged(
+      const PaymentRequestOptions* options) override;
+  void OnPaymentRequestInformationChanged(
+      const PaymentInformation* state) override;
   void OnDetailsChanged(const Details* details) override;
-  void ShowProgressBar(int progress) override;
-  void HideProgressBar() override;
-  void SetTouchableArea(const std::vector<RectF>& areas) override;
+  void OnInfoBoxChanged(const InfoBox* info_box) override;
+  void OnProgressChanged(int progress) override;
+  void OnProgressVisibilityChanged(bool visible) override;
+  void OnTouchableAreaChanged(const RectF& visual_viewport,
+                              const std::vector<RectF>& areas) override;
+  void OnResizeViewportChanged(bool resize_viewport) override;
+  void OnPeekModeChanged(
+      ConfigureBottomSheetProto::PeekMode peek_mode) override;
+  void OnOverlayColorsChanged(const UiDelegate::OverlayColors& colors) override;
+  void OnFormChanged(const FormProto* form) override;
 
   // Called by AssistantOverlayDelegate:
   void OnUnexpectedTaps();
@@ -62,55 +88,108 @@ class UiControllerAndroid : public UiController {
 
   // Called by AssistantHeaderDelegate:
   void OnFeedbackButtonClicked();
-  void OnCloseButtonClicked();
 
-  // Called by AssistantCarouselDelegate:
-  void OnChipSelected(int index);
+  // Called by AssistantPaymentRequestDelegate:
+  void OnShippingAddressChanged(
+      std::unique_ptr<autofill::AutofillProfile> address);
+  void OnBillingAddressChanged(
+      std::unique_ptr<autofill::AutofillProfile> address);
+  void OnContactInfoChanged(std::string name,
+                            std::string phone,
+                            std::string email);
+  void OnCreditCardChanged(std::unique_ptr<autofill::CreditCard> card);
+  void OnTermsAndConditionsChanged(TermsAndConditionsState state);
+
+  // Called by AssistantFormDelegate:
+  void OnCounterChanged(int input_index, int counter_index, int value);
+  void OnChoiceSelectionChanged(int input_index,
+                                int choice_index,
+                                bool selected);
 
   // Called by Java.
-  void Stop(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
-  void OnGetPaymentInformation(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& jcaller,
-      jboolean jsucceed,
-      const base::android::JavaParamRef<jobject>& jcard,
-      const base::android::JavaParamRef<jobject>& jaddress,
-      const base::android::JavaParamRef<jstring>& jpayer_name,
-      const base::android::JavaParamRef<jstring>& jpayer_phone,
-      const base::android::JavaParamRef<jstring>& jpayer_email,
-      jboolean jis_terms_and_services_accepted);
+  void SnackbarResult(JNIEnv* env,
+                      const base::android::JavaParamRef<jobject>& obj,
+                      jboolean undo);
+  void Stop(JNIEnv* env,
+            const base::android::JavaParamRef<jobject>& obj,
+            int reason);
+  void OnFatalError(JNIEnv* env,
+                    const base::android::JavaParamRef<jobject>& obj,
+                    const base::android::JavaParamRef<jstring>& message,
+                    int reason);
   base::android::ScopedJavaLocalRef<jstring> GetPrimaryAccountName(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& jcaller);
+  void OnSuggestionSelected(JNIEnv* env,
+                            const base::android::JavaParamRef<jobject>& jcaller,
+                            jint index);
+  void OnActionSelected(JNIEnv* env,
+                        const base::android::JavaParamRef<jobject>& jcaller,
+                        jint index);
+  void OnCancelButtonClicked(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& jcaller,
+      jint actionIndex);
+  void OnCloseButtonClicked(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& jcaller);
+  void SetVisible(JNIEnv* env,
+                  const base::android::JavaParamRef<jobject>& jcaller,
+                  jboolean visible);
 
  private:
-  Client* const client_;
-  UiDelegate* const ui_delegate_;
+  // A pointer to the client. nullptr until Attach() is called.
+  Client* client_ = nullptr;
+
+  // A pointer to the ui_delegate. nullptr until Attach() is called.
+  UiDelegate* ui_delegate_ = nullptr;
   AssistantOverlayDelegate overlay_delegate_;
   AssistantHeaderDelegate header_delegate_;
-  AssistantCarouselDelegate carousel_delegate_;
+  AssistantPaymentRequestDelegate payment_request_delegate_;
+  AssistantFormDelegate form_delegate_;
+
+  // What to do if undo is not pressed on the current snackbar.
+  base::OnceCallback<void()> snackbar_action_;
 
   base::android::ScopedJavaLocalRef<jobject> GetModel();
   base::android::ScopedJavaLocalRef<jobject> GetOverlayModel();
   base::android::ScopedJavaLocalRef<jobject> GetHeaderModel();
   base::android::ScopedJavaLocalRef<jobject> GetDetailsModel();
-  base::android::ScopedJavaLocalRef<jobject> GetCarouselModel();
+  base::android::ScopedJavaLocalRef<jobject> GetInfoBoxModel();
+  base::android::ScopedJavaLocalRef<jobject> GetPaymentRequestModel();
+  base::android::ScopedJavaLocalRef<jobject> GetFormModel();
 
   void SetOverlayState(OverlayState state);
   void AllowShowingSoftKeyboard(bool enabled);
   void ExpandBottomSheet();
-  void ShutdownGracefully();
-  void SetProgressPulsingEnabled(bool enabled);
+  void SetSpinPoodle(bool enabled);
   std::string GetDebugContext();
+  void DestroySelf();
+  void Shutdown(Metrics::DropOutReason reason);
+  void UpdateActions();
+
+  // Hide the UI, show a snackbar with an undo button, and execute the given
+  // action after a short delay unless the user taps the undo button.
+  void ShowSnackbar(const std::string& message,
+                    base::OnceCallback<void()> action);
+  void OnCancelButtonClicked();
+  void OnCancelButtonWithActionIndexClicked(int action_index);
+  void OnCancel(int action_index);
+
+  // Updates the state of the UI to reflect the UIDelegate's state.
+  void SetupForState();
+
+  // Makes the whole of AA invisible or visible again.
+  void SetVisible(bool visible);
+
+  // Debug context captured previously. If non-empty, GetDebugContext() returns
+  // this context.
+  std::string captured_debug_context_;
 
   // Java-side AutofillAssistantUiController object.
-  base::android::ScopedJavaGlobalRef<jobject>
-      java_autofill_assistant_ui_controller_;
+  base::android::ScopedJavaGlobalRef<jobject> java_object_;
 
-  std::unique_ptr<std::vector<Chip>> current_chips_;
-  base::OnceCallback<void(std::unique_ptr<PaymentInformation>)>
-      get_payment_information_callback_;
-
+  OverlayState desired_overlay_state_ = OverlayState::FULL;
   base::WeakPtrFactory<UiControllerAndroid> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(UiControllerAndroid);

@@ -23,7 +23,7 @@
 #include "components/sync/model/string_ordinal.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "extensions/browser/api/declarative_net_request/utils.h"
+#include "extensions/browser/api/declarative_net_request/ruleset_source.h"
 #include "extensions/browser/extension_file_task_runner.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/install_flag.h"
@@ -265,16 +265,17 @@ bool UnpackedInstaller::LoadExtension(Manifest::Location location,
 bool UnpackedInstaller::IndexAndPersistRulesIfNeeded(std::string* error) {
   DCHECK(extension());
 
-  const ExtensionResource* resource =
-      declarative_net_request::DNRManifestData::GetRulesetResource(extension());
-  // The extension did not provide a ruleset.
-  if (!resource)
+  if (!declarative_net_request::DNRManifestData::HasRuleset(*extension())) {
+    // The extension did not provide a ruleset.
     return true;
+  }
 
   // TODO(crbug.com/761107): Change this so that we don't need to parse JSON
   // in the browser process.
-  declarative_net_request::IndexAndPersistRulesResult result =
-      declarative_net_request::IndexAndPersistRulesUnsafe(*extension());
+  auto ruleset_source =
+      declarative_net_request::RulesetSource::CreateStatic(*extension());
+  declarative_net_request::IndexAndPersistJSONRulesetResult result =
+      ruleset_source.IndexAndPersistJSONRulesetUnsafe();
   if (!result.success) {
     *error = std::move(result.error);
     return false;

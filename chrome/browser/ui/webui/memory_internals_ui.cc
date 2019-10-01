@@ -123,7 +123,6 @@ content::WebUIDataSource* CreateMemoryInternalsUIHTMLSource() {
       content::WebUIDataSource::Create(chrome::kChromeUIMemoryInternalsHost);
   source->SetDefaultResource(IDR_MEMORY_INTERNALS_HTML);
   source->AddResourcePath("memory_internals.js", IDR_MEMORY_INTERNALS_JS);
-  source->UseGzip();
   return source;
 }
 
@@ -208,8 +207,8 @@ void MemoryInternalsDOMHandler::HandleRequestProcessList(
   // the IO thread, while the render process iterator must run on the UI thread.
   base::PostTaskWithTraits(
       FROM_HERE, {content::BrowserThread::IO},
-      base::Bind(&MemoryInternalsDOMHandler::GetChildProcessesOnIOThread,
-                 weak_factory_.GetWeakPtr()));
+      base::BindOnce(&MemoryInternalsDOMHandler::GetChildProcessesOnIOThread,
+                     weak_factory_.GetWeakPtr()));
 }
 
 void MemoryInternalsDOMHandler::HandleSaveDump(const base::ListValue* args) {

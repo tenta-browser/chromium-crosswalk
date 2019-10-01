@@ -185,7 +185,7 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
   // may be null.
   //
   // This constructor is fast and does no I/O, so can be called at any time.
-  HistoryBackend(Delegate* delegate,
+  HistoryBackend(std::unique_ptr<Delegate> delegate,
                  std::unique_ptr<HistoryBackendClient> backend_client,
                  scoped_refptr<base::SequencedTaskRunner> task_runner);
 
@@ -233,27 +233,24 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
   // Run the |callback| on the History thread.
   // |callback| should handle the null database case.
   void ScheduleAutocomplete(
-      const base::Callback<void(HistoryBackend*, URLDatabase*)>& callback);
+      base::OnceCallback<void(HistoryBackend*, URLDatabase*)> callback);
 
-  void QueryURL(const GURL& url,
-                bool want_visits,
-                QueryURLResult* query_url_result);
-  void QueryHistory(const base::string16& text_query,
-                    const QueryOptions& options,
-                    QueryResults* query_results);
+  QueryURLResult QueryURL(const GURL& url, bool want_visits);
+  QueryResults QueryHistory(const base::string16& text_query,
+                            const QueryOptions& options);
 
   // Computes the most recent URL(s) that the given canonical URL has
   // redirected to. There may be more than one redirect in a row, so this
   // function will fill the given array with the entire chain. If there are
   // no redirects for the most recent visit of the URL, or the URL is not
   // in history, the array will be empty.
-  void QueryRedirectsFrom(const GURL& url, RedirectList* redirects);
+  RedirectList QueryRedirectsFrom(const GURL& url);
 
   // Similar to above function except computes a chain of redirects to the
   // given URL. Stores the most recent list of redirects ending at |url| in the
   // given RedirectList. For example, if we have the redirect list A -> B -> C,
   // then calling this function with url=C would fill redirects with {B, A}.
-  void QueryRedirectsTo(const GURL& url, RedirectList* redirects);
+  RedirectList QueryRedirectsTo(const GURL& url);
 
   void GetVisibleVisitCountToHost(const GURL& url,
                                   VisibleVisitCountToHostResult* result);
@@ -415,9 +412,13 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
 
   // Deleting ------------------------------------------------------------------
 
-  virtual void DeleteURLs(const std::vector<GURL>& urls);
+  void DeleteURLs(const std::vector<GURL>& urls);
 
-  virtual void DeleteURL(const GURL& url);
+  void DeleteURL(const GURL& url);
+
+  // Deletes all visits to urls until the corresponding timestamp.
+  void DeleteURLsUntil(
+      const std::vector<std::pair<GURL, base::Time>>& urls_and_timestamps);
 
   // Calls ExpireHistoryBackend::ExpireHistoryBetween and commits the change.
   void ExpireHistoryBetween(const std::set<GURL>& restrict_urls,

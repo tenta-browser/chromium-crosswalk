@@ -585,8 +585,9 @@ video_decode_accelerator_unittest when input file is test-25fps.h264.
 This value must be identical on all platforms.
 
 #### test-25fps.h264.json:
-JSON file that contains metadata of test-25fps.h264.
-This is used by video_decode_accelerator_tests.
+JSON file that contains all metadata related to test-25fps.h264, used by the
+video_decode_accelerator_tests. This includes the video codec, resolution and
+md5 checksums of individual video frames when converted to the I420 format.
 
 #### test-25fps.vp8
 ffmpeg git-2012-07-19-a8d8e86, libvpx ToT 7/19, chromium r147247,
@@ -607,8 +608,9 @@ video_decode_accelerator_unittest when input file is test-25fps.vp8.
 This value must be identical on all platforms.
 
 #### test-25fps.vp8.json:
-JSON file that contains metadata of test-25fps.vp8.
-This is used by video_decode_accelerator_tests.
+JSON file that contains all metadata related to test-25fps.vp8, used by the
+video_decode_accelerator_tests. This includes the video codec, resolution and
+md5 checksums of individual video frames when converted to the I420 format.
 
 #### test-25fps.vp9
 avconv 9.16-6:9.16-0ubuntu0.14.04.1, vpxenc v1.3.0
@@ -634,8 +636,9 @@ video_decode_accelerator_unittest when input file is test-25fps.vp9.
 This value must be identical on all platforms.
 
 #### test-25fps.vp9.json:
-JSON file that contains metadata of test-25fps.vp9.
-This is used by video_decode_accelerator_tests.
+JSON file that contains all metadata related to test-25fps.vp9, used by the
+video_decode_accelerator_tests. This includes the video codec, resolution and
+md5 checksums of individual video frames when converted to the I420 format.
 
 #### test-25fps.vp9_2
 Similar to test-25fps.vp9, substituting the option `--profile=0` with
@@ -653,8 +656,9 @@ video_decode_accelerator_unittest when input file is test-25fps.vp9_2.
 This value must be identical on all platforms.
 
 #### test-25fps.vp9_2.json:
-JSON file that contains metadata of test-25fps.vp9_2.
-This is used by video_decode_accelerator_tests.
+JSON file that contains all metadata related to test-25fps.vp9_2, used by the
+video_decode_accelerator_tests. This includes the video codec, resolution and
+md5 checksums of individual video frames when converted to the I420 format.
 
 
 ### VP9 video with show_existing_frame flag
@@ -746,32 +750,43 @@ The frame sizes change between 1080p and 720p every 24 frames.
 
 ### VEA test files:
 
-#### bear_320x192_40frames.yuv
+#### bear_320x192_40frames.yuv.webm
 First 40 raw i420 frames of bear-1280x720.mp4 scaled down to 320x192 for
-video_encode_accelerator_unittest.
+video_encode_accelerator_unittest. Encoded with vp9 lossless:
+`ffmpeg -pix_fmt yuv420p -s:v 320x192 -r 30 -i bear_320x192_40frames.yuv -lossless 1 bear_320x192_40frames.yuv.webm`
 
-#### bear_320x192_40frames.nv12.yuv
-First 40 raw nv12 frames of bear-1280x720.mp4 scaled down to 320x192 for
-video_encode_accelerator_unittest.
+#### bear_640x384_40frames.yuv.webm
+First 40 raw i420 frames of bear-1280x720.mp4 scaled down to 340x384 for
+video_encode_accelerator_unittest. Encoded with vp9 lossless:
+`ffmpeg -pix_fmt yuv420p -s:v 640x384 -r 30 -i bear_640x384_40frames.yuv -lossless 1 bear_640x384_40frames.yuv.webm`
 
-#### bear_320x192_40frames.nv21.yuv
-First 40 raw nv21 frames of bear-1280x720.mp4 scaled down to 320x192 for
-video_encode_accelerator_unittest.
-
-#### bear_320x192_40frames.yv12.yuv
-First 40 raw yv12 frames of bear-1280x720.mp4 scaled down to 320x192 for
-video_encode_accelerator_unittest.
 
 ### ImageProcessor Test Files
 
 #### bear\_320x192.i420.yuv
 First frame of bear\_320x192\_40frames.yuv for image\_processor_test.
 
+#### bear\_320x192.i420.yuv.json
+Metadata describing bear\_320x192.i420.yuv.
+
 #### bear\_320x192.nv12.yuv
 First frame of bear\_320x192\_40frames.nv12.yuv for image\_processor_test.
 
-#### bear\_320x192.yv21.yuv
-First frame of bear\_320x192\_40frames.yv21.yuv for image\_processor_test.
+#### bear\_320x192.nv12.yuv.json
+Metadata describing bear\_320x192.nv12.yuv.
+
+#### bear\_320x192.yv12.yuv
+First frame of bear\_320x192\_40frames.yv12.yuv for image\_processor_test.
+
+#### bear\_320x192.rgba
+RAW RGBA format data. This data is created from bear\_320x192.i420.yuv by the
+following command. Alpha channel is always 0xFF because of that.
+`ffmpeg -s 320x192 -pix_fmt yuv420p -i bear_320x192.i420.yuv -vcodec rawvideo -f image2 -pix_fmt rgba bear_320x192.rgba`
+
+#### bear\_320x192.bgra
+RAW BGRA format data. This data is created from bear\_320x192.i420.yuv by the
+following command. Alpha channel is always 0xFF because of that.
+`ffmpeg -s 320x192 -pix_fmt yuv420p -i bear_320x192.i420.yuv -vcodec rawvideo -f image2 -pix_fmt rgba bear_320x192.bgra`
 
 ###  VP9 parser test files:
 
@@ -802,11 +817,53 @@ ffmpeg -i green.webm -i a300hz.webm -map 0 -map 1 green-a300hz.webm
 ffmpeg -i red.webm -i a500hz.webm -map 0 -map 1 red-a500hz.webm
 ```
 
+### WebP Test Files
+
+#### bouncy_ball.webp
+An animated (extended) WebP encoded image of 450x450. Created by gildekel@ using Gimp.
+
+#### red_green_gradient_lossy.webp
+A lossy WebP encoded image of 3000x3000. Created by gildekel@ using Gimp.
+
+#### yellow_pink_gradient_lossless.webp
+A lossless WebP encoded image of 3000x3000. Created by gildekel@ using Gimp.
+
 ### JPEG Test Files
 
 #### pixel-1280x720.jpg
-Single MJEPG encoded frame of 1280x720, captured on Chromebook Pixel. This image
+Single MJPEG encoded frame of 1280x720, captured on Chromebook Pixel. This image
 does not have Huffman table.
+
+#### pixel-1280x720-trailing-zeros.jpg
+A version of pixel-1280x720.jpg with five trailing zero bytes after the EOI
+marker. The command used to generated it was:
+```
+echo -e "`xxd -g1 -p -c1 pixel-1280x720.jpg`" "\n00\n00\n00\n00\n00" | xxd -r -g1 -p -c1 > pixel-1280x720-trailing-zeros.jpg
+```
+
+#### pixel-1280x720-grayscale.jpg
+A version of pixel-1280x720.jpg converted to grayscale using:
+```
+jpegtran -grayscale pixel-1280x720.jpg > pixel-1280x720-grayscale.jpg
+```
+Then, using a hex editor, the Huffman table sections were removed from the
+resulting file.
+
+#### pixel-1280x720-yuv420.jpg
+A version of pixel-1280x720.jpg converted to 4:2:0 subsampling using:
+```
+convert pixel-1280x720.jpg -sampling-factor 4:2:0 -define jpeg:optimize-coding=false pixel-1280x720-yuv420.jpg
+```
+Then, using a hex editor, the Huffman table sections were removed from the
+resulting file.
+
+#### pixel-1280x720-yuv444.jpg
+A version of pixel-1280x720.jpg converted to 4:4:4 subsampling using:
+```
+convert pixel-1280x720.jpg -sampling-factor 4:4:4 -define jpeg:optimize-coding=false pixel-1280x720-yuv444.jpg
+```
+Then, using a hex editor, the Huffman table sections were removed from the
+resulting file.
 
 #### peach_pi-1280x720.jpg
 Single MJPEG encoded frame of 1280x720, captured on Samsung Chromebook 2(13").

@@ -27,7 +27,6 @@
 #include "content/browser/indexed_db/indexed_db_active_blob_registry.h"
 #include "content/browser/indexed_db/indexed_db_blob_info.h"
 #include "content/browser/indexed_db/indexed_db_leveldb_coding.h"
-#include "content/browser/indexed_db/indexed_db_pre_close_task_queue.h"
 #include "content/browser/indexed_db/leveldb/leveldb_iterator.h"
 #include "content/browser/indexed_db/leveldb/leveldb_transaction.h"
 #include "content/common/content_export.h"
@@ -71,8 +70,7 @@ enum class V2SchemaCorruptionStatus {
 
 // All interaction with this class should be done on the task runner given to
 // Open.
-class CONTENT_EXPORT IndexedDBBackingStore
-    : public base::RefCounted<IndexedDBBackingStore> {
+class CONTENT_EXPORT IndexedDBBackingStore {
  public:
   class CONTENT_EXPORT Comparator : public LevelDBComparator {
    public:
@@ -104,16 +102,8 @@ class CONTENT_EXPORT IndexedDBBackingStore
 
   enum class BlobWriteResult { FAILURE_ASYNC, SUCCESS_ASYNC, SUCCESS_SYNC };
 
-  class BlobWriteCallback : public base::RefCounted<BlobWriteCallback> {
-   public:
-    // TODO(dmurph): Make all calls to this method async after measuring
-    // performance.
-    virtual leveldb::Status Run(BlobWriteResult result) = 0;
-
-   protected:
-    friend class base::RefCounted<BlobWriteCallback>;
-    virtual ~BlobWriteCallback() {}
-  };
+  using BlobWriteCallback = base::OnceCallback<leveldb::Status(
+      IndexedDBBackingStore::BlobWriteResult result)>;
 
   class BlobChangeRecord {
    public:
@@ -149,7 +139,7 @@ class CONTENT_EXPORT IndexedDBBackingStore
     // files should be cleaned up.
     // The callback will be called eventually on success or failure, or
     // immediately if phase one is complete due to lack of any blobs to write.
-    virtual leveldb::Status CommitPhaseOne(scoped_refptr<BlobWriteCallback>);
+    virtual leveldb::Status CommitPhaseOne(BlobWriteCallback callback);
 
     // CommitPhaseTwo is called once the blob files (if any) have been written
     // to disk, and commits the actual transaction to the backing store,
@@ -244,7 +234,6 @@ class CONTENT_EXPORT IndexedDBBackingStore
     typedef std::vector<WriteDescriptor> WriteDescriptorVec;
 
    private:
-    class BlobWriteCallbackWrapper;
 
     // Called by CommitPhaseOne: Identifies the blob entries to write and adds
     // them to the primary blob journal directly (i.e. not as part of the
@@ -264,13 +253,16 @@ class CONTENT_EXPORT IndexedDBBackingStore
     // eventually on success or failure.
     void WriteNewBlobs(BlobEntryKeyValuePairVec* new_blob_entries,
                        WriteDescriptorVec* new_files_to_write,
-                       scoped_refptr<BlobWriteCallback> callback);
+                       BlobWriteCallback callback);
 
     // Called by CommitPhaseTwo: Partition blob references in blobs_to_remove_
     // into live (active references) and dead (no references).
     void PartitionBlobsToRemove(BlobJournalType* dead_blobs,
                                 BlobJournalType* live_blobs) const;
 
+    // The raw pointer is not inherently safe, but IndexedDB destroys
+    // transactions & connections before destroying the backing store.
+    // TODO(dmurph): Convert to WeakPtr. https://crbug.com/960992
     IndexedDBBackingStore* backing_store_;
     scoped_refptr<LevelDBTransaction> transaction_;
     std::map<std::string, std::unique_ptr<BlobChangeRecord>> blob_change_map_;
@@ -341,7 +333,7 @@ class CONTENT_EXPORT IndexedDBBackingStore
     virtual bool LoadCurrentRow(leveldb::Status* s) = 0;
 
    protected:
-    Cursor(scoped_refptr<IndexedDBBackingStore> backing_store,
+    Cursor(IndexedDBBackingStore* backing_store,
            Transaction* transaction,
            int64_t database_id,
            const CursorOptions& cursor_options);
@@ -354,7 +346,13 @@ class CONTENT_EXPORT IndexedDBBackingStore
     bool IsPastBounds() const;
     bool HaveEnteredRange() const;
 
+    // The raw pointer is not inherently safe, but IndexedDB destroys
+    // transactions & connections before destroying the backing store.
+    // TODO(dmurph): Convert to WeakPtr. https://crbug.com/960992
     IndexedDBBackingStore* backing_store_;
+    // The raw pointer is not inherently safe, but IndexedDB destroys
+    // transactions before cursors.
+    // TODO(dmurph): Convert to WeakPtr. https://crbug.com/960992
     Transaction* transaction_;
     int64_t database_id_;
     const CursorOptions cursor_options_;
@@ -380,6 +378,9 @@ class CONTENT_EXPORT IndexedDBBackingStore
 
     DISALLOW_COPY_AND_ASSIGN(Cursor);
   };
+
+  enum class Mode { kInMemory, kOnDisk };
+
   // Schedule an immediate blob journal cleanup if we reach this number of
   // requests.
   static constexpr const int kMaxJournalCleanRequests = 50;
@@ -391,11 +392,13 @@ class CONTENT_EXPORT IndexedDBBackingStore
   static constexpr const base::TimeDelta kInitialJournalCleaningWindowTime =
       base::TimeDelta::FromSeconds(2);
 
-  IndexedDBBackingStore(IndexedDBFactory* indexed_db_factory,
+  IndexedDBBackingStore(Mode backing_store_mode,
+                        IndexedDBFactory* indexed_db_factory,
                         const url::Origin& origin,
                         const base::FilePath& blob_path,
                         std::unique_ptr<LevelDBDatabase> db,
                         base::SequencedTaskRunner* task_runner);
+  virtual ~IndexedDBBackingStore();
 
   // Initializes the backing store. This must be called before doing any
   // operations or method calls on this object.
@@ -404,7 +407,6 @@ class CONTENT_EXPORT IndexedDBBackingStore
   const url::Origin& origin() const { return origin_; }
   IndexedDBFactory* factory() const { return indexed_db_factory_; }
   base::SequencedTaskRunner* task_runner() const { return task_runner_.get(); }
-  base::OneShotTimer* close_timer() { return &close_timer_; }
   IndexedDBActiveBlobRegistry* active_blob_registry() {
     return &active_blob_registry_;
   }
@@ -529,17 +531,6 @@ class CONTENT_EXPORT IndexedDBBackingStore
       blink::mojom::IDBCursorDirection,
       leveldb::Status*);
 
-  IndexedDBPreCloseTaskQueue* pre_close_task_queue() {
-    return pre_close_task_queue_.get();
-  }
-
-  void SetPreCloseTaskList(std::unique_ptr<IndexedDBPreCloseTaskQueue> list) {
-    pre_close_task_queue_ = std::move(list);
-  }
-
-  // |pre_close_task_queue()| must not be null.
-  void StartPreCloseTasks();
-
   LevelDBDatabase* db() { return db_.get(); }
 
   const std::string& origin_identifier() { return origin_identifier_; }
@@ -568,12 +559,14 @@ class CONTENT_EXPORT IndexedDBBackingStore
   // an otherwise healthy backing store.
   leveldb::Status RevertSchemaToV2();
 
-  bool is_incognito() const { return !indexed_db_factory_; }
+  bool is_incognito() const { return backing_store_mode_ == Mode::kInMemory; }
+
+  base::WeakPtr<IndexedDBBackingStore> AsWeakPtr() {
+    return weak_factory_.GetWeakPtr();
+  }
 
  protected:
-  friend class base::RefCounted<IndexedDBBackingStore>;
-  virtual ~IndexedDBBackingStore();
-
+  friend class IndexedDBOriginState;
 
   leveldb::Status AnyDatabaseContainsBlobs(LevelDBTransaction* transaction,
                                            bool* blobs_exist);
@@ -630,6 +623,7 @@ class CONTENT_EXPORT IndexedDBBackingStore
   // Can run a journal cleaning job if one is pending.
   void DidCommitTransaction();
 
+  Mode backing_store_mode_;
   IndexedDBFactory* indexed_db_factory_;
   const url::Origin origin_;
   base::FilePath blob_path_;
@@ -659,16 +653,16 @@ class CONTENT_EXPORT IndexedDBBackingStore
   // Whenever blobs are registered in active_blob_registry_,
   // indexed_db_factory_ will hold a reference to this backing store.
   IndexedDBActiveBlobRegistry active_blob_registry_;
-  base::OneShotTimer close_timer_;
-  std::unique_ptr<IndexedDBPreCloseTaskQueue> pre_close_task_queue_;
 
   // Incremented whenever a transaction starts committing, decremented when
   // complete. While > 0, temporary journal entries may exist so out-of-band
   // journal cleaning must be deferred.
-  size_t committing_transaction_count_;
+  size_t committing_transaction_count_ = 0;
+
 #if DCHECK_IS_ON()
   bool initialized_ = false;
 #endif
+  base::WeakPtrFactory<IndexedDBBackingStore> weak_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(IndexedDBBackingStore);
 };
 

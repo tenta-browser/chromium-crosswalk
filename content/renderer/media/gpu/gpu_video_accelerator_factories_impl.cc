@@ -8,7 +8,6 @@
 #include <GLES2/gl2ext.h>
 
 #include "base/bind.h"
-#include "base/feature_list.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/unguessable_token.h"
@@ -24,7 +23,6 @@
 #include "gpu/command_buffer/common/gpu_memory_buffer_support.h"
 #include "gpu/ipc/client/gpu_channel_host.h"
 #include "gpu/ipc/common/gpu_memory_buffer_support.h"
-#include "media/base/media_switches.h"
 #include "media/filters/gpu_video_decoder.h"
 #include "media/gpu/gpu_video_accelerator_util.h"
 #include "media/gpu/ipc/client/gpu_video_decode_accelerator_host.h"
@@ -121,22 +119,27 @@ void GpuVideoAcceleratorFactoriesImpl::BindOnTaskRunner(
 
   if (context_provider_->BindToCurrentThread() !=
       gpu::ContextResult::kSuccess) {
-    SetContextProviderLost();
+    OnContextLost();
     return;
   }
 
+  context_provider_->AddObserver(this);
+
 #if BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
-  if (base::FeatureList::IsEnabled(media::kMojoVideoDecoder)) {
-    interface_factory_->CreateVideoDecoder(mojo::MakeRequest(&video_decoder_));
-    video_decoder_->GetSupportedConfigs(base::BindOnce(
-        &GpuVideoAcceleratorFactoriesImpl::OnSupportedDecoderConfigs,
-        base::Unretained(this)));
-  }
+  // Note: This is a bit of a hack, since we don't specify the implementation
+  // before asking for the map of supported configs.  We do this because it
+  // (a) saves an ipc call, and (b) makes the return of those configs atomic.
+  // Otherwise, we might have received configs for kDefault but not yet
+  // kAlternate, for example.
+  interface_factory_->CreateVideoDecoder(mojo::MakeRequest(&video_decoder_));
+  video_decoder_->GetSupportedConfigs(base::BindOnce(
+      &GpuVideoAcceleratorFactoriesImpl::OnSupportedDecoderConfigs,
+      base::Unretained(this)));
 #endif  // BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
 }
 
 void GpuVideoAcceleratorFactoriesImpl::OnSupportedDecoderConfigs(
-    const std::vector<media::SupportedVideoDecoderConfig>& supported_configs) {
+    const media::SupportedVideoDecoderConfigMap& supported_configs) {
   base::AutoLock lock(supported_decoder_configs_lock_);
   supported_decoder_configs_ = supported_configs;
   video_decoder_.reset();
@@ -148,7 +151,7 @@ bool GpuVideoAcceleratorFactoriesImpl::CheckContextLost() {
     return true;
   if (context_provider_->ContextGL()->GetGraphicsResetStatusKHR() !=
       GL_NO_ERROR) {
-    SetContextProviderLost();
+    OnContextLost();
     return true;
   }
   return false;
@@ -160,6 +163,8 @@ void GpuVideoAcceleratorFactoriesImpl::DestroyContext() {
 
   if (!context_provider_)
     return;
+
+  context_provider_->RemoveObserver(this);
   context_provider_ = nullptr;
   RecordContextProviderPhaseUmaEnum(
       ContextProviderPhase::CONTEXT_PROVIDER_RELEASED);
@@ -190,6 +195,7 @@ int32_t GpuVideoAcceleratorFactoriesImpl::GetCommandBufferRouteId() {
 }
 
 bool GpuVideoAcceleratorFactoriesImpl::IsDecoderConfigSupported(
+    media::VideoDecoderImplementation implementation,
     const media::VideoDecoderConfig& config) {
   base::AutoLock lock(supported_decoder_configs_lock_);
 
@@ -199,7 +205,14 @@ bool GpuVideoAcceleratorFactoriesImpl::IsDecoderConfigSupported(
   if (!supported_decoder_configs_)
     return true;
 
-  for (const auto& supported : *supported_decoder_configs_) {
+  auto iter = supported_decoder_configs_->find(implementation);
+  // If the decoder implementation wasn't listed, then fail.  This means that
+  // there is no such decoder implementation.
+  if (iter == supported_decoder_configs_->end())
+    return false;
+
+  // Iterate over the supported configs for |impl|.
+  for (const auto& supported : iter->second) {
     if (supported.Matches(config))
       return true;
   }
@@ -209,8 +222,8 @@ bool GpuVideoAcceleratorFactoriesImpl::IsDecoderConfigSupported(
 std::unique_ptr<media::VideoDecoder>
 GpuVideoAcceleratorFactoriesImpl::CreateVideoDecoder(
     media::MediaLog* media_log,
-    const media::RequestOverlayInfoCB& request_overlay_info_cb,
-    const gfx::ColorSpace& target_color_space) {
+    media::VideoDecoderImplementation implementation,
+    const media::RequestOverlayInfoCB& request_overlay_info_cb) {
   DCHECK(video_accelerator_enabled_);
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK(interface_factory_.is_bound());
@@ -218,17 +231,14 @@ GpuVideoAcceleratorFactoriesImpl::CreateVideoDecoder(
     return nullptr;
 
 #if BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
-  if (base::FeatureList::IsEnabled(media::kMojoVideoDecoder)) {
-    media::mojom::VideoDecoderPtr video_decoder;
-    interface_factory_->CreateVideoDecoder(mojo::MakeRequest(&video_decoder));
-    return std::make_unique<media::MojoVideoDecoder>(
-        task_runner_, this, media_log, std::move(video_decoder),
-        request_overlay_info_cb, target_color_space);
-  }
+  media::mojom::VideoDecoderPtr video_decoder;
+  interface_factory_->CreateVideoDecoder(mojo::MakeRequest(&video_decoder));
+  return std::make_unique<media::MojoVideoDecoder>(
+      task_runner_, this, media_log, std::move(video_decoder), implementation,
+      request_overlay_info_cb, rendering_color_space_);
+#else
+  return nullptr;
 #endif  // BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
-
-  return std::make_unique<media::GpuVideoDecoder>(
-      this, request_overlay_info_cb, target_color_space, media_log);
 }
 
 std::unique_ptr<media::VideoDecodeAccelerator>
@@ -371,7 +381,7 @@ bool GpuVideoAcceleratorFactoriesImpl::ShouldUseGpuMemoryBuffersForVideoFrames(
 unsigned GpuVideoAcceleratorFactoriesImpl::ImageTextureTarget(
     gfx::BufferFormat format) {
   DCHECK(context_provider_);
-  return gpu::GetBufferTextureTarget(gfx::BufferUsage::GPU_READ_CPU_READ_WRITE,
+  return gpu::GetBufferTextureTarget(gfx::BufferUsage::SCANOUT_CPU_READ_WRITE,
                                      format,
                                      context_provider_->ContextCapabilities());
 }
@@ -442,6 +452,17 @@ gpu::gles2::GLES2Interface* GpuVideoAcceleratorFactoriesImpl::ContextGL() {
   return CheckContextLost() ? nullptr : context_provider_->ContextGL();
 }
 
+gpu::SharedImageInterface*
+GpuVideoAcceleratorFactoriesImpl::SharedImageInterface() {
+  return CheckContextLost() ? nullptr
+                            : context_provider_->SharedImageInterface();
+}
+
+gpu::GpuMemoryBufferManager*
+GpuVideoAcceleratorFactoriesImpl::GpuMemoryBufferManager() {
+  return gpu_memory_buffer_manager_;
+}
+
 std::unique_ptr<base::SharedMemory>
 GpuVideoAcceleratorFactoriesImpl::CreateSharedMemory(size_t size) {
   std::unique_ptr<base::SharedMemory> mem(
@@ -490,8 +511,9 @@ bool GpuVideoAcceleratorFactoriesImpl::CheckContextProviderLostOnMainThread() {
   return context_provider_lost_;
 }
 
-void GpuVideoAcceleratorFactoriesImpl::SetContextProviderLost() {
+void GpuVideoAcceleratorFactoriesImpl::OnContextLost() {
   DCHECK(task_runner_->BelongsToCurrentThread());
+  TRACE_EVENT0("media", "GpuVideoAcceleratorFactoriesImpl::OnContextLost");
 
   // Don't delete the |context_provider_| here, we could be in the middle of
   // it notifying about the loss, and we'd be destroying it while it's on

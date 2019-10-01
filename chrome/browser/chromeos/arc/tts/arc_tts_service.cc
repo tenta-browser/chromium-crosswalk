@@ -8,8 +8,8 @@
 
 #include "base/logging.h"
 #include "base/memory/singleton.h"
-#include "components/arc/arc_bridge_service.h"
 #include "components/arc/arc_browser_context_keyed_service_factory_base.h"
+#include "components/arc/session/arc_bridge_service.h"
 #include "content/public/browser/tts_controller.h"
 
 namespace arc {
@@ -87,7 +87,7 @@ void ArcTtsService::OnTtsEvent(uint32_t id,
       chrome_event_type = content::TTS_EVENT_ERROR;
       break;
   }
-  tts_controller_->OnTtsEvent(id, chrome_event_type, char_index, error_msg);
+  tts_controller_->OnTtsEvent(id, chrome_event_type, char_index, -1, error_msg);
 }
 
 }  // namespace arc

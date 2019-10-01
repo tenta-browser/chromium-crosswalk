@@ -4,6 +4,7 @@
 
 #include "components/gcm_driver/account_tracker.h"
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
@@ -66,9 +67,9 @@ std::vector<AccountIds> AccountTracker::GetAccounts() const {
 }
 
 void AccountTracker::OnRefreshTokenUpdatedForAccount(
-    const AccountInfo& account_info) {
+    const CoreAccountInfo& account_info) {
   TRACE_EVENT1("identity", "AccountTracker::OnRefreshTokenUpdatedForAccount",
-               "account_id", account_info.account_id);
+               "account_id", account_info.account_id.id);
 
   // Ignore refresh tokens if there is no active account ID at all.
   if (!identity_manager_->HasPrimaryAccount())
@@ -79,30 +80,30 @@ void AccountTracker::OnRefreshTokenUpdatedForAccount(
 }
 
 void AccountTracker::OnRefreshTokenRemovedForAccount(
-    const std::string& account_id) {
+    const CoreAccountId& account_id) {
   TRACE_EVENT1("identity", "AccountTracker::OnRefreshTokenRemovedForAccount",
-               "account_id", account_id);
+               "account_id", account_id.id);
 
   DVLOG(1) << "REVOKED " << account_id;
   UpdateSignInState(account_id, /*is_signed_in=*/false);
 }
 
 void AccountTracker::OnPrimaryAccountSet(
-    const AccountInfo& primary_account_info) {
+    const CoreAccountInfo& primary_account_info) {
   TRACE_EVENT0("identity", "AccountTracker::OnPrimaryAccountSet");
 
-  std::vector<AccountInfo> accounts =
+  std::vector<CoreAccountInfo> accounts =
       identity_manager_->GetAccountsWithRefreshTokens();
 
   DVLOG(1) << "LOGIN " << accounts.size() << " accounts available.";
 
-  for (const AccountInfo& account_info : accounts) {
+  for (const CoreAccountInfo& account_info : accounts) {
     UpdateSignInState(account_info.account_id, /*is_signed_in=*/true);
   }
 }
 
 void AccountTracker::OnPrimaryAccountCleared(
-    const AccountInfo& previous_primary_account_info) {
+    const CoreAccountInfo& previous_primary_account_info) {
   TRACE_EVENT0("identity", "AccountTracker::OnPrimaryAccountCleared");
   DVLOG(1) << "LOGOUT";
   StopTrackingAllAccounts();

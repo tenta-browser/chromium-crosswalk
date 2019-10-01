@@ -4,6 +4,7 @@
 
 #include "chrome/browser/safe_browsing/download_protection/file_analyzer.h"
 
+#include "base/bind.h"
 #include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
@@ -68,7 +69,7 @@ FileAnalyzer::Results ExtractFileFeatures(
 
 }  // namespace
 
-FileAnalyzer::Results::Results() {}
+FileAnalyzer::Results::Results() : file_count(0), directory_count(0) {}
 FileAnalyzer::Results::~Results() {}
 FileAnalyzer::Results::Results(const FileAnalyzer::Results& other) = default;
 
@@ -180,8 +181,8 @@ void FileAnalyzer::OnZipAnalysisFinished(
   UMA_HISTOGRAM_BOOLEAN(
       "SBClientDownload.ZipFileHasArchiveButNoExecutable",
       archive_results.has_archive && !archive_results.has_executable);
-  UMA_HISTOGRAM_TIMES("SBClientDownload.ExtractZipFeaturesTime",
-                      base::TimeTicks::Now() - zip_analysis_start_time_);
+  UMA_HISTOGRAM_MEDIUM_TIMES("SBClientDownload.ExtractZipFeaturesTimeMedium",
+                             base::TimeTicks::Now() - zip_analysis_start_time_);
   for (const auto& file_name : archive_results.archived_archive_filenames)
     RecordArchivedArchiveFileExtensionType(file_name);
 
@@ -206,6 +207,9 @@ void FileAnalyzer::OnZipAnalysisFinished(
   } else {
     results_.type = ClientDownloadRequest::ZIPPED_EXECUTABLE;
   }
+
+  results_.file_count = archive_results.file_count;
+  results_.directory_count = archive_results.directory_count;
 
   std::move(callback_).Run(std::move(results_));
 }
@@ -247,8 +251,8 @@ void FileAnalyzer::OnRarAnalysisFinished(
   UMA_HISTOGRAM_BOOLEAN(
       "SBClientDownload.RarFileHasArchiveButNoExecutable",
       archive_results.has_archive && !archive_results.has_executable);
-  UMA_HISTOGRAM_TIMES("SBClientDownload.ExtractRarFeaturesTime",
-                      base::TimeTicks::Now() - rar_analysis_start_time_);
+  UMA_HISTOGRAM_MEDIUM_TIMES("SBClientDownload.ExtractRarFeaturesTimeMedium",
+                             base::TimeTicks::Now() - rar_analysis_start_time_);
   for (const auto& file_name : archive_results.archived_archive_filenames)
     RecordArchivedArchiveFileExtensionType(file_name);
 
@@ -263,6 +267,9 @@ void FileAnalyzer::OnRarAnalysisFinished(
   } else {
     results_.type = ClientDownloadRequest::RAR_COMPRESSED_EXECUTABLE;
   }
+
+  results_.file_count = archive_results.file_count;
+  results_.directory_count = archive_results.directory_count;
 
   std::move(callback_).Run(std::move(results_));
 }
@@ -343,8 +350,8 @@ void FileAnalyzer::OnDmgAnalysisFinished(
                              uma_file_type);
   }
 
-  UMA_HISTOGRAM_TIMES("SBClientDownload.ExtractDmgFeaturesTime",
-                      base::TimeTicks::Now() - dmg_analysis_start_time_);
+  UMA_HISTOGRAM_MEDIUM_TIMES("SBClientDownload.ExtractDmgFeaturesTimeMedium",
+                             base::TimeTicks::Now() - dmg_analysis_start_time_);
 
   std::move(callback_).Run(std::move(results_));
 }

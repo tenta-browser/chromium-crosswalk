@@ -7,7 +7,7 @@
 #include "ash/accessibility/accessibility_controller.h"
 #include "ash/shell.h"
 #include "ash/system/brightness_control_delegate.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
+#include "base/bind.h"
 #include "chromeos/dbus/power_manager/backlight.pb.h"
 
 namespace ash {
@@ -37,16 +37,14 @@ class UnifiedSystemTrayModel::DBusObserver
 UnifiedSystemTrayModel::DBusObserver::DBusObserver(
     UnifiedSystemTrayModel* owner)
     : owner_(owner) {
-  chromeos::DBusThreadManager::Get()->GetPowerManagerClient()->AddObserver(
-      this);
+  chromeos::PowerManagerClient::Get()->AddObserver(this);
   Shell::Get()->brightness_control_delegate()->GetBrightnessPercent(
       base::BindOnce(&DBusObserver::HandleInitialBrightness,
                      weak_ptr_factory_.GetWeakPtr()));
 }
 
 UnifiedSystemTrayModel::DBusObserver::~DBusObserver() {
-  chromeos::DBusThreadManager::Get()->GetPowerManagerClient()->RemoveObserver(
-      this);
+  chromeos::PowerManagerClient::Get()->RemoveObserver(this);
 }
 
 void UnifiedSystemTrayModel::DBusObserver::HandleInitialBrightness(
@@ -75,7 +73,8 @@ void UnifiedSystemTrayModel::DBusObserver::KeyboardBrightnessChanged(
 }
 
 UnifiedSystemTrayModel::UnifiedSystemTrayModel()
-    : dbus_observer_(std::make_unique<DBusObserver>(this)) {}
+    : dbus_observer_(std::make_unique<DBusObserver>(this)),
+      pagination_model_(std::make_unique<PaginationModel>()) {}
 
 UnifiedSystemTrayModel::~UnifiedSystemTrayModel() = default;
 

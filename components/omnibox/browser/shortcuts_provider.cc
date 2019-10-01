@@ -203,7 +203,7 @@ void ShortcutsProvider::GetMatches(const AutocompleteInput& input) {
   // Remove duplicates.  This is important because it's common to have multiple
   // shortcuts pointing to the same URL, e.g., ma, mai, and mail all pointing
   // to mail.google.com, so typing "m" will return them all.  If we then simply
-  // clamp to kMaxMatches and let the SortAndDedupMatches take care of
+  // clamp to provider_max_matches_ and let the SortAndDedupMatches take care of
   // collapsing the duplicates, we'll effectively only be returning one match,
   // instead of several possibilities.
   //
@@ -217,7 +217,7 @@ void ShortcutsProvider::GetMatches(const AutocompleteInput& input) {
   std::partial_sort(
       shortcut_matches.begin(),
       shortcut_matches.begin() +
-          std::min(AutocompleteProvider::kMaxMatches, shortcut_matches.size()),
+          std::min(provider_max_matches_, shortcut_matches.size()),
       shortcut_matches.end(),
       [](const ShortcutMatch& elem1, const ShortcutMatch& elem2) {
         // Ensure a stable sort by sorting equal-relevance matches
@@ -226,21 +226,18 @@ void ShortcutsProvider::GetMatches(const AutocompleteInput& input) {
                    ? elem1.contents < elem2.contents
                    : elem1.relevance > elem2.relevance;
       });
-  if (shortcut_matches.size() > AutocompleteProvider::kMaxMatches) {
-    shortcut_matches.erase(
-        shortcut_matches.begin() + AutocompleteProvider::kMaxMatches,
-        shortcut_matches.end());
+  if (shortcut_matches.size() > provider_max_matches_) {
+    shortcut_matches.erase(shortcut_matches.begin() + provider_max_matches_,
+                           shortcut_matches.end());
   }
   // Create and initialize autocomplete matches from shortcut matches.
   // Also guarantee that all relevance scores are decreasing (but do not assign
   // any scores below 1).
-  WordMap terms_map(CreateWordMapForString(term_string));
   matches_.reserve(shortcut_matches.size());
   for (ShortcutMatch& match : shortcut_matches) {
     max_relevance = std::min(max_relevance, match.relevance);
     matches_.push_back(ShortcutToACMatch(*match.shortcut, max_relevance, input,
-                                         fixed_up_input, term_string,
-                                         terms_map));
+                                         fixed_up_input, term_string));
     if (max_relevance > 1)
       --max_relevance;
   }
@@ -251,8 +248,7 @@ AutocompleteMatch ShortcutsProvider::ShortcutToACMatch(
     int relevance,
     const AutocompleteInput& input,
     const base::string16& fixed_up_input_text,
-    const base::string16 term_string,
-    const WordMap& terms_map) {
+    const base::string16 term_string) {
   DCHECK(!input.text().empty());
   AutocompleteMatch match;
   match.provider = this;
@@ -330,12 +326,11 @@ AutocompleteMatch ShortcutsProvider::ShortcutToACMatch(
 
   // Try to mark pieces of the contents and description as matches if they
   // appear in |input.text()|.
-  if (!terms_map.empty()) {
-    match.contents_class =
-        ClassifyAllMatchesInString(term_string, terms_map, match.contents,
-                                   is_search_type, match.contents_class);
+  if (!term_string.empty()) {
+    match.contents_class = ClassifyAllMatchesInString(
+        term_string, match.contents, is_search_type, match.contents_class);
     match.description_class = ClassifyAllMatchesInString(
-        term_string, terms_map, match.description,
+        term_string, match.description,
         /*text_is_search_query=*/false, match.description_class);
   }
   return match;

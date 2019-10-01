@@ -11,9 +11,7 @@
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/policy/user_cloud_policy_manager_chromeos.h"
-#include "chrome/browser/chromeos/policy/user_policy_manager_factory_chromeos.h"
 #else
-#include "chrome/browser/policy/cloud/user_cloud_policy_manager_factory.h"
 #include "components/policy/core/common/cloud/user_cloud_policy_manager.h"
 #endif
 
@@ -31,11 +29,6 @@ UserCloudPolicyInvalidatorFactory::UserCloudPolicyInvalidatorFactory()
           BrowserContextDependencyManager::GetInstance()) {
   DependsOn(invalidation::DeprecatedProfileInvalidationProviderFactory::
                 GetInstance());
-#if defined(OS_CHROMEOS)
-  DependsOn(UserPolicyManagerFactoryChromeOS::GetInstance());
-#else
-  DependsOn(UserCloudPolicyManagerFactory::GetInstance());
-#endif
 }
 
 UserCloudPolicyInvalidatorFactory::~UserCloudPolicyInvalidatorFactory() {}
@@ -45,11 +38,9 @@ KeyedService* UserCloudPolicyInvalidatorFactory::BuildServiceInstanceFor(
   Profile* profile = static_cast<Profile*>(context);
 #if defined(OS_CHROMEOS)
   CloudPolicyManager* policy_manager =
-      UserPolicyManagerFactoryChromeOS::GetCloudPolicyManagerForProfile(
-          profile);
+      profile->GetUserCloudPolicyManagerChromeOS();
 #else
-  CloudPolicyManager* policy_manager =
-      UserCloudPolicyManagerFactory::GetForBrowserContext(context);
+  CloudPolicyManager* policy_manager = profile->GetUserCloudPolicyManager();
 #endif
   if (!policy_manager)
     return NULL;

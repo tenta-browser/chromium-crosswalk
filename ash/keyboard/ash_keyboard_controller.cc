@@ -4,16 +4,17 @@
 
 #include "ash/keyboard/ash_keyboard_controller.h"
 
-#include "ash/keyboard/ash_keyboard_ui.h"
+#include "ash/keyboard/ui/keyboard_controller.h"
+#include "ash/keyboard/ui/keyboard_ui_factory.h"
 #include "ash/keyboard/virtual_keyboard_controller.h"
+#include "ash/public/cpp/keyboard/keyboard_switches.h"
 #include "ash/public/cpp/shell_window_ids.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "ash/shell_delegate.h"
+#include "base/command_line.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/keyboard/keyboard_controller.h"
-#include "ui/keyboard/keyboard_ui_factory.h"
 #include "ui/wm/core/coordinate_conversion.h"
 
 using keyboard::mojom::KeyboardConfig;
@@ -23,7 +24,7 @@ using keyboard::mojom::KeyboardEnableFlag;
 namespace ash {
 
 AshKeyboardController::AshKeyboardController(
-    SessionController* session_controller)
+    SessionControllerImpl* session_controller)
     : session_controller_(session_controller),
       keyboard_controller_(std::make_unique<keyboard::KeyboardController>()) {
   if (session_controller_)  // May be null in tests.
@@ -42,44 +43,29 @@ void AshKeyboardController::BindRequest(
   bindings_.AddBinding(this, std::move(request));
 }
 
-void AshKeyboardController::EnableKeyboard() {
-  if (!keyboard_controller_->IsKeyboardEnableRequested())
-    return;
-
-  // KeyboardController::EnableKeyboard will reload the keyboard if it's already
-  // enabled. TODO(https://crbug.com/731537): Add a separate function for
-  // reloading the keyboard.
-  keyboard_controller_->EnableKeyboard(
-      keyboard_ui_factory_ ? keyboard_ui_factory_->CreateKeyboardUI()
-                           : std::make_unique<AshKeyboardUI>(this),
-      virtual_keyboard_controller_.get());
-
-  // Start preloading the virtual keyboard UI in the background, so that it
-  // shows up faster when needed.
-  keyboard_controller_->LoadKeyboardWindowInBackground();
-}
-
-void AshKeyboardController::DisableKeyboard() {
-  keyboard_controller_->DisableKeyboard();
-}
-
 void AshKeyboardController::CreateVirtualKeyboard(
     std::unique_ptr<keyboard::KeyboardUIFactory> keyboard_ui_factory) {
-  DCHECK(keyboard_ui_factory || features::IsUsingWindowService())
-      << "keyboard_ui_factory can be null only when window service is used.";
-  keyboard_ui_factory_ = std::move(keyboard_ui_factory);
+  DCHECK(keyboard_ui_factory);
   virtual_keyboard_controller_ = std::make_unique<VirtualKeyboardController>();
+  keyboard_controller_->Initialize(std::move(keyboard_ui_factory),
+                                   virtual_keyboard_controller_.get());
+
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          keyboard::switches::kEnableVirtualKeyboard)) {
+    keyboard_controller_->SetEnableFlag(
+        KeyboardEnableFlag::kCommandLineEnabled);
+  }
 }
 
 void AshKeyboardController::DestroyVirtualKeyboard() {
   virtual_keyboard_controller_.reset();
+  keyboard_controller_->Shutdown();
 }
 
 void AshKeyboardController::SendOnKeyboardVisibleBoundsChanged(
-    const gfx::Rect& bounds) {
-  DVLOG(1) << "OnKeyboardVisibleBoundsChanged: " << bounds.ToString();
+    const gfx::Rect& screen_bounds) {
+  DVLOG(1) << "OnKeyboardVisibleBoundsChanged: " << screen_bounds.ToString();
   // Pass the bounds in screen coordinates over mojo.
-  gfx::Rect screen_bounds = BoundsToScreen(bounds);
   observers_.ForAllPtrs(
       [&screen_bounds](mojom::KeyboardControllerObserver* observer) {
         observer->OnKeyboardVisibleBoundsChanged(screen_bounds);
@@ -101,9 +87,8 @@ void AshKeyboardController::SendOnKeyboardUIDestroyed() {
 // mojom::KeyboardController
 
 void AshKeyboardController::KeyboardContentsLoaded(
-    const base::UnguessableToken& token,
     const gfx::Size& size) {
-  keyboard_controller()->KeyboardContentsLoaded(token, size);
+  keyboard_controller()->KeyboardContentsLoaded(size);
 }
 
 void AshKeyboardController::GetKeyboardConfig(
@@ -123,15 +108,11 @@ void AshKeyboardController::IsKeyboardEnabled(
 }
 
 void AshKeyboardController::SetEnableFlag(KeyboardEnableFlag flag) {
-  bool was_enabled = keyboard_controller_->IsEnabled();
   keyboard_controller_->SetEnableFlag(flag);
-  UpdateEnableFlag(was_enabled);
 }
 
 void AshKeyboardController::ClearEnableFlag(KeyboardEnableFlag flag) {
-  bool was_enabled = keyboard_controller_->IsEnabled();
   keyboard_controller_->ClearEnableFlag(flag);
-  UpdateEnableFlag(was_enabled);
 }
 
 void AshKeyboardController::GetEnableFlags(GetEnableFlagsCallback callback) {
@@ -150,8 +131,7 @@ void AshKeyboardController::RebuildKeyboardIfEnabled() {
   // Test IsKeyboardEnableRequested in case of an unlikely edge case where this
   // is called while after the enable state changed to disabled (in which case
   // we do not want to override the requested state).
-  if (keyboard_controller_->IsKeyboardEnableRequested())
-    EnableKeyboard();
+  keyboard_controller_->RebuildKeyboardIfEnabled();
 }
 
 void AshKeyboardController::IsKeyboardVisible(
@@ -216,7 +196,7 @@ void AshKeyboardController::AddObserver(
 // SessionObserver
 void AshKeyboardController::OnSessionStateChanged(
     session_manager::SessionState state) {
-  if (!keyboard_controller_->IsKeyboardEnableRequested())
+  if (!keyboard_controller_->IsEnabled())
     return;
 
   switch (state) {
@@ -227,7 +207,7 @@ void AshKeyboardController::OnSessionStateChanged(
       // proper IME. |LOGGED_IN_NOT_ACTIVE| is needed so that the virtual
       // keyboard works on supervised user creation, http://crbug.com/712873.
       // |ACTIVE| is also needed for guest user workflow.
-      EnableKeyboard();
+      RebuildKeyboardIfEnabled();
       break;
     default:
       break;
@@ -242,15 +222,6 @@ void AshKeyboardController::OnRootWindowClosing(aura::Window* root_window) {
         virtual_keyboard_controller_->GetContainerForDefaultDisplay();
     DCHECK_NE(root_window, new_parent);
     keyboard_controller_->MoveToParentContainer(new_parent);
-  }
-}
-
-void AshKeyboardController::UpdateEnableFlag(bool was_enabled) {
-  bool is_enabled = keyboard_controller_->IsKeyboardEnableRequested();
-  if (is_enabled && !was_enabled) {
-    EnableKeyboard();
-  } else if (!is_enabled && was_enabled) {
-    DisableKeyboard();
   }
 }
 
@@ -270,15 +241,14 @@ void AshKeyboardController::OnKeyboardVisibilityStateChanged(bool is_visible) {
 }
 
 void AshKeyboardController::OnKeyboardVisibleBoundsChanged(
-    const gfx::Rect& bounds) {
-  SendOnKeyboardVisibleBoundsChanged(bounds);
+    const gfx::Rect& screen_bounds) {
+  SendOnKeyboardVisibleBoundsChanged(screen_bounds);
 }
 
 void AshKeyboardController::OnKeyboardWorkspaceOccludedBoundsChanged(
-    const gfx::Rect& bounds) {
-  DVLOG(1) << "OnKeyboardOccludedBoundsChanged: " << bounds.ToString();
+    const gfx::Rect& screen_bounds) {
+  DVLOG(1) << "OnKeyboardOccludedBoundsChanged: " << screen_bounds.ToString();
   // Pass the bounds in screen coordinates over mojo.
-  gfx::Rect screen_bounds = BoundsToScreen(bounds);
   observers_.ForAllPtrs(
       [&screen_bounds](mojom::KeyboardControllerObserver* observer) {
         observer->OnKeyboardOccludedBoundsChanged(screen_bounds);
@@ -299,14 +269,6 @@ void AshKeyboardController::OnKeyboardEnabledChanged(bool is_enabled) {
       [is_enabled](mojom::KeyboardControllerObserver* observer) {
         observer->OnKeyboardEnabledChanged(is_enabled);
       });
-}
-
-gfx::Rect AshKeyboardController::BoundsToScreen(const gfx::Rect& bounds) {
-  DCHECK(keyboard_controller_->GetKeyboardWindow());
-  gfx::Rect screen_bounds(bounds);
-  ::wm::ConvertRectToScreen(keyboard_controller_->GetKeyboardWindow(),
-                            &screen_bounds);
-  return screen_bounds;
 }
 
 }  // namespace ash

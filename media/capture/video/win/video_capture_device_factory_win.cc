@@ -13,6 +13,7 @@
 #include <wrl.h>
 #include <wrl/client.h>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/metrics/histogram_macros.h"
@@ -86,7 +87,10 @@ const char* const kModelIdsBlacklistedForMediaFoundation[] = {
     // Sensoray 2253
     "1943:2253",
     // Dell E5440
-    "0c45:64d0", "0c45:64d2"};
+    "0c45:64d0", "0c45:64d2",
+    // Lenovo Thinkpad Model 20CG0006FMZ front and rear cameras, see
+    // also https://crbug.com/924528
+    "04ca:7047", "04ca:7048"};
 
 const std::pair<VideoCaptureApi, std::vector<std::pair<GUID, GUID>>>
     kMfAttributes[] = {{VideoCaptureApi::WIN_MEDIA_FOUNDATION,
@@ -322,7 +326,7 @@ void GetDeviceSupportedFormatsMediaFoundation(const Descriptor& descriptor,
 
 bool IsEnclosureLocationSupported() {
   // DeviceInformation class is only available in Win10 onwards (v10.0.10240.0).
-  if (base::win::GetVersion() < base::win::VERSION_WIN10) {
+  if (base::win::GetVersion() < base::win::Version::WIN10) {
     DVLOG(1) << "DeviceInformation not supported before Windows 10";
     return false;
   }

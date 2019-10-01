@@ -173,14 +173,6 @@ enum UMATouchEventFeatureDetectionState {
   UMA_TOUCH_EVENT_FEATURE_DETECTION_STATE_COUNT
 };
 
-#if defined(OS_ANDROID) && defined(__arm__)
-enum UMAAndroidArmFpu {
-  UMA_ANDROID_ARM_FPU_VFPV3_D16,  // The ARM CPU only supports vfpv3-d16.
-  UMA_ANDROID_ARM_FPU_NEON,       // The Arm CPU supports NEON.
-  UMA_ANDROID_ARM_FPU_COUNT
-};
-#endif  // defined(OS_ANDROID) && defined(__arm__)
-
 void RecordMicroArchitectureStats() {
 #if defined(ARCH_CPU_X86_FAMILY)
   base::CPU cpu;
@@ -188,19 +180,6 @@ void RecordMicroArchitectureStats() {
   UMA_HISTOGRAM_ENUMERATION("Platform.IntelMaxMicroArchitecture", arch,
                             base::CPU::MAX_INTEL_MICRO_ARCHITECTURE);
 #endif  // defined(ARCH_CPU_X86_FAMILY)
-#if defined(OS_ANDROID) && defined(__arm__)
-  // Detect NEON support.
-  // TODO(fdegans): Remove once non-NEON support has been removed.
-  if (android_getCpuFeatures() & ANDROID_CPU_ARM_FEATURE_NEON) {
-    UMA_HISTOGRAM_ENUMERATION("Android.ArmFpu",
-                              UMA_ANDROID_ARM_FPU_NEON,
-                              UMA_ANDROID_ARM_FPU_COUNT);
-  } else {
-    UMA_HISTOGRAM_ENUMERATION("Android.ArmFpu",
-                              UMA_ANDROID_ARM_FPU_VFPV3_D16,
-                              UMA_ANDROID_ARM_FPU_COUNT);
-  }
-#endif  // defined(OS_ANDROID) && defined(__arm__)
   base::UmaHistogramSparse("Platform.LogicalCpuCount",
                            base::SysInfo::NumberOfProcessors());
 }
@@ -211,10 +190,10 @@ void RecordStartupMetrics() {
 #if defined(OS_WIN)
   const base::win::OSInfo& os_info = *base::win::OSInfo::GetInstance();
   UMA_HISTOGRAM_ENUMERATION("Windows.GetVersionExVersion", os_info.version(),
-                            base::win::VERSION_WIN_LAST);
+                            base::win::Version::WIN_LAST);
   UMA_HISTOGRAM_ENUMERATION("Windows.Kernel32Version",
                             os_info.Kernel32Version(),
-                            base::win::VERSION_WIN_LAST);
+                            base::win::Version::WIN_LAST);
   UMA_HISTOGRAM_BOOLEAN("Windows.InCompatibilityMode",
                         os_info.version() != os_info.Kernel32Version());
 
@@ -222,13 +201,7 @@ void RecordStartupMetrics() {
                         base::TimeTicks::IsHighResolution());
 #endif  // defined(OS_WIN)
 
-  // TODO(kenrb): Reporting Bluetooth availability is disabled on Windows
-  // because initializing the Bluetooth adapter causes too much jank.
-  // Re-enable when that is resolved.
-  // See https://crbug.com/929375.
-#if !defined(OS_WIN)
   bluetooth_utility::ReportBluetoothAvailability();
-#endif
 
   // Record whether Chrome is the default browser or not.
   shell_integration::DefaultWebClientState default_state =

@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.webapps;
 
+import android.annotation.TargetApi;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Resources;
@@ -18,6 +19,9 @@ import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.chrome.browser.metrics.WebApkUma;
 import org.chromium.chrome.browser.notifications.NotificationBuilderBase;
+import org.chromium.chrome.browser.notifications.NotificationMetadata;
+import org.chromium.chrome.browser.notifications.NotificationUmaTracker;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 import org.chromium.webapk.lib.client.WebApkServiceConnectionManager;
 import org.chromium.webapk.lib.runtime_library.IWebApkApi;
 
@@ -69,8 +73,8 @@ public class WebApkServiceClient {
     }
 
     private WebApkServiceClient() {
-        mConnectionManager =
-                new WebApkServiceConnectionManager(CATEGORY_WEBAPK_API, null /* action */);
+        mConnectionManager = new WebApkServiceConnectionManager(
+                UiThreadTaskTraits.DEFAULT, CATEGORY_WEBAPK_API, null /* action */);
     }
 
     /**
@@ -95,8 +99,12 @@ public class WebApkServiceClient {
                         channelName = ContextUtils.getApplicationContext().getString(
                                 org.chromium.chrome.R.string.webapk_notification_channel_name);
                     }
-                    api.notifyNotificationWithChannel(
-                            platformTag, platformID, notificationBuilder.build(), channelName);
+                    NotificationMetadata metadata = new NotificationMetadata(
+                            NotificationUmaTracker.SystemNotificationType.WEBAPK, platformTag,
+                            platformID);
+
+                    api.notifyNotificationWithChannel(platformTag, platformID,
+                            notificationBuilder.build(metadata).getNotification(), channelName);
                 }
                 WebApkUma.recordNotificationPermissionStatus(notificationPermissionEnabled);
             }
@@ -129,6 +137,32 @@ public class WebApkServiceClient {
 
         mConnectionManager.connect(
                 ContextUtils.getApplicationContext(), webApkPackage, connectionCallback);
+    }
+
+    /** Finishes and removes the WebAPK's task. */
+    @TargetApi(Build.VERSION_CODES.M)
+    public void finishAndRemoveTaskSdk23(final WebApkActivity webApkActivity) {
+        final ApiUseCallback connectionCallback = new ApiUseCallback() {
+            @Override
+            public void useApi(IWebApkApi api) throws RemoteException {
+                if (webApkActivity.isActivityFinishingOrDestroyed()) return;
+
+                if (!api.finishAndRemoveTaskSdk23()) {
+                    // If |webApkActivity| is not the root of the task, hopefully the activities
+                    // below this one will close themselves.
+                    webApkActivity.finish();
+                }
+            }
+        };
+
+        String webApkPackage = webApkActivity.getWebApkPackageName();
+        mConnectionManager.connect(
+                ContextUtils.getApplicationContext(), webApkPackage, connectionCallback);
+    }
+
+    /** Returns whether there are any WebAPK service API calls in progress. */
+    public static boolean hasPendingWork() {
+        return sInstance != null && !sInstance.mConnectionManager.didAllConnectCallbacksRun();
     }
 
     /** Disconnects all the connections to WebAPK services. */

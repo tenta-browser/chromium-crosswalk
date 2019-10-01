@@ -8,6 +8,7 @@
 #include <limits>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/logging.h"
@@ -27,6 +28,7 @@
 #include "content/shell/test_runner/test_runner.h"
 #include "content/shell/test_runner/web_test_delegate.h"
 #include "content/shell/test_runner/web_view_test_proxy.h"
+#include "content/shell/test_runner/web_widget_test_proxy.h"
 #include "gin/arguments.h"
 #include "gin/array_buffer.h"
 #include "gin/handle.h"
@@ -36,6 +38,7 @@
 #include "third_party/blink/public/platform/web_data.h"
 #include "third_party/blink/public/platform/web_isolated_world_info.h"
 #include "third_party/blink/public/platform/web_point.h"
+#include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/public/platform/web_url_response.h"
 #include "third_party/blink/public/web/blink.h"
 #include "third_party/blink/public/web/web_array_buffer.h"
@@ -45,6 +48,7 @@
 #include "third_party/blink/public/web/web_frame_widget.h"
 #include "third_party/blink/public/web/web_input_element.h"
 #include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_render_theme.h"
 #include "third_party/blink/public/web/web_script_source.h"
 #include "third_party/blink/public/web/web_security_policy.h"
 #include "third_party/blink/public/web/web_serialized_script_value.h"
@@ -87,8 +91,7 @@ void TestRunnerForSpecificView::Reset() {
 #if !defined(OS_MACOSX) && !defined(OS_WIN)
   // (Constants copied because we can't depend on the header that defined
   // them from this file.)
-  web_view()->SetSelectionColors(0xff1e90ff, 0xff000000, 0xffc8c8c8,
-                                 0xff323232);
+  blink::SetSelectionColors(0xff1e90ff, 0xff000000, 0xffc8c8c8, 0xff323232);
 #endif
   if (web_view()->MainFrame()->IsWebLocalFrame()) {
     web_view()->MainFrame()->ToWebLocalFrame()->EnableViewSourceMode(false);
@@ -203,16 +206,14 @@ base::OnceClosure TestRunnerForSpecificView::CreateClosureThatPostsV8Callback(
 void TestRunnerForSpecificView::UpdateAllLifecyclePhasesAndComposite() {
   // Note, this is executed synchronously. Wrap in setTimeout() to run
   // asynchronously.
-  blink::WebWidget* widget =
-      web_view()->MainFrame()->ToWebLocalFrame()->FrameWidget();
-  widget->UpdateAllLifecyclePhasesAndCompositeForTesting(/* raster = */ true);
+  main_frame_render_widget()->SynchronouslyComposite(/*raster=*/true);
 }
 
 void TestRunnerForSpecificView::UpdateAllLifecyclePhasesAndCompositeThen(
     v8::Local<v8::Function> callback) {
   // Note, this is executed synchronously. Wrap in setTimeout() to run
   // asynchronously.
-  TestRunnerForSpecificView::UpdateAllLifecyclePhasesAndComposite();
+  UpdateAllLifecyclePhasesAndComposite();
   InvokeV8Callback(
       v8::UniquePersistent<v8::Function>(blink::MainThreadIsolate(), callback));
 }
@@ -226,14 +227,41 @@ void TestRunnerForSpecificView::CapturePixelsAsyncThen(
       << "Web tests harness doesn't currently support running "
       << "testRuner.capturePixelsAsyncThen from an OOPIF";
 
-  web_view_test_proxy_->test_interfaces()->GetTestRunner()->DumpPixelsAsync(
-      web_view()->MainFrame()->ToWebLocalFrame(),
-      base::BindOnce(&TestRunnerForSpecificView::CapturePixelsCallback,
-                     weak_factory_.GetWeakPtr(),
-                     std::move(persistent_callback)));
+  test_runner::TestInterfaces* interfaces =
+      web_view_test_proxy_->test_interfaces();
+
+  if (interfaces->GetTestRunner()->CanDumpPixelsFromRenderer()) {
+    // If we're grabbing pixels from printing, we do that in the renderer, and
+    // some tests actually look at the results.
+    interfaces->GetTestRunner()->DumpPixelsAsync(
+        web_view_test_proxy_,
+        base::BindOnce(&TestRunnerForSpecificView::RunJSCallbackWithBitmap,
+                       weak_factory_.GetWeakPtr(),
+                       std::move(persistent_callback)));
+  } else {
+    // If we're running the compositor lifecycle then the pixels aren't
+    // available from the renderer, and they don't matter to tests.
+    // TODO(crbug.com/952399): We could stop pretending they matter and split
+    // this into a separate testRunner API that won't act like its returning
+    // pixels.
+    main_frame_render_widget()->RequestPresentation(base::BindOnce(
+        &TestRunnerForSpecificView::RunJSCallbackAfterCompositorLifecycle,
+        weak_factory_.GetWeakPtr(), std::move(persistent_callback)));
+  }
 }
 
-void TestRunnerForSpecificView::CapturePixelsCallback(
+void TestRunnerForSpecificView::RunJSCallbackAfterCompositorLifecycle(
+    v8::UniquePersistent<v8::Function> callback,
+    const gfx::PresentationFeedback&) {
+  // TODO(crbug.com/952399): We're not testing pixels on this path, remove the
+  // SkBitmap plumbing entirely and rename CapturePixels* to RunLifecycle*.
+  SkBitmap bitmap;
+  bitmap.allocN32Pixels(1, 1);
+  bitmap.eraseColor(0);
+  RunJSCallbackWithBitmap(std::move(callback), bitmap);
+}
+
+void TestRunnerForSpecificView::RunJSCallbackWithBitmap(
     v8::UniquePersistent<v8::Function> callback,
     const SkBitmap& snapshot) {
   v8::Isolate* isolate = blink::MainThreadIsolate();
@@ -281,7 +309,7 @@ void TestRunnerForSpecificView::CopyImageAtAndCapturePixelsAsyncThen(
       blink::MainThreadIsolate(), callback);
   CopyImageAtAndCapturePixels(
       web_view()->MainFrame()->ToWebLocalFrame(), x, y,
-      base::BindOnce(&TestRunnerForSpecificView::CapturePixelsCallback,
+      base::BindOnce(&TestRunnerForSpecificView::RunJSCallbackWithBitmap,
                      weak_factory_.GetWeakPtr(),
                      std::move(persistent_callback)));
 }
@@ -305,7 +333,7 @@ void TestRunnerForSpecificView::GetManifestThen(
 
 void TestRunnerForSpecificView::GetManifestCallback(
     v8::UniquePersistent<v8::Function> callback,
-    const GURL& manifest_url,
+    const blink::WebURL& manifest_url,
     const blink::Manifest& manifest) {
   PostV8CallbackWithArgs(std::move(callback), 0, nullptr);
 }
@@ -455,8 +483,7 @@ bool TestRunnerForSpecificView::HasCustomPageSizeStyle(int page_index) {
 }
 
 void TestRunnerForSpecificView::ForceRedSelectionColors() {
-  web_view()->SetSelectionColors(0xffee0000, 0xff00ee00, 0xff000000,
-                                 0xffc0c0c0);
+  blink::SetSelectionColors(0xffee0000, 0xff00ee00, 0xff000000, 0xffc0c0c0);
 }
 
 void TestRunnerForSpecificView::SetPageVisibility(
@@ -598,13 +625,18 @@ void TestRunnerForSpecificView::SetIsolatedWorldInfo(
     int world_id,
     v8::Local<v8::Value> security_origin,
     v8::Local<v8::Value> content_security_policy) {
-  CHECK(security_origin->IsString() || security_origin->IsNull());
-  CHECK(content_security_policy->IsString() ||
-        content_security_policy->IsNull());
+  if (!security_origin->IsString() && !security_origin->IsNull())
+    return;
+
+  if (!content_security_policy->IsString() &&
+      !content_security_policy->IsNull()) {
+    return;
+  }
 
   // If |content_security_policy| is specified, |security_origin| must also be
   // specified.
-  CHECK(content_security_policy->IsNull() || security_origin->IsString());
+  if (content_security_policy->IsString() && security_origin->IsNull())
+    return;
 
   blink::WebIsolatedWorldInfo info;
   if (security_origin->IsString()) {
@@ -617,6 +649,9 @@ void TestRunnerForSpecificView::SetIsolatedWorldInfo(
     info.content_security_policy = V8StringToWebString(
         blink::MainThreadIsolate(), content_security_policy.As<v8::String>());
   }
+
+  // Clear the document->isolated world CSP mapping.
+  web_view()->FocusedFrame()->ClearIsolatedWorldCSPForTesting(world_id);
 
   web_view()->FocusedFrame()->SetIsolatedWorldInfo(world_id, info);
 }
@@ -677,13 +712,12 @@ blink::WebLocalFrame* TestRunnerForSpecificView::GetLocalMainFrame() {
   return web_view()->MainFrame()->ToWebLocalFrame();
 }
 
-content::RenderWidget* TestRunnerForSpecificView::main_frame_render_widget() {
-  return web_view_test_proxy_->GetWidget();
+WebWidgetTestProxy* TestRunnerForSpecificView::main_frame_render_widget() {
+  return static_cast<WebWidgetTestProxy*>(web_view_test_proxy_->GetWidget());
 }
 
 blink::WebView* TestRunnerForSpecificView::web_view() {
-  // TODO(danakj): This could grab the GetWebView() off RenderViewImpl instead.
-  return web_view_test_proxy_->web_view();
+  return web_view_test_proxy_->webview();
 }
 
 WebTestDelegate* TestRunnerForSpecificView::delegate() {

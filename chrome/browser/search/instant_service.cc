@@ -5,8 +5,10 @@
 #include "chrome/browser/search/instant_service.h"
 
 #include <stddef.h>
+#include <string>
 
 #include "base/bind.h"
+#include "base/callback.h"
 #include "base/files/file_util.h"
 #include "base/path_service.h"
 #include "base/scoped_observer.h"
@@ -15,6 +17,7 @@
 #include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/image_fetcher/image_decoder_impl.h"
 #include "chrome/browser/ntp_tiles/chrome_most_visited_sites_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search/background/ntp_background_service.h"
@@ -37,6 +40,7 @@
 #include "chrome/common/search.mojom.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/theme_resources.h"
+#include "components/ntp_tiles/constants.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/search/search.h"
@@ -48,9 +52,11 @@
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/browser/url_data_source.h"
+#include "ui/gfx/color_analysis.h"
 #include "ui/gfx/color_utils.h"
-#include "ui/native_theme/native_theme_observer.h"
+#include "ui/native_theme/dark_mode_observer.h"
 
 namespace {
 
@@ -59,6 +65,8 @@ const char kNtpCustomBackgroundAttributionLine1[] = "attribution_line_1";
 const char kNtpCustomBackgroundAttributionLine2[] = "attribution_line_2";
 const char kNtpCustomBackgroundAttributionActionURL[] =
     "attribution_action_url";
+
+const char kCustomBackgroundsUmaClientName[] = "NtpCustomBackgrounds";
 
 base::DictionaryValue GetBackgroundInfoAsDict(
     const GURL& background_url,
@@ -78,13 +86,43 @@ base::DictionaryValue GetBackgroundInfoAsDict(
   return background_info;
 }
 
-std::unique_ptr<base::DictionaryValue> NtpCustomBackgroundDefaults() {
-  std::unique_ptr<base::DictionaryValue> defaults =
-      std::make_unique<base::DictionaryValue>();
-  defaults->SetString(kNtpCustomBackgroundURL, std::string());
-  defaults->SetString(kNtpCustomBackgroundAttributionLine1, std::string());
-  defaults->SetString(kNtpCustomBackgroundAttributionLine2, std::string());
-  defaults->SetString(kNtpCustomBackgroundAttributionActionURL, std::string());
+// |GetBackgroundInfoWithColor| has to return new object so that updated version
+// gets synced.
+base::DictionaryValue GetBackgroundInfoWithColor(
+    const base::DictionaryValue* background_info,
+    const SkColor color) {
+  base::DictionaryValue new_background_info;
+  auto url = const_cast<base::Value&&>(
+      *background_info->FindKey(kNtpCustomBackgroundURL));
+  auto attribution_line_1 = const_cast<base::Value&&>(
+      *background_info->FindKey(kNtpCustomBackgroundAttributionLine1));
+  auto attribution_line_2 = const_cast<base::Value&&>(
+      *background_info->FindKey(kNtpCustomBackgroundAttributionLine2));
+  auto action_url = const_cast<base::Value&&>(
+      *background_info->FindKey(kNtpCustomBackgroundAttributionActionURL));
+
+  new_background_info.SetKey(kNtpCustomBackgroundURL, url.Clone());
+  new_background_info.SetKey(kNtpCustomBackgroundAttributionLine1,
+                             attribution_line_1.Clone());
+  new_background_info.SetKey(kNtpCustomBackgroundAttributionLine2,
+                             attribution_line_2.Clone());
+  new_background_info.SetKey(kNtpCustomBackgroundAttributionActionURL,
+                             action_url.Clone());
+  new_background_info.SetKey(kNtpCustomBackgroundMainColor,
+                             base::Value((int)color));
+  return new_background_info;
+}
+
+base::Value NtpCustomBackgroundDefaults() {
+  base::Value defaults(base::Value::Type::DICTIONARY);
+  defaults.SetKey(kNtpCustomBackgroundURL,
+                  base::Value(base::Value::Type::STRING));
+  defaults.SetKey(kNtpCustomBackgroundAttributionLine1,
+                  base::Value(base::Value::Type::STRING));
+  defaults.SetKey(kNtpCustomBackgroundAttributionLine2,
+                  base::Value(base::Value::Type::STRING));
+  defaults.SetKey(kNtpCustomBackgroundAttributionActionURL,
+                  base::Value(base::Value::Type::STRING));
   return defaults;
 }
 
@@ -93,17 +131,6 @@ void CopyFileToProfilePath(const base::FilePath& from_path,
   base::CopyFile(from_path,
                  profile_path.AppendASCII(
                      chrome::kChromeSearchLocalNtpBackgroundFilename));
-}
-
-// In some cases (Sync, upgrading versions) its necessary to check if the file
-// actually exists and is in the correct location.
-bool CheckLocalBackgroundImageExists(const base::FilePath& profile_path) {
-  base::FilePath user_data_dir;
-  base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
-  base::FilePath profile_image =
-      profile_path.AppendASCII(chrome::kChromeSearchLocalNtpBackgroundFilename);
-
-  return base::PathExists(profile_image);
 }
 
 void DoDeleteThumbnailDataIfExists(
@@ -118,13 +145,16 @@ void DoDeleteThumbnailDataIfExists(
     std::move(*callback).Run(result);
 }
 
-bool IsLocalFileUrl(GURL url) {
-  return base::StartsWith(url.spec(),
-                          chrome::kChromeSearchLocalNtpBackgroundUrl,
-                          base::CompareCase::SENSITIVE);
+// |GetBitmapMainColor| just wraps |CalculateKMeanColorOfBitmap|.
+// As |CalculateKMeanColorOfBitmap| is overloaded, it cannot be bind for async
+// call.
+SkColor GetBitmapMainColor(const SkBitmap& bitmap) {
+  return color_utils::CalculateKMeanColorOfBitmap(bitmap);
 }
 
 }  // namespace
+
+const char kNtpCustomBackgroundMainColor[] = "background_main_color";
 
 // Keeps track of any changes in search engine provider and notifies
 // InstantService if a third-party search provider (i.e. a third-party NTP) is
@@ -133,7 +163,7 @@ class InstantService::SearchProviderObserver
     : public TemplateURLServiceObserver {
  public:
   explicit SearchProviderObserver(TemplateURLService* service,
-                                  base::RepeatingCallback<void(bool)> callback)
+                                  base::RepeatingClosure callback)
       : service_(service),
         is_google_(search::DefaultSearchProviderIsGoogle(service_)),
         callback_(std::move(callback)) {
@@ -151,7 +181,7 @@ class InstantService::SearchProviderObserver
  private:
   void OnTemplateURLServiceChanged() override {
     is_google_ = search::DefaultSearchProviderIsGoogle(service_);
-    callback_.Run(is_google_);
+    callback_.Run();
   }
 
   void OnTemplateURLServiceShuttingDown() override {
@@ -161,7 +191,7 @@ class InstantService::SearchProviderObserver
 
   TemplateURLService* service_;
   bool is_google_;
-  base::RepeatingCallback<void(bool)> callback_;
+  base::RepeatingClosure callback_;
 };
 
 // Keeps track of any changes to system dark mode and notifies InstantService if
@@ -228,8 +258,6 @@ InstantService::InstantService(Profile* profile)
 
   most_visited_sites_ = ChromeMostVisitedSitesFactory::NewForProfile(profile_);
   if (most_visited_sites_) {
-    bool custom_links_enabled = true;
-
     // Determine if we are using a third-party NTP. Custom links should only be
     // enabled for the default NTP.
     TemplateURLService* template_url_service =
@@ -239,13 +267,13 @@ InstantService::InstantService(Profile* profile)
           template_url_service,
           base::BindRepeating(&InstantService::OnSearchProviderChanged,
                               weak_ptr_factory_.GetWeakPtr()));
-      custom_links_enabled = search_provider_observer_->is_google();
     }
 
     // 9 tiles are required for the custom links feature in order to balance the
     // Most Visited rows (this is due to an additional "Add" button).
-    most_visited_sites_->SetMostVisitedURLsObserver(this, 9);
-    most_visited_sites_->EnableCustomLinks(custom_links_enabled);
+    most_visited_sites_->SetMostVisitedURLsObserver(
+        this, ntp_tiles::kMaxNumMostVisited);
+    most_visited_sites_->EnableCustomLinks(IsCustomLinksEnabled());
   }
 
   if (profile_) {
@@ -259,10 +287,7 @@ InstantService::InstantService(Profile* profile)
     }
   }
 
-  dark_mode_handler_ = std::make_unique<DarkModeHandler>(
-      ui::NativeTheme::GetInstanceForNativeUi(),
-      base::BindRepeating(&InstantService::OnDarkModeChanged,
-                          weak_ptr_factory_.GetWeakPtr()));
+  CreateDarkModeObserver(ui::NativeTheme::GetInstanceForNativeUi());
 
   background_service_ = NtpBackgroundServiceFactory::GetForProfile(profile_);
 
@@ -287,8 +312,13 @@ InstantService::InstantService(Profile* profile)
   pref_change_registrar_.Init(pref_service_);
   pref_change_registrar_.Add(
       prefs::kNtpCustomBackgroundDict,
-      base::BindRepeating(&InstantService::UpdateThemeInfo,
-                          base::Unretained(this)));
+      base::BindRepeating(&InstantService::UpdateBackgroundFromSync,
+                          weak_ptr_factory_.GetWeakPtr()));
+
+  image_fetcher_ = std::make_unique<image_fetcher::ImageFetcherImpl>(
+      std::make_unique<ImageDecoderImpl>(),
+      content::BrowserContext::GetDefaultStoragePartition(profile_)
+          ->GetURLLoaderFactoryForBrowserProcess());
 }
 
 InstantService::~InstantService() = default;
@@ -340,61 +370,70 @@ void InstantService::UndoAllMostVisitedDeletions() {
   }
 }
 
+bool InstantService::ToggleMostVisitedOrCustomLinks() {
+  // Non-Google NTPs are not supported.
+  if (!most_visited_sites_ || !search_provider_observer_ ||
+      !search_provider_observer_->is_google()) {
+    return false;
+  }
+  bool use_most_visited =
+      pref_service_->GetBoolean(prefs::kNtpUseMostVisitedTiles);
+  pref_service_->SetBoolean(prefs::kNtpUseMostVisitedTiles, !use_most_visited);
+  most_visited_sites_->EnableCustomLinks(IsCustomLinksEnabled());
+  return true;
+}
+
 bool InstantService::AddCustomLink(const GURL& url, const std::string& title) {
-  if (most_visited_sites_)
-    return most_visited_sites_->AddCustomLink(url, base::UTF8ToUTF16(title));
-  return false;
+  return most_visited_sites_ &&
+         most_visited_sites_->AddCustomLink(url, base::UTF8ToUTF16(title));
 }
 
 bool InstantService::UpdateCustomLink(const GURL& url,
                                       const GURL& new_url,
                                       const std::string& new_title) {
-  if (most_visited_sites_) {
-    return most_visited_sites_->UpdateCustomLink(url, new_url,
-                                                 base::UTF8ToUTF16(new_title));
-  }
-  return false;
+  return most_visited_sites_ && most_visited_sites_->UpdateCustomLink(
+                                    url, new_url, base::UTF8ToUTF16(new_title));
 }
 
 bool InstantService::ReorderCustomLink(const GURL& url, int new_pos) {
-  if (most_visited_sites_)
-    return most_visited_sites_->ReorderCustomLink(url, new_pos);
-  return false;
+  return most_visited_sites_ &&
+         most_visited_sites_->ReorderCustomLink(url, new_pos);
 }
 
 bool InstantService::DeleteCustomLink(const GURL& url) {
-  if (most_visited_sites_)
-    return most_visited_sites_->DeleteCustomLink(url);
-  return false;
+  return most_visited_sites_ && most_visited_sites_->DeleteCustomLink(url);
 }
 
 bool InstantService::UndoCustomLinkAction() {
-  // Non-Google search providers are not supported.
-  if (most_visited_sites_ && search_provider_observer_->is_google()) {
-    most_visited_sites_->UndoCustomLinkAction();
-    return true;
+  // Non-Google NTPs are not supported.
+  if (!most_visited_sites_ || !search_provider_observer_ ||
+      !search_provider_observer_->is_google()) {
+    return false;
   }
-  return false;
+  most_visited_sites_->UndoCustomLinkAction();
+  return true;
 }
 
 bool InstantService::ResetCustomLinks() {
-  // Non-Google search providers are not supported.
-  if (most_visited_sites_ && search_provider_observer_->is_google()) {
-    most_visited_sites_->UninitializeCustomLinks();
-    return true;
+  // Non-Google NTPs are not supported.
+  if (!most_visited_sites_ || !search_provider_observer_ ||
+      !search_provider_observer_->is_google()) {
+    return false;
   }
-  return false;
+  most_visited_sites_->UninitializeCustomLinks();
+  return true;
 }
 
 void InstantService::UpdateThemeInfo() {
-  // Initialize |theme_info_| if necessary.
-  if (!theme_info_) {
-    BuildThemeInfo();
-  }
-
   ApplyOrResetCustomBackgroundThemeInfo();
 
   NotifyAboutThemeInfo();
+}
+
+void InstantService::UpdateBackgroundFromSync() {
+  // Any incoming change to synced background data should clear the local image.
+  pref_service_->SetBoolean(prefs::kNtpCustomBackgroundLocalToDevice, false);
+  UpdateThemeInfo();
 }
 
 void InstantService::UpdateMostVisitedItemsInfo() {
@@ -424,29 +463,38 @@ void InstantService::SetCustomBackgroundURLWithAttributions(
       background_service_ &&
       background_service_->IsValidBackdropUrl(background_url);
 
+  bool need_forced_refresh =
+      pref_service_->GetBoolean(prefs::kNtpCustomBackgroundLocalToDevice) &&
+      pref_service_->FindPreference(prefs::kNtpCustomBackgroundDict)
+          ->IsDefaultValue();
   pref_service_->SetBoolean(prefs::kNtpCustomBackgroundLocalToDevice, false);
   RemoveLocalBackgroundImageCopy();
 
   if (background_url.is_valid() && is_backdrop_url) {
+    const GURL& thumbnail_url =
+        background_service_->GetThumbnailUrl(background_url);
+    FetchCustomBackground(background_url, thumbnail_url.is_valid()
+                                              ? thumbnail_url
+                                              : background_url);
+
     base::DictionaryValue background_info = GetBackgroundInfoAsDict(
         background_url, attribution_line_1, attribution_line_2, action_url);
     pref_service_->Set(prefs::kNtpCustomBackgroundDict, background_info);
   } else {
     pref_service_->ClearPref(prefs::kNtpCustomBackgroundDict);
+
+    // If this device was using a local image and did not have a non-local
+    // background saved, UpdateBackgroundFromSync will not fire. Therefore, we
+    // need to force a refresh here.
+    if (need_forced_refresh) {
+      UpdateThemeInfo();
+    }
   }
 }
 
 void InstantService::SetBackgroundToLocalResource() {
-  // Add a timestamp to the url to prevent the browser from using a cached
-  // version when "Upload an image" is used multiple times.
-  std::string time_string = std::to_string(base::Time::Now().ToTimeT());
-  std::string local_string(chrome::kChromeSearchLocalNtpBackgroundUrl);
-  GURL timestamped_url(local_string + "?ts=" + time_string);
-
-  base::DictionaryValue background_info = GetBackgroundInfoAsDict(
-      timestamped_url, std::string(), std::string(), GURL());
   pref_service_->SetBoolean(prefs::kNtpCustomBackgroundLocalToDevice, true);
-  pref_service_->Set(prefs::kNtpCustomBackgroundDict, background_info);
+  UpdateThemeInfo();
 }
 
 void InstantService::SelectLocalBackgroundImage(const base::FilePath& path) {
@@ -457,9 +505,14 @@ void InstantService::SelectLocalBackgroundImage(const base::FilePath& path) {
                      weak_ptr_factory_.GetWeakPtr()));
 }
 
+ThemeBackgroundInfo* InstantService::GetInitializedThemeInfo() {
+  if (!theme_info_)
+    BuildThemeInfo();
+  return theme_info_.get();
+}
+
 void InstantService::SetDarkModeThemeForTesting(ui::NativeTheme* theme) {
-  if (dark_mode_handler_)
-    dark_mode_handler_->SetThemeForTesting(theme);
+  CreateDarkModeObserver(theme);
 }
 
 void InstantService::Shutdown() {
@@ -521,9 +574,15 @@ void InstantService::OnRendererProcessTerminated(int process_id) {
   }
 }
 
-void InstantService::OnSearchProviderChanged(bool is_google) {
+void InstantService::OnSearchProviderChanged() {
   DCHECK(most_visited_sites_);
-  most_visited_sites_->EnableCustomLinks(is_google);
+  most_visited_sites_->EnableCustomLinks(IsCustomLinksEnabled());
+}
+
+void InstantService::OnDarkModeChanged(bool dark_mode) {
+  // Force theme information rebuild in order to update dark mode colors.
+  BuildThemeInfo();
+  UpdateThemeInfo();
 }
 
 void InstantService::OnDarkModeChanged(bool dark_mode) {
@@ -568,9 +627,12 @@ void InstantService::NotifyAboutThemeInfo() {
     observer.ThemeInfoChanged(*theme_info_);
 }
 
-namespace {
+bool InstantService::IsCustomLinksEnabled() {
+  return search_provider_observer_ && search_provider_observer_->is_google() &&
+         !pref_service_->GetBoolean(prefs::kNtpUseMostVisitedTiles);
+}
 
-const int kSectionBorderAlphaTransparency = 80;
+namespace {
 
 // Converts SkColor to RGBAColor
 RGBAColor SkColorToRGBAColor(const SkColor& sKColor) {
@@ -588,10 +650,11 @@ void InstantService::BuildThemeInfo() {
   // Get theme information from theme service.
   theme_info_.reset(new ThemeBackgroundInfo());
 
-  // Get if the current theme is the default theme (or GTK+ on linux).
+  // Get if the current theme is the default theme.
   ThemeService* theme_service = ThemeServiceFactory::GetForProfile(profile_);
-  theme_info_->using_default_theme =
-      theme_service->UsingDefaultTheme() || theme_service->UsingSystemTheme();
+  theme_info_->using_default_theme = theme_service->UsingDefaultTheme();
+
+  theme_info_->using_dark_mode = dark_mode_observer_->InDarkMode();
 
   theme_info_->using_dark_mode = dark_mode_handler_->IsDarkModeEnabled();
 
@@ -601,25 +664,13 @@ void InstantService::BuildThemeInfo() {
   SkColor background_color =
       theme_provider.GetColor(ThemeProperties::COLOR_NTP_BACKGROUND);
   SkColor text_color = theme_provider.GetColor(ThemeProperties::COLOR_NTP_TEXT);
-  SkColor link_color = theme_provider.GetColor(ThemeProperties::COLOR_NTP_LINK);
   SkColor text_color_light =
       theme_provider.GetColor(ThemeProperties::COLOR_NTP_TEXT_LIGHT);
-  SkColor header_color =
-      theme_provider.GetColor(ThemeProperties::COLOR_NTP_HEADER);
-  // Generate section border color from the header color.
-  SkColor section_border_color =
-      SkColorSetARGB(kSectionBorderAlphaTransparency,
-                     SkColorGetR(header_color),
-                     SkColorGetG(header_color),
-                     SkColorGetB(header_color));
 
   // Set colors.
   theme_info_->background_color = SkColorToRGBAColor(background_color);
   theme_info_->text_color = SkColorToRGBAColor(text_color);
-  theme_info_->link_color = SkColorToRGBAColor(link_color);
   theme_info_->text_color_light = SkColorToRGBAColor(text_color_light);
-  theme_info_->header_color = SkColorToRGBAColor(header_color);
-  theme_info_->section_border_color = SkColorToRGBAColor(section_border_color);
 
   int logo_alternate =
       theme_provider.GetDisplayProperty(ThemeProperties::NTP_LOGO_ALTERNATE);
@@ -677,6 +728,22 @@ void InstantService::ApplyOrResetCustomBackgroundThemeInfo() {
     return;
   }
 
+  if (pref_service_->GetBoolean(prefs::kNtpCustomBackgroundLocalToDevice)) {
+    // Add a timestamp to the url to prevent the browser from using a cached
+    // version when "Upload an image" is used multiple times.
+    std::string time_string = std::to_string(base::Time::Now().ToTimeT());
+    std::string local_string(chrome::kChromeSearchLocalNtpBackgroundUrl);
+    GURL timestamped_url(local_string + "?ts=" + time_string);
+    GetInitializedThemeInfo()->custom_background_url = timestamped_url;
+    GetInitializedThemeInfo()->custom_background_attribution_line_1 =
+        std::string();
+    GetInitializedThemeInfo()->custom_background_attribution_line_2 =
+        std::string();
+    GetInitializedThemeInfo()->custom_background_attribution_action_url =
+        GURL();
+    return;
+  }
+
   // Attempt to get custom background URL from preferences.
   GURL custom_background_url;
   if (!IsCustomBackgroundPrefValid(custom_background_url)) {
@@ -684,34 +751,7 @@ void InstantService::ApplyOrResetCustomBackgroundThemeInfo() {
     return;
   }
 
-  // If the url points to a local image check that it actually exists, if not
-  // fall back to the default background.
-  const PrefService::Preference* background_local_to_device_pref =
-      pref_service_->FindPreference(prefs::kNtpCustomBackgroundLocalToDevice);
-  if (IsLocalFileUrl(custom_background_url) &&
-      background_local_to_device_pref->IsDefaultValue()) {
-    base::PostTaskWithTraitsAndReplyWithResult(
-        FROM_HERE, {base::TaskPriority::USER_VISIBLE, base::MayBlock()},
-        base::BindOnce(&CheckLocalBackgroundImageExists, profile_->GetPath()),
-        base::BindOnce(
-            &InstantService::ApplyCustomBackgroundThemeInfoFromLocalFile,
-            weak_ptr_factory_.GetWeakPtr()));
-    return;
-  }
   ApplyCustomBackgroundThemeInfo();
-}
-
-void InstantService::ApplyCustomBackgroundThemeInfoFromLocalFile(
-    bool file_exists) {
-  pref_service_->SetBoolean(prefs::kNtpCustomBackgroundLocalToDevice,
-                            file_exists);
-
-  ApplyCustomBackgroundThemeInfo();
-
-  // This method executes as a result of PostTask... so the call to
-  // NotifyAboutThemeInfo from UpdateThemeInfo is lost, explicitly send it
-  // here instead.
-  NotifyAboutThemeInfo();
 }
 
 void InstantService::ApplyCustomBackgroundThemeInfo() {
@@ -719,14 +759,6 @@ void InstantService::ApplyCustomBackgroundThemeInfo() {
       pref_service_->GetDictionary(prefs::kNtpCustomBackgroundDict);
   GURL custom_background_url(
       background_info->FindKey(kNtpCustomBackgroundURL)->GetString());
-
-  // If a background was set using a local image on a different device fallback
-  // to the default background.
-  if (IsLocalFileUrl(custom_background_url) &&
-      !pref_service_->GetBoolean(prefs::kNtpCustomBackgroundLocalToDevice)) {
-    FallbackToDefaultThemeInfo();
-    return;
-  }
 
   // Set custom background information in theme info (attributions are
   // optional).
@@ -736,16 +768,16 @@ void InstantService::ApplyCustomBackgroundThemeInfo() {
       background_info->FindKey(kNtpCustomBackgroundAttributionLine2);
   const base::Value* attribution_action_url =
       background_info->FindKey(kNtpCustomBackgroundAttributionActionURL);
-
-  theme_info_->custom_background_url = custom_background_url;
+  ThemeBackgroundInfo* theme_info = GetInitializedThemeInfo();
+  theme_info->custom_background_url = custom_background_url;
 
   if (attribution_line_1) {
-    theme_info_->custom_background_attribution_line_1 =
+    theme_info->custom_background_attribution_line_1 =
         background_info->FindKey(kNtpCustomBackgroundAttributionLine1)
             ->GetString();
   }
   if (attribution_line_2) {
-    theme_info_->custom_background_attribution_line_2 =
+    theme_info->custom_background_attribution_line_2 =
         background_info->FindKey(kNtpCustomBackgroundAttributionLine2)
             ->GetString();
   }
@@ -755,9 +787,9 @@ void InstantService::ApplyCustomBackgroundThemeInfo() {
             ->GetString());
 
     if (!action_url.SchemeIsCryptographic()) {
-      theme_info_->custom_background_attribution_action_url = GURL();
+      theme_info->custom_background_attribution_action_url = GURL();
     } else {
-      theme_info_->custom_background_attribution_action_url = action_url;
+      theme_info->custom_background_attribution_action_url = action_url;
     }
   }
 }
@@ -770,23 +802,75 @@ void InstantService::ResetCustomBackgroundThemeInfo() {
 }
 
 void InstantService::FallbackToDefaultThemeInfo() {
-  theme_info_->custom_background_url = GURL();
-  theme_info_->custom_background_attribution_line_1 = std::string();
-  theme_info_->custom_background_attribution_line_2 = std::string();
-  theme_info_->custom_background_attribution_action_url = GURL();
+  ThemeBackgroundInfo* theme_info = GetInitializedThemeInfo();
+  theme_info->custom_background_url = GURL();
+  theme_info->custom_background_attribution_line_1 = std::string();
+  theme_info->custom_background_attribution_line_2 = std::string();
+  theme_info->custom_background_attribution_action_url = GURL();
 }
 
 bool InstantService::IsCustomBackgroundSet() {
+  if (pref_service_->GetBoolean(prefs::kNtpCustomBackgroundLocalToDevice))
+    return true;
+
   GURL custom_background_url;
   if (!IsCustomBackgroundPrefValid(custom_background_url))
     return false;
 
-  if (IsLocalFileUrl(custom_background_url) &&
-      !pref_service_->GetBoolean(prefs::kNtpCustomBackgroundLocalToDevice)) {
-    return false;
-  }
-
   return true;
+}
+
+void InstantService::ResetToDefault() {
+  ResetCustomLinks();
+  ResetCustomBackgroundThemeInfo();
+}
+
+void InstantService::UpdateCustomBackgroundColorAsync(
+    const GURL& image_url,
+    const gfx::Image& fetched_image,
+    const image_fetcher::RequestMetadata& metadata) {
+  // Calculate the bitmap color asynchronously as it is slow (1-2 seconds for
+  // the thumbnail). However, prefs should be updated on the main thread.
+  if (!fetched_image.IsEmpty()) {
+    base::PostTaskWithTraitsAndReplyWithResult(
+        FROM_HERE, {base::TaskPriority::BEST_EFFORT},
+        base::BindOnce(&GetBitmapMainColor, *fetched_image.ToSkBitmap()),
+        base::BindOnce(&InstantService::UpdateCustomBackgroundPrefsWithColor,
+                       weak_ptr_factory_.GetWeakPtr(), image_url));
+  }
+}
+
+void InstantService::FetchCustomBackground(const GURL& image_url,
+                                           const GURL& fetch_url) {
+  DCHECK(!fetch_url.is_empty());
+
+  net::NetworkTrafficAnnotationTag traffic_annotation =
+      net::DefineNetworkTrafficAnnotation("ntp_custom_background",
+                                          R"(
+    semantics {
+      sender: "Desktop Chrome background fetcher"
+      description:
+        "Fetch New Tab Page custom background for color calculation."
+      trigger:
+        "User selects new background on the New Tab Page."
+      data: "The only data sent is the path to an image"
+      destination: GOOGLE_OWNED_SERVICE
+    }
+    policy {
+      cookies_allowed: NO
+      setting:
+        "Users cannot disable this feature. The feature is enabled by "
+        "default."
+      policy_exception_justification: "Not implemented."
+    })");
+
+  image_fetcher::ImageFetcherParams params(traffic_annotation,
+                                           kCustomBackgroundsUmaClientName);
+  image_fetcher_->FetchImage(
+      image_url,
+      base::BindOnce(&InstantService::UpdateCustomBackgroundColorAsync,
+                     weak_ptr_factory_.GetWeakPtr(), image_url),
+      std::move(params));
 }
 
 bool InstantService::IsCustomBackgroundPrefValid(GURL& custom_background_url) {
@@ -827,6 +911,13 @@ void InstantService::AddValidBackdropUrlForTesting(const GURL& url) const {
   background_service_->AddValidBackdropUrlForTesting(url);
 }
 
+void InstantService::CreateDarkModeObserver(ui::NativeTheme* theme) {
+  dark_mode_observer_ = std::make_unique<ui::DarkModeObserver>(
+      theme, base::BindRepeating(&InstantService::OnDarkModeChanged,
+                                 weak_ptr_factory_.GetWeakPtr()));
+  dark_mode_observer_->Start();
+}
+
 // static
 void InstantService::RegisterProfilePrefs(PrefRegistrySimple* registry) {
   registry->RegisterDictionaryPref(
@@ -834,4 +925,26 @@ void InstantService::RegisterProfilePrefs(PrefRegistrySimple* registry) {
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterBooleanPref(prefs::kNtpCustomBackgroundLocalToDevice,
                                 false);
+  registry->RegisterBooleanPref(prefs::kNtpUseMostVisitedTiles, false);
+}
+
+void InstantService::UpdateCustomBackgroundPrefsWithColor(const GURL& image_url,
+                                                          SkColor color) {
+  // Update background color only if the selected background is still the same.
+  const base::DictionaryValue* background_info =
+      pref_service_->GetDictionary(prefs::kNtpCustomBackgroundDict);
+  if (!background_info)
+    return;
+
+  GURL current_bg_url(
+      background_info->FindKey(kNtpCustomBackgroundURL)->GetString());
+  if (current_bg_url == image_url) {
+    pref_service_->Set(prefs::kNtpCustomBackgroundDict,
+                       GetBackgroundInfoWithColor(background_info, color));
+  }
+}
+
+void InstantService::SetImageFetcherForTesting(
+    image_fetcher::ImageFetcher* image_fetcher) {
+  image_fetcher_ = base::WrapUnique(image_fetcher);
 }

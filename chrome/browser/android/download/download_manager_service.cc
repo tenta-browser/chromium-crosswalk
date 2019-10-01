@@ -6,8 +6,10 @@
 
 #include <memory>
 
+#include "base/android/callback_android.h"
 #include "base/android/jni_string.h"
 #include "base/android/path_utils.h"
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/single_thread_task_runner.h"
@@ -19,10 +21,11 @@
 #include "chrome/browser/android/download/download_utils.h"
 #include "chrome/browser/android/download/service/download_task_scheduler.h"
 #include "chrome/browser/android/feature_utilities.h"
+#include "chrome/browser/android/profile_key_startup_accessor.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/download/download_core_service.h"
-#include "chrome/browser/download/download_core_service_factory.h"
+#include "chrome/browser/download/download_target_determiner.h"
 #include "chrome/browser/download/offline_item_utils.h"
+#include "chrome/browser/download/simple_download_manager_coordinator_factory.h"
 #include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/common/chrome_constants.h"
@@ -30,7 +33,10 @@
 #include "components/download/public/common/auto_resumption_handler.h"
 #include "components/download/public/common/download_item.h"
 #include "components/download/public/common/download_item_impl.h"
+#include "components/download/public/common/download_stats.h"
 #include "components/download/public/common/download_url_loader_factory_getter_impl.h"
+#include "components/download/public/common/simple_download_manager_coordinator.h"
+#include "components/download/public/common/url_download_handler_factory.h"
 #include "components/download/public/task/task_manager_impl.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/download_item_utils.h"
@@ -41,13 +47,13 @@
 #include "jni/DownloadItem_jni.h"
 #include "jni/DownloadManagerService_jni.h"
 #include "third_party/blink/public/common/mime_util/mime_util.h"
+#include "url/origin.h"
 
-using base::android::JavaParamRef;
 using base::android::ConvertJavaStringToUTF8;
-using base::android::ConvertUTF8ToJavaString;
 using base::android::ConvertUTF16ToJavaString;
+using base::android::ConvertUTF8ToJavaString;
+using base::android::JavaParamRef;
 using base::android::ScopedJavaLocalRef;
-
 namespace {
 
 // The remaining time for a download item if it cannot be calculated.
@@ -69,6 +75,21 @@ ScopedJavaLocalRef<jobject> JNI_DownloadManagerService_CreateJavaDownloadItem(
       env, DownloadManagerService::CreateJavaDownloadInfo(env, item),
       item->GetStartTime().ToJavaTime(), item->GetEndTime().ToJavaTime(),
       item->GetFileExternallyRemoved());
+}
+
+// For download that doesn't require full browser process, origin security check
+// is skipped as the download is either resumption or from a secure source.
+bool IgnoreOriginSecurityCheck(const GURL& url) {
+  return true;
+}
+
+void RenameItemCallback(
+    const base::android::ScopedJavaGlobalRef<jobject> j_callback,
+    download::DownloadItem::DownloadRenameResult result) {
+  base::android::RunIntCallbackAndroid(
+      j_callback,
+      static_cast<int>(
+          OfflineItemUtils::ConvertDownloadRenameResultToRenameResult(result)));
 }
 
 }  // namespace
@@ -137,7 +158,8 @@ ScopedJavaLocalRef<jobject> DownloadManagerService::CreateJavaDownloadInfo(
   base::TimeDelta time_delta;
   bool time_remaining_known = item->TimeRemaining(&time_delta);
   std::string original_url = item->GetOriginalUrl().SchemeIs(url::kDataScheme)
-      ? std::string() : item->GetOriginalUrl().spec();
+                                 ? std::string()
+                                 : item->GetOriginalUrl().spec();
   content::BrowserContext* browser_context =
       content::DownloadItemUtils::GetBrowserContext(item);
   return Java_DownloadInfo_createDownloadInfo(
@@ -182,9 +204,11 @@ DownloadManagerService::DownloadActionParams::DownloadActionParams(
     : action(other.action), has_user_gesture(other.has_user_gesture) {}
 
 DownloadManagerService::DownloadManagerService()
-    : is_history_query_complete_(false),
+    : is_manager_initialized_(false),
       is_pending_downloads_loaded_(false),
-      pending_get_downloads_actions_(NONE) {}
+      pending_get_downloads_actions_(NONE),
+      original_coordinator_(nullptr),
+      off_the_record_coordinator_(nullptr) {}
 
 DownloadManagerService::~DownloadManagerService() {}
 
@@ -207,11 +231,7 @@ void DownloadManagerService::OnFullBrowserStarted(JNIEnv* env, jobject obj) {
   registrar_.Add(this, chrome::NOTIFICATION_PROFILE_CREATED,
                  content::NotificationService::AllSources());
   Profile* profile = ProfileManager::GetActiveUserProfile();
-  DownloadCoreService* download_core_service =
-      DownloadCoreServiceFactory::GetForBrowserContext(profile);
-  DownloadHistory* history = download_core_service->GetDownloadHistory();
-  if (history)
-    history->AddObserver(this);
+  ResetCoordinatorIfNeeded(profile);
 }
 
 void DownloadManagerService::Observe(
@@ -221,19 +241,7 @@ void DownloadManagerService::Observe(
   switch (type) {
     case chrome::NOTIFICATION_PROFILE_CREATED: {
       Profile* profile = content::Source<Profile>(source).ptr();
-      content::DownloadManager* manager =
-          content::BrowserContext::GetDownloadManager(profile);
-      if (!manager)
-        break;
-
-      auto& notifier = profile->IsOffTheRecord() ? off_the_record_notifier_
-                                                 : original_notifier_;
-
-      // Update notifiers to monitor any newly created DownloadManagers.
-      if (!notifier || notifier->GetManager() != manager) {
-        notifier =
-            std::make_unique<download::AllDownloadItemNotifier>(manager, this);
-      }
+      ResetCoordinatorIfNeeded(profile);
     } break;
     default:
       NOTREACHED();
@@ -261,6 +269,9 @@ void DownloadManagerService::ShowDownloadManager(bool show_prefetched_content) {
 
 void DownloadManagerService::OpenDownload(download::DownloadItem* download,
                                           int source) {
+  if (java_ref_.is_null())
+    return;
+
   JNIEnv* env = base::android::AttachCurrentThread();
   ScopedJavaLocalRef<jobject> j_item =
       JNI_DownloadManagerService_CreateJavaDownloadItem(env, download);
@@ -274,7 +285,7 @@ void DownloadManagerService::OpenDownload(
     const JavaParamRef<jstring>& jdownload_guid,
     bool is_off_the_record,
     jint source) {
-  if (!is_history_query_complete_)
+  if (!is_manager_initialized_)
     return;
 
   std::string download_guid = ConvertJavaStringToUTF8(env, jdownload_guid);
@@ -292,9 +303,9 @@ void DownloadManagerService::ResumeDownload(
     bool is_off_the_record,
     bool has_user_gesture) {
   std::string download_guid = ConvertJavaStringToUTF8(env, jdownload_guid);
-  if (is_pending_downloads_loaded_ || is_off_the_record)
+  if (is_pending_downloads_loaded_ || is_off_the_record) {
     ResumeDownloadInternal(download_guid, is_off_the_record, has_user_gesture);
-  else {
+  } else {
     EnqueueDownloadAction(download_guid,
                           DownloadActionParams(RESUME, has_user_gesture));
   }
@@ -331,7 +342,7 @@ void DownloadManagerService::RemoveDownload(
     const JavaParamRef<jstring>& jdownload_guid,
     bool is_off_the_record) {
   std::string download_guid = ConvertJavaStringToUTF8(env, jdownload_guid);
-  if (is_history_query_complete_ || is_off_the_record)
+  if (is_manager_initialized_ || is_off_the_record)
     RemoveDownloadInternal(download_guid, is_off_the_record);
   else
     EnqueueDownloadAction(download_guid, DownloadActionParams(REMOVE));
@@ -340,7 +351,7 @@ void DownloadManagerService::RemoveDownload(
 void DownloadManagerService::GetAllDownloads(JNIEnv* env,
                                              const JavaParamRef<jobject>& obj,
                                              bool is_off_the_record) {
-  if (is_history_query_complete_)
+  if (is_manager_initialized_)
     GetAllDownloadsInternal(is_off_the_record);
   else if (is_off_the_record)
     pending_get_downloads_actions_ |= OFF_THE_RECORD;
@@ -380,10 +391,10 @@ void DownloadManagerService::CheckForExternallyRemovedDownloads(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj,
     bool is_off_the_record) {
-  // Once the history query is complete, download_history.cc will check for the
+  // Once the DownloadManager is initlaized, DownloadHistory will check for the
   // removal of history files. If the history query is not yet complete, ignore
   // requests to check for externally removed downloads.
-  if (!is_history_query_complete_)
+  if (!is_manager_initialized_)
     return;
 
   content::DownloadManager* manager = GetDownloadManager(is_off_the_record);
@@ -398,11 +409,7 @@ void DownloadManagerService::UpdateLastAccessTime(
     const JavaParamRef<jstring>& jdownload_guid,
     bool is_off_the_record) {
   std::string download_guid = ConvertJavaStringToUTF8(env, jdownload_guid);
-  content::DownloadManager* manager = GetDownloadManager(is_off_the_record);
-  if (!manager)
-    return;
-
-  download::DownloadItem* item = manager->GetDownloadByGuid(download_guid);
+  download::DownloadItem* item = GetDownload(download_guid, is_off_the_record);
   if (item)
     item->SetLastAccessTime(base::Time::Now());
 }
@@ -421,8 +428,14 @@ void DownloadManagerService::CancelDownload(
     EnqueueDownloadAction(download_guid, DownloadActionParams(CANCEL));
 }
 
-void DownloadManagerService::OnHistoryQueryComplete() {
-  is_history_query_complete_ = true;
+void DownloadManagerService::OnDownloadsInitialized(
+    download::SimpleDownloadManagerCoordinator* coordinator,
+    bool active_downloads_only) {
+  if (active_downloads_only) {
+    OnPendingDownloadsLoaded();
+    return;
+  }
+  is_manager_initialized_ = true;
   OnPendingDownloadsLoaded();
 
   // Respond to any requests to get all downloads.
@@ -432,8 +445,16 @@ void DownloadManagerService::OnHistoryQueryComplete() {
     GetAllDownloadsInternal(true);
 }
 
+void DownloadManagerService::OnManagerGoingDown(
+    download::SimpleDownloadManagerCoordinator* coordinator) {
+  if (original_coordinator_ == coordinator)
+    original_coordinator_ = nullptr;
+  else if (off_the_record_coordinator_ == coordinator)
+    off_the_record_coordinator_ = nullptr;
+}
+
 void DownloadManagerService::OnDownloadCreated(
-    content::DownloadManager* manager,
+    download::SimpleDownloadManagerCoordinator* coordinator,
     download::DownloadItem* item) {
   if (item->IsTransient())
     return;
@@ -445,7 +466,7 @@ void DownloadManagerService::OnDownloadCreated(
 }
 
 void DownloadManagerService::OnDownloadUpdated(
-    content::DownloadManager* manager,
+    download::SimpleDownloadManagerCoordinator* coordinator,
     download::DownloadItem* item) {
   if (java_ref_.is_null())
     return;
@@ -460,7 +481,7 @@ void DownloadManagerService::OnDownloadUpdated(
 }
 
 void DownloadManagerService::OnDownloadRemoved(
-    content::DownloadManager* manager,
+    download::SimpleDownloadManagerCoordinator* coordinator,
     download::DownloadItem* item) {
   if (java_ref_.is_null() || item->IsTransient())
     return;
@@ -469,6 +490,15 @@ void DownloadManagerService::OnDownloadRemoved(
   Java_DownloadManagerService_onDownloadItemRemoved(
       env, java_ref_, ConvertUTF8ToJavaString(env, item->GetGuid()),
       content::DownloadItemUtils::GetBrowserContext(item)->IsOffTheRecord());
+}
+
+void DownloadManagerService::OnDisconnected() {
+  // Some unit tests recreate |ServiceManagerContext| inside
+  // |TestServiceManagerContext|. Closing |service_binding_| will prevent DCHECK
+  // in such tests, because |DownloadManagerService| starts automatically in
+  // |ServiceManagerContext|.
+  service_binding_.Close();
+  Terminate();
 }
 
 void DownloadManagerService::ResumeDownloadInternal(
@@ -558,7 +588,8 @@ void DownloadManagerService::RetryDownloadInternal(
 }
 
 void DownloadManagerService::CancelDownloadInternal(
-    const std::string& download_guid, bool is_off_the_record) {
+    const std::string& download_guid,
+    bool is_off_the_record) {
   download::DownloadItem* item = GetDownload(download_guid, is_off_the_record);
   if (item) {
     // Remove the observer first to avoid item->Cancel() causing re-entrance
@@ -569,14 +600,16 @@ void DownloadManagerService::CancelDownloadInternal(
 }
 
 void DownloadManagerService::PauseDownloadInternal(
-    const std::string& download_guid, bool is_off_the_record) {
+    const std::string& download_guid,
+    bool is_off_the_record) {
   download::DownloadItem* item = GetDownload(download_guid, is_off_the_record);
   if (item)
     item->Pause();
 }
 
 void DownloadManagerService::RemoveDownloadInternal(
-    const std::string& download_guid, bool is_off_the_record) {
+    const std::string& download_guid,
+    bool is_off_the_record) {
   download::DownloadItem* item = GetDownload(download_guid, is_off_the_record);
   if (item)
     item->Remove();
@@ -614,8 +647,9 @@ void DownloadManagerService::EnqueueDownloadAction(
 void DownloadManagerService::OnResumptionFailed(
     const std::string& download_guid) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&DownloadManagerService::OnResumptionFailedInternal,
-                            base::Unretained(this), download_guid));
+      FROM_HERE,
+      base::BindOnce(&DownloadManagerService::OnResumptionFailedInternal,
+                     base::Unretained(this), download_guid));
   DownloadController::RecordDownloadCancelReason(
       DownloadController::CANCEL_REASON_NOT_CANCELED);
 }
@@ -631,12 +665,24 @@ void DownloadManagerService::OnResumptionFailedInternal(
     resume_callback_for_testing_.Run(false);
 }
 
+void DownloadManagerService::GetAllDownloads(
+    content::DownloadManager::DownloadVector* all_items,
+    bool is_off_the_record) {
+  if (in_progress_manager_) {
+    in_progress_manager_->GetAllDownloads(all_items);
+  } else {
+    content::DownloadManager* manager = GetDownloadManager(is_off_the_record);
+    if (manager)
+      manager->GetAllDownloads(all_items);
+  }
+}
+
 download::DownloadItem* DownloadManagerService::GetDownload(
     const std::string& download_guid,
     bool is_off_the_record) {
   if (in_progress_manager_) {
     DCHECK(!is_off_the_record);
-    return in_progress_manager_->GetInProgressDownload(download_guid);
+    return in_progress_manager_->GetDownloadByGuid(download_guid);
   }
 
   content::DownloadManager* manager = GetDownloadManager(is_off_the_record);
@@ -646,30 +692,50 @@ download::DownloadItem* DownloadManagerService::GetDownload(
 }
 
 void DownloadManagerService::CreateInProgressDownloadManager() {
-  DCHECK(!in_progress_manager_);
+  if (in_progress_manager_)
+    return;
   base::FilePath data_dir;
   base::android::GetDataDirectory(&data_dir);
+  service_manager::Connector* connector = service_binding_.GetConnector();
   in_progress_manager_ = std::make_unique<download::InProgressDownloadManager>(
       nullptr, data_dir.Append(chrome::kInitialProfile),
-      download::InProgressDownloadManager::IsOriginSecureCallback(),
-      base::BindRepeating(&content::DownloadRequestUtils::IsURLSafe));
-  content::GetNetworkServiceFromConnector(service_binding_.GetConnector());
+      base::BindRepeating(&IgnoreOriginSecurityCheck),
+      base::BindRepeating(&content::DownloadRequestUtils::IsURLSafe),
+      connector);
+  content::GetNetworkServiceFromConnector(connector);
   scoped_refptr<network::SharedURLLoaderFactory> factory =
       SystemNetworkContextManager::GetInstance()->GetSharedURLLoaderFactory();
   in_progress_manager_->set_url_loader_factory_getter(
       base::MakeRefCounted<download::DownloadURLLoaderFactoryGetterImpl>(
           factory->Clone()));
-  in_progress_manager_->NotifyWhenInitialized(
-      base::BindOnce(&DownloadManagerService::OnPendingDownloadsLoaded,
-                     base::Unretained(this)));
   in_progress_manager_->set_download_start_observer(
       DownloadControllerBase::Get());
+  in_progress_manager_->set_intermediate_path_cb(
+      base::BindRepeating(&DownloadTargetDeterminer::GetCrDownloadPath));
+  download::SimpleDownloadManagerCoordinator* coordinator =
+      SimpleDownloadManagerCoordinatorFactory::GetForKey(
+          ProfileKeyStartupAccessor::GetInstance()->profile_key());
+  coordinator->SetSimpleDownloadManager(in_progress_manager_.get(), false);
+  UpdateCoordinator(coordinator, false);
+}
+
+void DownloadManagerService::RecordFirstBackgroundInterruptReason(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj,
+    const JavaParamRef<jstring>& jdownload_guid,
+    jboolean download_started) {
+  std::string download_guid = ConvertJavaStringToUTF8(env, jdownload_guid);
+  download::DownloadItem* download = GetDownload(download_guid, false);
+  if (download) {
+    download::RecordFirstBackgroundDownloadInterruptReason(
+        download->GetLastReason(), download_started);
+  }
 }
 
 void DownloadManagerService::OnPendingDownloadsLoaded() {
-  // If |in_progress_manager_| is null, wait for DownloadHistory to initialize
+  // If |in_progress_manager_| is null, wait for DownloadManager to initialize
   // before performing any pending actions.
-  if (!in_progress_manager_ && !is_history_query_complete_)
+  if (!in_progress_manager_ && !is_manager_initialized_)
     return;
   is_pending_downloads_loaded_ = true;
 
@@ -716,21 +782,57 @@ content::DownloadManager* DownloadManagerService::GetDownloadManager(
   if (is_off_the_record)
     profile = profile->GetOffTheRecordProfile();
 
-  auto& notifier =
-      is_off_the_record ? off_the_record_notifier_ : original_notifier_;
   content::DownloadManager* manager =
       content::BrowserContext::GetDownloadManager(profile);
-  if (!manager) {
-    notifier.reset();
-    return nullptr;
-  }
-
-  // Update notifiers to monitor any newly created DownloadManagers.
-  if (!notifier || notifier->GetManager() != manager) {
-    notifier =
-        std::make_unique<download::AllDownloadItemNotifier>(manager, this);
-  }
+  ResetCoordinatorIfNeeded(profile);
   return manager;
+}
+
+void DownloadManagerService::ResetCoordinatorIfNeeded(Profile* profile) {
+  download::SimpleDownloadManagerCoordinator* coordinator =
+      SimpleDownloadManagerCoordinatorFactory::GetForKey(
+          profile->GetProfileKey());
+  UpdateCoordinator(coordinator, profile->IsOffTheRecord());
+}
+
+void DownloadManagerService::UpdateCoordinator(
+    download::SimpleDownloadManagerCoordinator* new_coordinator,
+    bool is_off_the_record) {
+  auto*& coordinator =
+      is_off_the_record ? off_the_record_coordinator_ : original_coordinator_;
+  if (!coordinator || coordinator != new_coordinator) {
+    if (coordinator)
+      coordinator->GetNotifier()->RemoveObserver(this);
+    coordinator = new_coordinator;
+    coordinator->GetNotifier()->AddObserver(this);
+  }
+}
+
+void DownloadManagerService::RenameDownload(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj,
+    const JavaParamRef<jstring>& id,
+    const JavaParamRef<jstring>& name,
+    const JavaParamRef<jobject>& j_callback,
+    bool is_off_the_record) {
+  std::string download_guid = ConvertJavaStringToUTF8(id);
+  download::DownloadItem* item = GetDownload(download_guid, is_off_the_record);
+  if (!item) {
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE,
+        base::BindOnce(
+            &RenameItemCallback,
+            base::android::ScopedJavaGlobalRef<jobject>(env, j_callback),
+            download::DownloadItem::DownloadRenameResult::FAILURE_UNAVAILABLE));
+
+    return;
+  }
+  std::string target_name = ConvertJavaStringToUTF8(name);
+  base::OnceCallback<void(download::DownloadItem::DownloadRenameResult)>
+      callback = base::BindOnce(
+          &RenameItemCallback,
+          base::android::ScopedJavaGlobalRef<jobject>(env, j_callback));
+  item->Rename(base::FilePath(target_name), std::move(callback));
 }
 
 void DownloadManagerService::CreateInterruptedDownloadForTest(
@@ -749,8 +851,9 @@ void DownloadManagerService::CreateInterruptedDownloadForTest(
           in_progress_manager_.get(),
           ConvertJavaStringToUTF8(env, jdownload_guid), 1,
           target_path.AddExtension("crdownload"), target_path, url_chain,
-          GURL(), GURL(), GURL(), GURL(), "", "", base::Time(), base::Time(),
-          "", "", 0, -1, 0, "", download::DownloadItem::INTERRUPTED,
+          GURL(), GURL(), GURL(), GURL(), url::Origin(), "", "", base::Time(),
+          base::Time(), "", "", 0, -1, 0, "",
+          download::DownloadItem::INTERRUPTED,
           download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
           download::DOWNLOAD_INTERRUPT_REASON_CRASH, false, false, false,
           base::Time(), false,
@@ -767,11 +870,11 @@ jboolean JNI_DownloadManagerService_IsSupportedMimeType(
 
 // static
 jint JNI_DownloadManagerService_GetAutoResumptionLimit(JNIEnv* env) {
-  std::string value  = base::GetFieldTrialParamValueByFeature(
+  std::string value = base::GetFieldTrialParamValueByFeature(
       chrome::android::kDownloadAutoResumptionThrottling,
       kAutoResumptionLimitParamName);
   int auto_resumption_limit;
   return base::StringToInt(value, &auto_resumption_limit)
-               ? auto_resumption_limit
-               : kDefaultAutoResumptionLimit;
+             ? auto_resumption_limit
+             : kDefaultAutoResumptionLimit;
 }

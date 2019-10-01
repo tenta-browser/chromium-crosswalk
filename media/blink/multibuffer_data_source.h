@@ -82,6 +82,10 @@ class MEDIA_BLINK_EXPORT MultibufferDataSource : public DataSource {
   // This must be called after the response arrives.
   bool IsCorsCrossOrigin() const;
 
+  // Returns true if the response includes an Access-Control-Allow-Origin
+  // header (that is not "null").
+  bool HasAccessControl() const;
+
   // Returns the CorsMode of the underlying UrlData.
   UrlData::CorsMode cors_mode() const;
 
@@ -120,6 +124,8 @@ class MEDIA_BLINK_EXPORT MultibufferDataSource : public DataSource {
   void SetIsClientAudioElement(bool is_client_audio_element) {
     is_client_audio_element_ = is_client_audio_element;
   }
+
+  bool cancel_on_defer_for_testing() const { return cancel_on_defer_; }
 
  protected:
   void OnRedirect(const scoped_refptr<UrlData>& destination);

@@ -6,12 +6,15 @@
 
 #include <cmath>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/task/post_task.h"
 #include "chrome/browser/chromeos/power/auto_screen_brightness/utils.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
+#include "chromeos/constants/chromeos_features.h"
+#include "chromeos/dbus/power/power_manager_client.h"
 #include "chromeos/dbus/power_manager/backlight.pb.h"
 
 namespace chromeos {
@@ -20,20 +23,21 @@ namespace auto_screen_brightness {
 
 constexpr base::TimeDelta BrightnessMonitorImpl::kBrightnessSampleDelay;
 
-BrightnessMonitorImpl::BrightnessMonitorImpl(
-    chromeos::PowerManagerClient* const power_manager_client)
-    : power_manager_client_observer_(this),
-      power_manager_client_(power_manager_client),
-      weak_ptr_factory_(this) {
-  DCHECK(power_manager_client);
-  power_manager_client_observer_.Add(power_manager_client);
-
-  power_manager_client_->WaitForServiceToBeAvailable(
-      base::BindOnce(&BrightnessMonitorImpl::OnPowerManagerServiceAvailable,
-                     weak_ptr_factory_.GetWeakPtr()));
-}
-
+BrightnessMonitorImpl::BrightnessMonitorImpl() = default;
 BrightnessMonitorImpl::~BrightnessMonitorImpl() = default;
+
+void BrightnessMonitorImpl::Init() {
+  const int brightness_sample_delay_seconds = GetFieldTrialParamByFeatureAsInt(
+      features::kAutoScreenBrightness, "brightness_sample_delay_seconds",
+      kBrightnessSampleDelay.InSeconds());
+
+  brightness_sample_delay_ =
+      brightness_sample_delay_seconds < 0
+          ? kBrightnessSampleDelay
+          : base::TimeDelta::FromSeconds(brightness_sample_delay_seconds);
+
+  power_manager_client_observer_.Add(PowerManagerClient::Get());
+}
 
 void BrightnessMonitorImpl::AddObserver(
     BrightnessMonitor::Observer* const observer) {
@@ -49,6 +53,18 @@ void BrightnessMonitorImpl::RemoveObserver(
     BrightnessMonitor::Observer* const observer) {
   DCHECK(observer);
   observers_.RemoveObserver(observer);
+}
+
+void BrightnessMonitorImpl::PowerManagerBecameAvailable(
+    const bool service_is_ready) {
+  if (!service_is_ready) {
+    brightness_monitor_status_ = Status::kDisabled;
+    OnInitializationComplete();
+    return;
+  }
+  PowerManagerClient::Get()->GetScreenBrightnessPercent(
+      base::BindOnce(&BrightnessMonitorImpl::OnReceiveInitialBrightnessPercent,
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
 void BrightnessMonitorImpl::ScreenBrightnessChanged(
@@ -91,16 +107,9 @@ void BrightnessMonitorImpl::ScreenBrightnessChanged(
   stable_brightness_percent_ = brightness_percent_received;
 }
 
-void BrightnessMonitorImpl::OnPowerManagerServiceAvailable(
-    const bool service_is_ready) {
-  if (!service_is_ready) {
-    brightness_monitor_status_ = Status::kDisabled;
-    OnInitializationComplete();
-    return;
-  }
-  power_manager_client_->GetScreenBrightnessPercent(
-      base::BindOnce(&BrightnessMonitorImpl::OnReceiveInitialBrightnessPercent,
-                     weak_ptr_factory_.GetWeakPtr()));
+base::TimeDelta BrightnessMonitorImpl::GetBrightnessSampleDelayForTesting()
+    const {
+  return brightness_sample_delay_;
 }
 
 void BrightnessMonitorImpl::OnReceiveInitialBrightnessPercent(
@@ -134,7 +143,7 @@ void BrightnessMonitorImpl::OnInitializationComplete() {
 void BrightnessMonitorImpl::StartBrightnessSampleTimer() {
   // It's ok if the timer is already running, we simply wait a bit longer.
   brightness_sample_timer_.Start(
-      FROM_HERE, kBrightnessSampleDelay, this,
+      FROM_HERE, brightness_sample_delay_, this,
       &BrightnessMonitorImpl::NotifyUserBrightnessChanged);
 }
 

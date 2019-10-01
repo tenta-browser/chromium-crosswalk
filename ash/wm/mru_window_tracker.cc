@@ -8,9 +8,10 @@
 
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/public/cpp/window_properties.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
-#include "ash/wm/focus_rules.h"
+#include "ash/wm/ash_focus_rules.h"
+#include "ash/wm/desks/desks_util.h"
 #include "ash/wm/switchable_windows.h"
 #include "ash/wm/window_state.h"
 #include "ash/wm/window_util.h"
@@ -19,16 +20,53 @@
 #include "ui/aura/window.h"
 #include "ui/wm/core/window_util.h"
 #include "ui/wm/public/activation_client.h"
+#include "ui/wm/public/activation_delegate.h"
 
 namespace ash {
 
 namespace {
 
-// A predicate that determines whether |window| can be included in the MRU
-// window list.
-bool CanIncludeWindowInMruList(aura::Window* window) {
-  return ::wm::CanActivateWindow(window) &&
-         !wm::GetWindowState(window)->IsPip();
+// A class that observes a window that should not be destroyed inside a certain
+// scope. This class is added to investigate crbug.com/937381 to see if it's
+// possible that a window is destroyed while building up the mru window list.
+// TODO(crbug.com/937381): Remove this class once we figure out the reason.
+class ScopedWindowClosingObserver : public aura::WindowObserver {
+ public:
+  explicit ScopedWindowClosingObserver(aura::Window* window) : window_(window) {
+    window_->AddObserver(this);
+  }
+  ~ScopedWindowClosingObserver() override {
+    window_->RemoveObserver(this);
+    window_ = nullptr;
+  }
+
+  // aura::WindowObserver:
+  void OnWindowDestroyed(aura::Window* window) override { CHECK(false); }
+
+ private:
+  aura::Window* window_;
+
+  DISALLOW_COPY_AND_ASSIGN(ScopedWindowClosingObserver);
+};
+
+bool IsWindowConsideredActivatable(aura::Window* window) {
+  DCHECK(window);
+  ScopedWindowClosingObserver observer(window);
+  AshFocusRules* focus_rules = Shell::Get()->focus_rules();
+
+  // Only toplevel windows can be activated.
+  if (!focus_rules->IsToplevelWindow(window))
+    return false;
+
+  if (!focus_rules->IsWindowConsideredVisibleForActivation(window))
+    return false;
+
+  if (::wm::GetActivationDelegate(window) &&
+      !::wm::GetActivationDelegate(window)->ShouldActivate()) {
+    return false;
+  }
+
+  return window->CanFocus();
 }
 
 // A predicate that determines whether |window| can be included in the list
@@ -41,14 +79,20 @@ bool CanIncludeWindowInCycleList(aura::Window* window) {
 // Returns a list of windows ordered by their stacking order such that the most
 // recently used window is at the front of the list.
 // If |mru_windows| is passed, these windows are moved to the front of the list.
+// If |desks_mru_type| is `kAllDesks`, then all active and inactive desk
+// containers will be considered, otherwise only the active desk container is
+// considered.
 // It uses the given |can_include_window_predicate| to determine whether to
 // include a window in the returned list or not.
 template <class CanIncludeWindowPredicate>
 MruWindowTracker::WindowList BuildWindowListInternal(
     const std::vector<aura::Window*>* mru_windows,
+    DesksMruType desks_mru_type,
     CanIncludeWindowPredicate can_include_window_predicate) {
   MruWindowTracker::WindowList windows;
 
+  const int active_desk_id = desks_util::GetActiveDeskContainerId();
+  const bool active_desk_only = desks_mru_type == kActiveDesk;
   // Put the windows in the mru_windows list at the head, if it's available.
   if (mru_windows) {
     // The |mru_windows| are sorted such that the most recent window comes last,
@@ -56,9 +100,22 @@ MruWindowTracker::WindowList BuildWindowListInternal(
     for (auto* window : base::Reversed(*mru_windows)) {
       // Exclude windows in non-switchable containers and those which should not
       // be included.
-      if ((window->parent() && !wm::IsSwitchableContainer(window->parent())) ||
-          !can_include_window_predicate(window)) {
-        continue;
+      if (window->parent()) {
+        if (!wm::IsSwitchableContainer(window->parent()))
+          continue;
+
+        if (active_desk_only) {
+          // If only the active desk's MRU windows are requested, then exclude
+          // children of the non-active desks' containers.
+          const int parent_id = window->parent()->id();
+          if (desks_util::IsDeskContainerId(parent_id) &&
+              parent_id != active_desk_id) {
+            continue;
+          }
+        }
+
+        if (!can_include_window_predicate(window))
+          continue;
       }
 
       windows.emplace_back(window);
@@ -82,13 +139,16 @@ MruWindowTracker::WindowList BuildWindowListInternal(
     roots.emplace_back(active_root);
   }
 
+  // TODO(afakhry): Check with UX, if kAllDesks is desired, should we put
+  // the active desk's windows at the front?
+
   for (auto* root : base::Reversed(roots)) {
     // |wm::kSwitchableWindowContainerIds[]| contains a list of the container
     // IDs sorted such that the ID of the top-most container comes last. Hence,
     // we iterate in reverse order so the top-most windows are added first.
-    for (int i = wm::kSwitchableWindowContainerIdsLength - 1; i >= 0; --i) {
-      aura::Window* container =
-          root->GetChildById(wm::kSwitchableWindowContainerIds[i]);
+    const auto switachable_containers =
+        wm::GetSwitchableContainersForRoot(root, active_desk_only);
+    for (auto* container : base::Reversed(switachable_containers)) {
       for (auto* child : base::Reversed(container->children())) {
         // Only add windows that the predicate allows.
         if (!can_include_window_predicate(child))
@@ -109,6 +169,11 @@ MruWindowTracker::WindowList BuildWindowListInternal(
 
 }  // namespace
 
+bool CanIncludeWindowInMruList(aura::Window* window) {
+  return ::wm::CanActivateWindow(window) &&
+         !wm::GetWindowState(window)->IsPip();
+}
+
 //////////////////////////////////////////////////////////////////////////////
 // MruWindowTracker, public:
 
@@ -122,17 +187,22 @@ MruWindowTracker::~MruWindowTracker() {
     window->RemoveObserver(this);
 }
 
-MruWindowTracker::WindowList MruWindowTracker::BuildMruWindowList() const {
-  return BuildWindowListInternal(&mru_windows_, CanIncludeWindowInMruList);
+MruWindowTracker::WindowList MruWindowTracker::BuildMruWindowList(
+    DesksMruType desks_mru_type) const {
+  return BuildWindowListInternal(&mru_windows_, desks_mru_type,
+                                 CanIncludeWindowInMruList);
 }
 
-MruWindowTracker::WindowList MruWindowTracker::BuildWindowListIgnoreModal()
-    const {
-  return BuildWindowListInternal(nullptr, IsWindowConsideredActivatable);
+MruWindowTracker::WindowList MruWindowTracker::BuildWindowListIgnoreModal(
+    DesksMruType desks_mru_type) const {
+  return BuildWindowListInternal(nullptr, desks_mru_type,
+                                 IsWindowConsideredActivatable);
 }
 
-MruWindowTracker::WindowList MruWindowTracker::BuildWindowForCycleList() const {
-  return BuildWindowListInternal(&mru_windows_, CanIncludeWindowInCycleList);
+MruWindowTracker::WindowList MruWindowTracker::BuildWindowForCycleList(
+    DesksMruType desks_mru_type) const {
+  return BuildWindowListInternal(&mru_windows_, desks_mru_type,
+                                 CanIncludeWindowInCycleList);
 }
 
 void MruWindowTracker::SetIgnoreActivations(bool ignore) {
@@ -142,6 +212,14 @@ void MruWindowTracker::SetIgnoreActivations(bool ignore) {
   // to front.
   if (!ignore)
     SetActiveWindow(wm::GetActiveWindow());
+}
+
+void MruWindowTracker::AddObserver(Observer* observer) {
+  observers_.AddObserver(observer);
+}
+
+void MruWindowTracker::RemoveObserver(Observer* observer) {
+  observers_.RemoveObserver(observer);
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -174,6 +252,9 @@ void MruWindowTracker::OnWindowDestroyed(aura::Window* window) {
   // else we may end up with a deleted window in |mru_windows_|.
   base::Erase(mru_windows_, window);
   window->RemoveObserver(this);
+
+  for (auto& observer : observers_)
+    observer.OnWindowUntracked(window);
 }
 
 }  // namespace ash

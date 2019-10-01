@@ -68,11 +68,11 @@ class NGPhysicalFragmentCollectorBase {
     DCHECK(fragment.IsContainer());
     DCHECK(fragment.IsInline() || fragment.IsLineBox() ||
            (fragment.IsBlockFlow() &&
-            ToNGPhysicalBoxFragment(fragment).ChildrenInline()));
+            To<NGPhysicalBoxFragment>(fragment).ChildrenInline()));
 
     for (const auto& child :
-         ToNGPhysicalContainerFragment(fragment).Children()) {
-      base::AutoReset<NGPhysicalOffset> offset_resetter(
+         To<NGPhysicalContainerFragment>(fragment).Children()) {
+      base::AutoReset<PhysicalOffset> offset_resetter(
           &current_offset_to_root_, current_offset_to_root_ + child.Offset());
       base::AutoReset<const NGPhysicalFragment*> fragment_resetter(
           &current_fragment_, child.get());
@@ -86,7 +86,7 @@ class NGPhysicalFragmentCollectorBase {
  private:
   const NGPhysicalFragment* root_fragment_ = nullptr;
   const NGPhysicalFragment* current_fragment_ = nullptr;
-  NGPhysicalOffset current_offset_to_root_;
+  PhysicalOffset current_offset_to_root_;
   Vector<Result> results_;
   bool should_stop_traversing_ = false;
 

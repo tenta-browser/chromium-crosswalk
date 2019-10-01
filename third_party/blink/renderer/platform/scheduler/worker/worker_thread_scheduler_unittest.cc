@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/platform/scheduler/worker/worker_thread_scheduler.h"
+
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/single_thread_task_runner.h"
@@ -15,6 +17,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/platform/scheduler/common/process_state.h"
 #include "third_party/blink/renderer/platform/scheduler/test/fake_frame_scheduler.h"
+#include "third_party/blink/renderer/platform/scheduler/test/recording_task_time_observer.h"
 
 using testing::ElementsAreArray;
 
@@ -54,29 +57,36 @@ void TimelineIdleTestTask(std::vector<std::string>* timeline,
 
 class WorkerThreadSchedulerForTest : public WorkerThreadScheduler {
  public:
-  WorkerThreadSchedulerForTest(
-      std::unique_ptr<base::sequence_manager::SequenceManager> manager,
-      const base::TickClock* clock_,
-      std::vector<std::string>* timeline)
-      : WorkerThreadScheduler(WebThreadType::kTestThread,
-                              std::move(manager),
-                              nullptr),
+  WorkerThreadSchedulerForTest(base::sequence_manager::SequenceManager* manager,
+                               const base::TickClock* clock_,
+                               std::vector<std::string>* timeline)
+      : WorkerThreadScheduler(WebThreadType::kTestThread, manager, nullptr),
         clock_(clock_),
         timeline_(timeline) {}
 
-  WorkerThreadSchedulerForTest(
-      std::unique_ptr<base::sequence_manager::SequenceManager> manager,
-      const base::TickClock* clock_,
-      std::vector<std::string>* timeline,
-      WorkerSchedulerProxy* proxy)
-      : WorkerThreadScheduler(WebThreadType::kTestThread,
-                              std::move(manager),
-                              proxy),
+  WorkerThreadSchedulerForTest(base::sequence_manager::SequenceManager* manager,
+                               const base::TickClock* clock_,
+                               std::vector<std::string>* timeline,
+                               WorkerSchedulerProxy* proxy)
+      : WorkerThreadScheduler(WebThreadType::kTestThread, manager, proxy),
         clock_(clock_),
         timeline_(timeline) {}
 
-  using ThreadSchedulerImpl::SetUkmTaskSamplingRateForTest;
   using WorkerThreadScheduler::SetUkmRecorderForTest;
+  using WorkerThreadScheduler::SetUkmTaskSamplingRateForTest;
+
+  void AddTaskTimeObserver(base::sequence_manager::TaskTimeObserver* observer) {
+    helper()->AddTaskTimeObserver(observer);
+  }
+
+  void RemoveTaskTimeObserver(
+      base::sequence_manager::TaskTimeObserver* observer) {
+    helper()->RemoveTaskTimeObserver(observer);
+  }
+
+  void set_on_microtask_checkpoint(base::OnceClosure cb) {
+    on_microtask_checkpoint_ = std::move(cb);
+  }
 
  private:
   bool CanEnterLongIdlePeriod(
@@ -98,8 +108,14 @@ class WorkerThreadSchedulerForTest : public WorkerThreadScheduler {
     WorkerThreadScheduler::IsNotQuiescent();
   }
 
+  void PerformMicrotaskCheckpoint() override {
+    if (on_microtask_checkpoint_)
+      std::move(on_microtask_checkpoint_).Run();
+  }
+
   const base::TickClock* clock_;        // Not owned.
   std::vector<std::string>* timeline_;  // Not owned.
+  base::OnceClosure on_microtask_checkpoint_;
 };
 
 class WorkerThreadSchedulerTest : public testing::Test {
@@ -107,12 +123,14 @@ class WorkerThreadSchedulerTest : public testing::Test {
   WorkerThreadSchedulerTest()
       : task_environment_(
             base::test::ScopedTaskEnvironment::MainThreadType::MOCK_TIME,
-            base::test::ScopedTaskEnvironment::ExecutionMode::QUEUED),
-        scheduler_(new WorkerThreadSchedulerForTest(
+            base::test::ScopedTaskEnvironment::ThreadPoolExecutionMode::QUEUED),
+        sequence_manager_(
             base::sequence_manager::SequenceManagerForTest::Create(
                 nullptr,
                 task_environment_.GetMainThreadTaskRunner(),
-                task_environment_.GetMockTickClock()),
+                task_environment_.GetMockTickClock())),
+        scheduler_(new WorkerThreadSchedulerForTest(
+            sequence_manager_.get(),
             task_environment_.GetMockTickClock(),
             &timeline_)) {
     // Null clock might trigger some assertions.
@@ -175,6 +193,8 @@ class WorkerThreadSchedulerTest : public testing::Test {
 
  protected:
   base::test::ScopedTaskEnvironment task_environment_;
+  std::unique_ptr<base::sequence_manager::SequenceManagerForTest>
+      sequence_manager_;
   std::vector<std::string> timeline_;
   std::unique_ptr<WorkerThreadSchedulerForTest> scheduler_;
   scoped_refptr<base::sequence_manager::TaskQueue> default_task_queue_;
@@ -389,6 +409,32 @@ TEST_F(WorkerThreadSchedulerTest, TestLongIdlePeriodTimeline) {
   EXPECT_THAT(timeline_, ElementsAreArray(expected_timeline));
 }
 
+TEST_F(WorkerThreadSchedulerTest, TestMicrotaskCheckpointTiming) {
+  const base::TimeDelta kTaskTime = base::TimeDelta::FromMilliseconds(100);
+  const base::TimeDelta kMicrotaskTime = base::TimeDelta::FromMilliseconds(200);
+
+  base::TimeTicks start_time = task_environment_.NowTicks();
+  default_task_runner_->PostTask(
+      FROM_HERE, WTF::Bind(&base::test::ScopedTaskEnvironment::FastForwardBy,
+                           base::Unretained(&task_environment_), kTaskTime));
+  scheduler_->set_on_microtask_checkpoint(
+      WTF::Bind(&base::test::ScopedTaskEnvironment::FastForwardBy,
+                base::Unretained(&task_environment_), kMicrotaskTime));
+
+  RecordingTaskTimeObserver observer;
+
+  scheduler_->AddTaskTimeObserver(&observer);
+  RunUntilIdle();
+  scheduler_->RemoveTaskTimeObserver(&observer);
+
+  // Expect that the duration of microtask is counted as a part of the preceding
+  // task.
+  ASSERT_EQ(1u, observer.result().size());
+  EXPECT_EQ(start_time, observer.result().back().first);
+  EXPECT_EQ(start_time + kTaskTime + kMicrotaskTime,
+            observer.result().back().second);
+}
+
 namespace {
 
 class FrameSchedulerDelegateWithUkmSourceId : public FrameScheduler::Delegate {
@@ -402,6 +448,10 @@ class FrameSchedulerDelegateWithUkmSourceId : public FrameScheduler::Delegate {
 
   ukm::SourceId GetUkmSourceId() override { return source_id_; }
 
+  void UpdateTaskTime(base::TimeDelta time) override {}
+
+  void UpdateActiveSchedulerTrackedFeatures(uint64_t features_mask) override {}
+
  private:
   ukm::SourceId source_id_;
 };
@@ -413,7 +463,12 @@ class WorkerThreadSchedulerWithProxyTest : public testing::Test {
   WorkerThreadSchedulerWithProxyTest()
       : task_environment_(
             base::test::ScopedTaskEnvironment::MainThreadType::MOCK_TIME,
-            base::test::ScopedTaskEnvironment::ExecutionMode::QUEUED) {
+            base::test::ScopedTaskEnvironment::ThreadPoolExecutionMode::QUEUED),
+        sequence_manager_(
+            base::sequence_manager::SequenceManagerForTest::Create(
+                nullptr,
+                task_environment_.GetMainThreadTaskRunner(),
+                task_environment_.GetMockTickClock())) {
     frame_scheduler_delegate_ =
         std::make_unique<FrameSchedulerDelegateWithUkmSourceId>(42);
     frame_scheduler_ = FakeFrameScheduler::Builder()
@@ -428,11 +483,8 @@ class WorkerThreadSchedulerWithProxyTest : public testing::Test {
         std::make_unique<WorkerSchedulerProxy>(frame_scheduler_.get());
 
     scheduler_ = std::make_unique<WorkerThreadSchedulerForTest>(
-        base::sequence_manager::SequenceManagerForTest::Create(
-            nullptr, task_environment_.GetMainThreadTaskRunner(),
-            task_environment_.GetMockTickClock()),
-        task_environment_.GetMockTickClock(), &timeline_,
-        worker_scheduler_proxy_.get());
+        sequence_manager_.get(), task_environment_.GetMockTickClock(),
+        &timeline_, worker_scheduler_proxy_.get());
 
     task_environment_.FastForwardBy(base::TimeDelta::FromMilliseconds(5));
 
@@ -447,6 +499,8 @@ class WorkerThreadSchedulerWithProxyTest : public testing::Test {
 
  protected:
   base::test::ScopedTaskEnvironment task_environment_;
+  std::unique_ptr<base::sequence_manager::SequenceManagerForTest>
+      sequence_manager_;
   std::vector<std::string> timeline_;
   std::unique_ptr<FrameScheduler::Delegate> frame_scheduler_delegate_;
   std::unique_ptr<FrameScheduler> frame_scheduler_;
@@ -476,7 +530,7 @@ TEST_F(WorkerThreadSchedulerWithProxyTest, UkmTaskRecording) {
       base::ThreadTicks() + base::TimeDelta::FromMilliseconds(250),
       base::ThreadTicks() + base::TimeDelta::FromMilliseconds(500));
 
-  scheduler_->OnTaskCompleted(nullptr, task, task_timing);
+  scheduler_->OnTaskCompleted(nullptr, task, &task_timing, nullptr);
 
   auto entries = ukm_recorder->GetEntriesByName("RendererSchedulerTask");
 

@@ -121,10 +121,19 @@ std::vector<ScopedCupsOption> SettingsToCupsOptions(
                       settings.requested_media().vendor_id));  // paper size
   options.push_back(
       ConstructOption(kIppCopies,
-                      base::IntToString(settings.copies())));  // copies
+                      base::NumberToString(settings.copies())));  // copies
   options.push_back(
       ConstructOption(kIppCollate,
                       GetCollateString(settings.collate())));  // collate
+  if (settings.send_user_info()) {
+    options.push_back(ConstructOption(kIppDocumentName, settings.job_title()));
+    options.push_back(
+        ConstructOption(kIppRequestingUserName, settings.username()));
+  }
+  if (!settings.pin_value().empty()) {
+    options.push_back(ConstructOption(kIppPin, settings.pin_value()));
+    options.push_back(ConstructOption(kIppPinEncryption, kPinEncryptionNone));
+  }
 
   return options;
 }
@@ -288,8 +297,12 @@ PrintingContext::Result PrintingContextChromeos::NewDocument(
   std::vector<ScopedCupsOption> cups_options = SettingsToCupsOptions(settings_);
 
   std::vector<cups_option_t> options;
+  base::Optional<std::string> username;
+  const base::StringPiece requestingUserName(kIppRequestingUserName);
   for (const ScopedCupsOption& option : cups_options) {
-    if (printer_->CheckOptionSupported(option->name, option->value)) {
+    if (option->name == requestingUserName) {
+      username = option->value;
+    } else if (printer_->CheckOptionSupported(option->name, option->value)) {
       options.push_back(*(option.get()));
     } else {
       DVLOG(1) << "Unsupported option skipped " << option->name << ", "
@@ -297,7 +310,8 @@ PrintingContext::Result PrintingContextChromeos::NewDocument(
     }
   }
 
-  ipp_status_t create_status = printer_->CreateJob(&job_id_, title, options);
+  ipp_status_t create_status =
+      printer_->CreateJob(&job_id_, title, username, options);
 
   if (job_id_ == 0) {
     DLOG(WARNING) << "Creating cups job failed"

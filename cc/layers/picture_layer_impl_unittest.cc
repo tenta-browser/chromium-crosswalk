@@ -12,7 +12,6 @@
 #include <utility>
 
 #include "base/location.h"
-#include "base/macros.h"
 #include "base/stl_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "cc/animation/animation_host.h"
@@ -321,25 +320,20 @@ TEST_F(PictureLayerImplTest, ExternalViewportRectForPrioritizingTiles) {
       viewport_rect_for_tile_priority, transform_for_tile_priority);
   host_impl()->active_tree()->UpdateDrawProperties();
 
-  gfx::Rect viewport_rect_for_tile_priority_in_view_space =
-      viewport_rect_for_tile_priority;
-
   // Verify the viewport rect for tile priority is used in picture layer tiling.
-  EXPECT_EQ(viewport_rect_for_tile_priority_in_view_space,
+  EXPECT_EQ(viewport_rect_for_tile_priority,
             active_layer()->viewport_rect_for_tile_priority_in_content_space());
   PictureLayerTilingSet* tilings = active_layer()->tilings();
   for (size_t i = 0; i < tilings->num_tilings(); i++) {
     PictureLayerTiling* tiling = tilings->tiling_at(i);
-    EXPECT_EQ(
-        tiling->GetCurrentVisibleRectForTesting(),
-        gfx::ScaleToEnclosingRect(viewport_rect_for_tile_priority_in_view_space,
-                                  tiling->contents_scale_key()));
+    EXPECT_EQ(tiling->GetCurrentVisibleRectForTesting(),
+              gfx::ScaleToEnclosingRect(viewport_rect_for_tile_priority,
+                                        tiling->contents_scale_key()));
   }
 
   // Update tiles with viewport for tile priority as (200, 200, 100, 100) in
-  // screen space and the transform for tile priority is translated and
-  // rotated. The actual viewport for tile priority used by PictureLayerImpl
-  // should be (200, 200, 100, 100) applied with the said transform.
+  // root layer space and the transform for tile priority is translated and
+  // rotated.
   host_impl()->AdvanceToNextFrame(base::TimeDelta::FromMilliseconds(200));
 
   viewport_rect_for_tile_priority = gfx::Rect(200, 200, 100, 100);
@@ -349,27 +343,14 @@ TEST_F(PictureLayerImplTest, ExternalViewportRectForPrioritizingTiles) {
       viewport_rect_for_tile_priority, transform_for_tile_priority);
   host_impl()->active_tree()->UpdateDrawProperties();
 
-  gfx::Transform screen_to_view(gfx::Transform::kSkipInitialization);
-  bool success = transform_for_tile_priority.GetInverse(&screen_to_view);
-  EXPECT_TRUE(success);
-
-  // Note that we don't clip this to the layer bounds, since it is expected that
-  // the rect will sometimes be outside of the layer bounds. If we clip to
-  // bounds, then tile priorities will end up being incorrect in cases of fully
-  // offscreen layer.
-  viewport_rect_for_tile_priority_in_view_space =
-      MathUtil::ProjectEnclosingClippedRect(screen_to_view,
-                                            viewport_rect_for_tile_priority);
-
-  EXPECT_EQ(viewport_rect_for_tile_priority_in_view_space,
+  EXPECT_EQ(viewport_rect_for_tile_priority,
             active_layer()->viewport_rect_for_tile_priority_in_content_space());
   tilings = active_layer()->tilings();
   for (size_t i = 0; i < tilings->num_tilings(); i++) {
     PictureLayerTiling* tiling = tilings->tiling_at(i);
-    EXPECT_EQ(
-        tiling->GetCurrentVisibleRectForTesting(),
-        gfx::ScaleToEnclosingRect(viewport_rect_for_tile_priority_in_view_space,
-                                  tiling->contents_scale_key()));
+    EXPECT_EQ(tiling->GetCurrentVisibleRectForTesting(),
+              gfx::ScaleToEnclosingRect(viewport_rect_for_tile_priority,
+                                        tiling->contents_scale_key()));
   }
 }
 
@@ -1527,7 +1508,7 @@ TEST_F(PictureLayerImplTest, DisallowTileDrawQuads) {
   active_layer()->DidDraw(nullptr);
 
   ASSERT_EQ(1u, render_pass->quad_list.size());
-  EXPECT_EQ(viz::DrawQuad::PICTURE_CONTENT,
+  EXPECT_EQ(viz::DrawQuad::Material::kPictureContent,
             render_pass->quad_list.front()->material);
   EXPECT_EQ(render_pass->quad_list.front()->rect, layer_rect);
   EXPECT_FALSE(render_pass->quad_list.front()->needs_blending);
@@ -1564,7 +1545,7 @@ TEST_F(PictureLayerImplTest, ResourcelessPartialRecording) {
   gfx::Rect quad_visible = gfx::IntersectRects(scaled_visible, scaled_recorded);
 
   ASSERT_EQ(1U, render_pass->quad_list.size());
-  EXPECT_EQ(viz::DrawQuad::PICTURE_CONTENT,
+  EXPECT_EQ(viz::DrawQuad::Material::kPictureContent,
             render_pass->quad_list.front()->material);
   const viz::DrawQuad* quad = render_pass->quad_list.front();
   EXPECT_EQ(quad_visible, quad->rect);
@@ -1640,7 +1621,7 @@ TEST_F(PictureLayerImplTest, FarScrolledQuadsShifted) {
       last_height = draw_quad->rect.height();
     }
     EXPECT_LT(last_y, 5000);
-    EXPECT_EQ(draw_quad->material, viz::DrawQuad::TILED_CONTENT);
+    EXPECT_EQ(draw_quad->material, viz::DrawQuad::Material::kTiledContent);
 
     auto transform = [draw_quad](const gfx::Rect& rect) {
       gfx::RectF result(rect);
@@ -1718,7 +1699,7 @@ TEST_F(PictureLayerImplTest, FarScrolledSolidColorQuadsShifted) {
       last_height = draw_quad->rect.height();
     }
     EXPECT_LT(last_y, 5000);
-    EXPECT_EQ(draw_quad->material, viz::DrawQuad::SOLID_COLOR);
+    EXPECT_EQ(draw_quad->material, viz::DrawQuad::Material::kSolidColor);
 
     auto transform = [draw_quad](const gfx::Rect& rect) {
       gfx::RectF result(rect);
@@ -3950,9 +3931,9 @@ TEST_F(PictureLayerImplTestWithDelegatingRenderer,
   // Even when OOM, quads should be produced, and should be different material
   // from quads with resource.
   EXPECT_LT(max_tiles, render_pass->quad_list.size());
-  EXPECT_EQ(viz::DrawQuad::Material::TILED_CONTENT,
+  EXPECT_EQ(viz::DrawQuad::Material::kTiledContent,
             render_pass->quad_list.front()->material);
-  EXPECT_EQ(viz::DrawQuad::Material::SOLID_COLOR,
+  EXPECT_EQ(viz::DrawQuad::Material::kSolidColor,
             render_pass->quad_list.back()->material);
 }
 
@@ -4676,8 +4657,8 @@ void PictureLayerImplTest::TestQuadsForSolidColor(bool test_for_solid,
     EXPECT_EQ(4u, render_pass->quad_list.size());
 
   viz::DrawQuad::Material expected =
-      test_for_solid ? viz::DrawQuad::Material::SOLID_COLOR
-                     : viz::DrawQuad::Material::TILED_CONTENT;
+      test_for_solid ? viz::DrawQuad::Material::kSolidColor
+                     : viz::DrawQuad::Material::kTiledContent;
   EXPECT_EQ(expected, render_pass->quad_list.front()->material);
 }
 
@@ -5302,7 +5283,7 @@ TEST_F(PictureLayerImplTest, CompositedImageIgnoreIdealContentsScale) {
   active_layer->DidDraw(nullptr);
 
   ASSERT_FALSE(render_pass->quad_list.empty());
-  EXPECT_EQ(viz::DrawQuad::TILED_CONTENT,
+  EXPECT_EQ(viz::DrawQuad::Material::kTiledContent,
             render_pass->quad_list.front()->material);
 
   // Tiles are ready at correct scale, so should not set had_incomplete_tile.

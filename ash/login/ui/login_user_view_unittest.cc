@@ -6,6 +6,7 @@
 #include "ash/login/ui/login_display_style.h"
 #include "ash/login/ui/login_test_base.h"
 #include "ash/login/ui/login_test_utils.h"
+#include "base/bind.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/events/test/event_generator.h"
 #include "ui/gfx/geometry/rect.h"
@@ -41,7 +42,7 @@ class LoginUserViewUnittest : public LoginTestBase {
                           on_remove_warning_shown, on_remove);
 
     std::string email = "foo@foo.com";
-    mojom::LoginUserInfoPtr user =
+    LoginUserInfo user =
         public_account ? CreatePublicAccountUser(email) : CreateUser(email);
     view->UpdateForUser(user, false /*animate*/);
     container_->AddChildView(view);
@@ -100,7 +101,7 @@ TEST_F(LoginUserViewUnittest, DifferentUsernamesHaveSameWidth) {
   EXPECT_GT(extra_small_width, 0);
 
   for (int i = 0; i < 25; ++i) {
-    mojom::LoginUserInfoPtr user = CreateUser("user@domain.com");
+    LoginUserInfo user = CreateUser("user@domain.com");
     large->UpdateForUser(user, false /*animate*/);
     small->UpdateForUser(user, false /*animate*/);
     extra_small->UpdateForUser(user, false /*animate*/);
@@ -280,8 +281,7 @@ TEST_F(LoginUserViewUnittest, ElideUserLabel) {
                   false /*public_account*/);
   LoginUserView::TestApi view_test(view);
 
-  mojom::LoginUserInfoPtr user =
-      CreateUser("verylongusernamethatfillsthebox@domain.com");
+  LoginUserInfo user = CreateUser("verylongusernamethatfillsthebox@domain.com");
   view->UpdateForUser(user, false /*animate*/);
   container_->Layout();
 

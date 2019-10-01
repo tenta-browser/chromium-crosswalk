@@ -8,7 +8,7 @@
 Audits2.Audits2Panel = class extends UI.Panel {
   constructor() {
     super('audits2');
-    this.registerRequiredCSS('audits2/lighthouse/report-styles.css');
+    this.registerRequiredCSS('audits2/lighthouse/report.css');
     this.registerRequiredCSS('audits2/audits2Panel.css');
 
     this._protocolService = new Audits2.ProtocolService();
@@ -148,6 +148,11 @@ Audits2.Audits2Panel = class extends UI.Panel {
     const el = renderer.renderReport(lighthouseResult, reportContainer);
     Audits2.ReportRenderer.addViewTraceButton(el, artifacts);
     Audits2.ReportRenderer.linkifyNodeDetails(el);
+    Audits2.ReportRenderer.handleDarkMode(el);
+
+    const features = new ReportUIFeatures(dom);
+    features.setTemplateContext(templatesDOM);
+    features.initFeatures(lighthouseResult);
 
     this._cachedRenderedReports.set(lighthouseResult, reportContainer);
   }
@@ -225,6 +230,7 @@ Audits2.Audits2Panel = class extends UI.Panel {
       await this._resetEmulationAndProtocolConnection();
       this._buildReportUI(lighthouseResponse.lhr, lighthouseResponse.artifacts);
     } catch (err) {
+      await this._resetEmulationAndProtocolConnection();
       if (err instanceof Error)
         this._statusView.renderBugReport(err);
     }
@@ -236,6 +242,12 @@ Audits2.Audits2Panel = class extends UI.Panel {
     this._renderStartView();
   }
 
+  /**
+   * We set the device emulation on the DevTools-side for two reasons:
+   * 1. To workaround some odd device metrics emulation bugs like occuluding viewports
+   * 2. To get the attractive device outline
+   * flags.emulatedFormFactor is always set to none, so Lighthouse doesn't apply its own emulation.
+   */
   async _setupEmulationAndProtocolConnection() {
     const flags = this._controller.getFlags();
 
@@ -244,11 +256,10 @@ Audits2.Audits2Panel = class extends UI.Panel {
     this._emulationOutlineEnabledBefore = emulationModel.deviceOutlineSetting().get();
     emulationModel.toolbarControlsEnabledSetting().set(false);
 
-    if (flags.disableDeviceEmulation) {
+    if (flags._devtoolsEmulationType === 'desktop') {
       emulationModel.enabledSetting().set(false);
-      emulationModel.deviceOutlineSetting().set(false);
       emulationModel.emulate(Emulation.DeviceModeModel.Type.None, null, null);
-    } else {
+    } else if (flags._devtoolsEmulationType === 'mobile') {
       emulationModel.enabledSetting().set(true);
       emulationModel.deviceOutlineSetting().set(true);
 

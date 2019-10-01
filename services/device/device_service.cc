@@ -50,6 +50,7 @@ std::unique_ptr<DeviceService> CreateDeviceService(
     scoped_refptr<base::SingleThreadTaskRunner> file_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+    network::NetworkConnectionTracker* network_connection_tracker,
     const std::string& geolocation_api_key,
     bool use_gms_core_location_provider,
     const WakeLockContextCallback& wake_lock_context_callback,
@@ -61,14 +62,16 @@ std::unique_ptr<DeviceService> CreateDeviceService(
       custom_location_provider_callback, use_gms_core_location_provider);
   return std::make_unique<DeviceService>(
       std::move(file_task_runner), std::move(io_task_runner),
-      std::move(url_loader_factory), geolocation_api_key,
-      wake_lock_context_callback, java_nfc_delegate, std::move(request));
+      std::move(url_loader_factory), network_connection_tracker,
+      geolocation_api_key, wake_lock_context_callback, java_nfc_delegate,
+      std::move(request));
 }
 #else
 std::unique_ptr<DeviceService> CreateDeviceService(
     scoped_refptr<base::SingleThreadTaskRunner> file_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+    network::NetworkConnectionTracker* network_connection_tracker,
     const std::string& geolocation_api_key,
     const CustomLocationProviderCallback& custom_location_provider_callback,
     service_manager::mojom::ServiceRequest request) {
@@ -77,7 +80,8 @@ std::unique_ptr<DeviceService> CreateDeviceService(
       custom_location_provider_callback);
   return std::make_unique<DeviceService>(
       std::move(file_task_runner), std::move(io_task_runner),
-      std::move(url_loader_factory), geolocation_api_key, std::move(request));
+      std::move(url_loader_factory), network_connection_tracker,
+      geolocation_api_key, std::move(request));
 }
 #endif
 
@@ -86,6 +90,7 @@ DeviceService::DeviceService(
     scoped_refptr<base::SingleThreadTaskRunner> file_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+    network::NetworkConnectionTracker* network_connection_tracker,
     const std::string& geolocation_api_key,
     const WakeLockContextCallback& wake_lock_context_callback,
     const base::android::JavaRef<jobject>& java_nfc_delegate,
@@ -94,8 +99,10 @@ DeviceService::DeviceService(
       file_task_runner_(std::move(file_task_runner)),
       io_task_runner_(std::move(io_task_runner)),
       url_loader_factory_(std::move(url_loader_factory)),
+      network_connection_tracker_(network_connection_tracker),
       geolocation_api_key_(geolocation_api_key),
       wake_lock_context_callback_(wake_lock_context_callback),
+      wake_lock_provider_(file_task_runner_, wake_lock_context_callback_),
       java_interface_provider_initialized_(false) {
   java_nfc_delegate_.Reset(java_nfc_delegate);
 }
@@ -104,13 +111,16 @@ DeviceService::DeviceService(
     scoped_refptr<base::SingleThreadTaskRunner> file_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+    network::NetworkConnectionTracker* network_connection_tracker,
     const std::string& geolocation_api_key,
     service_manager::mojom::ServiceRequest request)
     : service_binding_(this, std::move(request)),
       file_task_runner_(std::move(file_task_runner)),
       io_task_runner_(std::move(io_task_runner)),
       url_loader_factory_(std::move(url_loader_factory)),
-      geolocation_api_key_(geolocation_api_key) {}
+      network_connection_tracker_(network_connection_tracker),
+      geolocation_api_key_(geolocation_api_key),
+      wake_lock_provider_(file_task_runner_, wake_lock_context_callback_) {}
 #endif
 
 DeviceService::~DeviceService() {
@@ -285,7 +295,8 @@ void DeviceService::BindPublicIpAddressGeolocationProviderRequest(
   if (!public_ip_address_geolocation_provider_) {
     public_ip_address_geolocation_provider_ =
         std::make_unique<PublicIpAddressGeolocationProvider>(
-            url_loader_factory_, geolocation_api_key_);
+            url_loader_factory_, network_connection_tracker_,
+            geolocation_api_key_);
   }
   public_ip_address_geolocation_provider_->Bind(std::move(request));
 }
@@ -295,8 +306,8 @@ void DeviceService::BindScreenOrientationListenerRequest(
 #if defined(OS_ANDROID)
   if (io_task_runner_) {
     io_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&ScreenOrientationListenerAndroid::Create,
-                              base::Passed(&request)));
+        FROM_HERE, base::BindOnce(&ScreenOrientationListenerAndroid::Create,
+                                  std::move(request)));
   }
 #endif
 }
@@ -305,8 +316,8 @@ void DeviceService::BindSensorProviderRequest(
     mojom::SensorProviderRequest request) {
   if (io_task_runner_) {
     io_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&device::SensorProviderImpl::Create,
-                              file_task_runner_, base::Passed(&request)));
+        FROM_HERE, base::BindOnce(&device::SensorProviderImpl::Create,
+                                  std::move(request)));
   }
 }
 
@@ -319,8 +330,7 @@ void DeviceService::BindTimeZoneMonitorRequest(
 
 void DeviceService::BindWakeLockProviderRequest(
     mojom::WakeLockProviderRequest request) {
-  WakeLockProvider::Create(std::move(request), file_task_runner_,
-                           wake_lock_context_callback_);
+  wake_lock_provider_.AddBinding(std::move(request));
 }
 
 void DeviceService::BindUsbDeviceManagerRequest(
@@ -333,8 +343,13 @@ void DeviceService::BindUsbDeviceManagerRequest(
 
 void DeviceService::BindUsbDeviceManagerTestRequest(
     mojom::UsbDeviceManagerTestRequest request) {
-  if (!usb_device_manager_test_)
-    usb_device_manager_test_ = std::make_unique<usb::DeviceManagerTest>();
+  if (!usb_device_manager_)
+    usb_device_manager_ = std::make_unique<usb::DeviceManagerImpl>();
+
+  if (!usb_device_manager_test_) {
+    usb_device_manager_test_ = std::make_unique<usb::DeviceManagerTest>(
+        usb_device_manager_->GetUsbService());
+  }
 
   usb_device_manager_test_->BindRequest(std::move(request));
 }

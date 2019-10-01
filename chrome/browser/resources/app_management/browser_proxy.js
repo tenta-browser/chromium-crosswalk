@@ -20,16 +20,59 @@ cr.define('app_management', function() {
 
         const /** @type {!Array<App>}*/ appList = [
           app_management.FakePageHandler.createApp(
-              'ahfgeienlihckogmohjhadlkjgocpleb'),
+              'blpcfgokakmgnkcojhhkbfblekacnbeo',
+              {
+                title: 'Built in app, not implemented',
+                type: AppType.kBuiltIn,
+                installSource: InstallSource.kSystem,
+              },
+              ),
           app_management.FakePageHandler.createApp(
               'aohghmighlieiainnegkcijnfilokake',
-              {type: apps.mojom.AppType.kExtension}),
+              {
+                title: 'Arc app',
+                type: AppType.kArc,
+                installSource: InstallSource.kUser,
+              },
+              ),
           app_management.FakePageHandler.createApp(
-              'blpcfgokakmgnkcojhhkbfbldkacnbeo'),
+              'blpcfgokakmgnkcojhhkbfbldkacnbeo',
+              {
+                title: 'Crostini app, not implemented',
+                type: AppType.kCrostini,
+                installSource: InstallSource.kUser,
+              },
+              ),
           app_management.FakePageHandler.createApp(
-              'pjkljhegncpnkpknbcohdijeoejaedia'),
+              'pjkljhegncpnkkknowihdijeoejaedia',
+              {
+                title: 'Chrome App',
+                type: AppType.kExtension,
+              },
+              ),
           app_management.FakePageHandler.createApp(
-              'aapocclcgogkmnckokdopfmhonfmgoek'),
+              'aapocclcdoekwnckovdopfmtonfmgok',
+              {
+                title: 'Web App',
+                type: AppType.kWeb,
+              },
+              ),
+          app_management.FakePageHandler.createApp(
+              'pjkljhegncpnkkknbcohdijeoejaedia',
+              {
+                title: 'Chrome App, OEM installed',
+                type: AppType.kExtension,
+                installSource: InstallSource.kOem,
+              },
+              ),
+          app_management.FakePageHandler.createApp(
+              'aapocclcgogkmnckokdopfmhonfmgok',
+              {
+                title: 'Web App, policy installed',
+                type: AppType.kWeb,
+                installSource: InstallSource.kPolicy,
+              },
+              ),
         ];
 
         this.handler.setApps(appList);
@@ -38,7 +81,7 @@ cr.define('app_management', function() {
         this.handler = new appManagement.mojom.PageHandlerProxy();
         const factory = appManagement.mojom.PageHandlerFactory.getProxy();
         factory.createPageHandler(
-            this.callbackRouter.createProxy(), this.handler.createRequest());
+            this.callbackRouter.createProxy(), this.handler.$.createRequest());
       }
     }
   }

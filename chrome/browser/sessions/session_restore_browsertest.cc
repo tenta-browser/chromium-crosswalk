@@ -526,7 +526,7 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTest, RestoreIndividualTabFromWindow) {
       base::FilePath(base::FilePath::kCurrentDirectory),
       base::FilePath(FILE_PATH_LITERAL("title1.html"))));
   // Any page that will yield a 200 status code will work here.
-  GURL url2("chrome://version");
+  GURL url2(chrome::kChromeUIVersionURL);
   GURL url3(ui_test_utils::GetTestUrl(
       base::FilePath(base::FilePath::kCurrentDirectory),
       base::FilePath(FILE_PATH_LITERAL("title3.html"))));
@@ -1001,14 +1001,14 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTest, RestoreWebUI) {
             new_tab->GetMainFrame()->GetEnabledBindings());
 }
 
-// http://crbug.com/803510 : Flaky on Win7 Tests (dbg)
-#if defined(OS_WIN) && !defined(NDEBUG)
+// http://crbug.com/803510 : Flaky on dbg and ASan bots.
+#if defined(ADDRESS_SANITIZER) || !defined(NDEBUG)
 #define MAYBE_RestoreWebUISettings DISABLED_RestoreWebUISettings
 #else
 #define MAYBE_RestoreWebUISettings RestoreWebUISettings
 #endif
 IN_PROC_BROWSER_TEST_F(SessionRestoreTest, MAYBE_RestoreWebUISettings) {
-  const GURL webui_url("chrome://settings");
+  const GURL webui_url(chrome::kChromeUISettingsURL);
   ui_test_utils::NavigateToURL(browser(), webui_url);
   content::WebContents* old_tab =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -1300,7 +1300,8 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTest, RestorePinnedSelectedTab) {
       ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
   ASSERT_EQ(1, browser()->tab_strip_model()->active_index());
   // Select the pinned tab.
-  browser()->tab_strip_model()->ActivateTabAt(0, true);
+  browser()->tab_strip_model()->ActivateTabAt(
+      0, {TabStripModel::GestureType::kOther});
   ASSERT_EQ(0, browser()->tab_strip_model()->active_index());
   Profile* profile = browser()->profile();
 
@@ -1586,7 +1587,8 @@ IN_PROC_BROWSER_TEST_F(SmartSessionRestoreTest, MAYBE_PRE_CorrectLoadingOrder) {
 
   // Activate the tabs one by one following the specified activation order.
   for (int i : activation_order)
-    browser()->tab_strip_model()->ActivateTabAt(i, true);
+    browser()->tab_strip_model()->ActivateTabAt(
+        i, {TabStripModel::GestureType::kOther});
 
   // Close the browser.
   std::unique_ptr<ScopedKeepAlive> keep_alive(new ScopedKeepAlive(
@@ -1618,14 +1620,11 @@ IN_PROC_BROWSER_TEST_F(SmartSessionRestoreTest, MAYBE_PRE_CorrectLoadingOrder) {
 
   // Activate the 2nd tab before the browser closes. This should be persisted in
   // the following test.
-  new_browser->tab_strip_model()->ActivateTabAt(1, true);
+  new_browser->tab_strip_model()->ActivateTabAt(
+      1, {TabStripModel::GestureType::kOther});
 }
 
 IN_PROC_BROWSER_TEST_F(SmartSessionRestoreTest, MAYBE_CorrectLoadingOrder) {
-  // TODO(https://crbug.com/923051): Flaky in single process mash.
-  if (features::IsSingleProcessMash())
-    return;
-
   const int activation_order[] = {4, 2, 5, 0, 3, 1};
   Profile* profile = browser()->profile();
 

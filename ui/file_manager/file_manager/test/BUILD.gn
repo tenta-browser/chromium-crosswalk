@@ -17,8 +17,8 @@ action("create_test_main") {
     "../foreground/js/elements_importer.js",
     "../foreground/js/main_scripts.js",
     "../main.html",
-    "//chrome/app/file_manager_strings.grdp",
     "//chrome/browser/chromeos/extensions/file_manager/private_api_strings.cc",
+    "//ui/chromeos/file_manager_strings.grdp",
     "//ui/webui/resources/css/text_defaults.css",
     "check_select.js",
     "crostini_mount.js",
@@ -43,6 +43,7 @@ js_type_check("closure_compile") {
     ":crostini_share",
     ":crostini_tasks",
     ":menu",
+    ":plugin_vm",
     ":progress_center",
     ":uma",
   ]
@@ -57,7 +58,6 @@ js_library("closure_compile_externs") {
     "js/externs.js",
     "$externs_path/command_line_private.js",
     "$externs_path/metrics_private.js",
-    "//ui/file_manager/externs/app_window_common.js",
     "//ui/file_manager/externs/background/file_browser_background.js",
     "//ui/file_manager/externs/background/progress_center.js",
     "//ui/file_manager/externs/background/crostini.js",
@@ -97,6 +97,13 @@ js_library("crostini_tasks") {
 }
 
 js_library("menu") {
+  deps = [
+    "js:test_util",
+    "//ui/webui/resources/js:webui_resource_test",
+  ]
+}
+
+js_library("plugin_vm") {
   deps = [
     "js:test_util",
     "//ui/webui/resources/js:webui_resource_test",

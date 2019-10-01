@@ -88,6 +88,9 @@ class SearchProvider : public BaseSearchProvider,
                            DontInlineAutocompleteAsynchronously);
   FRIEND_TEST_ALL_PREFIXES(SearchProviderTest, NavigationInline);
   FRIEND_TEST_ALL_PREFIXES(SearchProviderTest, NavigationInlineDomainClassify);
+  FRIEND_TEST_ALL_PREFIXES(SearchProviderTest, NavigationPrefixClassify);
+  FRIEND_TEST_ALL_PREFIXES(SearchProviderTest, NavigationMidWordClassify);
+  FRIEND_TEST_ALL_PREFIXES(SearchProviderTest, NavigationWordBreakClassify);
   FRIEND_TEST_ALL_PREFIXES(SearchProviderTest, NavigationInlineSchemeSubstring);
   FRIEND_TEST_ALL_PREFIXES(SearchProviderTest, SuggestRelevanceExperiment);
   FRIEND_TEST_ALL_PREFIXES(SearchProviderTest, TestDeleteMatch);
@@ -131,7 +134,6 @@ class SearchProvider : public BaseSearchProvider,
       keyword_provider_ = keyword_provider;
     }
 
-    TemplateURLService* template_url_service() { return template_url_service_; }
     const base::string16& default_provider() const { return default_provider_; }
     const base::string16& keyword_provider() const { return keyword_provider_; }
 

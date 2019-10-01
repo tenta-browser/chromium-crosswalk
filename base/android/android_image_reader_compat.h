@@ -48,11 +48,16 @@ class BASE_EXPORT AndroidImageReader {
       AImageReader* reader,
       AImageReader_ImageListener* listener);
   void AImageReader_delete(AImageReader* reader);
+  media_status_t AImageReader_getFormat(const AImageReader* reader,
+                                        int32_t* format);
   media_status_t AImageReader_getWindow(AImageReader* reader,
                                         ANativeWindow** window);
   media_status_t AImageReader_acquireLatestImageAsync(AImageReader* reader,
                                                       AImage** image,
                                                       int* acquireFenceFd);
+  media_status_t AImageReader_acquireNextImageAsync(AImageReader* reader,
+                                                    AImage** image,
+                                                    int* acquireFenceFd);
   jobject ANativeWindow_toSurface(JNIEnv* env, ANativeWindow* window);
 
  private:
@@ -71,8 +76,10 @@ class BASE_EXPORT AndroidImageReader {
   pAImageReader_newWithUsage AImageReader_newWithUsage_;
   pAImageReader_setImageListener AImageReader_setImageListener_;
   pAImageReader_delete AImageReader_delete_;
+  pAImageReader_getFormat AImageReader_getFormat_;
   pAImageReader_getWindow AImageReader_getWindow_;
   pAImageReader_acquireLatestImageAsync AImageReader_acquireLatestImageAsync_;
+  pAImageReader_acquireNextImageAsync AImageReader_acquireNextImageAsync_;
   pANativeWindow_toSurface ANativeWindow_toSurface_;
 
   DISALLOW_COPY_AND_ASSIGN(AndroidImageReader);

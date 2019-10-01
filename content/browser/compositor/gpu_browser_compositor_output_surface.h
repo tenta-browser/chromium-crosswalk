@@ -10,12 +10,11 @@
 #include "base/macros.h"
 #include "build/build_config.h"
 #include "content/browser/compositor/browser_compositor_output_surface.h"
-#include "gpu/vulkan/buildflags.h"
 #include "ui/gfx/swap_result.h"
 #include "ui/latency/latency_tracker.h"
 
 namespace viz {
-class CompositorOverlayCandidateValidator;
+class OverlayCandidateValidator;
 }
 
 namespace gfx {
@@ -42,8 +41,7 @@ class GpuBrowserCompositorOutputSurface
  public:
   GpuBrowserCompositorOutputSurface(
       scoped_refptr<ws::ContextProviderCommandBuffer> context,
-      const UpdateVSyncParametersCallback& update_vsync_parameters_callback,
-      std::unique_ptr<viz::CompositorOverlayCandidateValidator>
+      std::unique_ptr<viz::OverlayCandidateValidator>
           overlay_candidate_validator);
 
   ~GpuBrowserCompositorOutputSurface() override;
@@ -74,10 +72,6 @@ class GpuBrowserCompositorOutputSurface
   unsigned UpdateGpuFence() override;
 
   void SetDrawRectangle(const gfx::Rect& rect) override;
-
-#if BUILDFLAG(ENABLE_VULKAN)
-  gpu::VulkanSurface* GetVulkanSurface() override;
-#endif
 
  protected:
   void OnPresentation(const gfx::PresentationFeedback& feedback);

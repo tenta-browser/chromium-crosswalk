@@ -8,10 +8,12 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "components/sync/driver/sync_service.h"
 #include "components/sync/model/fake_model_type_controller_delegate.h"
 #include "components/sync_sessions/open_tabs_ui_delegate.h"
 #include "components/sync_sessions/session_sync_service.h"
+#include "components/sync_user_events/global_id_mapper.h"
 #include "ios/chrome/browser/browser_state/test_chrome_browser_state.h"
 #include "ios/chrome/browser/sync/profile_sync_service_factory.h"
 #include "ios/chrome/browser/sync/session_sync_service_factory.h"
@@ -28,6 +30,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
 #import "third_party/ocmock/gtest_support.h"
+#include "url/gurl.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -80,9 +83,11 @@ class OpenTabsUIDelegateMock : public sync_sessions::OpenTabsUIDelegate {
   OpenTabsUIDelegateMock() {}
   ~OpenTabsUIDelegateMock() override {}
 
-  MOCK_CONST_METHOD2(GetSyncedFaviconForPageURL,
-                     bool(const std::string& pageurl,
-                          scoped_refptr<base::RefCountedMemory>* favicon_png));
+  MOCK_METHOD1(GetIconUrlForPageUrl, GURL(const GURL& page_url));
+
+  MOCK_CONST_METHOD1(
+      GetSyncedFaviconForPageURL,
+      scoped_refptr<base::RefCountedMemory>(const std::string& page_url));
   MOCK_METHOD1(
       GetAllForeignSessions,
       bool(std::vector<const sync_sessions::SyncedSession*>* sessions));
@@ -99,6 +104,16 @@ class OpenTabsUIDelegateMock : public sync_sessions::OpenTabsUIDelegate {
                     std::vector<const sessions::SessionTab*>* tabs));
   MOCK_METHOD1(GetLocalSession,
                bool(const sync_sessions::SyncedSession** local));
+};
+
+class GlobalIdMapperMock : public syncer::GlobalIdMapper {
+ public:
+  GlobalIdMapperMock() {}
+  ~GlobalIdMapperMock() {}
+
+  MOCK_METHOD1(AddGlobalIdChangeObserver,
+               void(syncer::GlobalIdChange callback));
+  MOCK_METHOD1(GetLatestGlobalId, int64_t(int64_t global_id));
 };
 
 class RecentTabsTableCoordinatorTest : public BlockCleanupTest {
@@ -156,6 +171,8 @@ class RecentTabsTableCoordinatorTest : public BlockCleanupTest {
     // initialization of SyncSetupServiceMock.
     ON_CALL(*session_sync_service, GetControllerDelegate())
         .WillByDefault(Return(fake_controller_delegate_.GetWeakPtr()));
+    ON_CALL(*session_sync_service, GetGlobalIdMapper())
+        .WillByDefault(Return(&global_id_mapper_));
 
     SyncSetupServiceMock* syncSetupService = static_cast<SyncSetupServiceMock*>(
         SyncSetupServiceFactory::GetForBrowserState(
@@ -190,6 +207,7 @@ class RecentTabsTableCoordinatorTest : public BlockCleanupTest {
 
   syncer::FakeModelTypeControllerDelegate fake_controller_delegate_;
   testing::NiceMock<OpenTabsUIDelegateMock> open_tabs_ui_delegate_;
+  testing::NiceMock<GlobalIdMapperMock> global_id_mapper_;
   std::unique_ptr<TestChromeBrowserState> chrome_browser_state_;
 
   // Must be declared *after* |chrome_browser_state_| so it can outlive it.

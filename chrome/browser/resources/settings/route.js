@@ -10,12 +10,15 @@
  *   ABOUT_ABOUT: (undefined|!settings.Route),
  *   ACCESSIBILITY: (undefined|!settings.Route),
  *   ACCOUNTS: (undefined|!settings.Route),
+ *   ACCOUNT_MANAGER: (undefined|!settings.Route),
  *   ADVANCED: (undefined|!settings.Route),
  *   ADDRESSES: (undefined|!settings.Route),
+ *   APPS: (undefined|!settings.Route),
  *   ANDROID_APPS: (undefined|!settings.Route),
  *   ANDROID_APPS_DETAILS: (undefined|!settings.Route),
  *   CROSTINI: (undefined|!settings.Route),
  *   CROSTINI_DETAILS: (undefined|!settings.Route),
+ *   CROSTINI_EXPORT_IMPORT: (undefined|!settings.Route),
  *   CROSTINI_SHARED_PATHS: (undefined|!settings.Route),
  *   CROSTINI_SHARED_USB_DEVICES: (undefined|!settings.Route),
  *   APPEARANCE: (undefined|!settings.Route),
@@ -37,6 +40,7 @@
  *   DISPLAY: (undefined|!settings.Route),
  *   DOWNLOADS: (undefined|!settings.Route),
  *   EDIT_DICTIONARY: (undefined|!settings.Route),
+ *   EXTERNAL_STORAGE_PREFERENCES: (undefined|!settings.Route),
  *   FINGERPRINT: (undefined|!settings.Route),
  *   FONTS: (undefined|!settings.Route),
  *   GOOGLE_ASSISTANT: (undefined|!settings.Route),
@@ -45,6 +49,7 @@
  *   INPUT_METHODS: (undefined|!settings.Route),
  *   INTERNET: (undefined|!settings.Route),
  *   INTERNET_NETWORKS: (undefined|!settings.Route),
+ *   KERBEROS_ACCOUNTS: (undefined|!settings.Route),
  *   KEYBOARD: (undefined|!settings.Route),
  *   KNOWN_NETWORKS: (undefined|!settings.Route),
  *   LANGUAGES: (undefined|!settings.Route),
@@ -59,6 +64,9 @@
  *   PASSWORDS: (undefined|!settings.Route),
  *   PAYMENTS: (undefined|!settings.Route),
  *   PEOPLE: (undefined|!settings.Route),
+ *   PLUGIN_VM: (undefined|!settings.Route),
+ *   PLUGIN_VM_DETAILS: (undefined|!settings.Route),
+ *   PLUGIN_VM_SHARED_PATHS: (undefined|!settings.Route),
  *   POINTERS: (undefined|!settings.Route),
  *   POWER: (undefined|!settings.Route),
  *   PRINTING: (undefined|!settings.Route),
@@ -67,12 +75,14 @@
  *   RESET_DIALOG: (undefined|!settings.Route),
  *   SEARCH: (undefined|!settings.Route),
  *   SEARCH_ENGINES: (undefined|!settings.Route),
+ *   SECURITY_KEYS: (undefined|!settings.Route),
  *   SIGN_OUT: (undefined|!settings.Route),
  *   SITE_SETTINGS: (undefined|!settings.Route),
  *   SITE_SETTINGS_ADS: (undefined|!settings.Route),
  *   SITE_SETTINGS_ALL: (undefined|!settings.Route),
  *   SITE_SETTINGS_AUTOMATIC_DOWNLOADS: (undefined|!settings.Route),
  *   SITE_SETTINGS_BACKGROUND_SYNC: (undefined|!settings.Route),
+ *   SITE_SETTINGS_BLUETOOTH_SCANNING: (undefined|!settings.Route),
  *   SITE_SETTINGS_CAMERA: (undefined|!settings.Route),
  *   SITE_SETTINGS_CLIPBOARD: (undefined|!settings.Route),
  *   SITE_SETTINGS_COOKIES: (undefined|!settings.Route),
@@ -95,6 +105,7 @@
  *   SITE_SETTINGS_SITE_DETAILS: (undefined|!settings.Route),
  *   SITE_SETTINGS_UNSANDBOXED_PLUGINS: (undefined|!settings.Route),
  *   SITE_SETTINGS_USB_DEVICES: (undefined|!settings.Route),
+ *   SITE_SETTINGS_SERIAL_PORTS: (undefined|!settings.Route),
  *   SITE_SETTINGS_ZOOM_LEVELS: (undefined|!settings.Route),
  *   SMART_LOCK: (undefined|!settings.Route),
  *   SMB_SHARES: (undefined|!settings.Route),
@@ -263,7 +274,15 @@ cr.define('settings', function() {
     r.SEARCH = r.BASIC.createSection('/search', 'search');
     r.SEARCH_ENGINES = r.SEARCH.createChild('/searchEngines');
     // <if expr="chromeos">
-    r.GOOGLE_ASSISTANT = r.SEARCH.createChild('/googleAssistant');
+    if (loadTimeData.valueExists('assistantEnabled') &&
+        loadTimeData.getBoolean('assistantEnabled')) {
+      r.GOOGLE_ASSISTANT = r.SEARCH.createChild('/googleAssistant');
+    }
+
+    if (loadTimeData.valueExists('showApps') &&
+        loadTimeData.getBoolean('showApps')) {
+      r.APPS = r.BASIC.createSection('/apps', 'apps');
+    }
 
     r.ANDROID_APPS = r.BASIC.createSection('/androidApps', 'androidApps');
     r.ANDROID_APPS_DETAILS = r.ANDROID_APPS.createChild('/androidApps/details');
@@ -272,9 +291,19 @@ cr.define('settings', function() {
         loadTimeData.getBoolean('showCrostini')) {
       r.CROSTINI = r.BASIC.createSection('/crostini', 'crostini');
       r.CROSTINI_DETAILS = r.CROSTINI.createChild('/crostini/details');
+      r.CROSTINI_EXPORT_IMPORT =
+          r.CROSTINI.createChild('/crostini/exportImport');
       r.CROSTINI_SHARED_PATHS = r.CROSTINI.createChild('/crostini/sharedPaths');
       r.CROSTINI_SHARED_USB_DEVICES =
           r.CROSTINI.createChild('/crostini/sharedUsbDevices');
+    }
+
+    if (loadTimeData.valueExists('showPluginVm') &&
+        loadTimeData.getBoolean('showPluginVm')) {
+      r.PLUGIN_VM = r.BASIC.createSection('/pluginVm', 'pluginVm');
+      r.PLUGIN_VM_DETAILS = r.PLUGIN_VM.createChild('/pluginVm/details');
+      r.PLUGIN_VM_SHARED_PATHS =
+          r.PLUGIN_VM.createChild('/pluginVm/sharedPaths');
     }
     // </if>
 
@@ -294,6 +323,7 @@ cr.define('settings', function() {
       r.CHANGE_PICTURE = r.PEOPLE.createChild('/changePicture');
       r.ACCOUNTS = r.PEOPLE.createChild('/accounts');
       r.ACCOUNT_MANAGER = r.PEOPLE.createChild('/accountManager');
+      r.KERBEROS_ACCOUNTS = r.PEOPLE.createChild('/kerberosAccounts');
       r.LOCK_SCREEN = r.PEOPLE.createChild('/lockScreen');
       r.FINGERPRINT = r.LOCK_SCREEN.createChild('/lockScreen/fingerprint');
       // </if>
@@ -306,6 +336,8 @@ cr.define('settings', function() {
     r.STYLUS = r.DEVICE.createChild('/stylus');
     r.DISPLAY = r.DEVICE.createChild('/display');
     r.STORAGE = r.DEVICE.createChild('/storage');
+    r.EXTERNAL_STORAGE_PREFERENCES =
+        r.DEVICE.createChild('/storage/externalStoragePreferences');
     r.POWER = r.DEVICE.createChild('/power');
     // </if>
 
@@ -320,6 +352,9 @@ cr.define('settings', function() {
         r.PRIVACY = r.ADVANCED.createSection('/privacy', 'privacy');
         r.CERTIFICATES = r.PRIVACY.createChild('/certificates');
         r.SITE_SETTINGS = r.PRIVACY.createChild('/content');
+        if (loadTimeData.getBoolean('enableSecurityKeysSubpage')) {
+          r.SECURITY_KEYS = r.PRIVACY.createChild('/securityKeys');
+        }
       }
 
       if (loadTimeData.getBoolean('enableSiteSettings')) {
@@ -363,6 +398,10 @@ cr.define('settings', function() {
           r.SITE_SETTINGS.createChild('unsandboxedPlugins');
       r.SITE_SETTINGS_MIDI_DEVICES = r.SITE_SETTINGS.createChild('midiDevices');
       r.SITE_SETTINGS_USB_DEVICES = r.SITE_SETTINGS.createChild('usbDevices');
+      if (loadTimeData.getBoolean('enableExperimentalWebPlatformFeatures')) {
+        r.SITE_SETTINGS_SERIAL_PORTS =
+            r.SITE_SETTINGS.createChild('serialPorts');
+      }
       r.SITE_SETTINGS_ZOOM_LEVELS = r.SITE_SETTINGS.createChild('zoomLevels');
       r.SITE_SETTINGS_PDF_DOCUMENTS =
           r.SITE_SETTINGS.createChild('pdfDocuments');
@@ -371,6 +410,10 @@ cr.define('settings', function() {
       if (loadTimeData.getBoolean('enablePaymentHandlerContentSetting')) {
         r.SITE_SETTINGS_PAYMENT_HANDLER =
             r.SITE_SETTINGS.createChild('paymentHandler');
+      }
+      if (loadTimeData.getBoolean('enableBluetoothScanningContentSetting')) {
+        r.SITE_SETTINGS_BLUETOOTH_SCANNING =
+            r.SITE_SETTINGS.createChild('bluetoothScanning');
       }
 
       // <if expr="chromeos">
@@ -527,7 +570,7 @@ cr.define('settings', function() {
           Object.keys(this.routes_)
               .find((key) => this.routes_[key].path == canonicalPath);
 
-      return !!matchingKey ? this.routes_[matchingKey] : null;
+      return matchingKey ? this.routes_[matchingKey] : null;
     }
 
     /**
@@ -671,11 +714,11 @@ cr.define('settings', function() {
         new URLSearchParams(window.location.search), true);
   });
 
-  // TODO(scottchen): Change to 'get routes() {}' in export when we fix a bug in
+  // TODO(dpapad): Change to 'get routes() {}' in export when we fix a bug in
   // ChromePass that limits the syntax of what can be returned from cr.define().
   const routes = routerInstance.getRoutes();
 
-  // TODO(scottchen): Stop exposing all those methods directly on settings.*,
+  // TODO(dpapad): Stop exposing all those methods directly on settings.*,
   // and instead update all clients to use the singleton instance directly
   const getCurrentRoute = routerInstance.getCurrentRoute.bind(routerInstance);
   const getRouteForPath = routerInstance.getRouteForPath.bind(routerInstance);

@@ -6,6 +6,7 @@
 #define CHROMECAST_COMMON_CAST_CONTENT_CLIENT_H_
 
 #include "content/public/common/content_client.h"
+#include "url/gurl.h"
 
 namespace chromecast {
 namespace shell {
@@ -26,10 +27,16 @@ class CastContentClient : public content::ContentClient {
       ui::ScaleFactor scale_factor) const override;
   base::RefCountedMemory* GetDataResourceBytes(
       int resource_id) const override;
+  bool IsDataResourceGzipped(int resource_id) const override;
   gfx::Image& GetNativeImageNamed(int resource_id) const override;
 #if defined(OS_ANDROID)
   ::media::MediaDrmBridgeClient* GetMediaDrmBridgeClient() override;
 #endif  // OS_ANDROID
+  void OnServiceManagerConnected(
+      content::ServiceManagerConnection* connection) override;
+
+ private:
+  GURL last_active_url_;
 };
 
 }  // namespace shell

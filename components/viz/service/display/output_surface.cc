@@ -16,7 +16,6 @@
 #include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/context_support.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
-#include "gpu/vulkan/buildflags.h"
 #include "ui/gfx/swap_result.h"
 
 namespace viz {
@@ -34,15 +33,11 @@ OutputSurface::OutputSurface(
   DCHECK(software_device_);
 }
 
-#if BUILDFLAG(ENABLE_VULKAN)
-OutputSurface::OutputSurface(
-    scoped_refptr<VulkanContextProvider> vulkan_context_provider)
-    : vulkan_context_provider_(std::move(vulkan_context_provider)) {
-  DCHECK(vulkan_context_provider_);
-}
-#endif
-
 OutputSurface::~OutputSurface() = default;
+
+SkiaOutputSurface* OutputSurface::AsSkiaOutputSurface() {
+  return nullptr;
+}
 
 void OutputSurface::UpdateLatencyInfoOnSwap(
     const gfx::SwapResponse& response,
@@ -58,6 +53,18 @@ void OutputSurface::UpdateLatencyInfoOnSwap(
 void OutputSurface::SetNeedsSwapSizeNotifications(
     bool needs_swap_size_notifications) {
   DCHECK(!needs_swap_size_notifications);
+}
+
+base::ScopedClosureRunner OutputSurface::GetCacheBackBufferCb() {
+  return base::ScopedClosureRunner();
+}
+
+void OutputSurface::SetGpuVSyncCallback(GpuVSyncCallback callback) {
+  NOTREACHED();
+}
+
+void OutputSurface::SetGpuVSyncEnabled(bool enabled) {
+  NOTREACHED();
 }
 
 }  // namespace viz

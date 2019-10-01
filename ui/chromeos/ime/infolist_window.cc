@@ -173,7 +173,7 @@ InfolistWindow::InfolistWindow(views::View* candidate_window,
       title_font_list_(gfx::Font(kJapaneseFontName, kFontSizeDelta + 15)),
       description_font_list_(
           gfx::Font(kJapaneseFontName, kFontSizeDelta + 11)) {
-  set_can_activate(false);
+  SetCanActivate(false);
   set_accept_events(false);
   set_margins(gfx::Insets());
 
@@ -242,7 +242,6 @@ void InfolistWindow::Relayout(const std::vector<ui::InfolistEntry>& entries) {
   }
 
   Layout();
-  GetBubbleFrameView()->bubble_border()->set_arrow_offset(0);
   SizeToContents();
 }
 

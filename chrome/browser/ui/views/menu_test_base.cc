@@ -15,21 +15,15 @@
 #include "ui/views/widget/widget.h"
 
 MenuTestBase::MenuTestBase()
-    : ViewEventTestBase(),
-      button_(NULL),
-      menu_(NULL),
-      last_command_(0) {
-}
+    : ViewEventTestBase(), button_(nullptr), menu_(nullptr), last_command_(0) {}
 
 MenuTestBase::~MenuTestBase() {
 }
 
-void MenuTestBase::Click(views::View* view, const base::Closure& next) {
-  ui_test_utils::MoveMouseToCenterAndPress(
-      view,
-      ui_controls::LEFT,
-      ui_controls::DOWN | ui_controls::UP,
-      next);
+void MenuTestBase::Click(views::View* view, base::OnceClosure next) {
+  ui_test_utils::MoveMouseToCenterAndPress(view, ui_controls::LEFT,
+                                           ui_controls::DOWN | ui_controls::UP,
+                                           std::move(next));
   views::test::WaitForMenuClosureAnimation();
 }
 
@@ -61,7 +55,7 @@ void MenuTestBase::TearDown() {
   menu_runner_->Cancel();
 
   menu_runner_.reset();
-  menu_ = NULL;
+  menu_ = nullptr;
   ViewEventTestBase::TearDown();
 }
 
@@ -77,14 +71,15 @@ gfx::Size MenuTestBase::GetPreferredSizeForContents() const {
   return button_->GetPreferredSize();
 }
 
-void MenuTestBase::OnMenuButtonClicked(views::MenuButton* source,
+void MenuTestBase::OnMenuButtonClicked(views::Button* source,
                                        const gfx::Point& point,
                                        const ui::Event* event) {
   gfx::Point screen_location;
   views::View::ConvertPointToScreen(source, &screen_location);
   gfx::Rect bounds(screen_location, source->size());
-  menu_runner_->RunMenuAt(source->GetWidget(), button_, bounds,
-                          views::MENU_ANCHOR_TOPLEFT, ui::MENU_SOURCE_NONE);
+  menu_runner_->RunMenuAt(source->GetWidget(), button_->button_controller(),
+                          bounds, views::MenuAnchorPosition::kTopLeft,
+                          ui::MENU_SOURCE_NONE);
 }
 
 void MenuTestBase::ExecuteCommand(int id) {

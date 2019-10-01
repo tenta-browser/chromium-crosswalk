@@ -164,7 +164,7 @@ void AssertMemoryPriority(HANDLE thread, int memory_priority) {
           ::GetModuleHandle(L"Kernel32.dll"), "GetThreadInformation"));
 
   if (!get_thread_information_fn) {
-    DCHECK_EQ(win::GetVersion(), win::VERSION_WIN7);
+    DCHECK_EQ(win::GetVersion(), win::Version::WIN7);
     return;
   }
 
@@ -214,7 +214,7 @@ void PlatformThread::SetName(const std::string& name) {
   ThreadIdNameManager::GetInstance()->SetName(name);
 
   // The SetThreadDescription API works even if no debugger is attached.
-  auto set_thread_description_func =
+  static auto set_thread_description_func =
       reinterpret_cast<SetThreadDescription>(::GetProcAddress(
           ::GetModuleHandle(L"Kernel32.dll"), "SetThreadDescription"));
   if (set_thread_description_func) {
@@ -373,7 +373,7 @@ ThreadPriority PlatformThread::GetCurrentThreadPriority() {
   switch (priority) {
     case THREAD_PRIORITY_IDLE:
     case internal::kWin7BackgroundThreadModePriority:
-      DCHECK_EQ(win::GetVersion(), win::VERSION_WIN7);
+      DCHECK_EQ(win::GetVersion(), win::Version::WIN7);
       FALLTHROUGH;
     case kWin8AboveBackgroundThreadModePriority:
     case THREAD_PRIORITY_LOWEST:

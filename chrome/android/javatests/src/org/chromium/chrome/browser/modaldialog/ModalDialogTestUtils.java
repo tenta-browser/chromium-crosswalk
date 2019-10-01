@@ -9,14 +9,15 @@ import android.support.annotation.Nullable;
 
 import org.junit.Assert;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeActivity;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.ui.modaldialog.DialogDismissalCause;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 import org.chromium.ui.modaldialog.ModalDialogManager.ModalDialogType;
 import org.chromium.ui.modaldialog.ModalDialogProperties;
 import org.chromium.ui.modelutil.PropertyModel;
+import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 
 import java.util.List;
 import java.util.concurrent.ExecutionException;
@@ -41,7 +42,7 @@ public class ModalDialogTestUtils {
      */
     public static PropertyModel createDialog(ChromeActivity activity, String title,
             @Nullable TestDialogDismissedObserver observer) throws ExecutionException {
-        return ThreadUtils.runOnUiThreadBlocking(() -> {
+        return TestThreadUtils.runOnUiThreadBlocking(() -> {
             ModalDialogProperties.Controller controller = new ModalDialogProperties.Controller() {
                 @Override
                 public void onDismiss(
@@ -77,7 +78,7 @@ public class ModalDialogTestUtils {
      */
     public static void showDialog(
             ModalDialogManager manager, PropertyModel model, @ModalDialogType int dialogType) {
-        ThreadUtils.runOnUiThreadBlocking(() -> manager.showDialog(model, dialogType));
+        TestThreadUtils.runOnUiThreadBlocking(() -> manager.showDialog(model, dialogType));
     }
 
     /**
@@ -85,7 +86,7 @@ public class ModalDialogTestUtils {
      */
     public static void checkPendingSize(
             ModalDialogManager manager, @ModalDialogType int dialogType, int expected) {
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             List list = manager.getPendingDialogsForTest(dialogType);
             Assert.assertEquals(expected, list != null ? list.size() : 0);
         });
@@ -97,7 +98,7 @@ public class ModalDialogTestUtils {
      */
     public static void checkCurrentPresenter(
             ModalDialogManager manager, @Nullable Integer dialogType) {
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             if (dialogType == null) {
                 Assert.assertFalse(manager.isShowing());
                 Assert.assertNull(manager.getCurrentPresenterForTest());
@@ -117,5 +118,19 @@ public class ModalDialogTestUtils {
             @Nullable Integer expectedDismissalCause, @DialogDismissalCause int dismissalCause) {
         if (expectedDismissalCause == null) return;
         Assert.assertEquals(expectedDismissalCause.intValue(), dismissalCause);
+    }
+
+    /**
+     * @param modelBuilder The builder for the modal dialog view model.
+     * @param view The {@link ModalDialogView} that should be bound.
+     * @return The {@link PropertyModel} that binds the {@code view}.
+     */
+    public static PropertyModel createModel(
+            PropertyModel.Builder modelBuilder, ModalDialogView view) {
+        return TestThreadUtils.runOnUiThreadBlockingNoException(() -> {
+            PropertyModel model = modelBuilder.build();
+            PropertyModelChangeProcessor.create(model, view, new ModalDialogViewBinder());
+            return model;
+        });
     }
 }

@@ -26,13 +26,14 @@ size_t OmniboxTabSwitchButton::icon_only_width_;
 size_t OmniboxTabSwitchButton::short_text_width_;
 size_t OmniboxTabSwitchButton::full_text_width_;
 
-OmniboxTabSwitchButton::OmniboxTabSwitchButton(OmniboxPopupContentsView* model,
-                                               OmniboxResultView* result_view,
-                                               const base::string16& hint,
-                                               const base::string16& hint_short,
-                                               const gfx::VectorIcon& icon)
+OmniboxTabSwitchButton::OmniboxTabSwitchButton(
+    OmniboxPopupContentsView* popup_contents_view,
+    OmniboxResultView* result_view,
+    const base::string16& hint,
+    const base::string16& hint_short,
+    const gfx::VectorIcon& icon)
     : MdTextButton(result_view, views::style::CONTEXT_BUTTON_MD),
-      model_(model),
+      popup_contents_view_(popup_contents_view),
       result_view_(result_view),
       initialized_(false),
       animation_(new gfx::SlideAnimation(this)),
@@ -54,7 +55,7 @@ OmniboxTabSwitchButton::OmniboxTabSwitchButton(OmniboxPopupContentsView* model,
     SetText(hint_);
   }
   SetTooltipText(hint_);
-  set_corner_radius(CalculatePreferredSize().height() / 2.f);
+  SetCornerRadius(kButtonHeight / 2.f);
   animation_->SetSlideDuration(500);
   SetElideBehavior(gfx::FADE_TAIL);
 
@@ -107,10 +108,10 @@ void OmniboxTabSwitchButton::StateChanged(ButtonState old_state) {
     if (old_state == STATE_PRESSED) {
       SetBgColorOverride(GetBackgroundColor());
       SetMouseHandler(parent());
-      if (model_->IsButtonSelected())
-        model_->UnselectButton();
-    // Otherwise was hovered. Update color if not selected.
-    } else if (!model_->IsButtonSelected()) {
+      if (popup_contents_view_->IsButtonSelected())
+        popup_contents_view_->UnselectButton();
+    } else if (!popup_contents_view_->IsButtonSelected()) {
+      // Otherwise, the button was hovered. Update color if not selected.
       SetBgColorOverride(GetBackgroundColor());
     }
   }
@@ -133,7 +134,7 @@ void OmniboxTabSwitchButton::ProvideWidthHint(size_t parent_width) {
   size_t preferred_width = CalculateGoalWidth(parent_width, &goal_text_);
   if (!initialized_) {
     initialized_ = true;
-    goal_width_ = preferred_width;
+    goal_width_ = start_width_ = preferred_width;
     animation_->Reset(1);
     SetText(goal_text_);
     return;
@@ -169,7 +170,7 @@ void OmniboxTabSwitchButton::GetAccessibleNodeData(ui::AXNodeData* node_data) {
 
 bool OmniboxTabSwitchButton::IsSelected() const {
   // Is this result selected and is button selected?
-  return result_view_->IsSelected() && model_->IsButtonSelected();
+  return result_view_->IsSelected() && popup_contents_view_->IsButtonSelected();
 }
 
 SkPath OmniboxTabSwitchButton::GetFocusRingPath() const {
@@ -181,16 +182,17 @@ SkPath OmniboxTabSwitchButton::GetFocusRingPath() const {
 
 SkColor OmniboxTabSwitchButton::GetBackgroundColor() const {
   return GetOmniboxColor(OmniboxPart::RESULTS_BACKGROUND,
-                         result_view_->GetTint(),
+                         result_view_->CalculateTint(),
                          state() == STATE_HOVERED ? OmniboxPartState::HOVERED
                                                   : OmniboxPartState::NORMAL);
 }
 
 void OmniboxTabSwitchButton::SetPressed() {
-  SetBgColorOverride(color_utils::AlphaBlend(
-      GetOmniboxColor(OmniboxPart::RESULTS_BACKGROUND, result_view_->GetTint(),
-                      OmniboxPartState::SELECTED),
-      SK_ColorBLACK, 0.8f));
+  SetBgColorOverride(
+      color_utils::AlphaBlend(GetOmniboxColor(OmniboxPart::RESULTS_BACKGROUND,
+                                              result_view_->CalculateTint(),
+                                              OmniboxPartState::SELECTED),
+                              SK_ColorBLACK, 0.8f));
 }
 
 size_t OmniboxTabSwitchButton::CalculateGoalWidth(size_t parent_width,

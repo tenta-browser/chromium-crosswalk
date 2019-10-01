@@ -9,8 +9,8 @@
 
 #include "base/callback_forward.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/field_trial.h"
+#include "base/power_monitor/power_monitor.h"
 #include "build/build_config.h"
 #include "content/browser/service_manager/service_manager_context.h"
 #include "content/browser/startup_data_impl.h"
@@ -54,12 +54,11 @@ class ContentMainRunnerImpl : public ContentMainRunner {
 
   bool is_browser_main_loop_started_ = false;
 
-  std::unique_ptr<base::MessageLoop> main_message_loop_;
-
   std::unique_ptr<StartupDataImpl> startup_data_;
   std::unique_ptr<base::FieldTrialList> field_trial_list_;
   std::unique_ptr<BrowserProcessSubThread> service_manager_thread_;
   std::unique_ptr<ServiceManagerContext> service_manager_context_;
+  std::unique_ptr<base::PowerMonitor> power_monitor_;
 #endif  // !defined(CHROME_MULTIPLE_DLL_CHILD)
 
   // True if the runner has been initialized.

@@ -84,10 +84,8 @@ void ShelfTooltipManager::ShowTooltip(views::View* view) {
     bubble_ = new ShelfTooltipPreviewBubble(view, open_windows, this, alignment,
                                             shelf_background_color);
   } else {
-    base::string16 title;
-    view->GetTooltipText(gfx::Point(), &title);
-    bubble_ =
-        new ShelfTooltipBubble(view, alignment, shelf_background_color, title);
+    bubble_ = new ShelfTooltipBubble(view, alignment, shelf_background_color,
+                                     shelf_view_->GetTitleForView(view));
   }
 
   aura::Window* window = bubble_->GetWidget()->GetNativeWindow();
@@ -164,7 +162,7 @@ void ShelfTooltipManager::OnAutoHideStateChanged(ShelfAutoHideState new_state) {
 
 bool ShelfTooltipManager::ShouldShowTooltipForView(views::View* view) {
   Shelf* shelf = shelf_view_ ? shelf_view_->shelf() : nullptr;
-  return shelf && shelf_view_->visible() &&
+  return shelf && shelf_view_->GetVisible() &&
          shelf_view_->ShouldShowTooltipForView(view) &&
          (shelf->GetVisibilityState() == SHELF_VISIBLE ||
           (shelf->GetVisibilityState() == SHELF_AUTO_HIDE &&

@@ -77,7 +77,7 @@ std::string BuildOSCpuInfo(bool include_android_build_number) {
     architecture_token = "; WOW64";
   } else {
     base::win::OSInfo::WindowsArchitecture windows_architecture =
-        os_info->architecture();
+        os_info->GetArchitecture();
     if (windows_architecture == base::win::OSInfo::X64_ARCHITECTURE)
       architecture_token = "; Win64; x64";
     else if (windows_architecture == base::win::OSInfo::IA64_ARCHITECTURE)
@@ -132,6 +132,14 @@ std::string BuildOSCpuInfo(bool include_android_build_number) {
   );  // NOLINT
 
   return os_cpu;
+}
+
+base::StringPiece GetFrozenUserAgent(bool mobile) {
+#if defined(OS_ANDROID)
+  return mobile ? frozen_user_agent_strings::kAndroidMobile
+                : frozen_user_agent_strings::kAndroid;
+#endif
+  return frozen_user_agent_strings::kDesktop;
 }
 
 std::string BuildUserAgentFromProduct(const std::string& product) {

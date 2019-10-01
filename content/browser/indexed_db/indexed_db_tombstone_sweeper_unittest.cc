@@ -70,7 +70,7 @@ MATCHER_P(SliceEq,
               base::HexEncode(str.data(), str.size())) {
   *result_listener << "which is " << base::HexEncode(arg.data(), arg.size());
   return std::string(arg.data(), arg.size()) == str;
-};
+}
 
 class MockTickClock : public base::TickClock {
  public:
@@ -140,7 +140,7 @@ class IndexedDBTombstoneSweeperTest : public testing::TestWithParam<Mode> {
     scoped_refptr<LevelDBState> level_db_state;
     leveldb::Status s;
     std::tie(level_db_state, s, std::ignore) =
-        indexed_db::GetDefaultLevelDBFactory()->OpenLevelDB(
+        indexed_db::GetDefaultLevelDBFactory()->OpenLevelDBState(
             base::FilePath(), indexed_db::GetDefaultIndexedDBComparator(),
             indexed_db::GetDefaultLevelDBComparator());
     ASSERT_TRUE(s.ok());
@@ -597,9 +597,9 @@ TEST_P(IndexedDBTombstoneSweeperTest, LevelDBError) {
       "WebCore.IndexedDB.TombstoneSweeper.IndexScanPercent", 1 * 20 / 3, 1);
 }
 
-INSTANTIATE_TEST_CASE_P(/* No prefix needed */,
-                        IndexedDBTombstoneSweeperTest,
-                        testing::Values(Mode::STATISTICS, Mode::DELETION));
+INSTANTIATE_TEST_SUITE_P(/* No prefix needed */,
+                         IndexedDBTombstoneSweeperTest,
+                         testing::Values(Mode::STATISTICS, Mode::DELETION));
 
 }  // namespace indexed_db_tombstone_sweeper_unittest
 }  // namespace content

@@ -48,7 +48,7 @@ class LayoutTextControlSingleLine : public LayoutTextControl {
 
  private:
   bool HasControlClip() const final;
-  LayoutRect ControlClipRect(const LayoutPoint&) const final;
+  PhysicalRect ControlClipRect(const PhysicalOffset&) const final;
   bool IsOfType(LayoutObjectType type) const override {
     return type == kLayoutObjectTextField || LayoutTextControl::IsOfType(type);
   }
@@ -61,7 +61,7 @@ class LayoutTextControlSingleLine : public LayoutTextControl {
                    const LayoutPoint& accumulated_offset,
                    HitTestAction) final;
 
-  void Autoscroll(const IntPoint&) final;
+  void Autoscroll(const LayoutPoint&) final;
 
   // Subclassed to forward to our inner div.
   LayoutUnit ScrollLeft() const final;

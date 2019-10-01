@@ -4,13 +4,12 @@
 
 #include "ash/system/status_area_widget.h"
 
-#include "ash/session/session_controller.h"
+#include "ash/kiosk_next/kiosk_next_shell_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shelf/shelf.h"
 #include "ash/shell.h"
-#include "ash/system/accessibility/autoclick_tray.h"
 #include "ash/system/accessibility/dictation_button_tray.h"
 #include "ash/system/accessibility/select_to_speak_tray.h"
-#include "ash/system/flag_warning/flag_warning_tray.h"
 #include "ash/system/ime_menu/ime_menu_tray.h"
 #include "ash/system/overview/overview_button_tray.h"
 #include "ash/system/palette/palette_tray.h"
@@ -18,10 +17,7 @@
 #include "ash/system/status_area_widget_delegate.h"
 #include "ash/system/unified/unified_system_tray.h"
 #include "ash/system/virtual_keyboard/virtual_keyboard_tray.h"
-#include "base/command_line.h"
 #include "base/i18n/time_formatting.h"
-#include "ui/accessibility/accessibility_switches.h"
-#include "ui/base/ui_base_features.h"
 #include "ui/display/display.h"
 #include "ui/native_theme/native_theme_dark_aura.h"
 
@@ -42,44 +38,35 @@ StatusAreaWidget::StatusAreaWidget(aura::Window* status_container, Shelf* shelf)
   Init(params);
   set_focus_on_creation(false);
   SetContentsView(status_area_widget_delegate_);
+  Shell::Get()->kiosk_next_shell_controller()->AddObserver(this);
 }
 
 void StatusAreaWidget::Initialize() {
-  // Create the child views, right to left.
-  overview_button_tray_ = std::make_unique<OverviewButtonTray>(shelf_);
-  status_area_widget_delegate_->AddChildView(overview_button_tray_.get());
-
-  unified_system_tray_ = std::make_unique<UnifiedSystemTray>(shelf_);
-  status_area_widget_delegate_->AddChildView(unified_system_tray_.get());
-
-  palette_tray_ = std::make_unique<PaletteTray>(shelf_);
-  status_area_widget_delegate_->AddChildView(palette_tray_.get());
-
-  virtual_keyboard_tray_ = std::make_unique<VirtualKeyboardTray>(shelf_);
-  status_area_widget_delegate_->AddChildView(virtual_keyboard_tray_.get());
-
-  ime_menu_tray_ = std::make_unique<ImeMenuTray>(shelf_);
-  status_area_widget_delegate_->AddChildView(ime_menu_tray_.get());
-
-  select_to_speak_tray_ = std::make_unique<SelectToSpeakTray>(shelf_);
-  status_area_widget_delegate_->AddChildView(select_to_speak_tray_.get());
-
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableExperimentalAccessibilityAutoclick)) {
-    autoclick_tray_ = std::make_unique<AutoclickTray>(shelf_);
-    status_area_widget_delegate_->AddChildView(autoclick_tray_.get());
-  }
-
-  dictation_button_tray_ = std::make_unique<DictationButtonTray>(shelf_);
-  status_area_widget_delegate_->AddChildView(dictation_button_tray_.get());
+  // Create the child views, left to right.
 
   logout_button_tray_ = std::make_unique<LogoutButtonTray>(shelf_);
   status_area_widget_delegate_->AddChildView(logout_button_tray_.get());
 
-  if (::features::IsMultiProcessMash()) {
-    flag_warning_tray_ = std::make_unique<FlagWarningTray>(shelf_);
-    status_area_widget_delegate_->AddChildView(flag_warning_tray_.get());
-  }
+  dictation_button_tray_ = std::make_unique<DictationButtonTray>(shelf_);
+  status_area_widget_delegate_->AddChildView(dictation_button_tray_.get());
+
+  select_to_speak_tray_ = std::make_unique<SelectToSpeakTray>(shelf_);
+  status_area_widget_delegate_->AddChildView(select_to_speak_tray_.get());
+
+  ime_menu_tray_ = std::make_unique<ImeMenuTray>(shelf_);
+  status_area_widget_delegate_->AddChildView(ime_menu_tray_.get());
+
+  virtual_keyboard_tray_ = std::make_unique<VirtualKeyboardTray>(shelf_);
+  status_area_widget_delegate_->AddChildView(virtual_keyboard_tray_.get());
+
+  palette_tray_ = std::make_unique<PaletteTray>(shelf_);
+  status_area_widget_delegate_->AddChildView(palette_tray_.get());
+
+  unified_system_tray_ = std::make_unique<UnifiedSystemTray>(shelf_);
+  status_area_widget_delegate_->AddChildView(unified_system_tray_.get());
+
+  overview_button_tray_ = std::make_unique<OverviewButtonTray>(shelf_);
+  status_area_widget_delegate_->AddChildView(overview_button_tray_.get());
 
   // The layout depends on the number of children, so build it once after
   // adding all of them.
@@ -91,8 +78,6 @@ void StatusAreaWidget::Initialize() {
   virtual_keyboard_tray_->Initialize();
   ime_menu_tray_->Initialize();
   select_to_speak_tray_->Initialize();
-  if (autoclick_tray_)
-    autoclick_tray_->Initialize();
   if (dictation_button_tray_)
     dictation_button_tray_->Initialize();
   overview_button_tray_->Initialize();
@@ -108,16 +93,16 @@ StatusAreaWidget::~StatusAreaWidget() {
   unified_system_tray_.reset();
   ime_menu_tray_.reset();
   select_to_speak_tray_.reset();
-  autoclick_tray_.reset();
   dictation_button_tray_.reset();
   virtual_keyboard_tray_.reset();
   palette_tray_.reset();
   logout_button_tray_.reset();
   overview_button_tray_.reset();
-  flag_warning_tray_.reset();
+
+  Shell::Get()->kiosk_next_shell_controller()->RemoveObserver(this);
 
   // All child tray views have been removed.
-  DCHECK_EQ(0, GetContentsView()->child_count());
+  DCHECK(GetContentsView()->children().empty());
 }
 
 void StatusAreaWidget::UpdateAfterShelfAlignmentChange() {
@@ -130,8 +115,6 @@ void StatusAreaWidget::UpdateAfterShelfAlignmentChange() {
     dictation_button_tray_->UpdateAfterShelfAlignmentChange();
   palette_tray_->UpdateAfterShelfAlignmentChange();
   overview_button_tray_->UpdateAfterShelfAlignmentChange();
-  if (flag_warning_tray_)
-    flag_warning_tray_->UpdateAfterShelfAlignmentChange();
   status_area_widget_delegate_->UpdateLayout();
 }
 
@@ -197,8 +180,6 @@ void StatusAreaWidget::SchedulePaint() {
     dictation_button_tray_->SchedulePaint();
   palette_tray_->SchedulePaint();
   overview_button_tray_->SchedulePaint();
-  if (flag_warning_tray_)
-    flag_warning_tray_->SchedulePaint();
 }
 
 const ui::NativeTheme* StatusAreaWidget::GetNativeTheme() const {
@@ -211,6 +192,14 @@ bool StatusAreaWidget::OnNativeWidgetActivationChanged(bool active) {
   if (active)
     status_area_widget_delegate_->SetPaneFocusAndFocusDefault();
   return true;
+}
+
+void StatusAreaWidget::OnKioskNextEnabled() {
+  ime_menu_tray_->UpdateIconVisibility();
+  overview_button_tray_->UpdateIconVisibility();
+  palette_tray_->UpdateIconVisibility();
+  virtual_keyboard_tray_->UpdateIconVisibility();
+  logout_button_tray_->UpdateVisibility();
 }
 
 void StatusAreaWidget::OnMouseEvent(ui::MouseEvent* event) {

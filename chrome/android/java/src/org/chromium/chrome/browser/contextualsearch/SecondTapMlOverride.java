@@ -4,13 +4,15 @@
 
 package org.chromium.chrome.browser.contextualsearch;
 
+import org.chromium.chrome.browser.contextualsearch.ContextualSearchFieldTrial.ContextualSearchSwitch;
+
 /**
  * Heuristic that allows a second tap near a previous ML-suppressed tap to override suppression.
  */
 class SecondTapMlOverride extends ContextualSearchHeuristic {
-    // Tap must be between 1/4 second and 3 seconds after the previous tap.
-    private static final int TIME_THRESHOLD_MAX_MILLISECONDS = 3000;
-    private static final int TIME_THRESHOLD_MIN_MILLISECONDS = 200;
+    // Tap must be between about 1/4 second and 3 seconds after the previous tap.
+    private static final long TIME_THRESHOLD_MAX_NANOSECONDS = 3_000_000_000L;
+    private static final long TIME_THRESHOLD_MIN_NANOSECONDS = 200_000_000L;
     // Tap must be within 30 dips of the previous tap.
     private static final int TAP_RADIUS_DPS = 30;
 
@@ -27,8 +29,8 @@ class SecondTapMlOverride extends ContextualSearchHeuristic {
      */
     SecondTapMlOverride(ContextualSearchSelectionController controller,
             ContextualSearchTapState previousTapState, int x, int y) {
-        mIsSecondTapEnabled =
-                ContextualSearchFieldTrial.isContextualSearchSecondTapMlOverrideEnabled();
+        mIsSecondTapEnabled = ContextualSearchFieldTrial.getSwitch(
+                ContextualSearchSwitch.IS_CONTEXTUAL_SEARCH_SECOND_TAP_ML_OVERRIDE_ENABLED);
         mPxToDp = controller.getPxToDp();
 
         mIsConditionSatisfied = previousTapState != null && previousTapState.wasMlSuppressed()
@@ -69,9 +71,8 @@ class SecondTapMlOverride extends ContextualSearchHeuristic {
         // The second tap needs to be close to the first tap in both time and space.
         // Recent enough?
         long timeSinceLastTap = System.nanoTime() - tapState.tapTimeNanoseconds();
-        if (timeSinceLastTap < (long) TIME_THRESHOLD_MIN_MILLISECONDS * NANOSECONDS_IN_A_MILLISECOND
-                || timeSinceLastTap
-                        > (long) TIME_THRESHOLD_MAX_MILLISECONDS * NANOSECONDS_IN_A_MILLISECOND) {
+        if (timeSinceLastTap < TIME_THRESHOLD_MIN_NANOSECONDS
+                || timeSinceLastTap > TIME_THRESHOLD_MAX_NANOSECONDS) {
             return false;
         }
 

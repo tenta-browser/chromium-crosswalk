@@ -4,6 +4,7 @@
 
 #include "components/mirroring/service/mirroring_service.h"
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "components/mirroring/service/session.h"
 #include "services/ws/public/cpp/gpu/gpu.h"
@@ -59,7 +60,7 @@ void MirroringService::Start(mojom::SessionParametersPtr params,
   if (params->type != mojom::SessionType::AUDIO_ONLY) {
     gpu = ws::Gpu::Create(
         service_binding_.GetConnector(),
-        features::IsUsingWindowService() ? "ui" : "content_browser",
+        features::IsUsingWindowService() ? "ui" : "content_system",
         io_task_runner_);
   }
   session_ = std::make_unique<Session>(

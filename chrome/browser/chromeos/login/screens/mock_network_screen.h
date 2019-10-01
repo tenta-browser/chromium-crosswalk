@@ -7,19 +7,21 @@
 
 #include "base/macros.h"
 #include "chrome/browser/chromeos/login/screens/network_screen.h"
-#include "chrome/browser/chromeos/login/screens/network_screen_view.h"
+#include "chrome/browser/ui/webui/chromeos/login/network_screen_handler.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
 namespace chromeos {
 
 class MockNetworkScreen : public NetworkScreen {
  public:
-  MockNetworkScreen(BaseScreenDelegate* base_screen_delegate,
-                    NetworkScreenView* view);
+  MockNetworkScreen(NetworkScreenView* view,
+                    const ScreenExitCallback& exit_callback);
   ~MockNetworkScreen() override;
 
   MOCK_METHOD0(Show, void());
   MOCK_METHOD0(Hide, void());
+
+  void ExitScreen(NetworkScreen::Result result);
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockNetworkScreen);

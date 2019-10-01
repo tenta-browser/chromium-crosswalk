@@ -30,7 +30,7 @@ class CORE_EXPORT CSSPaintImageGenerator
   class Observer : public GarbageCollectedFinalized<Observer> {
    public:
     virtual ~Observer() = default;
-    ;
+
     virtual void PaintImageGeneratorReady() = 0;
     virtual void Trace(blink::Visitor* visitor) {}
   };
@@ -45,6 +45,7 @@ class CORE_EXPORT CSSPaintImageGenerator
       const Document&,
       Observer*);
   static void Init(CSSPaintImageGeneratorCreateFunction);
+  static CSSPaintImageGeneratorCreateFunction* GetCreateFunctionForTesting();
 
   // Invokes the CSS Paint API 'paint' callback. May return a nullptr
   // representing an invalid image if an error occurred.
@@ -58,6 +59,7 @@ class CORE_EXPORT CSSPaintImageGenerator
   virtual bool HasAlpha() const = 0;
   virtual const Vector<CSSSyntaxDescriptor>& InputArgumentTypes() const = 0;
   virtual bool IsImageGeneratorReady() const = 0;
+  virtual int WorkletId() const = 0;
 
   virtual void Trace(blink::Visitor* visitor) {}
 };

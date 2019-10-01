@@ -56,10 +56,7 @@ class RecordReplayCommandBuffer : public CommandBufferDirect {
  public:
   enum Mode { kDirect, kRecord, kReplay };
 
-  explicit RecordReplayCommandBuffer(
-      TransferBufferManager* transfer_buffer_manager)
-      : CommandBufferDirect(transfer_buffer_manager) {}
-
+  RecordReplayCommandBuffer() = default;
   ~RecordReplayCommandBuffer() override = default;
 
   void AdvanceMode() {
@@ -183,8 +180,7 @@ class RecordReplayContext : public GpuControl {
         nullptr /* progress_reporter */, GpuFeatureInfo(),
         &discardable_manager_, &passthrough_discardable_manager_,
         &shared_image_manager_);
-    command_buffer_.reset(new RecordReplayCommandBuffer(
-        context_group->transfer_buffer_manager()));
+    command_buffer_.reset(new RecordReplayCommandBuffer());
 
     decoder_.reset(gles2::GLES2Decoder::Create(
         command_buffer_.get(), command_buffer_->service(), &outputter_,
@@ -322,6 +318,8 @@ class RecordReplayContext : public GpuControl {
     NOTREACHED();
     return true;
   }
+
+  void SetDisplayTransform(gfx::OverlayTransform) override { NOTREACHED(); }
 
   GpuPreferences gpu_preferences_;
 

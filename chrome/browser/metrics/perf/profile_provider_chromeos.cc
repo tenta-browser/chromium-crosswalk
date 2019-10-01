@@ -4,9 +4,16 @@
 
 #include "chrome/browser/metrics/perf/profile_provider_chromeos.h"
 
+#include "base/allocator/buildflags.h"
+#include "base/bind.h"
+#include "base/metrics/field_trial_params.h"
+#include "base/rand_util.h"
+#include "base/sampling_heap_profiler/sampling_heap_profiler.h"
+#include "chrome/browser/metrics/perf/heap_collector.h"
 #include "chrome/browser/metrics/perf/metric_collector.h"
 #include "chrome/browser/metrics/perf/perf_events_collector.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
+#include "components/services/heap_profiling/public/cpp/settings.h"
 #include "third_party/metrics_proto/sampled_profile.pb.h"
 
 namespace metrics {
@@ -28,11 +35,22 @@ ProfileProvider::ProfileProvider() : weak_factory_(this) {
 
 ProfileProvider::~ProfileProvider() {
   chromeos::LoginState::Get()->RemoveObserver(this);
-  chromeos::DBusThreadManager::Get()->GetPowerManagerClient()->RemoveObserver(
-      this);
+  chromeos::PowerManagerClient::Get()->RemoveObserver(this);
 }
 
 void ProfileProvider::Init() {
+#if !defined(MEMORY_TOOL_REPLACES_ALLOCATOR) && BUILDFLAG(USE_NEW_TCMALLOC)
+  if (base::FeatureList::IsEnabled(heap_profiling::kOOPHeapProfilingFeature)) {
+    HeapCollectionMode mode = HeapCollector::CollectionModeFromString(
+        base::GetFieldTrialParamValueByFeature(
+            heap_profiling::kOOPHeapProfilingFeature,
+            heap_profiling::kOOPHeapProfilingFeatureMode));
+    if (mode != HeapCollectionMode::kNone) {
+      collectors_.push_back(std::make_unique<HeapCollector>(mode));
+    }
+  }
+#endif
+
   for (auto& collector : collectors_) {
     collector->Init();
   }
@@ -41,8 +59,7 @@ void ProfileProvider::Init() {
   chromeos::LoginState::Get()->AddObserver(this);
 
   // Register as an observer of power manager events.
-  chromeos::DBusThreadManager::Get()->GetPowerManagerClient()->AddObserver(
-      this);
+  chromeos::PowerManagerClient::Get()->AddObserver(this);
 
   // Register as an observer of session restore.
   on_session_restored_callback_subscription_ =

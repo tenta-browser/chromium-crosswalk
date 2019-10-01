@@ -4,16 +4,19 @@
 
 #include "components/viz/service/display_embedder/gl_output_surface_android.h"
 
-#include "components/viz/service/display_embedder/compositor_overlay_candidate_validator_android.h"
+#include "components/viz/service/display_embedder/overlay_candidate_validator_android.h"
 
 namespace viz {
 
 GLOutputSurfaceAndroid::GLOutputSurfaceAndroid(
     scoped_refptr<VizProcessContextProvider> context_provider,
-    SyntheticBeginFrameSource* synthetic_begin_frame_source)
-    : GLOutputSurface(context_provider, synthetic_begin_frame_source),
-      overlay_candidate_validator_(
-          std::make_unique<CompositorOverlayCandidateValidatorAndroid>()) {}
+    bool allow_overlays)
+    : GLOutputSurface(context_provider) {
+  if (allow_overlays) {
+    overlay_candidate_validator_ =
+        std::make_unique<OverlayCandidateValidatorAndroid>();
+  }
+}
 
 GLOutputSurfaceAndroid::~GLOutputSurfaceAndroid() = default;
 
@@ -27,9 +30,9 @@ void GLOutputSurfaceAndroid::HandlePartialSwap(
       flags, std::move(swap_callback), std::move(presentation_callback));
 }
 
-OverlayCandidateValidator*
-GLOutputSurfaceAndroid::GetOverlayCandidateValidator() const {
-  return overlay_candidate_validator_.get();
+std::unique_ptr<OverlayCandidateValidator>
+GLOutputSurfaceAndroid::TakeOverlayCandidateValidator() {
+  return std::move(overlay_candidate_validator_);
 }
 
 }  // namespace viz

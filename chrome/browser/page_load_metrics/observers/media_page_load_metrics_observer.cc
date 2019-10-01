@@ -24,7 +24,7 @@ MediaPageLoadMetricsObserver::MediaPageLoadMetricsObserver()
 MediaPageLoadMetricsObserver::~MediaPageLoadMetricsObserver() = default;
 
 void MediaPageLoadMetricsObserver::OnResourceDataUseObserved(
-    FrameTreeNodeId frame_tree_node_id,
+    content::RenderFrameHost* rfh,
     const std::vector<page_load_metrics::mojom::ResourceDataUpdatePtr>&
         resources) {
   for (auto const& resource : resources) {
@@ -61,7 +61,7 @@ void MediaPageLoadMetricsObserver::OnComplete(
 
 void MediaPageLoadMetricsObserver::MediaStartedPlaying(
     const content::WebContentsObserver::MediaPlayerInfo& video_type,
-    bool is_in_main_frame) {
+    content::RenderFrameHost* render_frame_host) {
   if (played_media_)
     return;
   // Track media (audio or video) in all frames of the page load.

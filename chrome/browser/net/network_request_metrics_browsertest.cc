@@ -84,7 +84,7 @@ class WaitForMainFrameResourceObserver : public content::WebContentsObserver {
       RenderFrameHost* render_frame_host,
       const content::GlobalRequestID& request_id,
       const content::mojom::ResourceLoadInfo& resource_load_info) override {
-    EXPECT_EQ(RESOURCE_TYPE_MAIN_FRAME, resource_load_info.resource_type);
+    EXPECT_EQ(ResourceType::kMainFrame, resource_load_info.resource_type);
     EXPECT_EQ(net::OK, resource_load_info.net_error);
     run_loop_.Quit();
   }
@@ -609,12 +609,12 @@ IN_PROC_BROWSER_TEST_P(NetworkRequestMetricsBrowserTest, FileURLSuccess) {
                   NetworkAccessed::kNoNetworkAccessed);
 }
 
-INSTANTIATE_TEST_CASE_P(,
-                        NetworkRequestMetricsBrowserTest,
-                        testing::Values(RequestType::kMainFrame,
-                                        RequestType::kSubFrame,
-                                        RequestType::kImage,
-                                        RequestType::kScript));
+INSTANTIATE_TEST_SUITE_P(,
+                         NetworkRequestMetricsBrowserTest,
+                         testing::Values(RequestType::kMainFrame,
+                                         RequestType::kSubFrame,
+                                         RequestType::kImage,
+                                         RequestType::kScript));
 
 }  //  namespace
 }  // namespace content

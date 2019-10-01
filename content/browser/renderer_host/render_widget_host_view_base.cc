@@ -18,6 +18,7 @@
 #include "content/browser/gpu/gpu_data_manager_impl.h"
 #include "content/browser/renderer_host/delegated_frame_host.h"
 #include "content/browser/renderer_host/display_util.h"
+#include "content/browser/renderer_host/event_with_latency_info.h"
 #include "content/browser/renderer_host/input/mouse_wheel_phase_handler.h"
 #include "content/browser/renderer_host/input/synthetic_gesture_target_base.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
@@ -30,7 +31,6 @@
 #include "content/browser/renderer_host/text_input_manager.h"
 #include "content/common/content_switches_internal.h"
 #include "ui/base/layout.h"
-#include "ui/base/ui_base_features.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/display/screen.h"
 #include "ui/events/event.h"
@@ -39,11 +39,6 @@
 #include "ui/gfx/geometry/point_conversions.h"
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/geometry/size_f.h"
-
-#if defined(USE_AURA)
-#include "base/unguessable_token.h"
-#include "content/common/render_widget_window_tree_client_factory.mojom.h"
-#endif
 
 namespace content {
 
@@ -79,7 +74,7 @@ RenderWidgetHostImpl* RenderWidgetHostViewBase::GetFocusedWidget() const {
              : nullptr;
 }
 
-RenderWidgetHost* RenderWidgetHostViewBase::GetRenderWidgetHost() const {
+RenderWidgetHost* RenderWidgetHostViewBase::GetRenderWidgetHost() {
   return host();
 }
 
@@ -116,8 +111,8 @@ void RenderWidgetHostViewBase::StopFlingingIfNecessary(
   if (!processed &&
       event.GetType() == blink::WebInputEvent::kGestureScrollUpdate &&
       event.data.scroll_update.inertial_phase ==
-          blink::WebGestureEvent::kMomentumPhase &&
-      event.SourceDevice() != blink::kWebGestureDeviceSyntheticAutoscroll) {
+          blink::WebGestureEvent::InertialPhaseState::kMomentum &&
+      event.SourceDevice() != blink::WebGestureDevice::kSyntheticAutoscroll) {
     StopFling();
     view_stopped_flinging_for_test_ = true;
   }
@@ -140,17 +135,9 @@ void RenderWidgetHostViewBase::OnLocalSurfaceIdChanged(
 void RenderWidgetHostViewBase::UpdateIntrinsicSizingInfo(
     const blink::WebIntrinsicSizingInfo& sizing_info) {}
 
-gfx::Size RenderWidgetHostViewBase::GetCompositorViewportPixelSize() const {
+gfx::Size RenderWidgetHostViewBase::GetCompositorViewportPixelSize() {
   return gfx::ScaleToCeiledSize(GetRequestedRendererSize(),
                                 GetDeviceScaleFactor());
-}
-
-bool RenderWidgetHostViewBase::DoBrowserControlsShrinkRendererSize() const {
-  return false;
-}
-
-float RenderWidgetHostViewBase::GetTopControlsHeight() const {
-  return 0.f;
 }
 
 void RenderWidgetHostViewBase::SelectionBoundsChanged(
@@ -161,10 +148,6 @@ void RenderWidgetHostViewBase::SelectionBoundsChanged(
 #else
   NOTREACHED() << "Selection bounds should be routed through the compositor.";
 #endif
-}
-
-float RenderWidgetHostViewBase::GetBottomControlsHeight() const {
-  return 0.f;
 }
 
 int RenderWidgetHostViewBase::GetMouseWheelMinimumGranularity() const {
@@ -185,7 +168,7 @@ void RenderWidgetHostViewBase::SelectionChanged(const base::string16& text,
     GetTextInputManager()->SelectionChanged(this, text, offset, range);
 }
 
-gfx::Size RenderWidgetHostViewBase::GetRequestedRendererSize() const {
+gfx::Size RenderWidgetHostViewBase::GetRequestedRendererSize() {
   return GetViewBounds().size();
 }
 
@@ -212,7 +195,7 @@ viz::FrameSinkId RenderWidgetHostViewBase::GetRootFrameSinkId() {
   return viz::FrameSinkId();
 }
 
-bool RenderWidgetHostViewBase::IsSurfaceAvailableForCopy() const {
+bool RenderWidgetHostViewBase::IsSurfaceAvailableForCopy() {
   return false;
 }
 
@@ -341,7 +324,7 @@ void RenderWidgetHostViewBase::SetBackgroundColor(SkColor color) {
   }
 }
 
-base::Optional<SkColor> RenderWidgetHostViewBase::GetBackgroundColor() const {
+base::Optional<SkColor> RenderWidgetHostViewBase::GetBackgroundColor() {
   if (content_background_color_)
     return content_background_color_;
   return default_background_color_;
@@ -392,6 +375,19 @@ void RenderWidgetHostViewBase::GestureEventAck(
     const blink::WebGestureEvent& event,
     InputEventAckState ack_result) {
 }
+
+bool RenderWidgetHostViewBase::OnUnconsumedKeyboardEventAck(
+    const NativeWebKeyboardEventWithLatencyInfo& event) {
+  return false;
+}
+
+void RenderWidgetHostViewBase::FallbackCursorModeLockCursor(bool left,
+                                                            bool right,
+                                                            bool up,
+                                                            bool down) {}
+
+void RenderWidgetHostViewBase::FallbackCursorModeSetCursorVisibility(
+    bool visible) {}
 
 void RenderWidgetHostViewBase::ForwardTouchpadZoomEventIfNecessary(
     const blink::WebGestureEvent& event,
@@ -549,7 +545,7 @@ void RenderWidgetHostViewBase::DisableAutoResize(const gfx::Size& new_size) {
   host()->SynchronizeVisualProperties();
 }
 
-bool RenderWidgetHostViewBase::IsScrollOffsetAtTop() const {
+bool RenderWidgetHostViewBase::IsScrollOffsetAtTop() {
   return is_scroll_offset_at_top_;
 }
 
@@ -568,22 +564,16 @@ base::WeakPtr<RenderWidgetHostViewBase> RenderWidgetHostViewBase::GetWeakPtr() {
   return weak_factory_.GetWeakPtr();
 }
 
-std::unique_ptr<SyntheticGestureTarget>
-RenderWidgetHostViewBase::CreateSyntheticGestureTarget() {
-  return std::unique_ptr<SyntheticGestureTarget>(
-      new SyntheticGestureTargetBase(host()));
-}
-
 void RenderWidgetHostViewBase::FocusedNodeTouched(
     bool editable) {
   DVLOG(1) << "FocusedNodeTouched: " << editable;
 }
 
-void RenderWidgetHostViewBase::GetScreenInfo(ScreenInfo* screen_info) const {
+void RenderWidgetHostViewBase::GetScreenInfo(ScreenInfo* screen_info) {
   DisplayUtil::GetNativeViewScreenInfo(screen_info, GetNativeView());
 }
 
-float RenderWidgetHostViewBase::GetDeviceScaleFactor() const {
+float RenderWidgetHostViewBase::GetDeviceScaleFactor() {
   ScreenInfo screen_info;
   GetScreenInfo(&screen_info);
   return screen_info.device_scale_factor;
@@ -605,7 +595,7 @@ void RenderWidgetHostViewBase::OnAutoscrollStart() {
   GetMouseWheelPhaseHandler()->DispatchPendingWheelEndEvent();
 }
 
-gfx::Size RenderWidgetHostViewBase::GetVisibleViewportSize() const {
+gfx::Size RenderWidgetHostViewBase::GetVisibleViewportSize() {
   return GetViewBounds().size();
 }
 
@@ -721,11 +711,10 @@ gfx::PointF RenderWidgetHostViewBase::TransformRootPointToViewCoordSpace(
 bool RenderWidgetHostViewBase::TransformPointToLocalCoordSpace(
     const gfx::PointF& point,
     const viz::SurfaceId& original_surface,
-    gfx::PointF* transformed_point,
-    viz::EventSource source) {
+    gfx::PointF* transformed_point) {
   if (use_viz_hit_test_) {
     return TransformPointToLocalCoordSpaceViz(point, original_surface,
-                                              transformed_point, source);
+                                              transformed_point);
   }
   return TransformPointToLocalCoordSpaceLegacy(point, original_surface,
                                                transformed_point);
@@ -742,8 +731,7 @@ bool RenderWidgetHostViewBase::TransformPointToLocalCoordSpaceLegacy(
 bool RenderWidgetHostViewBase::TransformPointToCoordSpaceForView(
     const gfx::PointF& point,
     RenderWidgetHostViewBase* target_view,
-    gfx::PointF* transformed_point,
-    viz::EventSource source) {
+    gfx::PointF* transformed_point) {
   NOTREACHED();
   return true;
 }
@@ -765,6 +753,10 @@ void RenderWidgetHostViewBase::Destroy() {
     host_->render_frame_metadata_provider()->RemoveObserver(this);
     host_ = nullptr;
   }
+}
+
+bool RenderWidgetHostViewBase::CanSynchronizeVisualProperties() {
+  return true;
 }
 
 void RenderWidgetHostViewBase::TextInputStateChanged(
@@ -831,81 +823,25 @@ RenderWidgetHostViewBase::GetTouchSelectionControllerClientManager() {
   return nullptr;
 }
 
-#if defined(USE_AURA)
-void RenderWidgetHostViewBase::EmbedChildFrameRendererWindowTreeClient(
-    RenderWidgetHostViewBase* root_view,
-    int routing_id,
-    ws::mojom::WindowTreeClientPtr renderer_window_tree_client) {
-  RenderWidgetHost* render_widget_host = GetRenderWidgetHost();
-  if (!render_widget_host)
-    return;
-  const int embed_id = ++next_embed_id_;
-  pending_embeds_[routing_id] = embed_id;
-  root_view->ScheduleEmbed(
-      std::move(renderer_window_tree_client),
-      base::BindOnce(&RenderWidgetHostViewBase::OnDidScheduleEmbed,
-                     GetWeakPtr(), routing_id, embed_id));
+void RenderWidgetHostViewBase::SetRecordTabSwitchTimeRequest(
+    base::TimeTicks start_time,
+    bool destination_is_loaded,
+    bool destination_is_frozen) {
+  last_record_tab_switch_time_request_.emplace(
+      start_time, destination_is_loaded, destination_is_frozen);
 }
 
-void RenderWidgetHostViewBase::OnChildFrameDestroyed(int routing_id) {
-  pending_embeds_.erase(routing_id);
-  // Tests may not create |render_widget_window_tree_client_| (tests don't
-  // necessarily create RenderWidgetHostViewAura).
-  if (render_widget_window_tree_client_)
-    render_widget_window_tree_client_->DestroyFrame(routing_id);
+base::Optional<RecordTabSwitchTimeRequest>
+RenderWidgetHostViewBase::TakeRecordTabSwitchTimeRequest() {
+  auto stored_state = std::move(last_record_tab_switch_time_request_);
+  last_record_tab_switch_time_request_.reset();
+  return stored_state;
 }
-#endif
 
 void RenderWidgetHostViewBase::SynchronizeVisualProperties() {
   if (host())
     host()->SynchronizeVisualProperties();
 }
-
-#if defined(USE_AURA)
-void RenderWidgetHostViewBase::OnDidScheduleEmbed(
-    int routing_id,
-    int embed_id,
-    const base::UnguessableToken& token) {
-  auto iter = pending_embeds_.find(routing_id);
-  if (iter == pending_embeds_.end() || iter->second != embed_id)
-    return;
-  pending_embeds_.erase(iter);
-  // Tests may not create |render_widget_window_tree_client_| (tests don't
-  // necessarily create RenderWidgetHostViewAura).
-  if (render_widget_window_tree_client_)
-    render_widget_window_tree_client_->Embed(routing_id, token);
-}
-
-void RenderWidgetHostViewBase::ScheduleEmbed(
-    ws::mojom::WindowTreeClientPtr client,
-    base::OnceCallback<void(const base::UnguessableToken&)> callback) {
-  NOTREACHED();
-}
-
-ws::mojom::WindowTreeClientPtr
-RenderWidgetHostViewBase::GetWindowTreeClientFromRenderer() {
-  // NOTE: this function may be called multiple times.
-  RenderWidgetHost* render_widget_host = GetRenderWidgetHost();
-  mojom::RenderWidgetWindowTreeClientFactoryPtr factory;
-  BindInterface(render_widget_host->GetProcess(), &factory);
-
-  ws::mojom::WindowTreeClientPtr window_tree_client;
-  factory->CreateWindowTreeClientForRenderWidget(
-      render_widget_host->GetRoutingID(),
-      mojo::MakeRequest(&window_tree_client),
-      mojo::MakeRequest(&render_widget_window_tree_client_));
-  return window_tree_client;
-}
-
-#endif
-
-#if defined(OS_MACOSX)
-bool RenderWidgetHostViewBase::ShouldContinueToPauseForFrame() {
-  return false;
-}
-
-void RenderWidgetHostViewBase::SetParentUiLayer(ui::Layer* parent_ui_layer) {}
-#endif
 
 void RenderWidgetHostViewBase::DidNavigate() {
   if (host())
@@ -918,8 +854,7 @@ bool RenderWidgetHostViewBase::TransformPointToTargetCoordSpace(
     RenderWidgetHostViewBase* original_view,
     RenderWidgetHostViewBase* target_view,
     const gfx::PointF& point,
-    gfx::PointF* transformed_point,
-    viz::EventSource source) const {
+    gfx::PointF* transformed_point) const {
   DCHECK(use_viz_hit_test_);
   viz::FrameSinkId root_frame_sink_id = original_view->GetRootFrameSinkId();
   if (!root_frame_sink_id.is_valid())
@@ -934,44 +869,34 @@ bool RenderWidgetHostViewBase::TransformPointToTargetCoordSpace(
   std::vector<viz::FrameSinkId> target_ancestors;
   target_ancestors.push_back(target_view->GetFrameSinkId());
 
-  // Optimization using |target_ancestors| does not work with Window Service
-  // because the top-level window's ClientRoot registers a frame sink id that
-  // could not be derived here. HisTestQuery::TransformLocationForTarget fails
-  // because of the missed chain in |target_ancestors|. Passing only the target
-  // if Window Service used and TransformLocationForTarget would fallback to
-  // use GetTransformToTarget.
-  // TODO(crbug.com/895029): Bring back |target_ancestors| optimization for WS.
-  if (!features::IsUsingWindowService()) {
-    RenderWidgetHostViewBase* cur_view = target_view;
-    while (cur_view->IsRenderWidgetHostViewChildFrame()) {
-      if (cur_view->IsRenderWidgetHostViewGuest()) {
-        cur_view = static_cast<RenderWidgetHostViewGuest*>(cur_view)
-                       ->GetOwnerRenderWidgetHostView();
-      } else {
-        cur_view = static_cast<RenderWidgetHostViewChildFrame*>(cur_view)
-                       ->GetParentView();
-      }
-      if (!cur_view)
-        return false;
-      target_ancestors.push_back(cur_view->GetFrameSinkId());
+  RenderWidgetHostViewBase* cur_view = target_view;
+  while (cur_view->IsRenderWidgetHostViewChildFrame()) {
+    if (cur_view->IsRenderWidgetHostViewGuest()) {
+      cur_view = static_cast<RenderWidgetHostViewGuest*>(cur_view)
+                     ->GetOwnerRenderWidgetHostView();
+    } else {
+      cur_view = static_cast<RenderWidgetHostViewChildFrame*>(cur_view)
+                     ->GetParentView();
     }
-    target_ancestors.push_back(root_frame_sink_id);
+    if (!cur_view)
+      return false;
+    target_ancestors.push_back(cur_view->GetFrameSinkId());
   }
+  target_ancestors.push_back(root_frame_sink_id);
 
   float device_scale_factor = original_view->GetDeviceScaleFactor();
   DCHECK_GT(device_scale_factor, 0.0f);
   gfx::Point3F point_in_pixels(
       gfx::ConvertPointToPixel(device_scale_factor, point));
-  // TODO(riajiang): Optimize so that |point_in_pixels| doesn't need to be in
-  // the coordinate space of the root surface in HitTestQuery.
+  // TODO(crbug.com/966995): Optimize so that |point_in_pixels| doesn't need to
+  // be in the coordinate space of the root surface in HitTestQuery.
   gfx::Transform transform_root_to_original;
   query->GetTransformToTarget(original_view->GetFrameSinkId(),
                               &transform_root_to_original);
   if (!transform_root_to_original.TransformPointReverse(&point_in_pixels))
     return false;
-  if (!query->TransformLocationForTarget(source, target_ancestors,
-                                         point_in_pixels.AsPointF(),
-                                         transformed_point)) {
+  if (!query->TransformLocationForTarget(
+          target_ancestors, point_in_pixels.AsPointF(), transformed_point)) {
     return false;
   }
   *transformed_point =
@@ -1040,8 +965,7 @@ bool RenderWidgetHostViewBase::GetTransformToViewCoordSpace(
 bool RenderWidgetHostViewBase::TransformPointToLocalCoordSpaceViz(
     const gfx::PointF& point,
     const viz::SurfaceId& original_surface,
-    gfx::PointF* transformed_point,
-    viz::EventSource source) {
+    gfx::PointF* transformed_point) {
   DCHECK(use_viz_hit_test_);
   viz::FrameSinkId original_frame_sink_id = original_surface.frame_sink_id();
   viz::FrameSinkId target_frame_sink_id = GetFrameSinkId();
@@ -1058,7 +982,7 @@ bool RenderWidgetHostViewBase::TransformPointToLocalCoordSpaceViz(
   return TransformPointToTargetCoordSpace(
       router->FindViewFromFrameSinkId(original_frame_sink_id),
       router->FindViewFromFrameSinkId(target_frame_sink_id), point,
-      transformed_point, source);
+      transformed_point);
 }
 
 }  // namespace content

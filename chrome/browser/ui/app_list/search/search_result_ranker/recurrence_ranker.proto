@@ -18,6 +18,8 @@ message RecurrenceRankerProto {
   optional uint32 config_hash = 1;
   // Serialisation of the predictor used by the ranker.
   optional RecurrencePredictorProto predictor = 2;
-  // Serialisation of the store of targets.
+  // Serialisation of stored targets.
   optional FrecencyStoreProto targets = 3;
+  // Serialisation of stored conditions.
+  optional FrecencyStoreProto conditions = 4;
 }

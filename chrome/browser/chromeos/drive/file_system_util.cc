@@ -32,16 +32,18 @@
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths_internal.h"
 #include "chromeos/constants/chromeos_constants.h"
-#include "components/browser_sync/profile_sync_service.h"
 #include "components/drive/chromeos/file_system_interface.h"
 #include "components/drive/drive.pb.h"
 #include "components/drive/drive_pref_names.h"
 #include "components/drive/file_system_core_util.h"
 #include "components/drive/job_list.h"
 #include "components/prefs/pref_service.h"
+#include "components/sync/driver/sync_driver_switches.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/network_service_instance.h"
 #include "net/base/escape.h"
+#include "services/network/public/cpp/network_connection_tracker.h"
 #include "storage/browser/fileapi/file_system_url.h"
 
 using content::BrowserThread;
@@ -221,7 +223,7 @@ bool IsDriveEnabledForProfile(Profile* profile) {
 
   // Disable drive if sync is disabled by command line flag. Outside tests, this
   // only occurs in cases already handled by the gaia account check above.
-  if (!browser_sync::ProfileSyncService::IsSyncAllowedByFlag())
+  if (!switches::IsSyncAllowedByFlag())
     return false;
 
   return true;
@@ -231,15 +233,18 @@ ConnectionStatusType GetDriveConnectionStatus(Profile* profile) {
   auto* drive_integration_service = GetIntegrationServiceByProfile(profile);
   if (!drive_integration_service)
     return DRIVE_DISCONNECTED_NOSERVICE;
-  if (net::NetworkChangeNotifier::IsOffline())
+  auto* network_connection_tracker = content::GetNetworkConnectionTracker();
+  if (network_connection_tracker->IsOffline())
     return DRIVE_DISCONNECTED_NONETWORK;
   auto* drive_service = drive_integration_service->drive_service();
   if (drive_service && !drive_service->CanSendRequest())
     return DRIVE_DISCONNECTED_NOTREADY;
 
+  auto connection_type = network::mojom::ConnectionType::CONNECTION_UNKNOWN;
+  network_connection_tracker->GetConnectionType(&connection_type,
+                                                base::DoNothing());
   const bool is_connection_cellular =
-      net::NetworkChangeNotifier::IsConnectionCellular(
-          net::NetworkChangeNotifier::GetConnectionType());
+      network::NetworkConnectionTracker::IsConnectionCellular(connection_type);
   const bool disable_sync_over_celluar =
       profile->GetPrefs()->GetBoolean(prefs::kDisableDriveOverCellular);
 

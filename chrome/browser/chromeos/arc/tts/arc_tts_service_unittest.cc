@@ -8,8 +8,8 @@
 
 #include "base/threading/platform_thread.h"
 #include "chrome/test/base/testing_profile.h"
-#include "components/arc/arc_bridge_service.h"
 #include "components/arc/arc_service_manager.h"
+#include "components/arc/session/arc_bridge_service.h"
 #include "components/arc/test/fake_arc_session.h"
 #include "components/keyed_service/content/browser_context_keyed_service_factory.h"
 #include "content/public/browser/tts_controller.h"
@@ -28,10 +28,12 @@ class TestableTtsController : public content::TtsController {
   void OnTtsEvent(int utterance_id,
                   content::TtsEventType event_type,
                   int char_index,
+                  int length,
                   const std::string& error_message) override {
     last_utterance_id_ = utterance_id;
     last_event_type_ = event_type;
     last_char_index_ = char_index;
+    last_length_ = length;
     last_error_message_ = error_message;
   }
 
@@ -39,6 +41,7 @@ class TestableTtsController : public content::TtsController {
   bool IsSpeaking() override { return false; }
   void SpeakOrEnqueue(content::TtsUtterance* utterance) override {}
   void Stop() override {}
+  void Stop(const GURL& source_url) override {}
   void Pause() override {}
   void Resume() override {}
   void GetVoices(content::BrowserContext* browser_context,
@@ -57,9 +60,14 @@ class TestableTtsController : public content::TtsController {
   void SetTtsPlatform(content::TtsPlatform* tts_platform) override {}
   int QueueSize() override { return 0; }
 
+  void StripSSML(
+      const std::string& utterance,
+      base::OnceCallback<void(const std::string&)> callback) override {}
+
   int last_utterance_id_;
   content::TtsEventType last_event_type_;
   int last_char_index_;
+  int last_length_;
   std::string last_error_message_;
 
  private:
@@ -104,25 +112,25 @@ TEST_F(ArcTtsServiceTest, TestOnTtsEvent) {
   tts_service()->OnTtsEvent(1, mojom::TtsEventType::START, 0, "");
   EXPECT_EQ(1, tts_controller()->last_utterance_id_);
   EXPECT_EQ(content::TTS_EVENT_START, tts_controller()->last_event_type_);
-  EXPECT_EQ(0, tts_controller()->last_char_index_);
+  EXPECT_EQ(-1, tts_controller()->last_length_);
   EXPECT_EQ("", tts_controller()->last_error_message_);
 
   tts_service()->OnTtsEvent(1, mojom::TtsEventType::END, 10, "");
   EXPECT_EQ(1, tts_controller()->last_utterance_id_);
   EXPECT_EQ(content::TTS_EVENT_END, tts_controller()->last_event_type_);
-  EXPECT_EQ(10, tts_controller()->last_char_index_);
+  EXPECT_EQ(-1, tts_controller()->last_length_);
   EXPECT_EQ("", tts_controller()->last_error_message_);
 
   tts_service()->OnTtsEvent(2, mojom::TtsEventType::INTERRUPTED, 0, "");
   EXPECT_EQ(2, tts_controller()->last_utterance_id_);
   EXPECT_EQ(content::TTS_EVENT_INTERRUPTED, tts_controller()->last_event_type_);
-  EXPECT_EQ(0, tts_controller()->last_char_index_);
+  EXPECT_EQ(-1, tts_controller()->last_length_);
   EXPECT_EQ("", tts_controller()->last_error_message_);
 
   tts_service()->OnTtsEvent(3, mojom::TtsEventType::ERROR, 0, "");
   EXPECT_EQ(3, tts_controller()->last_utterance_id_);
   EXPECT_EQ(content::TTS_EVENT_ERROR, tts_controller()->last_event_type_);
-  EXPECT_EQ(0, tts_controller()->last_char_index_);
+  EXPECT_EQ(-1, tts_controller()->last_length_);
   EXPECT_EQ("", tts_controller()->last_error_message_);
 }
 

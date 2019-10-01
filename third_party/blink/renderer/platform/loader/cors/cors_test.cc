@@ -6,6 +6,7 @@
 
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_response.h"
+#include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 
 namespace blink {
 
@@ -18,7 +19,7 @@ class CorsExposedHeadersTest : public testing::Test {
   WebHTTPHeaderSet Parse(CredentialsMode credentials_mode,
                          const AtomicString& header) const {
     ResourceResponse response;
-    response.AddHTTPHeaderField("access-control-expose-headers", header);
+    response.AddHttpHeaderField("access-control-expose-headers", header);
 
     return cors::ExtractCorsExposedHeaderNamesList(credentials_mode, response);
   }
@@ -35,6 +36,8 @@ TEST_F(CorsExposedHeadersTest, ValidInput) {
 
   EXPECT_EQ(Parse(CredentialsMode::kOmit, " \t   \t\t a"),
             WebHTTPHeaderSet({"a"}));
+
+  EXPECT_EQ(Parse(CredentialsMode::kOmit, "a , "), WebHTTPHeaderSet({"a", ""}));
 }
 
 TEST_F(CorsExposedHeadersTest, DuplicatedEntries) {
@@ -57,8 +60,6 @@ TEST_F(CorsExposedHeadersTest, InvalidInput) {
 
   EXPECT_TRUE(Parse(CredentialsMode::kOmit, " , a").empty());
 
-  EXPECT_TRUE(Parse(CredentialsMode::kOmit, "a , ").empty());
-
   EXPECT_TRUE(Parse(CredentialsMode::kOmit, "").empty());
 
   EXPECT_TRUE(Parse(CredentialsMode::kOmit, " ").empty());
@@ -71,11 +72,11 @@ TEST_F(CorsExposedHeadersTest, InvalidInput) {
 
 TEST_F(CorsExposedHeadersTest, Wildcard) {
   ResourceResponse response;
-  response.AddHTTPHeaderField("access-control-expose-headers", "a, b, *");
-  response.AddHTTPHeaderField("b", "-");
-  response.AddHTTPHeaderField("c", "-");
-  response.AddHTTPHeaderField("d", "-");
-  response.AddHTTPHeaderField("*", "-");
+  response.AddHttpHeaderField("access-control-expose-headers", "a, b, *");
+  response.AddHttpHeaderField("b", "-");
+  response.AddHttpHeaderField("c", "-");
+  response.AddHttpHeaderField("d", "-");
+  response.AddHttpHeaderField("*", "-");
 
   EXPECT_EQ(
       cors::ExtractCorsExposedHeaderNamesList(CredentialsMode::kOmit, response),
@@ -89,11 +90,11 @@ TEST_F(CorsExposedHeadersTest, Wildcard) {
 
 TEST_F(CorsExposedHeadersTest, Asterisk) {
   ResourceResponse response;
-  response.AddHTTPHeaderField("access-control-expose-headers", "a, b, *");
-  response.AddHTTPHeaderField("b", "-");
-  response.AddHTTPHeaderField("c", "-");
-  response.AddHTTPHeaderField("d", "-");
-  response.AddHTTPHeaderField("*", "-");
+  response.AddHttpHeaderField("access-control-expose-headers", "a, b, *");
+  response.AddHttpHeaderField("b", "-");
+  response.AddHttpHeaderField("c", "-");
+  response.AddHttpHeaderField("d", "-");
+  response.AddHttpHeaderField("*", "-");
 
   EXPECT_EQ(cors::ExtractCorsExposedHeaderNamesList(CredentialsMode::kInclude,
                                                     response),

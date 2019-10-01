@@ -11,6 +11,7 @@
 #include "base/location.h"
 #include "base/memory/weak_ptr.h"
 #include "base/optional.h"
+#include "base/time/time.h"
 #include "components/sync/base/model_type.h"
 #include "components/sync/model/entity_data.h"
 #include "components/sync/model/model_error.h"
@@ -74,6 +75,16 @@ class ModelTypeChangeProcessor {
   // USS's ability to delete local data upcon commit completion.
   virtual bool IsEntityUnsynced(const std::string& storage_key) = 0;
 
+  // Returns the creation timestamp of the sync entity, or a null time if the
+  // entity is not tracked.
+  virtual base::Time GetEntityCreationTime(
+      const std::string& storage_key) const = 0;
+
+  // Returns the modification timestamp of the sync entity, or a null time if
+  // the entity is not tracked.
+  virtual base::Time GetEntityModificationTime(
+      const std::string& storage_key) const = 0;
+
   // Pass the pointer to the processor so that the processor can notify the
   // bridge of various events; |bridge| must not be nullptr and must outlive
   // this object.
@@ -96,6 +107,10 @@ class ModelTypeChangeProcessor {
   // Returns the account ID for which metadata is being tracked, or empty if not
   // tracking metadata.
   virtual std::string TrackedAccountId() = 0;
+
+  // Returns the cache guid for which metadata is being tracked, or empty if not
+  // tracking metadata.
+  virtual std::string TrackedCacheGuid() = 0;
 
   // Report an error in the model to sync. Should be called for any persistence
   // or consistency error the bridge encounters outside of a method that allows

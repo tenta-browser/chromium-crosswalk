@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/vr/elements/indicator_spec.h"
+
+#include "build/build_config.h"
 #include "chrome/browser/vr/vector_icons/vector_icons.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/vector_icons/vector_icons.h"
@@ -70,7 +72,11 @@ std::vector<IndicatorSpec> GetIndicatorSpecs() {
       {kBluetoothConnectedIndicator, kWebVrBluetoothConnectedIndicator,
        vector_icons::kBluetoothConnectedIcon,
        IDS_VR_SHELL_SITE_IS_USING_BLUETOOTH,
+#if defined(OS_ANDROID)
        IDS_VR_SHELL_BG_IS_USING_BLUETOOTH,
+#else
+       0,
+#endif
        IDS_VR_SHELL_SITE_CAN_USE_BLUETOOTH,
        &CapturingStateModel::bluetooth_connected,
        false},
@@ -81,7 +87,26 @@ std::vector<IndicatorSpec> GetIndicatorSpecs() {
        IDS_VR_SHELL_BG_IS_SHARING_SCREEN,
        IDS_VR_SHELL_SITE_CAN_SHARE_SCREEN,
        &CapturingStateModel::screen_capture_enabled,
-       false}};
+       false},
+
+#if !defined(OS_ANDROID)
+      {kUsbConnectedIndicator, kWebXrUsbConnectedIndicator,
+       vector_icons::kUsbIcon,
+       IDS_VR_SHELL_SITE_IS_USING_USB,
+       0,
+       0,
+       &CapturingStateModel::usb_connected,
+       false},
+
+       {kMidiConnectedIndicator, kWebXrMidiConnectedIndicator,
+       vector_icons::kMidiIcon,
+       IDS_VR_SHELL_SITE_IS_USING_MIDI,
+       0,
+       IDS_VR_SHELL_SITE_CAN_USE_MIDI,
+       &CapturingStateModel::midi_connected,
+       false},
+#endif
+  };
 
   return specs;
 }

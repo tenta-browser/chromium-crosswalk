@@ -191,6 +191,19 @@ bool AwContentRendererClient::HasErrorPage(int http_status_code) {
   return http_status_code >= 400;
 }
 
+bool AwContentRendererClient::ShouldSuppressErrorPage(
+    content::RenderFrame* render_frame,
+    const GURL& url) {
+  DCHECK(render_frame != nullptr);
+
+  AwRenderFrameExt* render_frame_ext =
+      AwRenderFrameExt::FromRenderFrame(render_frame);
+  if (render_frame_ext == nullptr)
+    return false;
+
+  return render_frame_ext->GetWillSuppressErrorPage();
+}
+
 void AwContentRendererClient::PrepareErrorPage(
     content::RenderFrame* render_frame,
     const blink::WebURLError& error,
@@ -265,13 +278,12 @@ void AwContentRendererClient::PrepareErrorPage(
       replacements, nullptr);
 }
 
-unsigned long long AwContentRendererClient::VisitedLinkHash(
-    const char* canonical_url,
-    size_t length) {
+uint64_t AwContentRendererClient::VisitedLinkHash(const char* canonical_url,
+                                                  size_t length) {
   return visited_link_slave_->ComputeURLFingerprint(canonical_url, length);
 }
 
-bool AwContentRendererClient::IsLinkVisited(unsigned long long link_hash) {
+bool AwContentRendererClient::IsLinkVisited(uint64_t link_hash) {
   return visited_link_slave_->IsVisited(link_hash);
 }
 

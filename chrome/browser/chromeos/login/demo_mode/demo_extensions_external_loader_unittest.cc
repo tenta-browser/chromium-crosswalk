@@ -20,6 +20,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "base/version.h"
 #include "build/build_config.h"
@@ -216,9 +217,9 @@ class DemoExtensionsExternalLoaderTest : public testing::Test {
 
   std::unique_ptr<DemoModeTestHelper> demo_mode_test_helper_;
 
- private:
   content::TestBrowserThreadBundle thread_bundle_;
 
+ private:
   scoped_refptr<network::WeakWrapperSharedURLLoaderFactory>
       test_shared_loader_factory_;
 
@@ -446,7 +447,7 @@ TEST_F(DemoExtensionsExternalLoaderTest,
   EXPECT_TRUE(external_provider_visitor_.loaded_crx_files().empty());
 }
 
-TEST_F(DemoExtensionsExternalLoaderTest, DISABLED_LoadApp) {
+TEST_F(DemoExtensionsExternalLoaderTest, LoadApp) {
   demo_mode_test_helper_->InitializeSession();
 
   // Create a temporary cache directory.
@@ -472,6 +473,7 @@ TEST_F(DemoExtensionsExternalLoaderTest, DISABLED_LoadApp) {
   loader->LoadApp(kTestExtensionId);
   // Verify that a downloader has started and is attempting to download an
   // update manifest.
+  thread_bundle_.RunUntilIdle();
   EXPECT_EQ(1, test_url_loader_factory_.NumPending());
   // Return a manifest to the downloader.
   std::string manifest;
@@ -479,7 +481,8 @@ TEST_F(DemoExtensionsExternalLoaderTest, DISABLED_LoadApp) {
   ASSERT_TRUE(base::PathService::Get(chrome::DIR_TEST_DATA, &test_dir));
   EXPECT_TRUE(base::ReadFileToString(
       test_dir.Append(kTestExtensionUpdateManifest), &manifest));
-  EXPECT_EQ(1u, test_url_loader_factory_.pending_requests()->size());
+  thread_bundle_.RunUntilIdle();
+  EXPECT_EQ(1, test_url_loader_factory_.NumPending());
   test_url_loader_factory_.AddResponse(
       test_url_loader_factory_.pending_requests()->at(0).request.url.spec(),
       manifest);
@@ -491,7 +494,8 @@ TEST_F(DemoExtensionsExternalLoaderTest, DISABLED_LoadApp) {
       .Wait();
 
   // Verify that the downloader is attempting to download a CRX file.
-  EXPECT_EQ(1u, test_url_loader_factory_.pending_requests()->size());
+  thread_bundle_.RunUntilIdle();
+  EXPECT_EQ(1, test_url_loader_factory_.NumPending());
   // Trigger downloading of the CRX file.
   test_url_loader_factory_.AddResponse(
       test_url_loader_factory_.pending_requests()->at(0).request.url.spec(),

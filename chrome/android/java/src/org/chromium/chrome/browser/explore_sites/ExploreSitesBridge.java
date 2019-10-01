@@ -53,12 +53,26 @@ public class ExploreSitesBridge {
         nativeGetIcon(profile, siteID, callback);
     }
 
+    /**
+     * Returns a Bitmap representing a summary of the sites available in the catalog for a specific
+     * category.
+     */
     public static void getCategoryImage(
             Profile profile, int categoryID, int pixelSize, Callback<Bitmap> callback) {
         if (sCatalogForTesting != null) {
             callback.onResult(null);
         }
         nativeGetCategoryImage(profile, categoryID, pixelSize, callback);
+    }
+
+    /**
+     * Returns a Bitmap representing a summary of the sites available in the catalog.
+     */
+    public static void getSummaryImage(Profile profile, int pixelSize, Callback<Bitmap> callback) {
+        if (sCatalogForTesting != null) {
+            callback.onResult(null);
+        }
+        nativeGetSummaryImage(profile, pixelSize, callback);
     }
 
     /**
@@ -92,13 +106,32 @@ public class ExploreSitesBridge {
         return nativeGetVariation();
     }
 
+    /**
+     * Gets the current Finch variation for last MostLikely icon that is configured by flag or
+     * experiment.
+     */
+    @MostLikelyVariation
+    public static int getIconVariation() {
+        return nativeGetIconVariation();
+    }
+
     public static boolean isEnabled(@ExploreSitesVariation int variation) {
         return variation == ExploreSitesVariation.ENABLED
-                || variation == ExploreSitesVariation.PERSONALIZED;
+                || variation == ExploreSitesVariation.PERSONALIZED
+                || variation == ExploreSitesVariation.CONDENSED
+                || variation == ExploreSitesVariation.MOST_LIKELY;
     }
 
     public static boolean isExperimental(@ExploreSitesVariation int variation) {
         return variation == ExploreSitesVariation.EXPERIMENT;
+    }
+
+    public static boolean isCondensed(@ExploreSitesVariation int variation) {
+        return variation == ExploreSitesVariation.CONDENSED;
+    }
+
+    public static boolean isIntegratedWithMostLikely(@ExploreSitesVariation int variation) {
+        return variation == ExploreSitesVariation.MOST_LIKELY;
     }
 
     /**
@@ -130,6 +163,7 @@ public class ExploreSitesBridge {
     }
 
     static native int nativeGetVariation();
+    static native int nativeGetIconVariation();
     private static native void nativeGetEspCatalog(Profile profile,
             List<ExploreSitesCategory> result, Callback<List<ExploreSitesCategory>> callback);
 
@@ -141,6 +175,9 @@ public class ExploreSitesBridge {
 
     private static native void nativeGetCategoryImage(
             Profile profile, int categoryID, int pixelSize, Callback<Bitmap> callback);
+
+    private static native void nativeGetSummaryImage(
+            Profile profile, int pixelSize, Callback<Bitmap> callback);
 
     private static native void nativeBlacklistSite(Profile profile, String url);
 

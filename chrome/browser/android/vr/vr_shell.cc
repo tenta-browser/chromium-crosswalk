@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "base/android/jni_string.h"
+#include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
@@ -47,8 +48,8 @@
 #include "chrome/browser/vr/vr_tab_helper.h"
 #include "chrome/browser/vr/vr_web_contents_observer.h"
 #include "chrome/common/chrome_features.h"
-#include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
+#include "components/language/core/browser/pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
@@ -85,6 +86,7 @@
 #include "url/gurl.h"
 
 using base::android::JavaParamRef;
+using base::android::JavaRef;
 using base::android::ScopedJavaLocalRef;
 
 namespace vr {
@@ -148,9 +150,7 @@ VrShell::VrShell(JNIEnv* env,
                  int display_height_pixels,
                  bool pause_content,
                  bool low_density)
-    : web_vr_autopresentation_expected_(
-          ui_initial_state.web_vr_autopresentation_expected),
-      delegate_provider_(delegate),
+    : delegate_provider_(delegate),
       main_thread_task_runner_(base::ThreadTaskRunnerHandle::Get()),
       reprojected_rendering_(reprojected_rendering),
       display_size_meters_(display_width_meters, display_height_meters),
@@ -179,12 +179,6 @@ VrShell::VrShell(JNIEnv* env,
           &BrowserUiInterface::SetOmniboxSuggestions, base::Unretained(ui_)));
 
   gl_thread_->Start();
-
-  if (ui_initial_state.in_web_vr ||
-      ui_initial_state.web_vr_autopresentation_expected) {
-    UMA_HISTOGRAM_BOOLEAN("VRAutopresentedWebVR",
-                          ui_initial_state.web_vr_autopresentation_expected);
-  }
 
   can_load_new_assets_ = AssetsLoader::GetInstance()->ComponentReady();
   if (!can_load_new_assets_) {
@@ -258,8 +252,7 @@ void VrShell::SwapContents(JNIEnv* env,
   if (web_contents_ && !SessionMetricsHelper::FromWebContents(web_contents_)) {
     SessionMetricsHelper::CreateForWebContents(
         web_contents_,
-        webvr_mode_ ? Mode::kWebXrVrPresentation : Mode::kVrBrowsingRegular,
-        web_vr_autopresentation_expected_);
+        webvr_mode_ ? Mode::kWebXrVrPresentation : Mode::kVrBrowsingRegular);
   }
 }
 
@@ -541,11 +534,11 @@ void VrShell::SetWebVrMode(JNIEnv* env,
   CreatePageInfo();
   ui_->SetWebVrMode(enabled);
 
-  if (!webvr_mode_ && !web_vr_autopresentation_expected_) {
-    AssetsLoader::GetInstance()->GetMetricsHelper()->OnEnter(Mode::kVrBrowsing);
-  } else {
+  if (webvr_mode_) {
     AssetsLoader::GetInstance()->GetMetricsHelper()->OnEnter(
         Mode::kWebXrVrPresentation);
+  } else {
+    AssetsLoader::GetInstance()->GetMetricsHelper()->OnEnter(Mode::kVrBrowsing);
   }
 }
 
@@ -576,22 +569,17 @@ void VrShell::OnLoadProgressChanged(JNIEnv* env,
 }
 
 void VrShell::OnTabListCreated(JNIEnv* env,
-                               const JavaParamRef<jobject>& obj,
-                               jobjectArray tabs,
-                               jobjectArray incognito_tabs) {
+                               const JavaRef<jobject>& obj,
+                               const JavaRef<jobjectArray>& tabs,
+                               const JavaRef<jobjectArray>& incognito_tabs) {
   incognito_tab_ids_.clear();
   regular_tab_ids_.clear();
-  size_t len = env->GetArrayLength(incognito_tabs);
-  for (size_t i = 0; i < len; ++i) {
-    ScopedJavaLocalRef<jobject> j_tab(
-        env, env->GetObjectArrayElement(incognito_tabs, i));
+  for (auto j_tab : incognito_tabs.ReadElements<jobject>()) {
     TabAndroid* tab = TabAndroid::GetNativeTab(env, j_tab);
     incognito_tab_ids_.insert(tab->GetAndroidId());
   }
 
-  len = env->GetArrayLength(tabs);
-  for (size_t i = 0; i < len; ++i) {
-    ScopedJavaLocalRef<jobject> j_tab(env, env->GetObjectArrayElement(tabs, i));
+  for (auto j_tab : tabs.ReadElements<jobject>()) {
     TabAndroid* tab = TabAndroid::GetNativeTab(env, j_tab);
     regular_tab_ids_.insert(tab->GetAndroidId());
   }
@@ -813,11 +801,17 @@ void VrShell::RecordVrStartAction(VrStartAction action) {
   }
 }
 
-void VrShell::RecordPresentationStartAction(PresentationStartAction action) {
+// TODO(https://crbug.com/965744): Rename below method to better reflect its
+// purpose (recording a start of immersive VR session).
+void VrShell::RecordPresentationStartAction(
+    PresentationStartAction action,
+    const device::mojom::XRRuntimeSessionOptions& options) {
+  DCHECK(options.immersive);
+  DCHECK(!options.environment_integration);
   SessionMetricsHelper* metrics_helper =
       SessionMetricsHelper::FromWebContents(web_contents_);
   if (metrics_helper)
-    metrics_helper->RecordPresentationStartAction(action);
+    metrics_helper->RecordPresentationStartAction(action, options);
 }
 
 void VrShell::ShowSoftInput(JNIEnv* env,
@@ -960,7 +954,7 @@ void VrShell::SetVoiceSearchActive(bool active) {
         this, ui_,
         content::BrowserContext::GetDefaultStoragePartition(profile)
             ->GetURLLoaderFactoryForBrowserProcessIOThread(),
-        profile->GetPrefs()->GetString(prefs::kAcceptLanguages),
+        profile->GetPrefs()->GetString(language::prefs::kAcceptLanguages),
         profile_locale));
   }
   if (active) {
@@ -1246,6 +1240,10 @@ void VrShell::SetPermissionInfo(const PermissionInfoList& permission_info_list,
 
 void VrShell::SetIdentityInfo(const IdentityInfo& identity_info) {}
 
+void VrShell::SetPageFeatureInfo(const PageFeatureInfo& info) {
+  NOTIMPLEMENTED();
+}
+
 void VrShell::AcceptDoffPromptForTesting(
     JNIEnv* env,
     const base::android::JavaParamRef<jobject>& obj) {
@@ -1345,13 +1343,11 @@ std::unique_ptr<PageInfo> VrShell::CreatePageInfo() {
 
   SecurityStateTabHelper* helper =
       SecurityStateTabHelper::FromWebContents(web_contents_);
-  security_state::SecurityInfo security_info;
-  helper->GetSecurityInfo(&security_info);
-
   return std::make_unique<PageInfo>(
       this, Profile::FromBrowserContext(web_contents_->GetBrowserContext()),
       TabSpecificContentSettings::FromWebContents(web_contents_), web_contents_,
-      entry->GetVirtualURL(), security_info);
+      entry->GetVirtualURL(), helper->GetSecurityLevel(),
+      *helper->GetVisibleSecurityState());
 }
 
 gfx::AcceleratedWidget VrShell::GetRenderSurface() {

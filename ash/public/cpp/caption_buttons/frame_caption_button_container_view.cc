@@ -9,6 +9,7 @@
 
 #include "ash/public/cpp/caption_buttons/caption_button_model.h"
 #include "ash/public/cpp/caption_buttons/frame_size_button.h"
+#include "ash/public/cpp/caption_buttons/snap_controller.h"
 #include "ash/public/cpp/gesture_action_type.h"
 #include "ash/public/cpp/tablet_mode.h"
 #include "ash/public/cpp/window_properties.h"
@@ -149,16 +150,14 @@ const char FrameCaptionButtonContainerView::kViewClassName[] =
     "FrameCaptionButtonContainerView";
 
 FrameCaptionButtonContainerView::FrameCaptionButtonContainerView(
-    views::Widget* frame,
-    FrameCaptionDelegate* delegate)
+    views::Widget* frame)
     : frame_(frame),
-      delegate_(delegate),
       model_(std::make_unique<DefaultCaptionButtonModel>(frame)) {
   auto layout =
       std::make_unique<views::BoxLayout>(views::BoxLayout::kHorizontal);
   layout->set_cross_axis_alignment(
-      views::BoxLayout::CROSS_AXIS_ALIGNMENT_CENTER);
-  layout->set_main_axis_alignment(views::BoxLayout::MAIN_AXIS_ALIGNMENT_END);
+      views::BoxLayout::CrossAxisAlignment::kCenter);
+  layout->set_main_axis_alignment(views::BoxLayout::MainAxisAlignment::kEnd);
   SetLayoutManager(std::move(layout));
   tablet_mode_animation_.reset(new gfx::SlideAnimation(this));
   tablet_mode_animation_->SetTweenType(gfx::Tween::LINEAR);
@@ -348,8 +347,9 @@ void FrameCaptionButtonContainerView::AnimationProgressed(
   // Slide all buttons to the left of the size button. Usually this is just the
   // minimize button but it can also include a PWA menu button.
   int previous_x = 0;
-  for (int i = 0; i < child_count() && child_at(i) != size_button_; ++i) {
-    views::View* button = child_at(i);
+  for (auto* button : children()) {
+    if (button == size_button_)
+      break;
     button->SetX(previous_x + x_slide);
     previous_x += button->width();
   }
@@ -403,7 +403,7 @@ void FrameCaptionButtonContainerView::ButtonPressed(views::Button* sender,
     }
   } else if (sender == close_button_) {
     frame_->Close();
-    if (TabletMode::IsEnabled())
+    if (TabletMode::Get()->IsEnabled())
       RecordAction(UserMetricsAction("Tablet_WindowCloseFromCaptionButton"));
     else
       RecordAction(UserMetricsAction("CloseButton_Clk"));
@@ -424,7 +424,7 @@ void FrameCaptionButtonContainerView::ButtonPressed(views::Button* sender,
 }
 
 bool FrameCaptionButtonContainerView::IsMinimizeButtonVisible() const {
-  return minimize_button_->visible();
+  return minimize_button_->GetVisible();
 }
 
 void FrameCaptionButtonContainerView::SetButtonsToNormal(Animate animate) {
@@ -459,7 +459,7 @@ FrameCaptionButtonContainerView::GetButtonClosestTo(
   views::FrameCaptionButton* closest_button = NULL;
   for (size_t i = 0; i < base::size(buttons); ++i) {
     views::FrameCaptionButton* button = buttons[i];
-    if (!button->visible())
+    if (!button->GetVisible())
       continue;
 
     gfx::Point center_point = button->GetLocalBounds().CenterPoint();
@@ -492,16 +492,15 @@ void FrameCaptionButtonContainerView::SetHoveredAndPressedButtons(
 }
 
 bool FrameCaptionButtonContainerView::CanSnap() {
-  return delegate_->CanSnap(frame_->GetNativeWindow());
+  return SnapController::Get()->CanSnap(frame_->GetNativeWindow());
 }
 
-void FrameCaptionButtonContainerView::ShowSnapPreview(
-    mojom::SnapDirection snap) {
-  delegate_->ShowSnapPreview(frame_->GetNativeWindow(), snap);
+void FrameCaptionButtonContainerView::ShowSnapPreview(SnapDirection snap) {
+  SnapController::Get()->ShowSnapPreview(frame_->GetNativeWindow(), snap);
 }
 
-void FrameCaptionButtonContainerView::CommitSnap(mojom::SnapDirection snap) {
-  delegate_->CommitSnap(frame_->GetNativeWindow(), snap);
+void FrameCaptionButtonContainerView::CommitSnap(SnapDirection snap) {
+  SnapController::Get()->CommitSnap(frame_->GetNativeWindow(), snap);
 }
 
 }  // namespace ash

@@ -8,41 +8,18 @@ differs from Google style.
 
 [TOC]
 
-## Use references for all non-null pointer arguments
-Pointer arguments that can never be null should be passed as a reference, even
-if this results in a mutable reference argument.
+## May use mutable reference arguments
 
-> Note: Even though Google style prohibits mutable reference arguments, Blink
-style explicitly permits their use.
+Mutable reference arguments are permitted in Blink, in contrast to Google style.
 
-**Good:**
+> Note: This rule is under [discussion](https://groups.google.com/a/chromium.org/d/msg/blink-dev/O7R4YwyPIHc/mJyEyJs-EAAJ).
+
+**OK:**
 ```c++
-// Passed by mutable reference since |frame| is assumed to be non-null.
+// May be passed by mutable reference since |frame| is assumed to be non-null.
 FrameLoader::FrameLoader(LocalFrame& frame)
     : frame_(&frame),
       progress_tracker_(ProgressTracker::Create(frame)) {
-  // ...
-}
-
-// Optional arguments should still be passed by pointer.
-void LocalFrame::SetDOMWindow(LocalDOMWindow* dom_window) {
-  if (dom_window)
-    GetScriptController().ClearWindowProxy();
-
-  if (this->DomWindow())
-    this->DomWindow()->Reset();
-  dom_window_ = dom_window;
-}
-```
-
-**Bad:**
-```c++
-// Since the constructor assumes that |frame| is never null, it should be
-// passed as a mutable reference.
-FrameLoader::FrameLoader(LocalFrame* frame)
-    : frame_(frame),
-      progress_tracker_(ProgressTracker::Create(frame)) {
-  DCHECK(frame_);
   // ...
 }
 ```
@@ -65,6 +42,17 @@ for more details on Blink directories and their type usage.
   std::vector<GURL> urls;
   std::unordered_map<int, std::deque<url::Origin>> origins;
 ```
+
+When interacting with WTF types, use `wtf_size_t` instead of `size_t`.
+
+## Do not use `new` and `delete`
+
+Object lifetime should not be managed using raw `new` and `delete`. Prefer to
+allocate objects instead using `std::make_unique`, `base::MakeRefCounted` or
+`blink::MakeGarbageCollected`, depending on the type, and manage their lifetime
+using appropriate smart pointers and handles (`std::unique_ptr`, `scoped_refptr`
+and strong Blink GC references, respectively). See [How Blink Works](https://docs.google.com/document/d/1aitSOucL0VHZa9Z2vbRJSyAIsAz24kX8LFByQ5xQnUg/edit#heading=h.ekwf97my4bgf)
+for more information.
 
 ## Naming
 

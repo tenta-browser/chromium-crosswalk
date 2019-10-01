@@ -209,6 +209,14 @@ var defaultTests = [
     chrome.autotestPrivate.runCrostiniUninstaller(chrome.test.callbackFail(
         'Crostini is not available for the current user'));
   },
+  function exportCrostini() {
+    chrome.autotestPrivate.exportCrostini('backup', chrome.test.callbackFail(
+        'Crostini is not available for the current user'));
+  },
+  function importCrostini() {
+    chrome.autotestPrivate.importCrostini('backup', chrome.test.callbackFail(
+        'Crostini is not available for the current user'));
+  },
   function takeScreenshot() {
     chrome.autotestPrivate.takeScreenshot(
       function(base64Png) {
@@ -226,23 +234,38 @@ var defaultTests = [
   function setAssistantEnabled() {
     chrome.autotestPrivate.setAssistantEnabled(true, 1000 /* timeout_ms */,
         chrome.test.callbackFail(
-            'Assistant is not available for the current user'));
+            'Assistant not allowed - state: 4'));
   },
   function sendAssistantTextQuery() {
     chrome.autotestPrivate.sendAssistantTextQuery(
         'what time is it?' /* query */,
         1000 /* timeout_ms */,
         chrome.test.callbackFail(
-          'Assistant is not available for the current user'));
+            'Assistant not allowed - state: 4'));
   },
-  // This test verifies that ARC is not provisioned by default.
-  function isArcProvisioned() {
-    chrome.autotestPrivate.isArcProvisioned(
-        function(arcProvisioned) {
-          chrome.test.assertFalse(arcProvisioned);
-          chrome.test.assertNoLastError();
-          chrome.test.succeed();
-        });
+  function setWhitelistedPref() {
+    chrome.autotestPrivate.setWhitelistedPref(
+        'settings.voice_interaction.hotword.enabled' /* pref_name */,
+        true /* value */,
+        chrome.test.callbackFail(
+            'Assistant not allowed - state: 4'));
+  },
+  // This test verifies that getArcState returns provisioned False in case ARC
+  // is not provisioned by default.
+  function arcNotProvisioned() {chrome.autotestPrivate.getArcState(
+    function(state) {
+      chrome.test.assertFalse(state.provisioned);
+      chrome.test.assertNoLastError();
+      chrome.test.succeed();
+    });
+  },
+  // This test verifies that ARC Terms of Service are needed by default.
+  function arcTosNeeded() {
+    chrome.autotestPrivate.getArcState(function(state) {
+      chrome.test.assertTrue(state.tosNeeded);
+      chrome.test.assertNoLastError();
+      chrome.test.succeed();
+    });
   },
   // No any ARC app by default
   function getArcApp() {
@@ -275,18 +298,108 @@ var defaultTests = [
           chrome.test.succeed();
         });
   },
-];
-
-var arcEnabledTests = [
-  // This test verifies that isArcProvisioned returns True in case ARC
-  // provisiong is done.
-  function isArcProvisioned() {
-    chrome.autotestPrivate.isArcProvisioned(
-        function(arcProvisioned) {
-          chrome.test.assertTrue(arcProvisioned);
+  // Check if tablet mode is enabled.
+  function isTabletModeEnabled() {
+    chrome.autotestPrivate.isTabletModeEnabled(
+        function(enabled) {
           chrome.test.assertNoLastError();
           chrome.test.succeed();
         });
+  },
+  // This test verifies that entering tablet mode works as expected.
+  function setTabletModeEnabled() {
+    chrome.autotestPrivate.setTabletModeEnabled(true, function(isEnabled){
+      chrome.test.assertTrue(isEnabled);
+      chrome.test.assertNoLastError();
+      chrome.test.succeed();
+    });
+  },
+  // This test verifies that leaving tablet mode works as expected.
+  function setTabletModeDisabled() {
+    chrome.autotestPrivate.setTabletModeEnabled(false, function(isEnabled){
+      chrome.test.assertFalse(isEnabled);
+      chrome.test.assertNoLastError();
+      chrome.test.succeed();
+    });
+  },
+  // This test verifies that changing the shelf behavior works as expected.
+  function setShelfAutoHideBehavior() {
+    // Using shelf from primary display.
+    var displayId = "-1";
+    chrome.system.display.getInfo(function(info) {
+      var l = info.length;
+      for (var i = 0; i < l; i++) {
+        if (info[i].isPrimary === true) {
+          displayId = info[i].id;
+          break;
+        }
+      }
+      chrome.test.assertTrue(displayId != "-1");
+      var behaviors = ["always", "never", "hidden"];
+      var l = behaviors.length;
+      for (var i = 0; i < l; i++) {
+        var behavior = behaviors[i];
+        chrome.autotestPrivate.setShelfAutoHideBehavior(displayId, behavior,
+            function() {
+          chrome.test.assertNoLastError();
+          chrome.autotestPrivate.getShelfAutoHideBehavior(displayId,
+              function(newBehavior) {
+            chrome.test.assertNoLastError();
+            chrome.test.assertEq(behavior, newBehavior);
+          });
+        });
+      }
+      chrome.test.succeed();
+    });
+  },
+  // This test verifies that changing the shelf alignment works as expected.
+  function setShelfAlignment() {
+    // Using shelf from primary display.
+    var displayId = "-1";
+    chrome.system.display.getInfo(function(info) {
+      var l = info.length;
+      for (var i = 0; i < l; i++) {
+        if (info[i].isPrimary === true) {
+          displayId = info[i].id;
+          break;
+        }
+      }
+      chrome.test.assertTrue(displayId != "-1");
+      // When running 'browser_tests', Chrome OS reports itself as locked,
+      // so the only valid shelf is Bottom Locked.
+      var alignment = chrome.autotestPrivate.ShelfAlignmentType.BOTTOM_LOCKED;
+      chrome.autotestPrivate.setShelfAlignment(displayId, alignment,
+          function() {
+        chrome.test.assertNoLastError();
+        chrome.autotestPrivate.getShelfAlignment(displayId,
+            function(newAlignment) {
+          chrome.test.assertNoLastError();
+          chrome.test.assertEq(newAlignment, alignment);
+          chrome.test.succeed();
+        });
+      });
+    });
+  },
+];
+
+var arcEnabledTests = [
+  // This test verifies that getArcState returns provisioned True in case ARC
+  // provisioning is done.
+  function arcProvisioned() {chrome.autotestPrivate.getArcState(
+    function(state) {
+      chrome.test.assertTrue(state.provisioned);
+      chrome.test.assertNoLastError();
+      chrome.test.succeed();
+    });
+  },
+  // This test verifies that ARC Terms of Service are not needed in case ARC is
+  // provisioned and Terms of Service are accepted.
+  function arcTosNotNeeded() {
+    chrome.autotestPrivate.getArcState(function(state) {
+      chrome.test.assertFalse(state.tosNeeded);
+      chrome.test.assertNoLastError();
+      chrome.test.succeed();
+    });
   },
   // ARC app is available
   function getArcApp() {

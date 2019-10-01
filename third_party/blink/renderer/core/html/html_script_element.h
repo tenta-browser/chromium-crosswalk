@@ -42,8 +42,6 @@ class CORE_EXPORT HTMLScriptElement final : public HTMLElement,
   USING_GARBAGE_COLLECTED_MIXIN(HTMLScriptElement);
 
  public:
-  static HTMLScriptElement* Create(Document&, const CreateElementFlags);
-
   HTMLScriptElement(Document&, const CreateElementFlags);
 
   // Returns attributes that should be checked against Trusted Types
@@ -101,16 +99,15 @@ class CORE_EXPORT HTMLScriptElement final : public HTMLElement,
   }
   bool AllowInlineScriptForCSP(const AtomicString& nonce,
                                const WTF::OrdinalNumber&,
-                               const String& script_content,
-                               ContentSecurityPolicy::InlineType) override;
+                               const String& script_content) override;
   void DispatchLoadEvent() override;
   void DispatchErrorEvent() override;
   void SetScriptElementForBinding(
       HTMLScriptElementOrSVGScriptElement&) override;
 
-  Element* CloneWithoutAttributesAndChildren(Document&) const override;
+  Element& CloneWithoutAttributesAndChildren(Document&) const override;
 
-  TraceWrapperMember<ScriptLoader> loader_;
+  Member<ScriptLoader> loader_;
 };
 
 }  // namespace blink

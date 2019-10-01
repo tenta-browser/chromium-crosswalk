@@ -15,7 +15,7 @@
 #include "base/time/time.h"
 #include "content/common/content_export.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
-#include "services/network/public/mojom/cookie_manager.mojom.h"
+#include "services/network/public/mojom/cookie_manager.mojom-forward.h"
 
 class GURL;
 
@@ -50,9 +50,11 @@ class DatabaseTracker;
 namespace content {
 
 class AppCacheService;
+class BackgroundSyncContext;
 class BrowserContext;
 class CacheStorageContext;
 class DOMStorageContext;
+class DevToolsBackgroundServicesContext;
 class IndexedDBContext;
 class GeneratedCodeCacheContext;
 class PlatformNotificationContext;
@@ -101,6 +103,7 @@ class CONTENT_EXPORT StoragePartition {
   GetCookieManagerForBrowserProcess() = 0;
   virtual storage::QuotaManager* GetQuotaManager() = 0;
   virtual AppCacheService* GetAppCacheService() = 0;
+  virtual BackgroundSyncContext* GetBackgroundSyncContext() = 0;
   virtual storage::FileSystemContext* GetFileSystemContext() = 0;
   virtual storage::DatabaseTracker* GetDatabaseTracker() = 0;
   virtual DOMStorageContext* GetDOMStorageContext() = 0;
@@ -109,6 +112,8 @@ class CONTENT_EXPORT StoragePartition {
   virtual SharedWorkerService* GetSharedWorkerService() = 0;
   virtual CacheStorageContext* GetCacheStorageContext() = 0;
   virtual GeneratedCodeCacheContext* GetGeneratedCodeCacheContext() = 0;
+  virtual DevToolsBackgroundServicesContext*
+  GetDevToolsBackgroundServicesContext() = 0;
 #if !defined(OS_ANDROID)
   virtual HostZoomMap* GetHostZoomMap() = 0;
   virtual HostZoomLevelContext* GetHostZoomLevelContext() = 0;
@@ -158,8 +163,8 @@ class CONTENT_EXPORT StoragePartition {
   // A callback type to check if a given origin matches a storage policy.
   // Can be passed empty/null where used, which means the origin will always
   // match.
-  typedef base::Callback<bool(const GURL&, storage::SpecialStoragePolicy*)>
-      OriginMatcherFunction;
+  using OriginMatcherFunction =
+      base::Callback<bool(const url::Origin&, storage::SpecialStoragePolicy*)>;
 
   // Similar to ClearDataForOrigin().
   // Deletes all data out for the StoragePartition if |storage_origin| is empty.
@@ -212,9 +217,14 @@ class CONTENT_EXPORT StoragePartition {
       base::OnceClosure callback) = 0;
 
   // Clears code caches associated with this StoragePartition.
-  // TODO(crbug.com/866419): Currently we just clear entire caches.
-  // Change it to conditionally clear entries based on the filters.
-  virtual void ClearCodeCaches(base::OnceClosure callback) = 0;
+  // If |begin| and |end| are not null, only entries with
+  // timestamps inbetween are deleted. If |url_matcher| is not null, only
+  // entries with URLs for which the |url_matcher| returns true are deleted.
+  virtual void ClearCodeCaches(
+      base::Time begin,
+      base::Time end,
+      const base::RepeatingCallback<bool(const GURL&)>& url_matcher,
+      base::OnceClosure callback) = 0;
 
   // Write any unwritten data to disk.
   // Note: this method does not sync the data - it only ensures that any

@@ -11,7 +11,6 @@
 #include "base/values.h"
 #include "components/sync/base/time.h"
 #include "components/sync/base/unique_position.h"
-#include "components/sync/driver/sync_driver_switches.h"
 #include "components/sync/engine/non_blocking_sync_common.h"
 #include "components/sync/engine_impl/model_type_worker.h"
 #include "components/sync/protocol/proto_value_conversions.h"
@@ -21,7 +20,7 @@ namespace syncer {
 NonBlockingTypeCommitContribution::NonBlockingTypeCommitContribution(
     ModelType type,
     const sync_pb::DataTypeContext& context,
-    const CommitRequestDataList& commit_requests,
+    CommitRequestDataList commit_requests,
     ModelTypeWorker* worker,
     Cryptographer* cryptographer,
     PassphraseType passphrase_type,
@@ -32,7 +31,7 @@ NonBlockingTypeCommitContribution::NonBlockingTypeCommitContribution(
       cryptographer_(cryptographer),
       passphrase_type_(passphrase_type),
       context_(context),
-      commit_requests_(commit_requests),
+      commit_requests_(std::move(commit_requests)),
       cleaned_up_(false),
       debug_info_emitter_(debug_info_emitter),
       only_commit_specifics_(only_commit_specifics) {}
@@ -53,13 +52,13 @@ void NonBlockingTypeCommitContribution::AddToCommitMessage(
   for (const auto& commit_request : commit_requests_) {
     sync_pb::SyncEntity* sync_entity = commit_message->add_entries();
     if (only_commit_specifics_) {
-      DCHECK(!commit_request.entity->is_deleted());
+      DCHECK(!commit_request->entity->is_deleted());
       DCHECK(!cryptographer_);
       // Only send specifics to server for commit-only types.
       sync_entity->mutable_specifics()->CopyFrom(
-          commit_request.entity->specifics);
+          commit_request->entity->specifics);
     } else {
-      PopulateCommitProto(commit_request, sync_entity);
+      PopulateCommitProto(type_, *commit_request, sync_entity);
       AdjustCommitProto(sync_entity);
     }
 
@@ -69,9 +68,9 @@ void NonBlockingTypeCommitContribution::AddToCommitMessage(
         !sync_entity->specifics().password().has_client_only_encrypted_data());
 
     // Update the relevant counter based on the type of the commit request.
-    if (commit_request.entity->is_deleted()) {
+    if (commit_request->entity->is_deleted()) {
       counters->num_deletion_commits_attempted++;
-    } else if (commit_request.base_version <= 0) {
+    } else if (commit_request->base_version <= 0) {
       counters->num_creation_commits_attempted++;
     } else {
       counters->num_update_commits_attempted++;
@@ -111,7 +110,7 @@ SyncerError NonBlockingTypeCommitContribution::ProcessCommitResponse(
       case sync_pb::CommitResponse::SUCCESS: {
         ++successes;
         CommitResponseData response_data;
-        const CommitRequestData& commit_request = commit_requests_[i];
+        const CommitRequestData& commit_request = *commit_requests_[i];
         response_data.id = entry_response.id_string();
         if (response_data.id != commit_request.entity->id) {
           // Server has changed the sync id in the request. Write back the
@@ -127,7 +126,7 @@ SyncerError NonBlockingTypeCommitContribution::ProcessCommitResponse(
         response_list.push_back(response_data);
 
         status->increment_num_successful_commits();
-        if (commit_request.entity->specifics.has_bookmark()) {
+        if (type_ == BOOKMARKS) {
           status->increment_num_successful_bookmark_commits();
         }
 
@@ -179,12 +178,14 @@ size_t NonBlockingTypeCommitContribution::GetNumEntries() const {
 
 // static
 void NonBlockingTypeCommitContribution::PopulateCommitProto(
+    ModelType type,
     const CommitRequestData& commit_entity,
     sync_pb::SyncEntity* commit_proto) {
-  const EntityData& entity_data = commit_entity.entity.value();
+  const EntityData& entity_data = *commit_entity.entity;
   commit_proto->set_id_string(entity_data.id);
-  // Populate client_defined_unique_tag only for non-bookmark data types.
-  if (!entity_data.specifics.has_bookmark()) {
+  // Populate client_defined_unique_tag only for non-bookmark and non-Nigori
+  // data types.
+  if (type != BOOKMARKS && type != NIGORI) {
     commit_proto->set_client_defined_unique_tag(entity_data.client_tag_hash);
   }
   commit_proto->set_version(commit_entity.base_version);
@@ -194,7 +195,7 @@ void NonBlockingTypeCommitContribution::PopulateCommitProto(
 
   if (!entity_data.is_deleted()) {
     // Handle bookmarks separately.
-    if (entity_data.specifics.has_bookmark()) {
+    if (type == BOOKMARKS) {
       // position_in_parent field is set only for legacy reasons.  See comments
       // in sync.proto for more information.
       commit_proto->set_position_in_parent(
@@ -231,37 +232,26 @@ void NonBlockingTypeCommitContribution::AdjustCommitProto(
 
   // Encrypt the specifics and hide the title if necessary.
   if (commit_proto->specifics().has_password()) {
-    if (base::FeatureList::IsEnabled(switches::kSyncUSSPasswords)) {
-      DCHECK(cryptographer_);
-      const sync_pb::PasswordSpecifics& password_specifics =
-          commit_proto->specifics().password();
-      const sync_pb::PasswordSpecificsData& password_data =
-          password_specifics.client_only_encrypted_data();
-      sync_pb::EntitySpecifics encrypted_password;
-      if (!IsExplicitPassphrase(passphrase_type_) &&
-          password_specifics.unencrypted_metadata().url() !=
-              password_data.signon_realm()) {
-        encrypted_password.mutable_password()
-            ->mutable_unencrypted_metadata()
-            ->set_url(password_data.signon_realm());
-      }
-
-      bool result = cryptographer_->Encrypt(
-          password_data,
-          encrypted_password.mutable_password()->mutable_encrypted());
-      DCHECK(result);
-      *commit_proto->mutable_specifics() = std::move(encrypted_password);
-      commit_proto->set_name("encrypted");
-    } else {
-      // If explicit encryption is enabled, password metadata fields must be
-      // cleared. See documentation in password_specifics.proto.
-      if (IsExplicitPassphrase(passphrase_type_)) {
-        commit_proto->mutable_specifics()
-            ->mutable_password()
-            ->clear_unencrypted_metadata();
-      }
-      commit_proto->set_name("encrypted");
+    DCHECK(cryptographer_);
+    const sync_pb::PasswordSpecifics& password_specifics =
+        commit_proto->specifics().password();
+    const sync_pb::PasswordSpecificsData& password_data =
+        password_specifics.client_only_encrypted_data();
+    sync_pb::EntitySpecifics encrypted_password;
+    if (!IsExplicitPassphrase(passphrase_type_) &&
+        password_specifics.unencrypted_metadata().url() !=
+            password_data.signon_realm()) {
+      encrypted_password.mutable_password()
+          ->mutable_unencrypted_metadata()
+          ->set_url(password_data.signon_realm());
     }
+
+    bool result = cryptographer_->Encrypt(
+        password_data,
+        encrypted_password.mutable_password()->mutable_encrypted());
+    DCHECK(result);
+    *commit_proto->mutable_specifics() = std::move(encrypted_password);
+    commit_proto->set_name("encrypted");
   } else if (cryptographer_) {
     if (commit_proto->has_specifics()) {
       sync_pb::EntitySpecifics encrypted_specifics;

@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
@@ -123,12 +124,9 @@ void PepperFileChooserHost::StoreChosenFiles(
 
   if (!files.empty()) {
     renderer_ppapi_host_->CreateBrowserResourceHosts(
-        pp_instance(),
-        create_msgs,
-        base::Bind(&PepperFileChooserHost::DidCreateResourceHosts,
-                   weak_factory_.GetWeakPtr(),
-                   file_paths,
-                   display_names));
+        pp_instance(), create_msgs,
+        base::BindOnce(&PepperFileChooserHost::DidCreateResourceHosts,
+                       weak_factory_.GetWeakPtr(), file_paths, display_names));
   } else {
     reply_context_.params.set_result(PP_ERROR_USERCANCEL);
     std::vector<ppapi::FileRefCreateInfo> chosen_files;

@@ -41,6 +41,7 @@ class IOSWebViewSigninClient : public SigninClient {
   void DoFinalInit() override;
   bool IsFirstRun() const override;
   bool AreSigninCookiesAllowed() override;
+  bool AreSigninCookiesDeletedOnExit() override;
   void AddContentSettingsObserver(
       content_settings::Observer* observer) override;
   void RemoveContentSettingsObserver(
@@ -48,12 +49,10 @@ class IOSWebViewSigninClient : public SigninClient {
   void PreSignOut(
       base::OnceCallback<void(SignoutDecision)> on_signout_decision_reached,
       signin_metrics::ProfileSignout signout_source_metric) override;
-  void DelayNetworkCall(const base::Closure& callback) override;
+  void DelayNetworkCall(base::OnceClosure callback) override;
   std::unique_ptr<GaiaAuthFetcher> CreateGaiaAuthFetcher(
       GaiaAuthConsumer* consumer,
-      gaia::GaiaSource source,
-      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory)
-      override;
+      gaia::GaiaSource source) override;
 
   // CWVSyncController setter/getter.
   void SetSyncController(CWVSyncController* sync_controller);

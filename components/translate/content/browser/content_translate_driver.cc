@@ -4,6 +4,7 @@
 
 #include "components/translate/content/browser/content_translate_driver.h"
 
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -11,12 +12,15 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
+#include "base/strings/utf_string_conversions.h"
+#include "base/supports_user_data.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "components/google/core/common/google_util.h"
 #include "components/language/core/browser/url_language_histogram.h"
-#include "components/search_engines/template_url_service.h"
 #include "components/translate/core/browser/translate_download_manager.h"
 #include "components/translate/core/browser/translate_manager.h"
 #include "components/translate/core/common/translate_util.h"
+#include "components/ukm/content/source_url_recorder.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_details.h"
@@ -28,6 +32,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/referrer.h"
 #include "net/http/http_status_code.h"
+#include "services/metrics/public/cpp/ukm_source_id.h"
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "url/gurl.h"
 
@@ -39,17 +44,24 @@ namespace {
 // loading before giving up the translation
 const int kMaxTranslateLoadCheckAttempts = 20;
 
+// The key used to store page language in the NavigationEntry;
+const char kPageLanguageKey[] = "page_language";
+
+struct LanguageDectionData : public base::SupportsUserData::Data {
+  // The adopted language. An ISO 639 language code (two letters, except for
+  // Chinese where a localization is necessary).
+  std::string adopted_language;
+};
+
 }  // namespace
 
 ContentTranslateDriver::ContentTranslateDriver(
     content::NavigationController* nav_controller,
-    const TemplateURLService* template_url_service,
     language::UrlLanguageHistogram* url_language_histogram)
     : content::WebContentsObserver(nav_controller->GetWebContents()),
       navigation_controller_(nav_controller),
       translate_manager_(nullptr),
       max_reload_check_attempts_(kMaxTranslateLoadCheckAttempts),
-      template_url_service_(template_url_service),
       next_page_seq_no_(0),
       language_histogram_(url_language_histogram),
       weak_pointer_factory_(this) {
@@ -168,6 +180,11 @@ const GURL& ContentTranslateDriver::GetVisibleURL() {
   return navigation_controller_->GetWebContents()->GetVisibleURL();
 }
 
+ukm::SourceId ContentTranslateDriver::GetUkmSourceId() {
+  return ukm::GetSourceIdForWebContentsDocument(
+      navigation_controller_->GetWebContents());
+}
+
 bool ContentTranslateDriver::HasCurrentPage() {
   return (navigation_controller_->GetLastCommittedEntry() != nullptr);
 }
@@ -248,42 +265,22 @@ void ContentTranslateDriver::DidFinishNavigation(
       navigation_handle->GetReloadType() != content::ReloadType::NONE ||
       navigation_handle->IsSameDocument();
 
-  translate::TranslateLanguageList* language_list =
-      translate::TranslateDownloadManager::GetInstance()->language_list();
   const base::Optional<url::Origin>& initiator_origin =
       navigation_handle->GetInitiatorOrigin();
 
-  std::string href_translate;
-  if (language_list->IsSupportedLanguage(
-          navigation_handle->GetHrefTranslate()) &&
+  bool navigation_from_google =
       initiator_origin.has_value() &&
-      IsDefaultSearchEngineOriginator(initiator_origin.value())) {
-    href_translate = navigation_handle->GetHrefTranslate();
-  }
+      google_util::IsGoogleDomainUrl(initiator_origin->GetURL(),
+                                     google_util::DISALLOW_SUBDOMAIN,
+                                     google_util::ALLOW_NON_STANDARD_PORTS);
 
   translate_manager_->GetLanguageState().DidNavigate(
       navigation_handle->IsSameDocument(), navigation_handle->IsInMainFrame(),
-      reload, href_translate);
+      reload, navigation_handle->GetHrefTranslate(), navigation_from_google);
 }
 
 void ContentTranslateDriver::OnPageAway(int page_seq_no) {
   pages_.erase(page_seq_no);
-}
-
-bool ContentTranslateDriver::IsDefaultSearchEngineOriginator(
-    const url::Origin& originating_origin) const {
-  const TemplateURL* default_provider =
-      template_url_service_->GetDefaultSearchProvider();
-
-  if (default_provider) {
-    GURL search_url = default_provider->GenerateSearchURL(
-        template_url_service_->search_terms_data());
-
-    return search_url.is_valid() &&
-           url::Origin::Create(search_url) == originating_origin;
-  }
-
-  return false;
 }
 
 void ContentTranslateDriver::AddBinding(
@@ -309,8 +306,17 @@ void ContentTranslateDriver::RegisterPage(
   translate_manager_->GetLanguageState().LanguageDetermined(
       details.adopted_language, page_needs_translation);
 
-  if (web_contents())
+  if (web_contents()) {
     translate_manager_->InitiateTranslation(details.adopted_language);
+
+    // Save the page language on the navigation entry so it can be synced.
+    auto* const entry = web_contents()->GetController().GetLastCommittedEntry();
+    if (entry != nullptr) {
+      auto data = std::make_unique<LanguageDectionData>();
+      data->adopted_language = details.adopted_language;
+      entry->SetUserData(kPageLanguageKey, std::move(data));
+    }
+  }
 
   for (auto& observer : observer_list_)
     observer.OnLanguageDetermined(details);

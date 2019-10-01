@@ -45,7 +45,6 @@ WebSettingsImpl::WebSettingsImpl(Settings* settings,
       render_v_sync_notification_enabled_(false),
       auto_zoom_focused_node_to_legible_scale_(false),
       support_deprecated_target_density_dpi_(false),
-      viewport_meta_layout_size_quirk_(false),
       viewport_meta_non_user_scalable_quirk_(false),
       clobber_user_agent_initial_scale_quirk_(false) {
   DCHECK(settings);
@@ -74,10 +73,6 @@ void WebSettingsImpl::SetNetworkQuietTimeout(double timeout) {
 
 void WebSettingsImpl::SetForceMainWorldInitialization(bool enabled) {
   settings_->SetForceMainWorldInitialization(enabled);
-}
-
-void WebSettingsImpl::SetForcePreloadNoneForMediaElements(bool enabled) {
-  settings_->SetForcePreloadNoneForMediaElements(enabled);
 }
 
 void WebSettingsImpl::SetForceZeroLayoutHeight(bool enabled) {
@@ -185,11 +180,6 @@ void WebSettingsImpl::SetSupportDeprecatedTargetDensityDPI(
     bool support_deprecated_target_density_dpi) {
   support_deprecated_target_density_dpi_ =
       support_deprecated_target_density_dpi;
-}
-
-void WebSettingsImpl::SetViewportMetaLayoutSizeQuirk(
-    bool viewport_meta_layout_size_quirk) {
-  viewport_meta_layout_size_quirk_ = viewport_meta_layout_size_quirk;
 }
 
 void WebSettingsImpl::SetViewportMetaMergeContentQuirk(
@@ -324,6 +314,12 @@ void WebSettingsImpl::SetWideViewportQuirkEnabled(
 
 void WebSettingsImpl::SetUseWideViewport(bool use_wide_viewport) {
   settings_->SetUseWideViewport(use_wide_viewport);
+}
+
+void WebSettingsImpl::SetDontSendKeyEventsToJavascript(
+    bool dont_send_key_events_to_javascript) {
+  settings_->SetDontSendKeyEventsToJavascript(
+      dont_send_key_events_to_javascript);
 }
 
 void WebSettingsImpl::SetDoubleTapToZoomEnabled(
@@ -499,10 +495,6 @@ void WebSettingsImpl::SetPresentationReceiver(bool enabled) {
 
 void WebSettingsImpl::SetHighlightAds(bool enabled) {
   settings_->SetHighlightAds(enabled);
-}
-
-void WebSettingsImpl::SetHistoryEntryRequiresUserGesture(bool enabled) {
-  settings_->SetHistoryEntryRequiresUserGesture(enabled);
 }
 
 void WebSettingsImpl::SetHyperlinkAuditingEnabled(bool enabled) {
@@ -685,10 +677,6 @@ void WebSettingsImpl::SetDoNotUpdateSelectionOnMutatingSelectionRange(
   settings_->SetDoNotUpdateSelectionOnMutatingSelectionRange(enabled);
 }
 
-void WebSettingsImpl::SetMediaDownloadInProductHelpEnabled(bool enabled) {
-  settings_->SetMediaDownloadInProductHelpEnabled(enabled);
-}
-
 void WebSettingsImpl::SetLowPriorityIframesThreshold(
     WebEffectiveConnectionType effective_connection_type) {
   settings_->SetLowPriorityIframesThreshold(effective_connection_type);
@@ -756,6 +744,15 @@ void WebSettingsImpl::SetLazyImageLoadingDistanceThresholdPx3G(
 void WebSettingsImpl::SetLazyImageLoadingDistanceThresholdPx4G(
     int distance_px) {
   settings_->SetLazyImageLoadingDistanceThresholdPx4G(distance_px);
+}
+
+void WebSettingsImpl::SetForceDarkModeEnabled(bool enabled) {
+  settings_->SetForceDarkModeEnabled(enabled);
+}
+
+void WebSettingsImpl::SetPreferredColorScheme(
+    PreferredColorScheme color_scheme) {
+  settings_->SetPreferredColorScheme(color_scheme);
 }
 
 STATIC_ASSERT_ENUM(WebSettings::ImageAnimationPolicy::kAllowed,

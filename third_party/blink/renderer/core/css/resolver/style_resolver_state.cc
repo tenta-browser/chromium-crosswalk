@@ -33,6 +33,7 @@ namespace blink {
 StyleResolverState::StyleResolverState(
     Document& document,
     const ElementResolveContext& element_context,
+    PseudoElement* pseudo_element,
     const ComputedStyle* parent_style,
     const ComputedStyle* layout_parent_style)
     : element_context_(element_context),
@@ -46,7 +47,9 @@ StyleResolverState::StyleResolverState(
       apply_property_to_visited_link_style_(false),
       has_dir_auto_attribute_(false),
       font_builder_(&document),
-      element_style_resources_(*GetElement(), document.DevicePixelRatio()) {
+      element_style_resources_(*GetElement(),
+                               document.DevicePixelRatio(),
+                               pseudo_element) {
   DCHECK(!!parent_style_ == !!layout_parent_style_);
 
   if (!parent_style_) {
@@ -64,11 +67,13 @@ StyleResolverState::StyleResolverState(
 
 StyleResolverState::StyleResolverState(Document& document,
                                        Element* element,
+                                       PseudoElement* pseudo_element,
                                        const ComputedStyle* parent_style,
                                        const ComputedStyle* layout_parent_style)
     : StyleResolverState(document,
                          element ? ElementResolveContext(*element)
                                  : ElementResolveContext(document),
+                         pseudo_element,
                          parent_style,
                          layout_parent_style) {}
 
@@ -94,15 +99,27 @@ scoped_refptr<ComputedStyle> StyleResolverState::TakeStyle() {
   return std::move(style_);
 }
 
-CSSToLengthConversionData StyleResolverState::FontSizeConversionData() const {
-  float em = ParentStyle()->SpecifiedFontSize();
+CSSToLengthConversionData StyleResolverState::UnzoomedLengthConversionData(
+    const ComputedStyle* font_style) const {
+  float em = font_style->SpecifiedFontSize();
   float rem = RootElementStyle() ? RootElementStyle()->SpecifiedFontSize() : 1;
+  // TODO(fs): Since 'ch' and 'ex' are still accessed directly from the font,
+  // they will still have zoom applied.
   CSSToLengthConversionData::FontSizes font_sizes(em, rem,
-                                                  &ParentStyle()->GetFont());
+                                                  &font_style->GetFont());
   CSSToLengthConversionData::ViewportSize viewport_size(
       GetDocument().GetLayoutView());
 
   return CSSToLengthConversionData(Style(), font_sizes, viewport_size, 1);
+}
+
+CSSToLengthConversionData StyleResolverState::FontSizeConversionData() const {
+  return UnzoomedLengthConversionData(ParentStyle());
+}
+
+CSSToLengthConversionData StyleResolverState::UnzoomedLengthConversionData()
+    const {
+  return UnzoomedLengthConversionData(Style());
 }
 
 void StyleResolverState::SetParentStyle(
@@ -121,7 +138,7 @@ void StyleResolverState::CacheUserAgentBorderAndBackground() {
   if (!Style()->HasAppearance())
     return;
 
-  cached_ua_style_ = CachedUAStyle::Create(Style());
+  cached_ua_style_ = std::make_unique<CachedUAStyle>(Style());
 }
 
 void StyleResolverState::LoadPendingResources() {
@@ -165,7 +182,7 @@ void StyleResolverState::SetTextOrientation(ETextOrientation text_orientation) {
 
 HeapHashMap<CSSPropertyID, Member<const CSSValue>>&
 StyleResolverState::ParsedPropertiesForPendingSubstitutionCache(
-    const CSSPendingSubstitutionValue& value) const {
+    const cssvalue::CSSPendingSubstitutionValue& value) const {
   HeapHashMap<CSSPropertyID, Member<const CSSValue>>* map =
       parsed_properties_for_pending_substitution_cache_.at(&value);
   if (!map) {

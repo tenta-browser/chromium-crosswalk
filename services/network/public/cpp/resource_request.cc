@@ -4,6 +4,8 @@
 
 #include "services/network/public/cpp/resource_request.h"
 
+#include "net/base/load_flags.h"
+
 namespace network {
 
 ResourceRequest::ResourceRequest() {}
@@ -22,8 +24,8 @@ bool ResourceRequest::EqualsForTesting(const ResourceRequest& request) const {
          referrer_policy == request.referrer_policy &&
          is_prerendering == request.is_prerendering &&
          headers.ToString() == request.headers.ToString() &&
-         requested_with_header == request.requested_with_header &&
-         client_data_header == request.client_data_header &&
+         cors_exempt_headers.ToString() ==
+             request.cors_exempt_headers.ToString() &&
          load_flags == request.load_flags &&
          allow_credentials == request.allow_credentials &&
          plugin_child_id == request.plugin_child_id &&
@@ -33,16 +35,16 @@ bool ResourceRequest::EqualsForTesting(const ResourceRequest& request) const {
          should_reset_appcache == request.should_reset_appcache &&
          is_external_request == request.is_external_request &&
          cors_preflight_policy == request.cors_preflight_policy &&
-         service_worker_provider_id == request.service_worker_provider_id &&
          originated_from_service_worker ==
              request.originated_from_service_worker &&
          skip_service_worker == request.skip_service_worker &&
+         corb_detachable == request.corb_detachable &&
+         corb_excluded == request.corb_excluded &&
          fetch_request_mode == request.fetch_request_mode &&
          fetch_credentials_mode == request.fetch_credentials_mode &&
          fetch_redirect_mode == request.fetch_redirect_mode &&
          fetch_integrity == request.fetch_integrity &&
          fetch_request_context_type == request.fetch_request_context_type &&
-         fetch_frame_type == request.fetch_frame_type &&
          request_body == request.request_body &&
          keepalive == request.keepalive &&
          has_user_gesture == request.has_user_gesture &&
@@ -58,6 +60,8 @@ bool ResourceRequest::EqualsForTesting(const ResourceRequest& request) const {
          initiated_in_secure_context == request.initiated_in_secure_context &&
          upgrade_if_insecure == request.upgrade_if_insecure &&
          is_revalidating == request.is_revalidating &&
+         should_also_use_factory_bound_origin_for_cors ==
+             request.should_also_use_factory_bound_origin_for_cors &&
          throttling_profile_id == request.throttling_profile_id &&
          custom_proxy_pre_cache_headers.ToString() ==
              request.custom_proxy_pre_cache_headers.ToString() &&
@@ -65,7 +69,16 @@ bool ResourceRequest::EqualsForTesting(const ResourceRequest& request) const {
              request.custom_proxy_post_cache_headers.ToString() &&
          custom_proxy_use_alternate_proxy_list ==
              request.custom_proxy_use_alternate_proxy_list &&
-         fetch_window_id == request.fetch_window_id;
+         fetch_window_id == request.fetch_window_id &&
+         devtools_request_id == request.devtools_request_id;
+}
+
+bool ResourceRequest::SendsCookies() const {
+  return allow_credentials && !(load_flags & net::LOAD_DO_NOT_SEND_COOKIES);
+}
+
+bool ResourceRequest::SavesCookies() const {
+  return allow_credentials && !(load_flags & net::LOAD_DO_NOT_SAVE_COOKIES);
 }
 
 }  // namespace network

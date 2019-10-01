@@ -65,7 +65,7 @@ class LayoutOnAddView : public View {
       return;
 
     // Contrive a realistic thing that a View might what to do, but which would
-    // break the layout machinery. Note an override of OnNativeThemeChanged()
+    // break the layout machinery. Note an override of OnThemeChanged()
     // would be more compelling, but there is no Widget in this test harness.
     SetPreferredSize(target_size_);
     PreferredSizeChanged();
@@ -104,10 +104,7 @@ class GridLayoutTest : public testing::Test {
         host_.SetLayoutManager(std::make_unique<views::GridLayout>(&host_));
   }
 
-  void RemoveAll() {
-    for (int i = host_.child_count() - 1; i >= 0; i--)
-      host_.RemoveChildView(host_.child_at(i));
-  }
+  void RemoveAll() { host_.RemoveAllChildViews(false); }
 
   gfx::Size GetPreferredSize() { return layout_->GetPreferredSize(&host_); }
 
@@ -127,10 +124,7 @@ class GridLayoutAlignmentTest : public testing::Test {
     v1_.SetPreferredSize(gfx::Size(10, 20));
   }
 
-  void RemoveAll() {
-    for (int i = host_.child_count() - 1; i >= 0; i--)
-      host_.RemoveChildView(host_.child_at(i));
-  }
+  void RemoveAll() { host_.RemoveAllChildViews(false); }
 
   void TestAlignment(GridLayout::Alignment alignment, gfx::Rect* bounds) {
     ColumnSet* c1 = layout_->AddColumnSet(0);
@@ -573,44 +567,37 @@ TEST_F(GridLayoutTest, FixedSize) {
 
   ColumnSet* set = layout()->AddColumnSet(0);
 
-  int column_count = 4;
-  int title_width = 100;
-  int row_count = 2;
-  int pref_width = 10;
-  int pref_height = 20;
+  constexpr size_t kRowCount = 2;
+  constexpr size_t kColumnCount = 4;
+  constexpr int kTitleWidth = 100;
+  constexpr int kPrefWidth = 10;
+  constexpr int kPrefHeight = 20;
 
-  for (int i = 0; i < column_count; ++i) {
-    set->AddColumn(GridLayout::CENTER,
-                   GridLayout::CENTER,
-                   0,
-                   GridLayout::FIXED,
-                   title_width,
-                   title_width);
+  for (size_t i = 0; i < kColumnCount; ++i) {
+    set->AddColumn(GridLayout::CENTER, GridLayout::CENTER, 0, GridLayout::FIXED,
+                   kTitleWidth, kTitleWidth);
   }
 
-  for (int row = 0; row < row_count; ++row) {
+  for (size_t row = 0; row < kRowCount; ++row) {
     layout()->StartRow(0, 0);
-    for (int col = 0; col < column_count; ++col) {
-      layout()->AddView(CreateSizedView(gfx::Size(pref_width, pref_height)));
-    }
+    for (size_t column = 0; column < kColumnCount; ++column)
+      layout()->AddView(CreateSizedView(gfx::Size(kPrefWidth, kPrefHeight)));
   }
 
   layout()->Layout(&host());
 
-  for (int i = 0; i < column_count; ++i) {
-    for (int row = 0; row < row_count; ++row) {
-      View* view = host().child_at(row * column_count + i);
+  auto i = host().children().cbegin();
+  for (size_t row = 0; row < kRowCount; ++row) {
+    for (size_t column = 0; column < kColumnCount; ++column, ++i) {
       ExpectViewBoundsEquals(
-          2 + title_width * i + (title_width - pref_width) / 2,
-          2 + pref_height * row,
-          pref_width,
-          pref_height, view);
+          2 + kTitleWidth * column + (kTitleWidth - kPrefWidth) / 2,
+          2 + kPrefHeight * row, kPrefWidth, kPrefHeight, *i);
     }
   }
 
-  gfx::Size pref = GetPreferredSize();
-  EXPECT_EQ(gfx::Size(column_count * title_width + 4,
-                      row_count * pref_height + 4), pref);
+  EXPECT_EQ(
+      gfx::Size(kColumnCount * kTitleWidth + 4, kRowCount * kPrefHeight + 4),
+      GetPreferredSize());
 }
 
 TEST_F(GridLayoutTest, RowSpanWithPaddingRow) {

@@ -37,9 +37,9 @@ TEST(IndexedDBIOErrorTest, CleanUpTest) {
   const base::FilePath path = temp_directory.GetPath();
 
   auto task_runner = base::SequencedTaskRunnerHandle::Get();
-  scoped_refptr<IndexedDBBackingStore> backing_store =
-      base::MakeRefCounted<IndexedDBBackingStore>(
-          nullptr, origin, path,
+  std::unique_ptr<IndexedDBBackingStore> backing_store =
+      std::make_unique<IndexedDBBackingStore>(
+          IndexedDBBackingStore::Mode::kInMemory, nullptr, origin, path,
           std::make_unique<LevelDBDatabase>(
               indexed_db::FakeLevelDBFactory::GetBrokenLevelDB(
                   leveldb::Status::IOError("It's broken!"), path),
@@ -69,9 +69,9 @@ TEST(IndexedDBNonRecoverableIOErrorTest, NuancedCleanupTest) {
       MakeIOError("some filename", "some message", leveldb_env::kNewLogger,
                   base::File::FILE_ERROR_FAILED)};
   for (leveldb::Status error_status : errors) {
-    scoped_refptr<IndexedDBBackingStore> backing_store =
-        base::MakeRefCounted<IndexedDBBackingStore>(
-            nullptr, origin, path,
+    std::unique_ptr<IndexedDBBackingStore> backing_store =
+        std::make_unique<IndexedDBBackingStore>(
+            IndexedDBBackingStore::Mode::kInMemory, nullptr, origin, path,
             std::make_unique<LevelDBDatabase>(
                 indexed_db::FakeLevelDBFactory::GetBrokenLevelDB(error_status,
                                                                  path),

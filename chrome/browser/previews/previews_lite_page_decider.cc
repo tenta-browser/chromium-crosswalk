@@ -6,6 +6,7 @@
 
 #include <vector>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/memory/ptr_util.h"
@@ -14,6 +15,8 @@
 #include "build/build_config.h"
 #include "chrome/browser/data_reduction_proxy/data_reduction_proxy_chrome_settings.h"
 #include "chrome/browser/data_reduction_proxy/data_reduction_proxy_chrome_settings_factory.h"
+#include "chrome/browser/predictors/loading_predictor.h"
+#include "chrome/browser/predictors/loading_predictor_factory.h"
 #include "chrome/browser/previews/previews_lite_page_infobar_delegate.h"
 #include "chrome/browser/previews/previews_lite_page_navigation_throttle.h"
 #include "chrome/browser/previews/previews_service.h"
@@ -22,6 +25,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_metrics.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_service.h"
+#include "components/data_reduction_proxy/core/common/data_reduction_proxy_headers.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
 #include "components/data_use_measurement/core/data_use_user_data.h"
 #include "components/pref_registry/pref_registry_syncable.h"
@@ -37,6 +41,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "net/base/net_errors.h"
+#include "services/network/public/cpp/features.h"
 
 namespace {
 const char kUserNeedsNotification[] =
@@ -48,7 +53,7 @@ const size_t kMaxBlacklistEntries = 30;
 // Cleans up the given host blacklist by removing all stale (expiry has passed)
 // entries. If after removing all stale entries, the blacklist is still over
 // capacity, then remove the entry with the closest expiration.
-void RemoveStaleEntries(base::DictionaryValue* dict) {
+void RemoveStaleBlacklistEntries(base::DictionaryValue* dict) {
   std::vector<std::string> keys_to_delete;
 
   base::Time min_value = base::Time::Max();
@@ -79,6 +84,19 @@ void RemoveStaleEntries(base::DictionaryValue* dict) {
 
   DCHECK_GE(kMaxBlacklistEntries, dict->DictSize());
 }
+
+void PreconnectToLitePagesServer(content::BrowserContext* browser_context) {
+  predictors::LoadingPredictor* loading_predictor =
+      predictors::LoadingPredictorFactory::GetForProfile(
+          Profile::FromBrowserContext(browser_context));
+
+  if (!loading_predictor || !loading_predictor->preconnect_manager())
+    return;
+
+  loading_predictor->preconnect_manager()->StartPreconnectUrl(
+      previews::params::GetLitePagePreviewsDomainURL(), true);
+}
+
 }  // namespace
 
 // This WebContentsObserver watches the rest of the current navigation shows a
@@ -136,7 +154,8 @@ PreviewsLitePageDecider::PreviewsLitePageDecider(
       page_id_(base::RandUint64()),
       drp_settings_(nullptr),
       pref_service_(nullptr),
-      host_bypass_blacklist_(std::make_unique<base::DictionaryValue>()) {
+      host_bypass_blacklist_(std::make_unique<base::DictionaryValue>()),
+      drp_headers_valid_(false) {
   if (!browser_context)
     return;
 
@@ -147,6 +166,11 @@ PreviewsLitePageDecider::PreviewsLitePageDecider(
     return;
 
   DCHECK(!browser_context->IsOffTheRecord());
+
+  // TODO(crbug.com/971918): Remove once a more robust prober is setup.
+  if (drp_settings->IsDataReductionProxyEnabled()) {
+    PreconnectToLitePagesServer(browser_context);
+  }
 
   pref_service_ = Profile::FromBrowserContext(browser_context)->GetPrefs();
   host_bypass_blacklist_ =
@@ -176,8 +200,7 @@ PreviewsLitePageDecider::~PreviewsLitePageDecider() = default;
 void PreviewsLitePageDecider::RegisterProfilePrefs(
     user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterBooleanPref(kUserNeedsNotification, true);
-  registry->RegisterDictionaryPref(kHostBlacklist,
-                                   std::make_unique<base::DictionaryValue>());
+  registry->RegisterDictionaryPref(kHostBlacklist);
 }
 
 // static
@@ -191,7 +214,8 @@ PreviewsLitePageDecider::MaybeCreateThrottleFor(
   if (!handle->IsInMainFrame())
     return nullptr;
 
-  if (base::FeatureList::IsEnabled(
+  if (base::FeatureList::IsEnabled(network::features::kNetworkService) &&
+      base::FeatureList::IsEnabled(
           previews::features::kHTTPSServerPreviewsUsingURLLoader)) {
     return nullptr;
   }
@@ -223,9 +247,34 @@ PreviewsLitePageDecider::MaybeCreateThrottleFor(
   return nullptr;
 }
 
+// static
+uint64_t PreviewsLitePageDecider::GeneratePageIdForWebContents(
+    content::WebContents* web_contents) {
+  return PreviewsLitePageDecider::GeneratePageIdForProfile(
+      Profile::FromBrowserContext(web_contents->GetBrowserContext()));
+}
+
+// static
+uint64_t PreviewsLitePageDecider::GeneratePageIdForProfile(Profile* profile) {
+  PreviewsService* previews_service =
+      PreviewsServiceFactory::GetForProfile(profile);
+  return previews_service
+             ? previews_service->previews_lite_page_decider()->GeneratePageID()
+             : 0;
+}
+
 void PreviewsLitePageDecider::OnProxyRequestHeadersChanged(
     const net::HttpRequestHeaders& headers) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  std::string drp_header;
+  drp_headers_valid_ =
+      headers.GetHeader(data_reduction_proxy::chrome_proxy_header(),
+                        &drp_header) &&
+      (drp_header.find(",s=") != std::string::npos ||
+       drp_header.find(" s=") != std::string::npos ||
+       base::StartsWith(drp_header, "s=", base::CompareCase::SENSITIVE));
+
   // This is done so that successive page ids cannot be used to track users
   // across sessions. These sessions are contained in the chrome-proxy header.
   page_id_ = base::RandUint64();
@@ -340,11 +389,14 @@ void PreviewsLitePageDecider::ReportDataSavings(int64_t network_bytes,
   if (!drp_settings_ || !drp_settings_->data_reduction_proxy_service())
     return;
 
+  // The total data usage is tracked for all data in Chrome, so we only need to
+  // update the savings.
+  int64_t data_saved = original_bytes - network_bytes;
   drp_settings_->data_reduction_proxy_service()->UpdateDataUseForHost(
-      network_bytes, original_bytes, host);
+      0, data_saved, host);
 
   drp_settings_->data_reduction_proxy_service()->UpdateContentLengths(
-      network_bytes, original_bytes, true /* data_reduction_proxy_enabled */,
+      0, data_saved, true /* data_reduction_proxy_enabled */,
       data_reduction_proxy::DataReductionProxyRequestType::
           VIA_DATA_REDUCTION_PROXY,
       "text/html", true /* is_user_traffic */,
@@ -384,7 +436,7 @@ void PreviewsLitePageDecider::BlacklistBypassedHost(const std::string& host,
   host_bypass_blacklist_->SetKey(
       host, base::Value((base::Time::Now() + duration).ToDoubleT()));
 
-  RemoveStaleEntries(host_bypass_blacklist_.get());
+  RemoveStaleBlacklistEntries(host_bypass_blacklist_.get());
   if (pref_service_)
     pref_service_->Set(kHostBlacklist, *host_bypass_blacklist_);
 }

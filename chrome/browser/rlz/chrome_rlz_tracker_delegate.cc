@@ -4,6 +4,7 @@
 
 #include "chrome/browser/rlz/chrome_rlz_tracker_delegate.h"
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "build/build_config.h"
@@ -126,7 +127,7 @@ bool ChromeRLZTrackerDelegate::GetBrand(std::string* brand) {
 }
 
 bool ChromeRLZTrackerDelegate::IsBrandOrganic(const std::string& brand) {
-  return brand.empty() || google_brand::IsOrganic(brand);
+  return google_brand::IsOrganic(brand);
 }
 
 bool ChromeRLZTrackerDelegate::GetReactivationBrand(std::string* brand) {

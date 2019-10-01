@@ -300,6 +300,18 @@ class CONTENT_EXPORT MediaStreamManager
                                          const std::string& device_guid,
                                          const std::string& raw_unique_id);
 
+  // Convenience method to get the raw device ID from the HMAC |hmac_device_id|
+  // for the given |security_origin| and |salt|. |stream_type| must be
+  // blink::MEDIA_DEVICE_AUDIO_CAPTURE or blink::MEDIA_DEVICE_VIDEO_CAPTURE.
+  // The result will be returned via |callback| on the given |task_runner|.
+  static void GetMediaDeviceIDForHMAC(
+      blink::MediaStreamType stream_type,
+      std::string salt,
+      url::Origin security_origin,
+      std::string hmac_device_id,
+      scoped_refptr<base::SequencedTaskRunner> task_runner,
+      base::OnceCallback<void(const base::Optional<std::string>&)> callback);
+
   // Returns true if the renderer process identified with |render_process_id|
   // is allowed to access |origin|.
   static bool IsOriginAllowed(int render_process_id, const url::Origin& origin);
@@ -339,7 +351,8 @@ class CONTENT_EXPORT MediaStreamManager
   // |DeviceRequests| is a list to ensure requests are processed in the order
   // they arrive. The first member of the pair is the label of the
   // |DeviceRequest|.
-  using LabeledDeviceRequest = std::pair<std::string, DeviceRequest*>;
+  using LabeledDeviceRequest =
+      std::pair<std::string, std::unique_ptr<DeviceRequest>>;
   using DeviceRequests = std::list<LabeledDeviceRequest>;
 
   void InitializeMaybeAsync(
@@ -374,7 +387,7 @@ class CONTENT_EXPORT MediaStreamManager
   bool RequestDone(const DeviceRequest& request) const;
   MediaStreamProvider* GetDeviceManager(blink::MediaStreamType stream_type);
   void StartEnumeration(DeviceRequest* request, const std::string& label);
-  std::string AddRequest(DeviceRequest* request);
+  std::string AddRequest(std::unique_ptr<DeviceRequest> request);
   DeviceRequest* FindRequest(const std::string& label) const;
   void DeleteRequest(const std::string& label);
   // Prepare the request with label |label| by starting device enumeration if

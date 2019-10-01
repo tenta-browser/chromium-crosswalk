@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
@@ -91,8 +93,8 @@ class ContentVerifyJobUnittest : public ExtensionsTest {
     auto run_content_read_step = [](ContentVerifyJob* verify_job,
                                     std::string* resource_contents) {
       // Simulate serving |resource_contents| from |resource_path|.
-      verify_job->BytesRead(resource_contents->size(),
-                            base::data(*resource_contents));
+      verify_job->BytesRead(base::data(*resource_contents),
+                            resource_contents->size(), base::File::FILE_OK);
       verify_job->DoneReading();
     };
 
@@ -363,11 +365,11 @@ class ContentMismatchUnittest
   DISALLOW_COPY_AND_ASSIGN(ContentMismatchUnittest);
 };
 
-INSTANTIATE_TEST_CASE_P(ContentVerifyJobUnittest,
-                        ContentMismatchUnittest,
-                        testing::Values(kNone,
-                                        kContentReadBeforeHashesReady,
-                                        kHashesReadyBeforeContentRead));
+INSTANTIATE_TEST_SUITE_P(ContentVerifyJobUnittest,
+                         ContentMismatchUnittest,
+                         testing::Values(kNone,
+                                         kContentReadBeforeHashesReady,
+                                         kHashesReadyBeforeContentRead));
 
 // Tests that content modification causes content verification failure.
 TEST_P(ContentMismatchUnittest, ContentMismatch) {

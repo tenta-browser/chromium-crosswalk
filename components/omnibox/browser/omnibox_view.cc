@@ -19,7 +19,7 @@
 #include "components/omnibox/browser/location_bar_model.h"
 #include "components/omnibox/browser/omnibox_edit_controller.h"
 #include "components/omnibox/browser/omnibox_edit_model.h"
-#include "components/omnibox/browser/omnibox_field_trial.h"
+#include "components/omnibox/common/omnibox_features.h"
 #include "extensions/common/constants.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -168,15 +168,6 @@ gfx::ImageSkia OmniboxView::GetIcon(int dip_size,
 
   const gfx::VectorIcon& vector_icon = match.GetVectorIcon(is_bookmarked);
 
-  // When the blue search loop experiment is enabled, the in-omnibox vector
-  // icon for search type matches should be blue as well. This icon is used if
-  // the default search engine favicon has not yet been fetched, or is disabled.
-  if (base::FeatureList::IsEnabled(
-          omnibox::kUIExperimentBlueSearchLoopAndSearchQuery) &&
-      AutocompleteMatch::IsSearchType(match.type)) {
-    return gfx::CreateVectorIcon(vector_icon, dip_size, search_alternate_color);
-  }
-
   return gfx::CreateVectorIcon(vector_icon, dip_size, color);
 #endif  // defined(OS_ANDROID) || defined(OS_IOS)
 }
@@ -281,6 +272,11 @@ bool OmniboxView::UpdateTextStyle(
     const base::string16& display_text,
     const bool text_is_url,
     const AutocompleteSchemeClassifier& classifier) {
+  if (!text_is_url) {
+    SetEmphasis(true, gfx::Range::InvalidRange());
+    return false;  // Path not eligible for fading if it's not even a URL.
+  }
+
   enum DemphasizeComponents {
     EVERYTHING,
     ALL_BUT_SCHEME,
@@ -292,21 +288,19 @@ bool OmniboxView::UpdateTextStyle(
   AutocompleteInput::ParseForEmphasizeComponents(display_text, classifier,
                                                  &scheme, &host);
 
-  if (text_is_url) {
-    const base::string16 url_scheme =
-        display_text.substr(scheme.begin, scheme.len);
-    // Extension IDs are not human-readable, so deemphasize everything to draw
-    // attention to the human-readable name in the location icon text.
-    // Data URLs are rarely human-readable and can be used for spoofing, so draw
-    // attention to the scheme to emphasize "this is just a bunch of data".
-    // For normal URLs, the host is the best proxy for "identity".
-    if (url_scheme == base::UTF8ToUTF16(extensions::kExtensionScheme))
-      deemphasize = EVERYTHING;
-    else if (url_scheme == base::UTF8ToUTF16(url::kDataScheme))
-      deemphasize = ALL_BUT_SCHEME;
-    else if (host.is_nonempty())
-      deemphasize = ALL_BUT_HOST;
-  }
+  const base::string16 url_scheme =
+      display_text.substr(scheme.begin, scheme.len);
+  // Extension IDs are not human-readable, so deemphasize everything to draw
+  // attention to the human-readable name in the location icon text.
+  // Data URLs are rarely human-readable and can be used for spoofing, so draw
+  // attention to the scheme to emphasize "this is just a bunch of data".
+  // For normal URLs, the host is the best proxy for "identity".
+  if (url_scheme == base::UTF8ToUTF16(extensions::kExtensionScheme))
+    deemphasize = EVERYTHING;
+  else if (url_scheme == base::UTF8ToUTF16(url::kDataScheme))
+    deemphasize = ALL_BUT_SCHEME;
+  else if (host.is_nonempty())
+    deemphasize = ALL_BUT_HOST;
 
   gfx::Range scheme_range = scheme.is_nonempty()
                                 ? gfx::Range(scheme.begin, scheme.end())

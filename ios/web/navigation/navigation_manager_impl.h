@@ -13,7 +13,7 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #import "ios/web/navigation/navigation_item_impl.h"
-#import "ios/web/public/navigation_item_list.h"
+#import "ios/web/public/deprecated/navigation_item_list.h"
 #import "ios/web/public/navigation_manager.h"
 #include "ios/web/public/reload_type.h"
 #include "ui/base/page_transition_types.h"
@@ -122,7 +122,25 @@ class NavigationManagerImpl : public NavigationManager {
       UserAgentOverrideOption user_agent_override_option) = 0;
 
   // Commits the pending item, if any.
+  // TODO(crbug.com/936933): Remove this method.
   virtual void CommitPendingItem() = 0;
+
+  // Commits given pending |item| stored outside of navigation manager
+  // (normally in NavigationContext). It is possible to have additional pending
+  // items owned by navigation manager and/or outside of navigation manager.
+  virtual void CommitPendingItem(std::unique_ptr<NavigationItemImpl> item) = 0;
+
+  // Removes pending item, so it can be stored in NavigationContext.
+  // Pending item is stored in this object when NavigationContext object does
+  // not yet exist (e.g. when navigation was just requested, or when navigation
+  // has aborted).
+  virtual std::unique_ptr<NavigationItemImpl> ReleasePendingItem() = 0;
+
+  // Allows transferring pending item from NavigationContext to this object.
+  // Pending item can be moved from NavigationContext to this object when
+  // navigation is aborted, but pending item should be retained.
+  virtual void SetPendingItem(
+      std::unique_ptr<web::NavigationItemImpl> item) = 0;
 
   // Returns the navigation index that differs from the current item (or pending
   // item if it exists) by the specified |offset|, skipping redirect navigation
@@ -175,6 +193,10 @@ class NavigationManagerImpl : public NavigationManager {
   // TODO(crbug.com/661316): Make this private once all navigation code is moved
   // out of CRWWebController.
   NavigationItemImpl* GetCurrentItemImpl() const;
+
+  // Returns the last committed NavigationItem, which may be null if there
+  // are no committed entries or session restoration is in-progress.
+  NavigationItemImpl* GetLastCommittedItemImpl() const;
 
   // Updates the pending or last committed navigation item after replaceState.
   // TODO(crbug.com/783382): This is a legacy method to maintain backward
@@ -238,6 +260,9 @@ class NavigationManagerImpl : public NavigationManager {
   // items.
   void WillRestore(size_t item_count);
 
+  // Some app-specific URLs need to be rewritten to about: scheme.
+  void RewriteItemURLIfNecessary(NavigationItem* item) const;
+
   // Creates a NavigationItem using the given properties, where |previous_url|
   // is the URL of the navigation just prior to the current one. If
   // |url_rewriters| is not nullptr, apply them before applying the permanent
@@ -261,7 +286,8 @@ class NavigationManagerImpl : public NavigationManager {
                                NavigationInitiationType type,
                                bool has_user_gesture) = 0;
   virtual void FinishReload();
-  virtual void FinishLoadURLWithParams();
+  virtual void FinishLoadURLWithParams(
+      NavigationInitiationType initiation_type);
 
   // Returns true if the subclass uses placeholder URLs and this is such a URL.
   virtual bool IsPlaceholderUrl(const GURL& url) const;

@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "components/signin/core/browser/account_info.h"
+#include "google_apis/gaia/gaia_auth_util.h"
 
 namespace {
 
@@ -40,6 +41,24 @@ const char kNoHostedDomainFound[] = "NO_HOSTED_DOMAIN";
 // This must be a string which can never be a valid picture URL.
 const char kNoPictureURLFound[] = "NO_PICTURE_URL";
 
+CoreAccountInfo::CoreAccountInfo() = default;
+
+CoreAccountInfo::~CoreAccountInfo() = default;
+
+CoreAccountInfo::CoreAccountInfo(const CoreAccountInfo& other) = default;
+
+CoreAccountInfo::CoreAccountInfo(CoreAccountInfo&& other) noexcept = default;
+
+CoreAccountInfo& CoreAccountInfo::operator=(const CoreAccountInfo& other) =
+    default;
+
+CoreAccountInfo& CoreAccountInfo::operator=(CoreAccountInfo&& other) noexcept =
+    default;
+
+bool CoreAccountInfo::IsEmpty() const {
+  return account_id.empty() && email.empty() && gaia.empty();
+}
+
 AccountInfo::AccountInfo() = default;
 
 AccountInfo::~AccountInfo() = default;
@@ -53,9 +72,9 @@ AccountInfo& AccountInfo::operator=(const AccountInfo& other) = default;
 AccountInfo& AccountInfo::operator=(AccountInfo&& other) noexcept = default;
 
 bool AccountInfo::IsEmpty() const {
-  return account_id.empty() && email.empty() && gaia.empty() &&
-         hosted_domain.empty() && full_name.empty() && given_name.empty() &&
-         locale.empty() && picture_url.empty();
+  return CoreAccountInfo::IsEmpty() && hosted_domain.empty() &&
+         full_name.empty() && given_name.empty() && locale.empty() &&
+         picture_url.empty();
 }
 
 bool AccountInfo::IsValid() const {
@@ -85,11 +104,25 @@ bool AccountInfo::UpdateWith(const AccountInfo& other) {
 
   return modified;
 }
+bool operator==(const CoreAccountInfo& l, const CoreAccountInfo& r) {
+  return l.account_id == r.account_id && l.gaia == r.gaia &&
+         gaia::AreEmailsSame(l.email, r.email) &&
+         l.is_under_advanced_protection == r.is_under_advanced_protection;
+}
+bool operator!=(const CoreAccountInfo& l, const CoreAccountInfo& r) {
+  return !(l == r);
+}
 
-AccountId AccountIdFromAccountInfo(const AccountInfo& account_info) {
-  if (account_info.IsEmpty())
+std::ostream& operator<<(std::ostream& os, const CoreAccountInfo& account) {
+  os << "account_id: " << account.account_id << ", gaia: " << account.gaia
+     << ", email: " << account.email << ", adv_prot: " << std::boolalpha
+     << account.is_under_advanced_protection;
+  return os;
+}
+
+AccountId AccountIdFromAccountInfo(const CoreAccountInfo& account_info) {
+  if (account_info.email.empty() || account_info.gaia.empty())
     return EmptyAccountId();
 
-  DCHECK(!account_info.email.empty() && !account_info.gaia.empty());
   return AccountId::FromUserEmailGaiaId(account_info.email, account_info.gaia);
 }

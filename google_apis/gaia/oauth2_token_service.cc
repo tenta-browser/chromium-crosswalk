@@ -446,9 +446,9 @@ OAuth2TokenService::StartRequestForMultilogin(
   // If we can get refresh token from the delegate, inform cosumer right away.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(&RequestImpl::InformConsumer, request.get()->AsWeakPtr(),
-                 GoogleServiceAuthError(GoogleServiceAuthError::NONE),
-                 token_response));
+      base::BindOnce(&RequestImpl::InformConsumer, request.get()->AsWeakPtr(),
+                     GoogleServiceAuthError(GoogleServiceAuthError::NONE),
+                     token_response));
   return std::move(request);
 }
 
@@ -515,8 +515,8 @@ OAuth2TokenService::StartRequestForClientWithContext(
 
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(&RequestImpl::InformConsumer, request->AsWeakPtr(), error,
-                   OAuth2AccessTokenConsumer::TokenResponse()));
+        base::BindOnce(&RequestImpl::InformConsumer, request->AsWeakPtr(),
+                       error, OAuth2AccessTokenConsumer::TokenResponse()));
     return std::move(request);
   }
 
@@ -580,9 +580,9 @@ void OAuth2TokenService::InformConsumerWithCachedTokenResponse(
   }
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(&RequestImpl::InformConsumer, request->AsWeakPtr(),
-                 GoogleServiceAuthError(GoogleServiceAuthError::NONE),
-                 *cache_token_response));
+      base::BindOnce(&RequestImpl::InformConsumer, request->AsWeakPtr(),
+                     GoogleServiceAuthError(GoogleServiceAuthError::NONE),
+                     *cache_token_response));
 }
 
 std::vector<std::string> OAuth2TokenService::GetAccounts() const {
@@ -711,10 +711,10 @@ OAuth2TokenService::GetCachedTokenResponse(
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   TokenCache::iterator token_iterator = token_cache_.find(request_parameters);
   if (token_iterator == token_cache_.end())
-    return NULL;
+    return nullptr;
   if (token_iterator->second.expiration_time <= base::Time::Now()) {
     token_cache_.erase(token_iterator);
-    return NULL;
+    return nullptr;
   }
   return &token_iterator->second;
 }

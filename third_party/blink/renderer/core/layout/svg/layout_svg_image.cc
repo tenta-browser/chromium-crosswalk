@@ -35,6 +35,7 @@
 #include "third_party/blink/renderer/core/layout/svg/svg_resources.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_resources_cache.h"
 #include "third_party/blink/renderer/core/layout/svg/transformed_hit_test_location.h"
+#include "third_party/blink/renderer/core/paint/image_element_timing.h"
 #include "third_party/blink/renderer/core/paint/svg_image_painter.h"
 #include "third_party/blink/renderer/core/svg/svg_image_element.h"
 #include "third_party/blink/renderer/platform/geometry/length_functions.h"
@@ -46,7 +47,7 @@ LayoutSVGImage::LayoutSVGImage(SVGImageElement* impl)
     : LayoutSVGModelObject(impl),
       needs_boundaries_update_(true),
       needs_transform_update_(true),
-      image_resource_(LayoutImageResource::Create()) {
+      image_resource_(MakeGarbageCollected<LayoutImageResource>()) {
   image_resource_->Initialize(this);
 }
 
@@ -54,6 +55,12 @@ LayoutSVGImage::~LayoutSVGImage() = default;
 
 void LayoutSVGImage::WillBeDestroyed() {
   image_resource_->Shutdown();
+
+  if (RuntimeEnabledFeatures::ElementTimingEnabled(&GetDocument())) {
+    if (LocalDOMWindow* window = GetDocument().domWindow())
+      ImageElementTiming::From(*window).NotifyWillBeDestroyed(this);
+  }
+
   LayoutSVGModelObject::WillBeDestroyed();
 }
 
@@ -187,7 +194,8 @@ bool LayoutSVGImage::NodeAtPoint(HitTestResult& result,
                                             LocalToSVGParentTransform());
   if (!local_location)
     return false;
-  if (!SVGLayoutSupport::IntersectsClipPath(*this, *local_location))
+  if (!SVGLayoutSupport::IntersectsClipPath(*this, object_bounding_box_,
+                                            *local_location))
     return false;
 
   if (hit_rules.can_hit_fill || hit_rules.can_hit_bounding_box) {

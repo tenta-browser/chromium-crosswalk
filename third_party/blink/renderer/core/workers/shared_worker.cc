@@ -57,8 +57,9 @@ SharedWorker* SharedWorker::Create(ExecutionContext* context,
   UseCounter::Count(context, WebFeature::kSharedWorkerStart);
 
   SharedWorker* worker = MakeGarbageCollected<SharedWorker>(context);
+  worker->UpdateStateIfNeeded();
 
-  MessageChannel* channel = MessageChannel::Create(context);
+  auto* channel = MakeGarbageCollected<MessageChannel>(context);
   worker->port_ = channel->port1();
   MessagePortChannel remote_port = channel->port2()->Disentangle();
 
@@ -110,6 +111,9 @@ const AtomicString& SharedWorker::InterfaceName() const {
 bool SharedWorker::HasPendingActivity() const {
   return is_being_connected_;
 }
+
+void SharedWorker::ContextLifecycleStateChanged(
+    mojom::FrameLifecycleState state) {}
 
 void SharedWorker::Trace(blink::Visitor* visitor) {
   visitor->Trace(port_);

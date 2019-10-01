@@ -12,6 +12,7 @@
 #include "net/base/net_errors.h"
 #include "testing/platform_test.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "url/gurl.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -49,9 +50,13 @@ using ErrorPageUtilTest = PlatformTest;
 // Tests error page for non-POST and non-OTR error. The expected strings are:
 // error code, failing url, reload button.
 TEST_F(ErrorPageUtilTest, NonPostNonOtrError) {
-  NSString* html = GetErrorPage(CreateTestError(NSURLErrorTimedOut),
+  NSString* html = GetErrorPage(GURL(base::SysNSStringToUTF8(kTestUrl)),
+                                CreateTestError(NSURLErrorTimedOut),
                                 /*is_post=*/false,
                                 /*is_off_the_record=*/false);
+
+  // Make sure gzipped HTML is successfully decompressed.
+  EXPECT_TRUE([html containsString:@"<head>"]);
 
   EXPECT_TRUE([html containsString:ErrorAsString(ERR_CONNECTION_TIMED_OUT)]);
   EXPECT_TRUE([html containsString:kTestUrl]);
@@ -62,9 +67,13 @@ TEST_F(ErrorPageUtilTest, NonPostNonOtrError) {
 // not have Reload button. The expected strings are: error code and failing
 // url.
 TEST_F(ErrorPageUtilTest, PostNonOtrError) {
-  NSString* html = GetErrorPage(CreateTestError(NSURLErrorTimedOut),
+  NSString* html = GetErrorPage(GURL(base::SysNSStringToUTF8(kTestUrl)),
+                                CreateTestError(NSURLErrorTimedOut),
                                 /*is_post=*/true,
                                 /*is_off_the_record=*/false);
+
+  // Make sure gzipped HTML is successfully decompressed.
+  EXPECT_TRUE([html containsString:@"<head>"]);
 
   EXPECT_TRUE([html containsString:ErrorAsString(ERR_CONNECTION_TIMED_OUT)]);
   EXPECT_TRUE([html containsString:kTestUrl]);
@@ -75,9 +84,13 @@ TEST_F(ErrorPageUtilTest, PostNonOtrError) {
 // same as non-OTR. The expected strings are: error code, failing url, reload
 // button.
 TEST_F(ErrorPageUtilTest, NonPostOtrError) {
-  NSString* html = GetErrorPage(CreateTestError(NSURLErrorTimedOut),
+  NSString* html = GetErrorPage(GURL(base::SysNSStringToUTF8(kTestUrl)),
+                                CreateTestError(NSURLErrorTimedOut),
                                 /*is_post=*/false,
                                 /*is_off_the_record=*/true);
+
+  // Make sure gzipped HTML is successfully decompressed.
+  EXPECT_TRUE([html containsString:@"<head>"]);
 
   EXPECT_TRUE([html containsString:ErrorAsString(ERR_CONNECTION_TIMED_OUT)]);
   EXPECT_TRUE([html containsString:kTestUrl]);
@@ -88,9 +101,13 @@ TEST_F(ErrorPageUtilTest, NonPostOtrError) {
 // as non-OTR. Error pages for POST requests do not have Reload button. The
 // expected strings are: error code and failing url.
 TEST_F(ErrorPageUtilTest, PostOtrError) {
-  NSString* html = GetErrorPage(CreateTestError(NSURLErrorTimedOut),
+  NSString* html = GetErrorPage(GURL(base::SysNSStringToUTF8(kTestUrl)),
+                                CreateTestError(NSURLErrorTimedOut),
                                 /*is_post=*/true,
                                 /*is_off_the_record=*/true);
+
+  // Make sure gzipped HTML is successfully decompressed.
+  EXPECT_TRUE([html containsString:@"<head>"]);
 
   EXPECT_TRUE([html containsString:ErrorAsString(ERR_CONNECTION_TIMED_OUT)]);
   EXPECT_TRUE([html containsString:kTestUrl]);
@@ -104,9 +121,12 @@ TEST_F(ErrorPageUtilTest, NoUrlSpec) {
       errorWithDomain:NSURLErrorDomain
                  code:NSURLErrorTimedOut
              userInfo:nil]);
-  NSString* html = GetErrorPage(error,
+  NSString* html = GetErrorPage(GURL::EmptyGURL(), error,
                                 /*is_post=*/false,
                                 /*is_off_the_record=*/false);
+
+  // Make sure gzipped HTML is successfully decompressed.
+  EXPECT_TRUE([html containsString:@"<head>"]);
 
   EXPECT_TRUE([html containsString:ErrorAsString(ERR_CONNECTION_TIMED_OUT)]);
   EXPECT_TRUE([html containsString:GetNSString(IDS_ERRORPAGES_BUTTON_RELOAD)]);

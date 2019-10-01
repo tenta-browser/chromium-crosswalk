@@ -11,7 +11,7 @@
 #include "content/renderer/media/stream/mock_constraint_factory.h"
 #include "media/base/limits.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/platform/modules/mediastream/platform_media_stream_source.h"
+#include "third_party/blink/public/platform/modules/mediastream/web_platform_media_stream_source.h"
 #include "third_party/blink/public/platform/web_media_constraints.h"
 
 namespace content {
@@ -21,7 +21,7 @@ namespace {
 const double kDefaultScreenCastAspectRatio =
     static_cast<double>(kDefaultScreenCastWidth) / kDefaultScreenCastHeight;
 
-void CheckNonResolutionDefaults(const VideoCaptureSettings& result) {
+void CheckNonResolutionDefaults(const blink::VideoCaptureSettings& result) {
   EXPECT_EQ(kDefaultScreenCastFrameRate, result.FrameRate());
   EXPECT_EQ(base::Optional<double>(), result.min_frame_rate());
   EXPECT_EQ(base::Optional<double>(), result.max_frame_rate());
@@ -30,14 +30,15 @@ void CheckNonResolutionDefaults(const VideoCaptureSettings& result) {
   EXPECT_FALSE(result.min_frame_rate().has_value());
 }
 
-void CheckNonFrameRateDefaults(const VideoCaptureSettings& result) {
+void CheckNonFrameRateDefaults(const blink::VideoCaptureSettings& result) {
   EXPECT_EQ(kDefaultScreenCastHeight, result.Height());
   EXPECT_EQ(kDefaultScreenCastWidth, result.Width());
   EXPECT_EQ(base::Optional<bool>(), result.noise_reduction());
   EXPECT_EQ(std::string(), result.device_id());
 }
 
-void CheckTrackAdapterSettingsEqualsFormat(const VideoCaptureSettings& result) {
+void CheckTrackAdapterSettingsEqualsFormat(
+    const blink::VideoCaptureSettings& result) {
   // For content capture, resolution and frame rate should always be the same
   // for source and track.
   EXPECT_TRUE(result.track_adapter_settings().target_size().has_value());
@@ -47,7 +48,7 @@ void CheckTrackAdapterSettingsEqualsFormat(const VideoCaptureSettings& result) {
 }
 
 void CheckTrackAdapterSettingsEqualsFormatDefaultAspectRatio(
-    const VideoCaptureSettings& result) {
+    const blink::VideoCaptureSettings& result) {
   EXPECT_EQ(
       static_cast<double>(kMinScreenCastDimension) / kMaxScreenCastDimension,
       result.track_adapter_settings().min_aspect_ratio());
@@ -61,7 +62,7 @@ void CheckTrackAdapterSettingsEqualsFormatDefaultAspectRatio(
 
 class MediaStreamConstraintsUtilVideoContentTest : public testing::Test {
  protected:
-  VideoCaptureSettings SelectSettings(
+  blink::VideoCaptureSettings SelectSettings(
       blink::MediaStreamType stream_type =
           blink::MEDIA_GUM_DESKTOP_VIDEO_CAPTURE) {
     blink::WebMediaConstraints constraints =

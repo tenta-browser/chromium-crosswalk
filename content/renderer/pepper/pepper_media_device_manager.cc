@@ -4,13 +4,13 @@
 
 #include "content/renderer/pepper/pepper_media_device_manager.h"
 
+#include "base/bind.h"
 #include "base/feature_list.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "content/public/common/console_message_level.h"
 #include "content/public/common/content_features.h"
 #include "content/renderer/media/stream/media_stream_device_observer.h"
 #include "content/renderer/pepper/renderer_ppapi_host_impl.h"
@@ -18,6 +18,7 @@
 #include "media/media_buildflags.h"
 #include "ppapi/shared_impl/ppb_device_ref_shared.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
+#include "third_party/blink/public/mojom/devtools/console_message.mojom.h"
 
 namespace content {
 
@@ -100,9 +101,8 @@ PepperMediaDeviceManager::~PepperMediaDeviceManager() {
   DCHECK(open_callbacks_.empty());
 }
 
-void PepperMediaDeviceManager::EnumerateDevices(
-    PP_DeviceType_Dev type,
-    const DevicesCallback& callback) {
+void PepperMediaDeviceManager::EnumerateDevices(PP_DeviceType_Dev type,
+                                                DevicesOnceCallback callback) {
   bool request_audio_input = type == PP_DEVICETYPE_DEV_AUDIOCAPTURE;
   bool request_video_input = type == PP_DEVICETYPE_DEV_VIDEOCAPTURE;
   bool request_audio_output = type == PP_DEVICETYPE_DEV_AUDIOOUTPUT;
@@ -110,8 +110,9 @@ void PepperMediaDeviceManager::EnumerateDevices(
   GetMediaDevicesDispatcher()->EnumerateDevices(
       request_audio_input, request_video_input, request_audio_output,
       false /* request_video_input_capabilities */,
+      false /* request_audio_input_capabilities */,
       base::BindOnce(&PepperMediaDeviceManager::DevicesEnumerated, AsWeakPtr(),
-                     callback, ToMediaDeviceType(type)));
+                     std::move(callback), ToMediaDeviceType(type)));
 }
 
 size_t PepperMediaDeviceManager::StartMonitoringDevices(
@@ -149,8 +150,8 @@ void PepperMediaDeviceManager::StopMonitoringDevices(PP_DeviceType_Dev type,
 int PepperMediaDeviceManager::OpenDevice(PP_DeviceType_Dev type,
                                          const std::string& device_id,
                                          PP_Instance pp_instance,
-                                         const OpenDeviceCallback& callback) {
-  open_callbacks_[next_id_] = callback;
+                                         OpenDeviceCallback callback) {
+  open_callbacks_[next_id_] = std::move(callback);
   int request_id = next_id_++;
 
   RendererPpapiHostImpl* host =
@@ -158,8 +159,9 @@ int PepperMediaDeviceManager::OpenDevice(PP_DeviceType_Dev type,
   if (!host->IsSecureContext(pp_instance)) {
     RenderFrame* render_frame = host->GetRenderFrameForInstance(pp_instance);
     if (render_frame) {
-      render_frame->AddMessageToConsole(CONSOLE_MESSAGE_LEVEL_WARNING,
-                                        kPepperInsecureOriginMessage);
+      render_frame->AddMessageToConsole(
+          blink::mojom::ConsoleMessageLevel::kWarning,
+          kPepperInsecureOriginMessage);
     }
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::BindOnce(&PepperMediaDeviceManager::OnDeviceOpened,
@@ -243,19 +245,22 @@ void PepperMediaDeviceManager::OnDeviceOpened(
   if (success)
     GetMediaStreamDeviceObserver()->AddStream(label, device);
 
-  OpenDeviceCallback callback = iter->second;
+  OpenDeviceCallback callback = std::move(iter->second);
   open_callbacks_.erase(iter);
 
   std::move(callback).Run(request_id, success, success ? label : std::string());
 }
 
 void PepperMediaDeviceManager::DevicesEnumerated(
-    const DevicesCallback& client_callback,
+    DevicesOnceCallback client_callback,
     blink::MediaDeviceType type,
     const std::vector<blink::WebMediaDeviceInfoArray>& enumeration,
     std::vector<blink::mojom::VideoInputDeviceCapabilitiesPtr>
-        video_input_capabilities) {
-  client_callback.Run(FromMediaDeviceInfoArray(type, enumeration[type]));
+        video_input_capabilities,
+    std::vector<blink::mojom::AudioInputDeviceCapabilitiesPtr>
+        audio_input_capabilities) {
+  std::move(client_callback)
+      .Run(FromMediaDeviceInfoArray(type, enumeration[type]));
 }
 
 const blink::mojom::MediaStreamDispatcherHostPtr&

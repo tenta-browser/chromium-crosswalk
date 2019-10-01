@@ -14,21 +14,22 @@
 #import "ios/chrome/browser/snapshots/snapshot_cache_factory.h"
 #import "ios/chrome/browser/snapshots/snapshot_tab_helper.h"
 #import "ios/chrome/browser/tabs/tab.h"
-#import "ios/chrome/browser/tabs/tab_model_observer.h"
 #import "ios/chrome/browser/ui/fullscreen/animated_scoped_fullscreen_disabler.h"
 #import "ios/chrome/browser/ui/fullscreen/fullscreen_controller_factory.h"
 #import "ios/chrome/browser/ui/fullscreen/scoped_fullscreen_disabler.h"
 #import "ios/chrome/browser/ui/side_swipe/card_side_swipe_view.h"
+#import "ios/chrome/browser/ui/side_swipe/side_swipe_gesture_recognizer.h"
 #import "ios/chrome/browser/ui/side_swipe/side_swipe_navigation_view.h"
 #import "ios/chrome/browser/ui/side_swipe/side_swipe_util.h"
-#import "ios/chrome/browser/ui/side_swipe_gesture_recognizer.h"
 #import "ios/chrome/browser/ui/tabs/requirements/tab_strip_highlighting.h"
 #include "ios/chrome/browser/ui/toolbar/public/side_swipe_toolbar_interacting.h"
 #import "ios/chrome/browser/ui/toolbar/public/side_swipe_toolbar_interacting.h"
 #include "ios/chrome/browser/ui/util/ui_util.h"
 #import "ios/chrome/browser/web/page_placeholder_tab_helper.h"
+#import "ios/chrome/browser/web/tab_id_tab_helper.h"
 #import "ios/chrome/browser/web/web_navigation_util.h"
 #import "ios/chrome/browser/web_state_list/web_state_list.h"
+#import "ios/chrome/browser/web_state_list/web_state_list_observer_bridge.h"
 #import "ios/web/public/navigation_item.h"
 #import "ios/web/public/web_client.h"
 #import "ios/web/public/web_state/web_state_observer_bridge.h"
@@ -56,9 +57,9 @@ const CGFloat kIpadTabSwipeDistance = 100;
 const NSUInteger kIpadGreySwipeTabCount = 8;
 }
 
-@interface SideSwipeController ()<CRWWebStateObserver,
-                                  TabModelObserver,
-                                  UIGestureRecognizerDelegate> {
+@interface SideSwipeController () <CRWWebStateObserver,
+                                   UIGestureRecognizerDelegate,
+                                   WebStateListObserving> {
  @private
 
   __weak TabModel* model_;
@@ -86,6 +87,9 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
   // Bridge to observe the web state from Objective-C.
   std::unique_ptr<web::WebStateObserverBridge> webStateObserverBridge_;
 
+  // Bridge to observe the WebStateList from Objective-C.
+  std::unique_ptr<WebStateListObserverBridge> webStateListObserver_;
+
   // Scoped observer used to track registration of the WebStateObserverBridge.
   std::unique_ptr<ScopedObserver<web::WebState, web::WebStateObserver>>
       scopedWebStateObserver_;
@@ -109,6 +113,8 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
 @property(nonatomic, assign) BOOL leadingEdgeNavigationEnabled;
 // Whether to allow navigating from the trailing edge.
 @property(nonatomic, assign) BOOL trailingEdgeNavigationEnabled;
+// The current active WebState.
+@property(nonatomic, readonly) web::WebState* activeWebState;
 
 // Load grey snapshots for the next |kIpadGreySwipeTabCount| tabs in
 // |direction|.
@@ -126,6 +132,10 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
 // Removes the |curtain_| and calls |completionHandler| when the curtain is
 // removed.
 - (void)dismissCurtainWithCompletionHandler:(ProceduralBlock)completionHandler;
+
+// Removes the |curtain_| if there was an active swipe, and resets
+// |inSwipe_| value.
+- (void)dismissCurtain;
 @end
 
 @implementation SideSwipeController
@@ -145,12 +155,15 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
   self = [super init];
   if (self) {
     model_ = model;
-    [model_ addObserver:self];
+    webStateListObserver_ = std::make_unique<WebStateListObserverBridge>(self);
+    model_.webStateList->AddObserver(webStateListObserver_.get());
     webStateObserverBridge_ =
         std::make_unique<web::WebStateObserverBridge>(self);
     scopedWebStateObserver_ =
         std::make_unique<ScopedObserver<web::WebState, web::WebStateObserver>>(
             webStateObserverBridge_.get());
+    if (self.activeWebState)
+      scopedWebStateObserver_->Add(self.activeWebState);
 
     browserState_ = browserState;
   }
@@ -158,7 +171,11 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
 }
 
 - (void)dealloc {
-  [model_ removeObserver:self];
+  if (model_.webStateList) {
+    // |model_| is a weak reference which owns |webStateList|. Make sure that
+    // |model_| is still alive before accessing |webStateList|.
+    model_.webStateList->RemoveObserver(webStateListObserver_.get());
+  }
 
   scopedWebStateObserver_.reset();
   webStateObserverBridge_.reset();
@@ -182,6 +199,11 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
   [panGestureRecognizer_ setSwipeThreshold:48];
   [panGestureRecognizer_ setDelegate:self];
   [view addGestureRecognizer:panGestureRecognizer_];
+}
+
+- (web::WebState*)activeWebState {
+  return model_.webStateList ? model_.webStateList->GetActiveWebState()
+                             : nullptr;
 }
 
 - (NSSet*)swipeRecognizers {
@@ -289,7 +311,8 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
     Tab* tab = [model_ tabAtIndex:index];
     if (tab && PagePlaceholderTabHelper::FromWebState(tab.webState)
                    ->will_add_placeholder_for_next_navigation()) {
-      [sessionIDs addObject:tab.tabId];
+      [sessionIDs
+          addObject:TabIdTabHelper::FromWebState(tab.webState)->tab_id()];
     }
     index = index + dx;
   }
@@ -335,7 +358,7 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
     fullscreenDisabler_ = std::make_unique<ScopedFullscreenDisabler>(
         FullscreenControllerFactory::GetInstance()->GetForBrowserState(
             browserState_));
-    SnapshotTabHelper::FromWebState([model_ currentTab].webState)
+    SnapshotTabHelper::FromWebState(self.activeWebState)
         ->UpdateSnapshotWithCallback(nil);
     [[NSNotificationCenter defaultCenter]
         postNotificationName:kSideSwipeWillStartNotification
@@ -391,7 +414,7 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
           ->CancelPlaceholderForNextNavigation();
       [model_ setCurrentTab:tab];
     }
-    PagePlaceholderTabHelper::FromWebState([model_ currentTab].webState)
+    PagePlaceholderTabHelper::FromWebState(self.activeWebState)
         ->CancelPlaceholderForNextNavigation();
 
     // Redisplay the view if it was in overlay preview mode.
@@ -408,14 +431,12 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
 }
 
 - (BOOL)canNavigate:(BOOL)goBack {
-  WebStateList* webStateList = model_.webStateList;
-  if (!webStateList || !webStateList->GetActiveWebState())
+  if (!self.activeWebState)
     return NO;
-  web::WebState* webState = webStateList->GetActiveWebState();
-  if (goBack && webState->GetNavigationManager()->CanGoBack()) {
+  if (goBack && self.activeWebState->GetNavigationManager()->CanGoBack()) {
     return YES;
   }
-  if (!goBack && webState->GetNavigationManager()->CanGoForward()) {
+  if (!goBack && self.activeWebState->GetNavigationManager()->CanGoForward()) {
     return YES;
   }
   return NO;
@@ -462,11 +483,7 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
 
   [pageSideSwipeView_ handleHorizontalPan:gesture
       onOverThresholdCompletion:^{
-        WebStateList* webStateList = model_.webStateList;
-        web::WebState* webState = nullptr;
-        if (webStateList) {
-          webState = webStateList->GetActiveWebState();
-        }
+        web::WebState* webState = self.activeWebState;
         BOOL wantsBack = IsSwipingBack(gesture.direction);
         if (webState) {
           if (wantsBack) {
@@ -482,8 +499,6 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
         if (webState &&
             (web::GetWebClient()->IsSlimNavigationManagerEnabled() ||
              webState->IsLoading())) {
-          scopedWebStateObserver_->RemoveAll();
-          scopedWebStateObserver_->Add(webState);
           [self addCurtainWithCompletionHandler:^{
             inSwipe_ = NO;
           }];
@@ -501,7 +516,6 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
 // Show horizontal swipe stack view for iPhone.
 - (void)handleiPhoneTabSwipe:(SideSwipeGestureRecognizer*)gesture {
   if (gesture.state == UIGestureRecognizerStateBegan) {
-    Tab* currentTab = [model_ currentTab];
 
     inSwipe_ = YES;
 
@@ -511,10 +525,10 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
     // TODO(crbug.com/904992): Do not use SnapshotGeneratorDelegate from
     // SideSwipeController.
     CGFloat headerHeight = 0;
-    if (currentTab.webState) {
+    if (self.activeWebState) {
       headerHeight =
           [self.snapshotDelegate snapshotGenerator:nil
-                     snapshotEdgeInsetsForWebState:currentTab.webState]
+                     snapshotEdgeInsetsForWebState:self.activeWebState]
               .top;
     }
 
@@ -537,14 +551,10 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
     }
 
     // Ensure that there's an up-to-date snapshot of the current tab.
-    if (currentTab.webState) {
-      SnapshotTabHelper::FromWebState(currentTab.webState)
+    if (self.activeWebState) {
+      SnapshotTabHelper::FromWebState(self.activeWebState)
           ->UpdateSnapshotWithCallback(nil);
     }
-
-    // Hide the infobar after snapshot has been updated (see the previous line)
-    // to avoid it obscuring the cards in the side swipe view.
-    [swipeDelegate_ updateAccessoryViewsForSideSwipeWithVisibility:NO];
 
     // Layout tabs with new snapshots in the current orientation.
     [tabSideSwipeView_ updateViewsForDirection:gesture.direction];
@@ -554,10 +564,6 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
     DCHECK([swipeDelegate_ verifyToolbarViewPlacementInView:gesture.view]);
     // Insert above the toolbar.
     [gesture.view addSubview:tabSideSwipeView_];
-
-    // Remove content area so it doesn't receive any pan events.
-    [[swipeDelegate_ sideSwipeContentView] removeFromSuperview];
-    [swipeDelegate_ didRemoveSideSwipeContentView];
   }
 
   [tabSideSwipeView_ handleHorizontalPan:gesture];
@@ -587,10 +593,17 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
 
 - (void)dismissCurtainWithCompletionHandler:(ProceduralBlock)completionHandler {
   [NSObject cancelPreviousPerformRequestsWithTarget:self];
-  scopedWebStateObserver_->RemoveAll();
   [curtain_ removeFromSuperview];
   curtain_ = nil;
   completionHandler();
+}
+
+- (void)dismissCurtain {
+  if (!inSwipe_)
+    return;
+  [self dismissCurtainWithCompletionHandler:^{
+    inSwipe_ = NO;
+  }];
 }
 
 - (void)updateNavigationEdgeSwipeForWebState:(web::WebState*)webState {
@@ -602,6 +615,9 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
     return;
   }
 
+  if (!webState)
+    return;
+
   // With slim nav enabled, disable SideSwipeController's edge swipe for a
   // typical navigation.  Continue to use SideSwipeController when on, before,
   // or after a native page.
@@ -610,7 +626,7 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
 
   web::NavigationItem* item =
       webState->GetNavigationManager()->GetVisibleItem();
-  if (item && UseNativeSwipe(item)) {
+  if (UseNativeSwipe(item)) {
     self.leadingEdgeNavigationEnabled = YES;
     self.trailingEdgeNavigationEnabled = YES;
   }
@@ -636,39 +652,42 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
 - (void)webStateDidStopLoading:(web::WebState*)webState {
   if (web::GetWebClient()->IsSlimNavigationManagerEnabled())
     return;
-  [self dismissCurtainWithCompletionHandler:^{
-    inSwipe_ = NO;
-  }];
+  [self dismissCurtain];
 }
 
 - (void)webState:(web::WebState*)webState didLoadPageWithSuccess:(BOOL)success {
   if (!web::GetWebClient()->IsSlimNavigationManagerEnabled())
     return;
-  [self dismissCurtainWithCompletionHandler:^{
-    inSwipe_ = NO;
-  }];
+  [self dismissCurtain];
 }
 
-- (void)webStateDestroyed:(web::WebState*)webState {
-  scopedWebStateObserver_->Remove(webState);
+- (void)webState:(web::WebState*)webState
+    didFinishNavigation:(web::NavigationContext*)navigation {
+  [self updateNavigationEdgeSwipeForWebState:webState];
 }
 
-#pragma mark - TabModelObserver Methods
+#pragma mark - WebStateListObserving Methods
 
-- (void)tabModel:(TabModel*)model
-    didChangeActiveTab:(Tab*)newTab
-           previousTab:(Tab*)previousTab
-               atIndex:(NSUInteger)index {
+- (void)webStateList:(WebStateList*)webStateList
+    didChangeActiveWebState:(web::WebState*)newWebState
+                oldWebState:(web::WebState*)oldWebState
+                    atIndex:(int)atIndex
+                     reason:(int)reason {
+  // If there is any an ongoing swipe for the old webState, cancel it and
+  // dismiss the curtain.
+  [self dismissCurtain];
   // Toggling the gesture's enabled state off and on will effectively cancel
   // the gesture recognizer.
   [swipeGestureRecognizer_ setEnabled:NO];
   [swipeGestureRecognizer_ setEnabled:YES];
+  // Track the new active WebState for navigation events. Also remove the old if
+  // there was one.
+  if (oldWebState)
+    scopedWebStateObserver_->Remove(oldWebState);
+  if (newWebState)
+    scopedWebStateObserver_->Add(newWebState);
 
-  [self updateNavigationEdgeSwipeForWebState:newTab.webState];
-}
-
-- (void)tabModel:(TabModel*)model didChangeTab:(Tab*)tab {
-  [self updateNavigationEdgeSwipeForWebState:tab.webState];
+  [self updateNavigationEdgeSwipeForWebState:newWebState];
 }
 
 @end

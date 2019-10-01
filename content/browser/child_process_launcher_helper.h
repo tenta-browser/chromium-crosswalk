@@ -98,6 +98,9 @@ class ChildProcessLauncherHelper :
       std::unique_ptr<SandboxedProcessLauncherDelegate> delegate,
       const base::WeakPtr<ChildProcessLauncher>& child_process_launcher,
       bool terminate_on_shutdown,
+#if defined(OS_ANDROID)
+      bool is_pre_warmup_required,
+#endif
       mojo::OutgoingInvitation mojo_invitation,
       const mojo::ProcessErrorCallback& process_error_callback);
 
@@ -125,9 +128,8 @@ class ChildProcessLauncherHelper :
   // LaunchOnLauncherThread will not call LaunchProcessOnLauncherThread and
   // AfterLaunchOnLauncherThread, and the launch_result will be reported as
   // LAUNCH_RESULT_FAILURE.
-  bool BeforeLaunchOnLauncherThread(
-      const FileMappedForLaunch& files_to_register,
-      base::LaunchOptions* options);
+  bool BeforeLaunchOnLauncherThread(FileMappedForLaunch& files_to_register,
+                                    base::LaunchOptions* options);
 
   // Does the actual starting of the process.
   // |is_synchronous_launch| is set to false if the starting of the process is
@@ -138,6 +140,9 @@ class ChildProcessLauncherHelper :
   ChildProcessLauncherHelper::Process LaunchProcessOnLauncherThread(
       const base::LaunchOptions& options,
       std::unique_ptr<FileMappedForLaunch> files_to_register,
+#if defined(OS_ANDROID)
+      bool is_pre_warmup_required,
+#endif
       bool* is_synchronous_launch,
       int* launch_result);
 
@@ -190,6 +195,9 @@ class ChildProcessLauncherHelper :
   void OnChildProcessStarted(JNIEnv* env,
                              const base::android::JavaParamRef<jobject>& obj,
                              jint handle);
+
+  // Dumps the stack of the child process without crashing it.
+  void DumpProcessStack(const base::Process& process);
 #endif  // OS_ANDROID
 
  private:
@@ -244,6 +252,8 @@ class ChildProcessLauncherHelper :
 #if defined(OS_ANDROID)
   base::android::ScopedJavaGlobalRef<jobject> java_peer_;
   bool java_peer_avaiable_on_client_thread_ = false;
+  // Whether the process can use warmed up connection.
+  bool can_use_warm_up_connection_;
 #endif
 
 #if defined(OS_FUCHSIA)

@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/metrics/user_metrics.h"
 #include "components/password_manager/core/browser/credential_manager_logger.h"
 #include "components/password_manager/core/browser/form_fetcher_impl.h"
@@ -61,7 +62,7 @@ void CredentialManagerImpl::Store(const CredentialInfo& credential,
   // without fetching of suppressed HTTPS credentials on HTTP origins as the API
   // is only available on HTTPS origins.
   auto form_fetcher = std::make_unique<FormFetcherImpl>(
-      PasswordStore::FormDigest(*observed_form), client_, false, false);
+      PasswordStore::FormDigest(*observed_form), client_, false);
   form_manager_ = std::make_unique<CredentialManagerPasswordFormManager>(
       client_, *observed_form, std::move(form), this, nullptr,
       std::move(form_fetcher));
@@ -145,7 +146,7 @@ bool CredentialManagerImpl::IsZeroClickAllowed() const {
 
 PasswordStore::FormDigest CredentialManagerImpl::GetSynthesizedFormForOrigin()
     const {
-  PasswordStore::FormDigest digest = {autofill::PasswordForm::SCHEME_HTML,
+  PasswordStore::FormDigest digest = {autofill::PasswordForm::Scheme::kHtml,
                                       std::string(),
                                       GetLastCommittedURL().GetOrigin()};
   digest.signon_realm = digest.origin.spec();

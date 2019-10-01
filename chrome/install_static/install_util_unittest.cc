@@ -9,11 +9,13 @@
 #include <tuple>
 
 #include "base/stl_util.h"
+#include "base/strings/string_util.h"
 #include "base/test/test_reg_util_win.h"
+#include "base/win/win_util.h"
+#include "chrome/chrome_elf/nt_registry/nt_registry.h"
 #include "chrome/install_static/install_details.h"
 #include "chrome/install_static/install_modes.h"
 #include "chrome/install_static/test/scoped_install_details.h"
-#include "chrome_elf/nt_registry/nt_registry.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -519,11 +521,8 @@ TEST_P(InstallStaticUtilTest, GetToastActivatorClsid) {
   EXPECT_EQ(GetToastActivatorClsid(),
             kToastActivatorClsids[std::get<0>(GetParam())]);
 
-  const int kCLSIDSize = 39;
-  wchar_t clsid_str[kCLSIDSize];
-  ASSERT_EQ(::StringFromGUID2(GetToastActivatorClsid(), clsid_str, kCLSIDSize),
-            kCLSIDSize);
-  EXPECT_THAT(clsid_str,
+  auto clsid_str = base::win::String16FromGUID(GetToastActivatorClsid());
+  EXPECT_THAT(base::as_wcstr(clsid_str.c_str()),
               StrCaseEq(kToastActivatorClsidsString[std::get<0>(GetParam())]));
 }
 
@@ -576,11 +575,8 @@ TEST_P(InstallStaticUtilTest, GetElevatorClsid) {
 
   EXPECT_EQ(GetElevatorClsid(), kElevatorClsids[std::get<0>(GetParam())]);
 
-  constexpr int kCLSIDSize = 39;
-  wchar_t clsid_str[kCLSIDSize] = {};
-  ASSERT_EQ(::StringFromGUID2(GetElevatorClsid(), clsid_str, kCLSIDSize),
-            kCLSIDSize);
-  EXPECT_THAT(clsid_str,
+  auto clsid_str = base::win::String16FromGUID(GetElevatorClsid());
+  EXPECT_THAT(base::as_wcstr(clsid_str.c_str()),
               StrCaseEq(kElevatorClsidsString[std::get<0>(GetParam())]));
 }
 
@@ -645,10 +641,9 @@ TEST_P(InstallStaticUtilTest, GetElevatorIid) {
 
   EXPECT_EQ(GetElevatorIid(), kElevatorIids[std::get<0>(GetParam())]);
 
-  constexpr int kIIDSize = 39;
-  wchar_t iid_str[kIIDSize] = {};
-  ASSERT_EQ(::StringFromGUID2(GetElevatorIid(), iid_str, kIIDSize), kIIDSize);
-  EXPECT_THAT(iid_str, StrCaseEq(kElevatorIidsString[std::get<0>(GetParam())]));
+  auto iid_str = base::win::String16FromGUID(GetElevatorIid());
+  EXPECT_THAT(base::as_wcstr(iid_str.c_str()),
+              StrCaseEq(kElevatorIidsString[std::get<0>(GetParam())]));
 }
 
 TEST_P(InstallStaticUtilTest, UsageStatsAbsent) {
@@ -737,31 +732,31 @@ TEST_P(InstallStaticUtilTest, GetSandboxSidPrefix) {
 
 #if defined(GOOGLE_CHROME_BUILD)
 // Stable supports user and system levels.
-INSTANTIATE_TEST_CASE_P(Stable,
-                        InstallStaticUtilTest,
-                        testing::Combine(testing::Values(STABLE_INDEX),
-                                         testing::Values("user", "system")));
+INSTANTIATE_TEST_SUITE_P(Stable,
+                         InstallStaticUtilTest,
+                         testing::Combine(testing::Values(STABLE_INDEX),
+                                          testing::Values("user", "system")));
 // Beta supports user and system levels.
-INSTANTIATE_TEST_CASE_P(Beta,
-                        InstallStaticUtilTest,
-                        testing::Combine(testing::Values(BETA_INDEX),
-                                         testing::Values("user", "system")));
+INSTANTIATE_TEST_SUITE_P(Beta,
+                         InstallStaticUtilTest,
+                         testing::Combine(testing::Values(BETA_INDEX),
+                                          testing::Values("user", "system")));
 // Dev supports user and system levels.
-INSTANTIATE_TEST_CASE_P(Dev,
-                        InstallStaticUtilTest,
-                        testing::Combine(testing::Values(DEV_INDEX),
-                                         testing::Values("user", "system")));
+INSTANTIATE_TEST_SUITE_P(Dev,
+                         InstallStaticUtilTest,
+                         testing::Combine(testing::Values(DEV_INDEX),
+                                          testing::Values("user", "system")));
 // Canary is only at user level.
-INSTANTIATE_TEST_CASE_P(Canary,
-                        InstallStaticUtilTest,
-                        testing::Combine(testing::Values(CANARY_INDEX),
-                                         testing::Values("user")));
+INSTANTIATE_TEST_SUITE_P(Canary,
+                         InstallStaticUtilTest,
+                         testing::Combine(testing::Values(CANARY_INDEX),
+                                          testing::Values("user")));
 #else   // GOOGLE_CHROME_BUILD
 // Chromium supports user and system levels.
-INSTANTIATE_TEST_CASE_P(Chromium,
-                        InstallStaticUtilTest,
-                        testing::Combine(testing::Values(CHROMIUM_INDEX),
-                                         testing::Values("user", "system")));
+INSTANTIATE_TEST_SUITE_P(Chromium,
+                         InstallStaticUtilTest,
+                         testing::Combine(testing::Values(CHROMIUM_INDEX),
+                                          testing::Values("user", "system")));
 #endif  // !GOOGLE_CHROME_BUILD
 
 }  // namespace install_static

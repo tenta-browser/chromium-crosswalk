@@ -60,8 +60,8 @@ class InfoMap;
 }
 
 namespace net {
+class CertNetFetcherImpl;
 class CertVerifier;
-class ChannelIDService;
 class ClientCertStore;
 class CookieStore;
 class HttpTransactionFactory;
@@ -151,7 +151,6 @@ class ProfileIOData {
 
   // Gets Sync state, for Dice account consistency.
   bool IsSyncEnabled() const;
-  bool SyncHasAuthError() const;
 
   BooleanPrefMember* safe_browsing_enabled() const {
     return &safe_browsing_enabled_;
@@ -163,6 +162,10 @@ class ProfileIOData {
 
   IntegerPrefMember* network_prediction_options() const {
     return &network_prediction_options_;
+  }
+
+  BooleanPrefMember* signed_exchange_enabled() const {
+    return &signed_exchange_enabled_;
   }
 
   signin::AccountConsistencyMethod account_consistency() const {
@@ -275,8 +278,6 @@ class ProfileIOData {
     AppRequestContext();
 
     void SetCookieStore(std::unique_ptr<net::CookieStore> cookie_store);
-    void SetChannelIDService(
-        std::unique_ptr<net::ChannelIDService> channel_id_service);
     void SetHttpNetworkSession(
         std::unique_ptr<net::HttpNetworkSession> http_network_session);
     void SetHttpTransactionFactory(
@@ -287,7 +288,6 @@ class ProfileIOData {
     ~AppRequestContext() override;
 
     std::unique_ptr<net::CookieStore> cookie_store_;
-    std::unique_ptr<net::ChannelIDService> channel_id_service_;
     std::unique_ptr<net::HttpNetworkSession> http_network_session_;
     std::unique_ptr<net::HttpTransactionFactory> http_factory_;
     std::unique_ptr<net::URLRequestJobFactory> job_factory_;
@@ -496,7 +496,6 @@ class ProfileIOData {
       client_cert_store_factory_;
 
   mutable StringPrefMember google_services_user_account_id_;
-  mutable BooleanPrefMember sync_has_auth_error_;
   mutable BooleanPrefMember sync_suppress_start_;
   mutable BooleanPrefMember sync_first_setup_complete_;
   mutable signin::AccountConsistencyMethod account_consistency_;
@@ -513,6 +512,7 @@ class ProfileIOData {
   mutable StringPrefMember allowed_domains_for_apps_;
   mutable IntegerPrefMember network_prediction_options_;
   mutable IntegerPrefMember incognito_availibility_pref_;
+  mutable BooleanPrefMember signed_exchange_enabled_;
 #if BUILDFLAG(ENABLE_PLUGINS)
   mutable BooleanPrefMember always_open_pdf_externally_;
 #endif
@@ -547,6 +547,10 @@ class ProfileIOData {
   // When the network service is disabled, this owns |system_request_context|.
   mutable network::URLRequestContextOwner main_request_context_owner_;
   mutable net::URLRequestContext* main_request_context_;
+  // When the network service is disabled, this holds the CertNetFetcher used
+  // by the profile's CertVerifier. May be nullptr if CertNetFetcher is not
+  // used by the current platform.
+  mutable scoped_refptr<net::CertNetFetcherImpl> cert_net_fetcher_;
 
   // One URLRequestContext per isolated app for main and media requests.
   mutable URLRequestContextMap app_request_context_map_;

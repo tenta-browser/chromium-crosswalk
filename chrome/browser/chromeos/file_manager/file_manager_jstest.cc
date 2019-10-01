@@ -10,6 +10,15 @@ class FileManagerJsTest : public FileManagerJsTestBase {
       base::FilePath(FILE_PATH_LITERAL("ui/file_manager/file_manager"))) {}
 };
 
+// Tests that draw to canvases and test pixels need pixel output turned on.
+class CanvasFileManagerJsTest : public FileManagerJsTest {
+ public:
+  void SetUp() override {
+    EnablePixelOutput();
+    FileManagerJsTest::SetUp();
+  }
+};
+
 IN_PROC_BROWSER_TEST_F(FileManagerJsTest, ActionsSubmenuTest) {
   RunGeneratedTest("/foreground/js/ui/actions_submenu_unittest.html");
 }
@@ -74,6 +83,10 @@ IN_PROC_BROWSER_TEST_F(FileManagerJsTest, MediaImportHandlerTest) {
   RunGeneratedTest("/background/js/media_import_handler_unittest.html");
 }
 
+IN_PROC_BROWSER_TEST_F(FileManagerJsTest, MountMetricsTest) {
+  RunGeneratedTest("/background/js/mount_metrics_unittest.html");
+}
+
 IN_PROC_BROWSER_TEST_F(FileManagerJsTest, TaskQueueTest) {
   RunGeneratedTest("/background/js/task_queue_unittest.html");
 }
@@ -84,10 +97,6 @@ IN_PROC_BROWSER_TEST_F(FileManagerJsTest, DuplicateFinderTest) {
 
 IN_PROC_BROWSER_TEST_F(FileManagerJsTest, ImportControllerTest) {
   RunGeneratedTest("/foreground/js/import_controller_unittest.html");
-}
-
-IN_PROC_BROWSER_TEST_F(FileManagerJsTest, AsyncUtilTest) {
-  RunGeneratedTest("/common/js/async_util_unittest.html");
 }
 
 IN_PROC_BROWSER_TEST_F(FileManagerJsTest, TaskController) {
@@ -146,7 +155,7 @@ IN_PROC_BROWSER_TEST_F(FileManagerJsTest, ExifParser) {
   RunGeneratedTest("/foreground/js/metadata/exif_parser_unittest.html");
 }
 
-IN_PROC_BROWSER_TEST_F(FileManagerJsTest, ImageOrientation) {
+IN_PROC_BROWSER_TEST_F(CanvasFileManagerJsTest, ImageOrientation) {
   RunGeneratedTest("/foreground/js/metadata/image_orientation_unittest.html");
 }
 
@@ -154,8 +163,8 @@ IN_PROC_BROWSER_TEST_F(FileManagerJsTest, ProvidersModel) {
   RunGeneratedTest("/foreground/js/providers_model_unittest.html");
 }
 
-IN_PROC_BROWSER_TEST_F(FileManagerJsTest, FilesTooltip) {
-  RunGeneratedTest("/foreground/elements/files_tooltip_unittest.html");
+IN_PROC_BROWSER_TEST_F(FileManagerJsTest, FilesToast) {
+  RunGeneratedTest("/foreground/elements/files_toast_unittest.html");
 }
 
 IN_PROC_BROWSER_TEST_F(FileManagerJsTest, SpinnerController) {
@@ -196,4 +205,12 @@ IN_PROC_BROWSER_TEST_F(FileManagerJsTest, Crostini) {
 
 IN_PROC_BROWSER_TEST_F(FileManagerJsTest, ListContainer) {
   RunGeneratedTest("/foreground/js/ui/list_container_unittest.html");
+}
+
+IN_PROC_BROWSER_TEST_F(FileManagerJsTest, FileTableList) {
+  RunGeneratedTest("/foreground/js/ui/file_table_list_unittest.html");
+}
+
+IN_PROC_BROWSER_TEST_F(FileManagerJsTest, FileTransferController) {
+  RunGeneratedTest("/foreground/js/file_transfer_controller_unittest.html");
 }

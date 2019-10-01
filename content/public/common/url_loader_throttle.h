@@ -57,6 +57,12 @@ class CONTENT_EXPORT URLLoaderThrottle {
 
     virtual void SetPriority(net::RequestPriority priority);
 
+    // Updates the request headers which is deferred  to be sent. This method
+    // needs to be called when the response is deferred on WillStartRequest or
+    // WillRedirectRequest and before calling Delegate::Resume().
+    virtual void UpdateDeferredRequestHeaders(
+        const net::HttpRequestHeaders& modified_request_headers);
+
     // Updates the response head which is deferred to be sent. This method needs
     // to be called when the response is deferred on
     // URLLoaderThrottle::WillProcessResponse() and before calling
@@ -107,8 +113,7 @@ class CONTENT_EXPORT URLLoaderThrottle {
   // asynchronously touching the pointer in defer case is not valid)
   // When |request->url| is modified it will make an internal redirect, which
   // might have some side-effects: drop upload streams data might be dropped,
-  // redirect count may be reached, and cross-origin redirect are not supported
-  // (at least until we have the demand).
+  // redirect count may be reached.
   //
   // Implementations should be aware that throttling can happen multiple times
   // for the same |request|, even after one instance of the same throttle
@@ -160,6 +165,11 @@ class CONTENT_EXPORT URLLoaderThrottle {
   virtual void WillOnCompleteWithError(
       const network::URLLoaderCompletionStatus& status,
       bool* defer);
+
+  // Must return true if the throttle may make cross-scheme redirects
+  // (which is usually considered unsafe, so allowed only if the setting
+  // is made very explicitly).
+  virtual bool makes_unsafe_redirect() const;
 
   void set_delegate(Delegate* delegate) { delegate_ = delegate; }
 

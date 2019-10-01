@@ -63,7 +63,7 @@ SyncableDirectoryTest::~SyncableDirectoryTest() {}
 
 void SyncableDirectoryTest::SetUp() {
   ASSERT_TRUE(connection_.OpenInMemory());
-  ASSERT_EQ(OPENED, ReopenDirectory());
+  ASSERT_EQ(OPENED_NEW, ReopenDirectory());
 }
 
 void SyncableDirectoryTest::TearDown() {
@@ -83,8 +83,10 @@ DirOpenResult SyncableDirectoryTest::ReopenDirectory() {
   DirOpenResult open_result =
       dir_->Open(kDirectoryName, &delegate_, NullTransactionObserver());
 
-  if (open_result != OPENED) {
+  if (open_result != OPENED_NEW && open_result != OPENED_EXISTING) {
     dir_.reset();
+  } else {
+    dir_->set_cache_guid(dir_->legacy_cache_guid());
   }
 
   return open_result;
@@ -453,7 +455,7 @@ TEST_F(SyncableDirectoryTest, ManageDeleteJournals) {
       item3.PutIsUnsynced(true);
       handle3 = item3.GetMetahandle();
     }
-    ASSERT_EQ(OPENED, SimulateSaveAndReloadDir());
+    ASSERT_EQ(OPENED_EXISTING, SimulateSaveAndReloadDir());
   }
 
   {  // Test adding and saving delete journals.
@@ -492,7 +494,7 @@ TEST_F(SyncableDirectoryTest, ManageDeleteJournals) {
       ReadTransaction trans(FROM_HERE, dir().get());
       EXPECT_EQ(0u, delete_journal->GetDeleteJournalSize(&trans));
     }
-    ASSERT_EQ(OPENED, SimulateSaveAndReloadDir());
+    ASSERT_EQ(OPENED_EXISTING, SimulateSaveAndReloadDir());
   }
 
   {
@@ -523,7 +525,7 @@ TEST_F(SyncableDirectoryTest, ManageDeleteJournals) {
       EXPECT_EQ(1u, delete_journal->delete_journals_to_purge_.size());
       EXPECT_TRUE(delete_journal->delete_journals_to_purge_.count(handle2));
     }
-    ASSERT_EQ(OPENED, SimulateSaveAndReloadDir());
+    ASSERT_EQ(OPENED_EXISTING, SimulateSaveAndReloadDir());
   }
 
   {
@@ -548,7 +550,7 @@ TEST_F(SyncableDirectoryTest, ManageDeleteJournals) {
       EXPECT_EQ(1u, delete_journal->delete_journals_to_purge_.size());
       EXPECT_TRUE(delete_journal->delete_journals_to_purge_.count(handle1));
     }
-    ASSERT_EQ(OPENED, SimulateSaveAndReloadDir());
+    ASSERT_EQ(OPENED_EXISTING, SimulateSaveAndReloadDir());
   }
 
   {
@@ -615,7 +617,7 @@ TEST_F(SyncableDirectoryTest, TestPurgeDeletedEntriesOnReload) {
         item.PutIsUnappliedUpdate(true);
     }
   }
-  ASSERT_EQ(OPENED, SimulateSaveAndReloadDir());
+  ASSERT_EQ(OPENED_EXISTING, SimulateSaveAndReloadDir());
 
   // Expect items 0 and 5 to be purged according to
   // DirectoryBackingStore::SafeToPurgeOnLoading:
@@ -1127,7 +1129,7 @@ TEST_F(SyncableDirectoryTest, ChangeEntryIDAndUpdateChildren_ParentAndChild) {
   }
 
   // Final check for validity.
-  EXPECT_EQ(OPENED, SimulateSaveAndReloadDir());
+  EXPECT_EQ(OPENED_EXISTING, SimulateSaveAndReloadDir());
 }
 
 // A test that roughly mimics the directory interaction that occurs when a
@@ -1169,7 +1171,7 @@ TEST_F(SyncableDirectoryTest, ChangeEntryIDAndUpdateChildren_ImplicitParent) {
   }
 
   // Final check for validity.
-  EXPECT_EQ(OPENED, SimulateSaveAndReloadDir());
+  EXPECT_EQ(OPENED_EXISTING, SimulateSaveAndReloadDir());
 
   // Verify that child's PARENT_ID hasn't been updated.
   {
@@ -1227,7 +1229,7 @@ TEST_F(SyncableDirectoryTest,
   }
 
   // Final check for validity.
-  EXPECT_EQ(OPENED, SimulateSaveAndReloadDir());
+  EXPECT_EQ(OPENED_EXISTING, SimulateSaveAndReloadDir());
 }
 
 // Ask the directory to generate a unique ID.  Close and re-open the database
@@ -1304,7 +1306,7 @@ TEST_F(SyncableDirectoryTest, OldClientLeftUnsyncedDeletedLocalItem) {
     zombie.PutIsUnsynced(true);
   }
 
-  ASSERT_EQ(OPENED, SimulateSaveAndReloadDir());
+  ASSERT_EQ(OPENED_EXISTING, SimulateSaveAndReloadDir());
 
   {
     ReadTransaction trans(FROM_HERE, dir().get());
@@ -1353,7 +1355,7 @@ TEST_F(SyncableDirectoryTest, PositionWithNullSurvivesSaveAndReload) {
     null_child_id = child.GetId();
   }
 
-  EXPECT_EQ(OPENED, SimulateSaveAndReloadDir());
+  EXPECT_EQ(OPENED_EXISTING, SimulateSaveAndReloadDir());
 
   {
     ReadTransaction trans(FROM_HERE, dir().get());
@@ -1826,11 +1828,14 @@ TEST_F(SyncableDirectoryTest, SaveChangesSnapshot_HasUnsavedMetahandleChanges) {
 TEST_F(SyncableDirectoryTest, CatastrophicError) {
   MockUnrecoverableErrorHandler unrecoverable_error_handler;
   Directory dir(
-      std::make_unique<InMemoryDirectoryBackingStore>("catastrophic_error"),
-      MakeWeakHandle(unrecoverable_error_handler.GetWeakPtr()), base::Closure(),
-      nullptr, nullptr);
-  ASSERT_EQ(OPENED, dir.Open(kDirectoryName, directory_change_delegate(),
-                             NullTransactionObserver()));
+      std::make_unique<InMemoryDirectoryBackingStore>(
+          "catastrophic_error", base::BindRepeating([]() -> std::string {
+            return "test_cache_guid";
+          })),
+      MakeWeakHandle(unrecoverable_error_handler.GetWeakPtr()),
+      base::RepeatingClosure(), nullptr, nullptr);
+  ASSERT_EQ(OPENED_NEW, dir.Open(kDirectoryName, directory_change_delegate(),
+                                 NullTransactionObserver()));
   ASSERT_EQ(0, unrecoverable_error_handler.invocation_count());
 
   // Fire off two catastrophic errors. Call it twice to ensure Directory is

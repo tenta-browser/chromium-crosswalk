@@ -4,6 +4,7 @@
 
 #include "content/test/test_blink_web_unit_test_support.h"
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -12,13 +13,15 @@
 #include "base/path_service.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/thread_pool/thread_pool.h"
+#include "base/test/null_task_runner.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "cc/trees/layer_tree_settings.h"
 #include "content/app/mojo/mojo_init.h"
+#include "content/child/child_process.h"
 #include "content/public/common/service_names.mojom.h"
-#include "content/renderer/loader/web_data_consumer_handle_impl.h"
 #include "content/renderer/loader/web_url_loader_impl.h"
 #include "content/renderer/mojo/blink_interface_provider_impl.h"
 #include "content/test/mock_clipboard_host.h"
@@ -127,7 +130,8 @@ content::TestBlinkWebUnitTestSupport* g_test_platform = nullptr;
 
 namespace content {
 
-TestBlinkWebUnitTestSupport::TestBlinkWebUnitTestSupport()
+TestBlinkWebUnitTestSupport::TestBlinkWebUnitTestSupport(
+    TestBlinkWebUnitTestSupport::SchedulerType scheduler_type)
     : weak_factory_(this) {
 #if defined(OS_MACOSX)
   base::mac::ScopedNSAutoreleasePool autorelease_pool;
@@ -145,7 +149,9 @@ TestBlinkWebUnitTestSupport::TestBlinkWebUnitTestSupport()
 
   scoped_refptr<base::SingleThreadTaskRunner> dummy_task_runner;
   std::unique_ptr<base::ThreadTaskRunnerHandle> dummy_task_runner_handle;
-  if (!base::ThreadTaskRunnerHandle::IsSet()) {
+  if (scheduler_type == SchedulerType::kMockScheduler) {
+    main_thread_scheduler_ =
+        blink::scheduler::CreateWebMainThreadSchedulerForTests();
     // Dummy task runner is initialized here because the blink::Initialize
     // creates IsolateHolder which needs the current task runner handle. There
     // should be no task posted to this task runner. The message loop is not
@@ -153,12 +159,17 @@ TestBlinkWebUnitTestSupport::TestBlinkWebUnitTestSupport()
     // of message loops, and their types are not known upfront. Some tests also
     // create their own thread bundles or message loops, and doing the same in
     // TestBlinkWebUnitTestSupport would introduce a conflict.
-    dummy_task_runner = base::MakeRefCounted<DummyTaskRunner>();
+    dummy_task_runner = base::MakeRefCounted<base::NullTaskRunner>();
     dummy_task_runner_handle.reset(
         new base::ThreadTaskRunnerHandle(dummy_task_runner));
+  } else {
+    DCHECK_EQ(scheduler_type, SchedulerType::kRealScheduler);
+    main_thread_scheduler_ =
+        blink::scheduler::WebThreadScheduler::CreateMainThreadScheduler(
+            base::MessagePump::Create(base::MessagePump::Type::DEFAULT));
+    base::ThreadPoolInstance::CreateAndStartWithDefaultParams(
+        "BlinkTestSupport");
   }
-  main_thread_scheduler_ =
-      blink::scheduler::CreateWebMainThreadSchedulerForTests();
 
   // Initialize mojo firstly to enable Blink initialization to use it.
   InitializeMojo();
@@ -198,7 +209,7 @@ TestBlinkWebUnitTestSupport::TestBlinkWebUnitTestSupport()
 
   // Test shell always exposes the GC.
   std::string flags("--expose-gc");
-  v8::V8::SetFlagsFromString(flags.c_str(), static_cast<int>(flags.size()));
+  v8::V8::SetFlagsFromString(flags.c_str(), flags.size());
 }
 
 TestBlinkWebUnitTestSupport::~TestBlinkWebUnitTestSupport() {
@@ -217,12 +228,6 @@ std::unique_ptr<blink::WebURLLoaderFactory>
 TestBlinkWebUnitTestSupport::CreateDefaultURLLoaderFactory() {
   return std::make_unique<WebURLLoaderFactoryWithMock>(
       weak_factory_.GetWeakPtr());
-}
-
-std::unique_ptr<blink::WebDataConsumerHandle>
-TestBlinkWebUnitTestSupport::CreateDataConsumerHandle(
-    mojo::ScopedDataPipeConsumerHandle handle) {
-  return std::make_unique<WebDataConsumerHandleImpl>(std::move(handle));
 }
 
 blink::WebString TestBlinkWebUnitTestSupport::UserAgent() {
@@ -287,6 +292,12 @@ blink::WebString TestBlinkWebUnitTestSupport::DefaultLocale() {
   return blink::WebString::FromASCII("en-US");
 }
 
+scoped_refptr<base::SingleThreadTaskRunner>
+TestBlinkWebUnitTestSupport::GetIOTaskRunner() const {
+  return ChildProcess::current() ? ChildProcess::current()->io_task_runner()
+                                 : nullptr;
+}
+
 blink::WebURLLoaderMockFactory*
 TestBlinkWebUnitTestSupport::GetURLLoaderMockFactory() {
   return url_loader_factory_.get();
@@ -302,14 +313,14 @@ class TestWebRTCCertificateGenerator
     : public blink::WebRTCCertificateGenerator {
   void GenerateCertificate(
       const blink::WebRTCKeyParams& key_params,
-      std::unique_ptr<blink::WebRTCCertificateCallback> callback,
+      blink::WebRTCCertificateCallback completion_callback,
       scoped_refptr<base::SingleThreadTaskRunner> task_runner) override {
     NOTIMPLEMENTED();
   }
   void GenerateCertificateWithExpiration(
       const blink::WebRTCKeyParams& key_params,
       uint64_t expires_ms,
-      std::unique_ptr<blink::WebRTCCertificateCallback> callback,
+      blink::WebRTCCertificateCallback completion_callback,
       scoped_refptr<base::SingleThreadTaskRunner> task_runner) override {
     NOTIMPLEMENTED();
   }

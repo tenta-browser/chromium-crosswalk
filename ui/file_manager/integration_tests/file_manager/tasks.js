@@ -30,9 +30,29 @@ function FakeTask(isDefault, taskId, title, opt_isGenericFileHandler) {
  * @type {Array<FakeTask>}
  * @const
  */
-var DOWNLOADS_FAKE_TASKS = [
+const DOWNLOADS_FAKE_TASKS = [
   new FakeTask(true, 'dummytaskid|open-with', 'DummyTask1'),
   new FakeTask(false, 'dummytaskid-2|open-with', 'DummyTask2')
+];
+
+/**
+ * Fake tasks for a local volume opening in browser.
+ *
+ * @type {Array<FakeTask>}
+ * @const
+ */
+const DOWNLOADS_FAKE_TEXT = [
+  new FakeTask(true, FILE_MANAGER_EXTENSIONS_ID + '|file|view-in-browser'),
+];
+
+/**
+ * Fake tasks for a PDF file opening in browser.
+ *
+ * @type {Array<FakeTask>}
+ * @const
+ */
+const DOWNLOADS_FAKE_PDF = [
+  new FakeTask(true, FILE_MANAGER_EXTENSIONS_ID + '|file|view-as-pdf'),
 ];
 
 /**
@@ -41,7 +61,7 @@ var DOWNLOADS_FAKE_TASKS = [
  * @type {Array<FakeTask>}
  * @const
  */
-var DRIVE_FAKE_TASKS = [
+const DRIVE_FAKE_TASKS = [
   new FakeTask(true, 'dummytaskid|drive|open-with', 'DummyTask1'),
   new FakeTask(false, 'dummytaskid-2|drive|open-with', 'DummyTask2')
 ];
@@ -89,7 +109,7 @@ async function executeDefaultTask(appId, expectedTaskId) {
  */
 async function defaultTaskDialog(appId, expectedTaskId) {
   // Prepare expected labels.
-  var expectedLabels = [
+  const expectedLabels = [
     'DummyTask1 (default)',
     'DummyTask2',
   ];
@@ -104,17 +124,17 @@ async function defaultTaskDialog(appId, expectedTaskId) {
       'fakeEvent', appId,
       ['#tasks', 'select', {item: {type: 'ChangeDefaultTask'}}]));
 
-  var caller = getCaller();
+  const caller = getCaller();
 
   // Wait for the list of menu item is added as expected.
-  await repeatUntil(async function() {
+  await repeatUntil(async () => {
     // Obtains menu items.
     const items = await remoteCall.callRemoteTestUtil(
         'queryAllElements', appId,
         ['#default-task-dialog #default-tasks-list li']);
 
     // Compare the contents of items.
-    var actualLabels = items.map((item) => item.text);
+    const actualLabels = items.map((item) => item.text);
     if (chrome.test.checkDeepEq(expectedLabels, actualLabels)) {
       return true;
     }
@@ -158,28 +178,40 @@ async function defaultTaskDialog(appId, expectedTaskId) {
   await remoteCall.waitUntilTaskExecutes(appId, expectedTaskId);
 }
 
-testcase.executeDefaultTaskDrive = async function() {
+testcase.executeDefaultTaskDrive = async () => {
   const appId = await setupTaskTest(RootPath.DRIVE, DRIVE_FAKE_TASKS);
   await executeDefaultTask(appId, 'dummytaskid|drive|open-with');
 };
 
-testcase.executeDefaultTaskDownloads = async function() {
+testcase.executeDefaultTaskDownloads = async () => {
   const appId = await setupTaskTest(RootPath.DOWNLOADS, DOWNLOADS_FAKE_TASKS);
   await executeDefaultTask(appId, 'dummytaskid|open-with');
 };
 
-testcase.defaultTaskDialogDrive = async function() {
+testcase.defaultTaskForTextPlain = async () => {
+  const appId = await setupTaskTest(RootPath.DOWNLOADS, DOWNLOADS_FAKE_TEXT);
+  await executeDefaultTask(
+      appId, FILE_MANAGER_EXTENSIONS_ID + '|file|view-in-browser');
+};
+
+testcase.defaultTaskForPdf = async () => {
+  const appId = await setupTaskTest(RootPath.DOWNLOADS, DOWNLOADS_FAKE_PDF);
+  await executeDefaultTask(
+      appId, FILE_MANAGER_EXTENSIONS_ID + '|file|view-as-pdf');
+};
+
+testcase.defaultTaskDialogDrive = async () => {
   const appId = await setupTaskTest(RootPath.DRIVE, DRIVE_FAKE_TASKS);
   await defaultTaskDialog(appId, 'dummytaskid-2|drive|open-with');
 };
 
-testcase.defaultTaskDialogDownloads = async function() {
+testcase.defaultTaskDialogDownloads = async () => {
   const appId = await setupTaskTest(RootPath.DOWNLOADS, DOWNLOADS_FAKE_TASKS);
   await defaultTaskDialog(appId, 'dummytaskid-2|open-with');
 };
 
-testcase.genericTaskIsNotExecuted = async function() {
-  var tasks = [new FakeTask(
+testcase.genericTaskIsNotExecuted = async () => {
+  const tasks = [new FakeTask(
       false, 'dummytaskid|open-with', 'DummyTask1',
       true /* isGenericFileHandler */)];
 
@@ -193,8 +225,8 @@ testcase.genericTaskIsNotExecuted = async function() {
       appId, FILE_MANAGER_EXTENSIONS_ID + '|file|view-in-browser');
 };
 
-testcase.genericTaskAndNonGenericTask = async function() {
-  var tasks = [
+testcase.genericTaskAndNonGenericTask = async () => {
+  const tasks = [
     new FakeTask(
         false, 'dummytaskid|open-with', 'DummyTask1',
         true /* isGenericFileHandler */),

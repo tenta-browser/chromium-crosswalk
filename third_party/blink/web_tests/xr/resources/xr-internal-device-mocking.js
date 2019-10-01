@@ -4,6 +4,13 @@
  * for interal tests. The main mocked objects are found in
  * ../external/wpt/resources/chromium/webxr-test.js. */
 
+const default_stage_parameters = {
+  standingTransform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1.65, 0, 1],
+  sizeX: 1.5,
+  sizeZ: 1.5,
+  bounds: null
+};
+
 MockRuntime.prototype.base_getFrameData = MockRuntime.prototype.getFrameData;
 
 MockRuntime.prototype.getFrameData = function() {
@@ -67,17 +74,34 @@ MockRuntime.prototype.setResetPose = function(to) {
 MockRuntime.prototype.setStageTransform = function(value) {
   if (value) {
     if (!this.displayInfo_.stageParameters) {
-      this.displayInfo_.stageParameters = {
-        standingTransform: value,
-        sizeX: 1.5,
-        sizeZ: 1.5,
-      };
-    } else {
-      this.displayInfo_.stageParameters.standingTransform = value;
+      this.displayInfo_.stageParameters = default_stage_parameters;
     }
+
+    this.displayInfo_.stageParameters.standingTransform = value;
   } else if (this.displayInfo_.stageParameters) {
     this.displayInfo_.stageParameters = null;
   }
+
+  this.sessionClient_.onChanged(this.displayInfo_);
+};
+
+MockRuntime.prototype.setStageSize = function(x, z) {
+  if (!this.displayInfo_.stageParameters) {
+    this.displayInfo_.stageParameters = default_stage_parameters;
+  }
+
+  this.displayInfo_.stageParameters.sizeX = x;
+  this.displayInfo_.stageParameters.sizeZ = z;
+
+  this.sessionClient_.onChanged(this.displayInfo_);
+};
+
+MockRuntime.prototype.setStageBounds = function(value) {
+  if (!this.displayInfo_.stageParameters) {
+    this.displayInfo_.stageParameters = default_stage_parameters;
+  }
+
+  this.displayInfo_.stageParameters.bounds = value;
 
   this.sessionClient_.onChanged(this.displayInfo_);
 };
@@ -96,6 +120,7 @@ class MockXRInputSource {
     this.primary_input_pressed_ = false;
     this.primary_input_clicked_ = false;
     this.grip_ = null;
+    this.gamepad_ = null;
 
     this.target_ray_mode_ = 'gaze';
     this.pointer_offset_ = null;
@@ -113,6 +138,10 @@ class MockXRInputSource {
       this.primary_input_clicked_ = true;
     }
     this.primary_input_pressed_ = value;
+  }
+
+  set primaryInputClicked(value) {
+    this.primary_input_clicked_ = value;
   }
 
   get grip() {
@@ -181,6 +210,28 @@ class MockXRInputSource {
     }
   }
 
+  get gamepad() {
+    return this.gamepad_;
+  }
+
+  connectGamepad() {
+    // Mojo complains if some of the properties on Gamepad are null, so set
+    // everything to reasonable defaults that tests can override.
+    this.gamepad_ = new device.mojom.Gamepad();
+    this.gamepad_.connected = true;
+    this.gamepad_.id = "unknown";
+    this.gamepad_.timestamp = 0;
+    this.gamepad_.axes = [];
+    this.gamepad_.buttons = [];
+    this.gamepad_.mapping = "";
+    this.gamepad_.display_id = 0;
+    this.gamepad_.hand = device.mojom.GamepadHand.GamepadHandNone;
+  }
+
+  disconnectGamepad() {
+    this.gamepad_ = null;
+  }
+
   getInputSourceState() {
     let input_state = new device.mojom.XRInputSourceState();
 
@@ -190,6 +241,8 @@ class MockXRInputSource {
     input_state.primaryInputClicked = this.primary_input_clicked_;
 
     input_state.grip = this.grip_;
+
+    input_state.gamepad = this.gamepad_;
 
     if (this.desc_dirty_) {
       let input_desc = new device.mojom.XRInputSourceDescription();

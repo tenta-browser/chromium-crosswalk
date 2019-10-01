@@ -19,6 +19,9 @@ enum ChromeInsetsMetric {
   INSETS_BOOKMARKS_BAR_BUTTON = views::VIEWS_INSETS_END,
   // Margins used by toasts.
   INSETS_TOAST,
+  // Margins around the title of a tab group header, that form the bounds of the
+  // title chip.
+  INSETS_TAB_GROUP_TITLE_CHIP,
 };
 
 enum ChromeDistanceMetric {
@@ -90,10 +93,6 @@ class ChromeLayoutProvider : public views::LayoutProvider {
   //   ---------------------------
   // This value controls the alignment used for "Label 1" and "Label 2".
   virtual views::GridLayout::Alignment GetControlLabelGridAlignment() const;
-
-  // Returns whether to use extra padding on dialogs. If this is false, content
-  // Views for dialogs should not insert extra padding at their own edges.
-  virtual bool UseExtraDialogPadding() const;
 
   // Returns whether to show the icon next to the title text on a dialog.
   virtual bool ShouldShowWindowIcon() const;

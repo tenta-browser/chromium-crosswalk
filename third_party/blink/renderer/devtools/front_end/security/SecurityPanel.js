@@ -90,32 +90,14 @@ Security.SecurityPanel = class extends UI.PanelWithSidebar {
     return highlightedUrl;
   }
 
-
-  /**
-   * @param {!Protocol.Security.SecurityState} securityState
-   */
-  setRanInsecureContentStyle(securityState) {
-    this._ranInsecureContentStyle = securityState;
-  }
-
-  /**
-   * @param {!Protocol.Security.SecurityState} securityState
-   */
-  setDisplayedInsecureContentStyle(securityState) {
-    this._displayedInsecureContentStyle = securityState;
-  }
-
   /**
    * @param {!Protocol.Security.SecurityState} newSecurityState
-   * @param {boolean} schemeIsCryptographic
    * @param {!Array<!Protocol.Security.SecurityStateExplanation>} explanations
-   * @param {?Protocol.Security.InsecureContentStatus} insecureContentStatus
    * @param {?string} summary
    */
-  _updateSecurityState(newSecurityState, schemeIsCryptographic, explanations, insecureContentStatus, summary) {
+  _updateSecurityState(newSecurityState, explanations, summary) {
     this._sidebarMainViewElement.setSecurityState(newSecurityState);
-    this._mainView.updateSecurityState(
-        newSecurityState, schemeIsCryptographic, explanations, insecureContentStatus, summary);
+    this._mainView.updateSecurityState(newSecurityState, explanations, summary);
   }
 
   /**
@@ -124,11 +106,9 @@ Security.SecurityPanel = class extends UI.PanelWithSidebar {
   _onSecurityStateChanged(event) {
     const data = /** @type {!Security.PageSecurityState} */ (event.data);
     const securityState = /** @type {!Protocol.Security.SecurityState} */ (data.securityState);
-    const schemeIsCryptographic = /** @type {boolean} */ (data.schemeIsCryptographic);
     const explanations = /** @type {!Array<!Protocol.Security.SecurityStateExplanation>} */ (data.explanations);
-    const insecureContentStatus = /** @type {?Protocol.Security.InsecureContentStatus} */ (data.insecureContentStatus);
     const summary = /** @type {?string} */ (data.summary);
-    this._updateSecurityState(securityState, schemeIsCryptographic, explanations, insecureContentStatus, summary);
+    this._updateSecurityState(securityState, explanations, summary);
   }
 
   selectAndSwitchToMainView() {
@@ -200,12 +180,9 @@ Security.SecurityPanel = class extends UI.PanelWithSidebar {
 
     let securityState = /** @type {!Protocol.Security.SecurityState} */ (request.securityState());
 
-    if (request.mixedContentType === Protocol.Security.MixedContentType.Blockable && this._ranInsecureContentStyle)
-      securityState = this._ranInsecureContentStyle;
-    else if (
-        request.mixedContentType === Protocol.Security.MixedContentType.OptionallyBlockable &&
-        this._displayedInsecureContentStyle)
-      securityState = this._displayedInsecureContentStyle;
+    if (request.mixedContentType === Protocol.Security.MixedContentType.Blockable ||
+        request.mixedContentType === Protocol.Security.MixedContentType.OptionallyBlockable)
+      securityState = Protocol.Security.SecurityState.Insecure;
 
     if (this._origins.has(origin)) {
       const originState = this._origins.get(origin);
@@ -399,42 +376,55 @@ Security.SecurityPanelSidebarTree = class extends UI.TreeOutlineInShadow {
     this._showOriginInPanel = showOriginInPanel;
     this._mainOrigin = null;
 
-    /** @type {!Map<!Security.SecurityPanelSidebarTree.OriginGroupName, !UI.TreeElement>} */
+    /** @type {!Map<!Security.SecurityPanelSidebarTree.OriginGroup, !UI.TreeElement>} */
     this._originGroups = new Map();
 
-    for (const key in Security.SecurityPanelSidebarTree.OriginGroupName) {
-      const originGroupName = Security.SecurityPanelSidebarTree.OriginGroupName[key];
-      const originGroup = new UI.TreeElement(originGroupName, true);
-      originGroup.selectable = false;
-      originGroup.setCollapsible(false);
-      originGroup.expand();
-      originGroup.listItemElement.classList.add('security-sidebar-origins');
-      this._originGroups.set(originGroupName, originGroup);
-      this.appendChild(originGroup);
+    /** @type {!Map<!Security.SecurityPanelSidebarTree.OriginGroup, string>} */
+    this._originGroupTitles = new Map([
+      [Security.SecurityPanelSidebarTree.OriginGroup.MainOrigin, ls`Main origin`],
+      [Security.SecurityPanelSidebarTree.OriginGroup.NonSecure, ls`Non-secure origins`],
+      [Security.SecurityPanelSidebarTree.OriginGroup.Secure, ls`Secure origins`],
+      [Security.SecurityPanelSidebarTree.OriginGroup.Unknown, ls`Unknown / canceled`],
+    ]);
+
+    for (const key in Security.SecurityPanelSidebarTree.OriginGroup) {
+      const group = Security.SecurityPanelSidebarTree.OriginGroup[key];
+      const element = this._createOriginGroupElement(this._originGroupTitles.get(group));
+      this._originGroups.set(group, element);
+      this.appendChild(element);
     }
+
     this._clearOriginGroups();
 
     // This message will be removed by clearOrigins() during the first new page load after the panel was opened.
     const mainViewReloadMessage = new UI.TreeElement(Common.UIString('Reload to view details'));
     mainViewReloadMessage.selectable = false;
     mainViewReloadMessage.listItemElement.classList.add('security-main-view-reload-message');
-    this._originGroups.get(Security.SecurityPanelSidebarTree.OriginGroupName.MainOrigin)
-        .appendChild(mainViewReloadMessage);
+    this._originGroups.get(Security.SecurityPanelSidebarTree.OriginGroup.MainOrigin).appendChild(mainViewReloadMessage);
 
     /** @type {!Map<!Security.SecurityPanel.Origin, !Security.SecurityPanelSidebarTreeElement>} */
     this._elementsByOrigin = new Map();
   }
 
   /**
+   * @param {string} originGroupTitle
+   * @return {!UI.TreeElement}
+   */
+  _createOriginGroupElement(originGroupTitle) {
+    const originGroup = new UI.TreeElement(originGroupTitle, true);
+    originGroup.selectable = false;
+    originGroup.setCollapsible(false);
+    originGroup.expand();
+    originGroup.listItemElement.classList.add('security-sidebar-origins');
+    return originGroup;
+  }
+
+  /**
    * @param {boolean} hidden
    */
   toggleOriginsList(hidden) {
-    for (const key in Security.SecurityPanelSidebarTree.OriginGroupName) {
-      const originGroupName = Security.SecurityPanelSidebarTree.OriginGroupName[key];
-      const group = this._originGroups.get(originGroupName);
-      if (group)
-        group.hidden = hidden;
-    }
+    for (const element of this._originGroups.values())
+      element.hidden = hidden;
   }
 
   /**
@@ -468,17 +458,21 @@ Security.SecurityPanelSidebarTree = class extends UI.TreeOutlineInShadow {
 
     let newParent;
     if (origin === this._mainOrigin) {
-      newParent = this._originGroups.get(Security.SecurityPanelSidebarTree.OriginGroupName.MainOrigin);
+      newParent = this._originGroups.get(Security.SecurityPanelSidebarTree.OriginGroup.MainOrigin);
+      if (securityState === Protocol.Security.SecurityState.Secure)
+        newParent.title = ls`Main origin (secure)`;
+      else
+        newParent.title = ls`Main origin (non-secure)`;
     } else {
       switch (securityState) {
         case Protocol.Security.SecurityState.Secure:
-          newParent = this._originGroups.get(Security.SecurityPanelSidebarTree.OriginGroupName.Secure);
+          newParent = this._originGroups.get(Security.SecurityPanelSidebarTree.OriginGroup.Secure);
           break;
         case Protocol.Security.SecurityState.Unknown:
-          newParent = this._originGroups.get(Security.SecurityPanelSidebarTree.OriginGroupName.Unknown);
+          newParent = this._originGroups.get(Security.SecurityPanelSidebarTree.OriginGroup.Unknown);
           break;
         default:
-          newParent = this._originGroups.get(Security.SecurityPanelSidebarTree.OriginGroupName.NonSecure);
+          newParent = this._originGroups.get(Security.SecurityPanelSidebarTree.OriginGroup.NonSecure);
           break;
       }
     }
@@ -500,7 +494,9 @@ Security.SecurityPanelSidebarTree = class extends UI.TreeOutlineInShadow {
       originGroup.removeChildren();
       originGroup.hidden = true;
     }
-    this._originGroups.get(Security.SecurityPanelSidebarTree.OriginGroupName.MainOrigin).hidden = false;
+    const mainOrigin = this._originGroups.get(Security.SecurityPanelSidebarTree.OriginGroup.MainOrigin);
+    mainOrigin.title = this._originGroupTitles.get(Security.SecurityPanelSidebarTree.OriginGroup.MainOrigin);
+    mainOrigin.hidden = false;
   }
 
   clearOrigins() {
@@ -509,16 +505,12 @@ Security.SecurityPanelSidebarTree = class extends UI.TreeOutlineInShadow {
   }
 };
 
-/**
- * A mapping from Javascript key IDs to names (sidebar section titles).
- * Note: The names are used as keys into a map, so they must be distinct from each other.
- * @enum {string}
- */
-Security.SecurityPanelSidebarTree.OriginGroupName = {
-  MainOrigin: Common.UIString('Main origin'),
-  NonSecure: Common.UIString('Non-secure origins'),
-  Secure: Common.UIString('Secure origins'),
-  Unknown: Common.UIString('Unknown / canceled')
+/** @enum */
+Security.SecurityPanelSidebarTree.OriginGroup = {
+  MainOrigin: Symbol('MainOrigin'),
+  NonSecure: Symbol('NonSecure'),
+  Secure: Symbol('Secure'),
+  Unknown: Symbol('Unknown')
 };
 
 /**
@@ -661,12 +653,10 @@ Security.SecurityMainView = class extends UI.VBox {
 
   /**
    * @param {!Protocol.Security.SecurityState} newSecurityState
-   * @param {boolean} schemeIsCryptographic
    * @param {!Array<!Protocol.Security.SecurityStateExplanation>} explanations
-   * @param {?Protocol.Security.InsecureContentStatus} insecureContentStatus
    * @param {?string} summary
    */
-  updateSecurityState(newSecurityState, schemeIsCryptographic, explanations, insecureContentStatus, summary) {
+  updateSecurityState(newSecurityState, explanations, summary) {
     // Remove old state.
     // It's safe to call this even when this._securityState is undefined.
     this._summarySection.classList.remove('security-summary-' + this._securityState);
@@ -684,11 +674,7 @@ Security.SecurityMainView = class extends UI.VBox {
     // Use override summary if present, otherwise use base explanation
     this._summaryText.textContent = summary || summaryExplanationStrings[this._securityState];
 
-    this._explanations = explanations, this._insecureContentStatus = insecureContentStatus;
-    this._schemeIsCryptographic = schemeIsCryptographic;
-
-    this._panel.setRanInsecureContentStyle(insecureContentStatus.ranInsecureContentStyle);
-    this._panel.setDisplayedInsecureContentStyle(insecureContentStatus.displayedInsecureContentStyle);
+    this._explanations = explanations;
 
     this.refreshExplanations();
   }
@@ -922,6 +908,13 @@ Security.SecurityOriginView = class extends UI.VBox {
       }
       noteSection.createChild('div').textContent =
           Common.UIString('The security details above are from the first inspected response.');
+    } else if (originState.securityState === Protocol.Security.SecurityState.Secure) {
+      // If the security state is secure but there are no security details,
+      // this means that the origin is a non-cryptographic secure origin, e.g.
+      // chrome:// or about:.
+      const secureSection = this.element.createChild('div', 'origin-view-section');
+      secureSection.createChild('div', 'origin-view-section-title').textContent = Common.UIString('Secure');
+      secureSection.createChild('div').textContent = Common.UIString('This origin is a non-HTTPS secure origin.');
     } else if (originState.securityState !== Protocol.Security.SecurityState.Unknown) {
       const notSecureSection = this.element.createChild('div', 'origin-view-section');
       notSecureSection.createChild('div', 'origin-view-section-title').textContent = Common.UIString('Not secure');

@@ -137,6 +137,15 @@ class PasswordStoreX : public password_manager::PasswordStoreDefault {
   // RefcountedKeyedService:
   void ShutdownOnUIThread() override;
 
+ protected:
+  // Implements PasswordStoreSync interface.
+  password_manager::FormRetrievalResult ReadAllLogins(
+      password_manager::PrimaryKeyToFormMap* key_to_form_map) override;
+  password_manager::PasswordStoreChangeList RemoveLoginByPrimaryKeySync(
+      int primary_key) override;
+  password_manager::PasswordStoreSync::MetadataStore* GetMetadataStore()
+      override;
+
  private:
   friend class PasswordStoreXTest;
 
@@ -146,7 +155,8 @@ class PasswordStoreX : public password_manager::PasswordStoreDefault {
   scoped_refptr<base::SequencedTaskRunner> CreateBackgroundTaskRunner()
       const override;
   password_manager::PasswordStoreChangeList AddLoginImpl(
-      const autofill::PasswordForm& form) override;
+      const autofill::PasswordForm& form,
+      password_manager::AddLoginError* error = nullptr) override;
   password_manager::PasswordStoreChangeList UpdateLoginImpl(
       const autofill::PasswordForm& form) override;
   password_manager::PasswordStoreChangeList RemoveLoginImpl(
@@ -165,8 +175,6 @@ class PasswordStoreX : public password_manager::PasswordStoreDefault {
       const base::Callback<bool(const GURL&)>& origin_filter) override;
   std::vector<std::unique_ptr<autofill::PasswordForm>> FillMatchingLogins(
       const FormDigest& form) override;
-  std::vector<std::unique_ptr<autofill::PasswordForm>>
-  FillLoginsForSameOrganizationName(const std::string& signon_realm) override;
   bool FillAutofillableLogins(
       std::vector<std::unique_ptr<autofill::PasswordForm>>* forms) override;
   bool FillBlacklistLogins(

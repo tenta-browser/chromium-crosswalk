@@ -44,22 +44,25 @@ class PasswordGenerationPopupViewViews::GeneratedPasswordBox
   // of it. |generating_state| means that the generated password is offered.
   void Init(const base::string16& password,
             const base::string16& suggestion,
-            PasswordGenerationPopupController::GenerationState state) {
+            PasswordGenerationPopupController::GenerationUIState state) {
     views::GridLayout* layout =
         SetLayoutManager(std::make_unique<views::GridLayout>(this));
     BuildColumnSet(layout);
     layout->StartRow(views::GridLayout::kFixedSize, 0);
 
-    layout->AddView(autofill::CreateLabelWithColorReadabilityDisabled(
-        suggestion, ChromeTextContext::CONTEXT_BODY_TEXT_LARGE,
-        state == PasswordGenerationPopupController::kOfferGeneration
-            ? views::style::STYLE_PRIMARY
-            : STYLE_SECONDARY));
+    layout->AddView(
+        autofill::CreateLabelWithColorReadabilityDisabled(
+            suggestion, ChromeTextContext::CONTEXT_BODY_TEXT_LARGE,
+            state == PasswordGenerationPopupController::kOfferGeneration
+                ? views::style::STYLE_PRIMARY
+                : STYLE_SECONDARY)
+            .release());
 
     DCHECK(!password_label_);
     password_label_ = autofill::CreateLabelWithColorReadabilityDisabled(
-        password, ChromeTextContext::CONTEXT_BODY_TEXT_LARGE,
-        STYLE_SECONDARY_MONOSPACED);
+                          password, ChromeTextContext::CONTEXT_BODY_TEXT_LARGE,
+                          STYLE_SECONDARY_MONOSPACED)
+                          .release();
     layout->AddView(password_label_);
   }
 
@@ -158,7 +161,7 @@ void PasswordGenerationPopupViewViews::CreateLayoutAndChildren() {
       SetLayoutManager(std::make_unique<views::BoxLayout>(
           views::BoxLayout::kVertical, gfx::Insets(), 1));
   box_layout->set_cross_axis_alignment(
-      views::BoxLayout::CROSS_AXIS_ALIGNMENT_STRETCH);
+      views::BoxLayout::CrossAxisAlignment::kStretch);
 
   const ChromeLayoutProvider* provider = ChromeLayoutProvider::Get();
   const int kVerticalPadding =

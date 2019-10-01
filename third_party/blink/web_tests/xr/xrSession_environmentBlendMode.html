@@ -5,7 +5,6 @@
 <script src="file:///gen/device/vr/public/mojom/vr_service.mojom.js"></script>
 <script src="../external/wpt/resources/chromium/webxr-test.js"></script>
 <script src="../xr/resources/xr-test-utils.js"></script>
-<script src="../xr/resources/test-constants.js"></script>
 <canvas id="webgl-canvas"></canvas>
 
 <script>
@@ -14,9 +13,9 @@ let testName = "environmentBlendMode is correct for a VR device";
 
 let fakeDeviceInitParams = { supportsImmersive:true };
 
-let requestSessionOptions = [
-  { outputContext: getOutputContext() },
-  { mode: 'immersive-vr' },
+let requestSessionModes = [
+  'inline',
+  'immersive-vr',
 ];
 
 let testFunction = function(session, t) {
@@ -26,7 +25,7 @@ let testFunction = function(session, t) {
 };
 
 xr_session_promise_test(
-  testFunction, fakeDeviceInitParams, requestSessionOptions, testName);
+  testFunction, fakeDeviceInitParams, requestSessionModes, testName);
 
 // TODO(https://crbug.com/828321): Enable once session options for AR are in place.
 /*xr_session_promise_test( (session, t) => {

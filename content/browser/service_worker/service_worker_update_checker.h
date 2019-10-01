@@ -17,10 +17,10 @@ namespace content {
 
 class ServiceWorkerVersion;
 
-class ServiceWorkerUpdateChecker {
+class CONTENT_EXPORT ServiceWorkerUpdateChecker {
  public:
   // Data of each compared script needed in remaining update process
-  struct ComparedScriptInfo {
+  struct CONTENT_EXPORT ComparedScriptInfo {
     ComparedScriptInfo();
     ComparedScriptInfo(
         int64_t old_resource_id,
@@ -51,7 +51,10 @@ class ServiceWorkerUpdateChecker {
       const GURL& main_script_url,
       int64_t main_script_resource_id,
       scoped_refptr<ServiceWorkerVersion> version_to_update,
-      scoped_refptr<network::SharedURLLoaderFactory> loader_factory);
+      scoped_refptr<network::SharedURLLoaderFactory> loader_factory,
+      bool force_bypass_cache,
+      blink::mojom::ServiceWorkerUpdateViaCache update_via_cache,
+      base::TimeDelta time_since_last_check);
   ~ServiceWorkerUpdateChecker();
 
   // |callback| is always triggered when Start() finishes. If the scripts are
@@ -64,11 +67,13 @@ class ServiceWorkerUpdateChecker {
   std::map<GURL, ComparedScriptInfo> TakeComparedResults();
 
   void OnOneUpdateCheckFinished(
-      const GURL& script_url,
       int64_t old_resource_id,
+      const GURL& script_url,
       ServiceWorkerSingleScriptUpdateChecker::Result result,
       std::unique_ptr<ServiceWorkerSingleScriptUpdateChecker::PausedState>
           paused_state);
+
+  bool network_accessed() const { return network_accessed_; }
 
  private:
   void CheckOneScript(const GURL& url, const int64_t resource_id);
@@ -87,6 +92,14 @@ class ServiceWorkerUpdateChecker {
   UpdateStatusCallback callback_;
 
   scoped_refptr<network::SharedURLLoaderFactory> loader_factory_;
+
+  const bool force_bypass_cache_;
+  const blink::mojom::ServiceWorkerUpdateViaCache update_via_cache_;
+  const base::TimeDelta time_since_last_check_;
+
+  // True if any at least one of the scripts is fetched by network.
+  bool network_accessed_ = false;
+
   base::WeakPtrFactory<ServiceWorkerUpdateChecker> weak_factory_;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(ServiceWorkerUpdateChecker);

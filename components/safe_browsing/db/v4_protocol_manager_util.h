@@ -8,6 +8,7 @@
 // A class that implements the stateless methods used by the GetHashUpdate and
 // GetFullHash stubby calls made by Chrome using the SafeBrowsing V4 protocol.
 
+#include <functional>
 #include <initializer_list>
 #include <memory>
 #include <ostream>
@@ -307,6 +308,10 @@ class V4ProtocolManagerUtil {
   // Given a URL, returns all the patterns we need to check.
   static void GeneratePatternsToCheck(const GURL& url,
                                       std::vector<std::string>* urls);
+
+  // Returns a FullHash for the basic host+path pattern for a given URL after
+  // canonicalization. Not intended for general use.
+  static FullHash GetFullHash(const GURL& url);
 
   // Generates a Pver4 request URL and sets the appropriate header values.
   // |request_base64| is the serialized request protocol buffer encoded in

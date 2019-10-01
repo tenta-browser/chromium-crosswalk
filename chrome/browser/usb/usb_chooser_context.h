@@ -16,10 +16,13 @@
 #include "base/macros.h"
 #include "base/observer_list.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/permissions/chooser_context_base.h"
 #include "chrome/browser/usb/usb_policy_allowed_devices.h"
-#include "device/usb/public/mojom/device_manager.mojom.h"
 #include "mojo/public/cpp/bindings/associated_binding.h"
+#include "services/device/public/mojom/usb_manager.mojom.h"
+#include "services/device/public/mojom/usb_manager_client.mojom.h"
+#include "url/origin.h"
 
 class UsbChooserContext : public ChooserContextBase,
                           public device::mojom::UsbDeviceManagerClient {
@@ -36,29 +39,29 @@ class UsbChooserContext : public ChooserContextBase,
     virtual void OnDeviceManagerConnectionError();
   };
 
-  static std::unique_ptr<base::DictionaryValue> DeviceInfoToDictValue(
+  static base::Value DeviceInfoToValue(
       const device::mojom::UsbDeviceInfo& device_info);
 
   // These methods from ChooserContextBase are overridden in order to expose
   // ephemeral devices through the public interface.
   std::vector<std::unique_ptr<ChooserContextBase::Object>> GetGrantedObjects(
-      const GURL& requesting_origin,
-      const GURL& embedding_origin) override;
+      const url::Origin& requesting_origin,
+      const url::Origin& embedding_origin) override;
   std::vector<std::unique_ptr<ChooserContextBase::Object>>
   GetAllGrantedObjects() override;
-  void RevokeObjectPermission(const GURL& requesting_origin,
-                              const GURL& embedding_origin,
-                              const base::DictionaryValue& object) override;
+  void RevokeObjectPermission(const url::Origin& requesting_origin,
+                              const url::Origin& embedding_origin,
+                              const base::Value& object) override;
 
   // Grants |requesting_origin| access to the USB device.
-  void GrantDevicePermission(const GURL& requesting_origin,
-                             const GURL& embedding_origin,
+  void GrantDevicePermission(const url::Origin& requesting_origin,
+                             const url::Origin& embedding_origin,
                              const device::mojom::UsbDeviceInfo& device_info);
 
   // Checks if |requesting_origin| (when embedded within |embedding_origin| has
   // access to a device with |device_info|.
-  bool HasDevicePermission(const GURL& requesting_origin,
-                           const GURL& embedding_origin,
+  bool HasDevicePermission(const url::Origin& requesting_origin,
+                           const url::Origin& embedding_origin,
                            const device::mojom::UsbDeviceInfo& device_info);
 
   void AddObserver(DeviceObserver* observer);
@@ -69,6 +72,11 @@ class UsbChooserContext : public ChooserContextBase,
   void GetDevice(const std::string& guid,
                  device::mojom::UsbDeviceRequest device_request,
                  device::mojom::UsbDeviceClientPtr device_client);
+#if defined(OS_ANDROID)
+  void RefreshDeviceInfo(
+      const std::string& guid,
+      device::mojom::UsbDeviceManager::RefreshDeviceInfoCallback callback);
+#endif
 
   // This method should only be called when you are sure that |devices_| has
   // been initialized. It will return nullptr if the guid cannot be found.
@@ -80,8 +88,10 @@ class UsbChooserContext : public ChooserContextBase,
       device::mojom::UsbDeviceManagerPtr fake_device_manager);
 
   // ChooserContextBase implementation.
-  bool IsValidObject(const base::DictionaryValue& object) override;
-  std::string GetObjectName(const base::DictionaryValue& object) override;
+  bool IsValidObject(const base::Value& object) override;
+
+  // Returns the human readable string representing the given object.
+  static std::string GetObjectName(const base::Value& object);
   void InitDeviceList(std::vector<::device::mojom::UsbDeviceInfoPtr> devices);
 
  private:
@@ -92,13 +102,19 @@ class UsbChooserContext : public ChooserContextBase,
   void OnDeviceManagerConnectionError();
   void EnsureConnectionWithDeviceManager();
   void SetUpDeviceManagerConnection();
+#if defined(OS_ANDROID)
+  void OnDeviceInfoRefreshed(
+      device::mojom::UsbDeviceManager::RefreshDeviceInfoCallback callback,
+      device::mojom::UsbDeviceInfoPtr device_info);
+#endif
 
   bool is_incognito_;
   bool is_initialized_ = false;
   base::queue<device::mojom::UsbDeviceManager::GetDevicesCallback>
       pending_get_devices_requests_;
 
-  std::map<std::pair<GURL, GURL>, std::set<std::string>> ephemeral_devices_;
+  std::map<std::pair<url::Origin, url::Origin>, std::set<std::string>>
+      ephemeral_devices_;
   std::map<std::string, device::mojom::UsbDeviceInfoPtr> devices_;
 
   std::unique_ptr<UsbPolicyAllowedDevices> usb_policy_allowed_devices_;

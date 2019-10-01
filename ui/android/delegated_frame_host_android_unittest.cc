@@ -3,7 +3,9 @@
 // found in the LICENSE file.
 
 #include "ui/android/delegated_frame_host_android.h"
+
 #include "base/android/build_info.h"
+#include "base/bind_helpers.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_mock_time_task_runner.h"
 #include "cc/layers/layer.h"
@@ -12,6 +14,7 @@
 #include "cc/trees/layer_tree_host.h"
 #include "components/viz/common/features.h"
 #include "components/viz/common/hit_test/hit_test_region_list.h"
+#include "components/viz/common/presentation_feedback_map.h"
 #include "components/viz/common/surfaces/parent_local_surface_id_allocator.h"
 #include "components/viz/host/host_frame_sink_manager.h"
 #include "components/viz/service/display_embedder/server_shared_bitmap_manager.h"
@@ -39,9 +42,8 @@ class MockDelegatedFrameHostAndroidClient
                void(const std::vector<viz::ReturnedResource>&));
   MOCK_METHOD1(ReclaimResources,
                void(const std::vector<viz::ReturnedResource>&));
-  MOCK_METHOD1(
-      DidPresentCompositorFrames,
-      void(const base::flat_map<uint32_t, gfx::PresentationFeedback>&));
+  MOCK_METHOD1(DidPresentCompositorFrames,
+               void(const viz::PresentationFeedbackMap&));
   MOCK_METHOD1(OnFrameTokenChanged, void(uint32_t));
   MOCK_METHOD0(WasEvicted, void());
 };
@@ -59,6 +61,10 @@ class MockWindowAndroidCompositor : public WindowAndroidCompositor {
                CompositorLock*(CompositorLockClient*, base::TimeDelta));
   MOCK_CONST_METHOD0(IsDrawingFirstVisibleFrame, bool());
   MOCK_METHOD1(SetVSyncPaused, void(bool));
+  MOCK_METHOD1(OnUpdateRefreshRate, void(float));
+
+  void OnUpdateSupportedRefreshRates(
+      const std::vector<float>& supported_refresh_rates) override {}
 
   // Helpers for move-only types:
   void RequestCopyOfOutputOnRootLayer(
@@ -407,6 +413,25 @@ TEST_F(DelegatedFrameHostAndroidSurfaceSynchronizationOnlyTest,
   viz::CopyOutputRequest* request = requests[0].second.get();
   EXPECT_FALSE(request->has_area());
   EXPECT_FALSE(request->has_result_selection());
+}
+
+TEST_F(DelegatedFrameHostAndroidLegacyNonVizTest, EvictWhileVisible) {
+  // Create a frame and mark it visible.
+  gfx::Size size(10, 10);
+  SetUpValidFrame(size);
+  auto id = allocator_.GetCurrentLocalSurfaceIdAllocation().local_surface_id();
+  frame_host_->WasShown(id, size);
+  EXPECT_TRUE(frame_host_->HasSavedFrame());
+
+  // Evict, which should do nothing as the frame is still visible.
+  frame_host_->EvictDelegatedFrame();
+  EXPECT_TRUE(frame_host_->HasSavedFrame());
+
+  // Hide frame and evict again, now it should release the frame.
+  EXPECT_CALL(client_, WasEvicted());
+  frame_host_->WasHidden();
+  frame_host_->EvictDelegatedFrame();
+  EXPECT_FALSE(frame_host_->HasSavedFrame());
 }
 
 }  // namespace

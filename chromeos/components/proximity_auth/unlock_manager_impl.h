@@ -8,6 +8,7 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "chromeos/components/proximity_auth/messenger_observer.h"
 #include "chromeos/components/proximity_auth/proximity_auth_system.h"
@@ -18,7 +19,7 @@
 #include "chromeos/components/proximity_auth/screenlock_state.h"
 #include "chromeos/components/proximity_auth/smart_lock_metrics_recorder.h"
 #include "chromeos/components/proximity_auth/unlock_manager.h"
-#include "chromeos/dbus/power_manager_client.h"
+#include "chromeos/dbus/power/power_manager_client.h"
 #include "chromeos/services/secure_channel/public/mojom/secure_channel.mojom.h"
 #include "device/bluetooth/bluetooth_adapter.h"
 
@@ -26,7 +27,6 @@ namespace proximity_auth {
 
 class Messenger;
 class ProximityAuthClient;
-class ProximityAuthPrefManager;
 class ProximityMonitor;
 
 // The unlock manager is responsible for controlling the lock screen UI based on
@@ -40,8 +40,7 @@ class UnlockManagerImpl : public UnlockManager,
   // The |proximity_auth_client| is not owned and should outlive the constructed
   // unlock manager.
   UnlockManagerImpl(ProximityAuthSystem::ScreenlockType screenlock_type,
-                    ProximityAuthClient* proximity_auth_client,
-                    ProximityAuthPrefManager* pref_manager);
+                    ProximityAuthClient* proximity_auth_client);
   ~UnlockManagerImpl() override;
 
   // UnlockManager:
@@ -55,8 +54,7 @@ class UnlockManagerImpl : public UnlockManager,
   // Creates a ProximityMonitor instance for the given |connection|.
   // Exposed for testing.
   virtual std::unique_ptr<ProximityMonitor> CreateProximityMonitor(
-      RemoteDeviceLifeCycle* life_cycle,
-      ProximityAuthPrefManager* pref_manager);
+      RemoteDeviceLifeCycle* life_cycle);
 
  private:
   // The possible lock screen states for the remote device.
@@ -124,8 +122,9 @@ class UnlockManagerImpl : public UnlockManager,
   // current state of |this| unlock manager.
   void UpdateProximityMonitorState();
 
-  // Sets waking up state.
-  void SetWakingUpState(bool is_waking_up);
+  // Sets if the "initial scan" is in progress. This state factors into what is
+  // shown to the user. See |is_performing_initial_scan_| for more.
+  void SetIsPerformingInitialScan(bool is_performing_initial_scan);
 
   // Accepts or rejects the current auth attempt according to |error|. Accepts
   // if and only if |error| is empty. If the auth attempt is accepted, unlocks
@@ -134,8 +133,9 @@ class UnlockManagerImpl : public UnlockManager,
       const base::Optional<
           SmartLockMetricsRecorder::SmartLockAuthResultFailureReason>& error);
 
-  // Failed to create a connection to the host.
-  void OnConnectionAttemptTimeOut();
+  // Failed to create a connection to the host during the "initial scan". See
+  // |is_performing_initial_scan_| for more.
+  void OnInitialScanTimeout();
 
   // Returns the screen lock state corresponding to the given remote |status|
   // update.
@@ -146,6 +146,13 @@ class UnlockManagerImpl : public UnlockManager,
   // will return nullptr if |life_cycle_| is not set or the remote device is not
   // yet authenticated.
   Messenger* GetMessenger();
+
+  // Records UMA performance metrics for the unlockable remote status being
+  // received.
+  void RecordUnlockableRemoteStatusReceived();
+
+  // Clears the timers for beginning a scan and fetching remote status.
+  void ResetPerformanceMetricsTimestamps();
 
   // Whether |this| manager is being used for sign-in or session unlock.
   const ProximityAuthSystem::ScreenlockType screenlock_type_;
@@ -165,15 +172,18 @@ class UnlockManagerImpl : public UnlockManager,
   // Used to call into the embedder. Expected to outlive |this| instance.
   ProximityAuthClient* proximity_auth_client_;
 
-  // Used to access the common prefs. Expected to outlive |this| instance.
-  ProximityAuthPrefManager* pref_manager_;
-
   // True if the manager is currently processing a user-initiated authentication
   // attempt, which is initiated when the user pod is clicked.
   bool is_attempting_auth_;
 
-  // Whether the system is waking up from sleep.
-  bool is_waking_up_;
+  // If true, either the lock screen was just shown (after resuming from
+  // suspend, or directly locking the screen), or the focused user pod was
+  // switched. It becomes false if the phone is found, something goes wrong
+  // while searching for the phone, or the initial scan times out (at which
+  // point the user visually sees an indication that the phone cannot be found).
+  // Though this field becomes false after this timeout, Smart Lock continues
+  // to scan for the phone until the user unlocks the screen.
+  bool is_performing_initial_scan_;
 
   // The Bluetooth adapter. Null if there is no adapter present on the local
   // device.
@@ -186,9 +196,20 @@ class UnlockManagerImpl : public UnlockManager,
   // The state of the current screen lock UI.
   ScreenlockState screenlock_state_;
 
-  // Used to clear the waking up state after a timeout.
+  // The timestamp of when UnlockManager begins to try to establish a secure
+  // connection to the requested remote device of the provided
+  // RemoteDeviceLifeCycle.
+  base::Time attempt_secure_connection_start_time_;
+
+  // The timestamp of when UnlockManager successfully establishes a secure
+  // connection to the requested remote device of the provided
+  // RemoteDeviceLifeCycle, and begins to try to fetch its "remote status".
+  base::Time attempt_get_remote_status_start_time_;
+
+  // Used to track if the "initial scan" has timed out. See
+  // |is_performing_initial_scan_| for more.
   base::WeakPtrFactory<UnlockManagerImpl>
-      clear_waking_up_state_weak_ptr_factory_;
+      initial_scan_timeout_weak_ptr_factory_;
 
   // Used to reject auth attempts after a timeout. An in-progress auth attempt
   // blocks the sign-in screen UI, so it's important to prevent the auth attempt

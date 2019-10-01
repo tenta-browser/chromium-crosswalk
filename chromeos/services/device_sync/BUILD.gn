@@ -2,8 +2,6 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//services/service_manager/public/service_manifest.gni")
-
 assert(is_chromeos, "Non-ChromeOS builds cannot depend on //chromeos")
 
 static_library("device_sync") {
@@ -13,10 +11,20 @@ static_library("device_sync") {
     "cryptauth_client.h",
     "cryptauth_client_impl.cc",
     "cryptauth_client_impl.h",
+    "cryptauth_constants.cc",
+    "cryptauth_constants.h",
+    "cryptauth_device.cc",
+    "cryptauth_device.h",
     "cryptauth_device_manager.cc",
     "cryptauth_device_manager.h",
     "cryptauth_device_manager_impl.cc",
     "cryptauth_device_manager_impl.h",
+    "cryptauth_device_registry.cc",
+    "cryptauth_device_registry.h",
+    "cryptauth_device_registry_impl.cc",
+    "cryptauth_device_registry_impl.h",
+    "cryptauth_device_sync_result.cc",
+    "cryptauth_device_sync_result.h",
     "cryptauth_enroller.h",
     "cryptauth_enroller_factory_impl.cc",
     "cryptauth_enroller_factory_impl.h",
@@ -28,6 +36,8 @@ static_library("device_sync") {
     "cryptauth_enrollment_manager_impl.h",
     "cryptauth_enrollment_result.cc",
     "cryptauth_enrollment_result.h",
+    "cryptauth_feature_type.cc",
+    "cryptauth_feature_type.h",
     "cryptauth_gcm_manager.cc",
     "cryptauth_gcm_manager.h",
     "cryptauth_gcm_manager_impl.cc",
@@ -36,10 +46,27 @@ static_library("device_sync") {
     "cryptauth_key.h",
     "cryptauth_key_bundle.cc",
     "cryptauth_key_bundle.h",
+    "cryptauth_key_creator.cc",
+    "cryptauth_key_creator.h",
+    "cryptauth_key_creator_impl.cc",
+    "cryptauth_key_creator_impl.h",
+    "cryptauth_key_proof_computer.h",
+    "cryptauth_key_proof_computer_impl.cc",
+    "cryptauth_key_proof_computer_impl.h",
     "cryptauth_key_registry.cc",
     "cryptauth_key_registry.h",
     "cryptauth_key_registry_impl.cc",
     "cryptauth_key_registry_impl.h",
+    "cryptauth_scheduler.cc",
+    "cryptauth_scheduler.h",
+    "cryptauth_scheduler_impl.cc",
+    "cryptauth_scheduler_impl.h",
+    "cryptauth_v2_enroller.cc",
+    "cryptauth_v2_enroller.h",
+    "cryptauth_v2_enroller_impl.cc",
+    "cryptauth_v2_enroller_impl.h",
+    "cryptauth_v2_enrollment_manager_impl.cc",
+    "cryptauth_v2_enrollment_manager_impl.h",
     "device_sync_base.cc",
     "device_sync_base.h",
     "device_sync_impl.cc",
@@ -67,6 +94,8 @@ static_library("device_sync") {
     "sync_scheduler.h",
     "sync_scheduler_impl.cc",
     "sync_scheduler_impl.h",
+    "value_string_encoding.cc",
+    "value_string_encoding.h",
   ]
 
   public_deps = [
@@ -79,8 +108,11 @@ static_library("device_sync") {
 
   deps = [
     "//base",
+    "//base/util/values:values_util",
     "//chromeos/components/multidevice",
     "//chromeos/components/multidevice/logging",
+    "//chromeos/constants:constants",
+    "//chromeos/network",
     "//chromeos/services/device_sync/proto:util",
     "//chromeos/services/device_sync/public/cpp",
     "//chromeos/services/device_sync/public/mojom",
@@ -99,11 +131,6 @@ static_library("device_sync") {
   ]
 }
 
-service_manifest("manifest") {
-  name = "device_sync"
-  source = "manifest.json"
-}
-
 static_library("test_support") {
   testonly = true
 
@@ -114,6 +141,14 @@ static_library("test_support") {
     "fake_cryptauth_enrollment_manager.h",
     "fake_cryptauth_gcm_manager.cc",
     "fake_cryptauth_gcm_manager.h",
+    "fake_cryptauth_key_creator.cc",
+    "fake_cryptauth_key_creator.h",
+    "fake_cryptauth_key_proof_computer.cc",
+    "fake_cryptauth_key_proof_computer.h",
+    "fake_cryptauth_scheduler.cc",
+    "fake_cryptauth_scheduler.h",
+    "fake_cryptauth_v2_enroller.cc",
+    "fake_cryptauth_v2_enroller.h",
     "fake_device_sync.cc",
     "fake_device_sync.h",
     "fake_device_sync_observer.cc",
@@ -149,12 +184,19 @@ source_set("unit_tests") {
     "cryptauth_api_call_flow_unittest.cc",
     "cryptauth_client_impl_unittest.cc",
     "cryptauth_device_manager_impl_unittest.cc",
+    "cryptauth_device_registry_impl_unittest.cc",
+    "cryptauth_device_unittest.cc",
     "cryptauth_enroller_impl_unittest.cc",
     "cryptauth_enrollment_manager_impl_unittest.cc",
     "cryptauth_gcm_manager_impl_unittest.cc",
     "cryptauth_key_bundle_unittest.cc",
+    "cryptauth_key_creator_impl_unittest.cc",
+    "cryptauth_key_proof_computer_impl_unittest.cc",
     "cryptauth_key_registry_impl_unittest.cc",
     "cryptauth_key_unittest.cc",
+    "cryptauth_scheduler_impl_unittest.cc",
+    "cryptauth_v2_enroller_impl_unittest.cc",
+    "cryptauth_v2_enrollment_manager_impl_unittest.cc",
     "device_sync_service_unittest.cc",
     "remote_device_loader_unittest.cc",
     "remote_device_provider_impl_unittest.cc",
@@ -169,7 +211,11 @@ source_set("unit_tests") {
     "//base/test:test_support",
     "//chromeos/components/multidevice",
     "//chromeos/components/multidevice:test_support",
+    "//chromeos/constants:constants",
     "//chromeos/dbus:test_support",
+    "//chromeos/network",
+    "//chromeos/network:test_support",
+    "//chromeos/services/device_sync/proto:test_support",
     "//chromeos/services/device_sync/proto:util",
     "//chromeos/services/device_sync/public/cpp:test_support",
     "//chromeos/services/device_sync/public/cpp:unit_tests",

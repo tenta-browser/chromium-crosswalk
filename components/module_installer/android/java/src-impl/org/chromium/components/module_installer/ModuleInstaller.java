@@ -40,6 +40,7 @@ public class ModuleInstaller {
 
     /** Needs to be called before trying to access a module. */
     public static void init() {
+        if (sSplitCompatted) return;
         // SplitCompat.install may copy modules into Chrome's internal folder or clean them up.
         try (StrictModeContext unused = StrictModeContext.allowDiskWrites()) {
             SplitCompat.install(ContextUtils.getApplicationContext());
@@ -47,6 +48,27 @@ public class ModuleInstaller {
         }
         // SplitCompat.install may add emulated modules. Thus, update crash keys.
         updateCrashKeys();
+    }
+
+    /**
+     * Needs to be called in attachBaseContext of the activities that want to have access to
+     * splits prior to application restart.
+     *
+     * For details, see:
+     * https://developer.android.com/reference/com/google/android/play/core/splitcompat/SplitCompat.html#install(android.content.Context)
+     */
+    public static void initActivity(Context context) {
+        SplitCompat.install(context);
+    }
+
+    /**
+     * Records via UMA all modules that have been requested and are currently installed. The intent
+     * is to measure the install penetration of each module.
+     */
+    public static void recordModuleAvailability() {
+        if (!CommandLine.getInstance().hasSwitch(FAKE_FEATURE_MODULE_INSTALL)) {
+            PlayCoreModuleInstallerBackend.recordModuleAvailability();
+        }
     }
 
     /** Writes fully installed and emulated modules to crash keys. */

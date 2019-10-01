@@ -5,6 +5,7 @@
 #include "media/base/android/media_drm_bridge.h"
 
 #include <stddef.h>
+#include <sys/system_properties.h>
 #include <algorithm>
 #include <memory>
 #include <utility>
@@ -37,10 +38,11 @@
 #include "third_party/widevine/cdm/widevine_cdm_common.h"
 
 using base::android::AttachCurrentThread;
-using base::android::ConvertUTF8ToJavaString;
 using base::android::ConvertJavaStringToUTF8;
+using base::android::ConvertUTF8ToJavaString;
 using base::android::JavaByteArrayToByteVector;
 using base::android::JavaByteArrayToString;
+using base::android::JavaObjectArrayReader;
 using base::android::JavaParamRef;
 using base::android::ScopedJavaGlobalRef;
 using base::android::ScopedJavaLocalRef;
@@ -263,6 +265,12 @@ bool AreMediaDrmApisAvailable() {
   return true;
 }
 
+int GetFirstApiLevel() {
+  JNIEnv* env = AttachCurrentThread();
+  int first_api_level = Java_MediaDrmBridge_getFirstApiLevel(env);
+  return first_api_level;
+}
+
 }  // namespace
 
 // MediaDrm is not generally usable without MediaCodec. Thus, both the MediaDrm
@@ -284,6 +292,22 @@ bool MediaDrmBridge::IsKeySystemSupported(const std::string& key_system) {
 bool MediaDrmBridge::IsPerOriginProvisioningSupported() {
   return base::android::BuildInfo::GetInstance()->sdk_int() >=
          base::android::SDK_VERSION_MARSHMALLOW;
+}
+
+// static
+bool MediaDrmBridge::IsPerApplicationProvisioningSupported() {
+  // Start by checking "ro.product.first_api_level", which may not exist.
+  // If it is non-zero, then it is the API level.
+  static int first_api_level = GetFirstApiLevel();
+  DVLOG(1) << "first_api_level = " << first_api_level;
+  if (first_api_level >= base::android::SDK_VERSION_OREO)
+    return true;
+
+  // If "ro.product.first_api_level" does not match, then check build number.
+  DVLOG(1) << "api_level = "
+           << base::android::BuildInfo::GetInstance()->sdk_int();
+  return base::android::BuildInfo::GetInstance()->sdk_int() >=
+         base::android::SDK_VERSION_OREO;
 }
 
 // static
@@ -337,6 +361,9 @@ scoped_refptr<MediaDrmBridge> MediaDrmBridge::CreateInternal(
   // All paths requires the MediaDrmApis.
   DCHECK(AreMediaDrmApisAvailable());
   DCHECK(!scheme_uuid.empty());
+
+  // TODO(crbug.com/917527): Check that |origin_id| is specified on devices
+  // that support it.
 
   scoped_refptr<MediaDrmBridge> media_drm_bridge(new MediaDrmBridge(
       scheme_uuid, origin_id, security_level, requires_media_crypto,
@@ -599,12 +626,12 @@ void MediaDrmBridge::RejectPromise(uint32_t promise_id,
 }
 
 void MediaDrmBridge::SetMediaCryptoReadyCB(
-    const MediaCryptoReadyCB& media_crypto_ready_cb) {
+    MediaCryptoReadyCB media_crypto_ready_cb) {
   if (!task_runner_->BelongsToCurrentThread()) {
     task_runner_->PostTask(
-        FROM_HERE,
-        base::BindOnce(&MediaDrmBridge::SetMediaCryptoReadyCB,
-                       weak_factory_.GetWeakPtr(), media_crypto_ready_cb));
+        FROM_HERE, base::BindOnce(&MediaDrmBridge::SetMediaCryptoReadyCB,
+                                  weak_factory_.GetWeakPtr(),
+                                  std::move(media_crypto_ready_cb)));
     return;
   }
 
@@ -616,7 +643,7 @@ void MediaDrmBridge::SetMediaCryptoReadyCB(
   }
 
   DCHECK(!media_crypto_ready_cb_);
-  media_crypto_ready_cb_ = media_crypto_ready_cb;
+  media_crypto_ready_cb_ = std::move(media_crypto_ready_cb);
 
   if (!j_media_crypto_)
     return;
@@ -746,13 +773,10 @@ void MediaDrmBridge::OnSessionKeysChange(
 
   CdmKeysInfo cdm_keys_info;
 
-  size_t size = env->GetArrayLength(j_keys_info);
-  DCHECK_GT(size, 0u);
+  JavaObjectArrayReader<jobject> j_keys_info_array(j_keys_info);
+  DCHECK_GT(j_keys_info_array.size(), 0);
 
-  for (size_t i = 0; i < size; ++i) {
-    ScopedJavaLocalRef<jobject> j_key_status(
-        env, env->GetObjectArrayElement(j_keys_info, i));
-
+  for (auto j_key_status : j_keys_info_array) {
     ScopedJavaLocalRef<jbyteArray> j_key_id =
         Java_KeyStatus_getKeyId(env, j_key_status);
     std::vector<uint8_t> key_id;

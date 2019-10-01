@@ -8,9 +8,14 @@
 #include "base/process/launch.h"
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/test/test_reg_util_win.h"
+#include "base/values.h"
 #include "base/win/scoped_handle.h"
 #include "build/build_config.h"
+#include "chrome/credential_provider/common/gcp_strings.h"
 #include "chrome/credential_provider/gaiacp/gcp_utils.h"
+#include "chrome/credential_provider/gaiacp/mdm_utils.h"
+#include "chrome/credential_provider/gaiacp/reg_utils.h"
 #include "chrome/credential_provider/test/gcp_fakes.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -420,5 +425,84 @@ TEST_F(GcpProcHelperTest, GetCommandLineForEntrypoint) {
   ASSERT_EQ(1u, command_line.GetArgs().size());
   ASSERT_EQ(expected_arg, command_line.GetArgs()[0]);
 }
+
+TEST(Enroll, EnrollToGoogleMdmIfNeeded_NotEnabled) {
+  // Make sure MDM is not enforced.
+  registry_util::RegistryOverrideManager registry_override;
+  InitializeRegistryOverrideForTesting(&registry_override);
+
+  // EnrollToGoogleMdmIfNeeded() should be a noop.
+  base::Value properties(base::Value::Type::DICTIONARY);
+  ASSERT_EQ(S_OK, EnrollToGoogleMdmIfNeeded(properties));
+}
+
+// Tests all possible data combinations sent to EnrollToGoogleMdmIfNeeded to
+// ensure correct error reporting is performed.
+// Parameters are:
+// 1. Email.
+// 2. Id token.
+// 3. Access token.
+// 4. User SID.
+// 5. Username.
+// 6. Domain.
+class GcpEnrollmentArgsTest
+    : public ::testing::TestWithParam<std::tuple<const char*,
+                                                 const char*,
+                                                 const char*,
+                                                 const char*,
+                                                 const char*,
+                                                 const char*>> {};
+
+TEST_P(GcpEnrollmentArgsTest, EnrollToGoogleMdmIfNeeded_MissingArgs) {
+  // Enforce successful MDM enrollment. We just want to verify that correct
+  // verification of the dictionary is being performed in the function.
+  registry_util::RegistryOverrideManager registry_override;
+  InitializeRegistryOverrideForTesting(&registry_override);
+  ASSERT_EQ(S_OK, SetGlobalFlagForTesting(kRegMdmUrl, L"https://mdm.com"));
+  GoogleMdmEnrollmentStatusForTesting forced_enrollment_status(true);
+  GoogleMdmEnrolledStatusForTesting forced_enrolled_status(false);
+
+  const char* email = std::get<0>(GetParam());
+  const char* id_token = std::get<1>(GetParam());
+  const char* access_token = std::get<2>(GetParam());
+  const char* sid = std::get<3>(GetParam());
+  const char* username = std::get<4>(GetParam());
+  const char* domain = std::get<5>(GetParam());
+
+  bool should_succeed = (email && email[0]) && (id_token && id_token[0]) &&
+                        (access_token && access_token[0]) && (sid && sid[0]) &&
+                        (username && username[0]) && (domain && domain[0]);
+
+  base::Value properties(base::Value::Type::DICTIONARY);
+  if (email)
+    properties.SetStringKey(kKeyEmail, email);
+  if (id_token)
+    properties.SetStringKey(kKeyMdmIdToken, id_token);
+  if (access_token)
+    properties.SetStringKey(kKeyAccessToken, access_token);
+  if (sid)
+    properties.SetStringKey(kKeySID, sid);
+  if (username)
+    properties.SetStringKey(kKeyUsername, username);
+  if (domain)
+    properties.SetStringKey(kKeyDomain, domain);
+
+  // EnrollToGoogleMdmIfNeeded() should fail if any field is missing.
+  if (should_succeed) {
+    ASSERT_EQ(S_OK, EnrollToGoogleMdmIfNeeded(properties));
+  } else {
+    ASSERT_NE(S_OK, EnrollToGoogleMdmIfNeeded(properties));
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ,
+    GcpEnrollmentArgsTest,
+    ::testing::Combine(::testing::Values("foo@gmail.com", "", nullptr),
+                       ::testing::Values("id_token", "", nullptr),
+                       ::testing::Values("access_token", "", nullptr),
+                       ::testing::Values("sid", "", nullptr),
+                       ::testing::Values("username", "", nullptr),
+                       ::testing::Values("domain", "", nullptr)));
 
 }  // namespace credential_provider

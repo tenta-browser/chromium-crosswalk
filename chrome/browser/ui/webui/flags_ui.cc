@@ -52,6 +52,10 @@
 #include "components/user_manager/user_manager.h"
 #endif
 
+#if !defined(OS_ANDROID)
+#include "chrome/browser/ui/webui/dark_mode_handler.h"
+#endif
+
 using content::WebContents;
 using content::WebUIMessageHandler;
 
@@ -83,7 +87,6 @@ content::WebUIDataSource* CreateFlagsUIHTMLSource() {
 
   source->AddResourcePath(flags_ui::kFlagsJS, IDR_FLAGS_UI_FLAGS_JS);
   source->SetDefaultResource(IDR_FLAGS_UI_FLAGS_HTML);
-  source->UseGzip();
   return source;
 }
 
@@ -349,7 +352,13 @@ FlagsUI::FlagsUI(content::WebUI* web_ui)
 #endif
 
   // Set up the about:flags source.
-  content::WebUIDataSource::Add(profile, CreateFlagsUIHTMLSource());
+  auto* source = CreateFlagsUIHTMLSource();
+#if !defined(OS_ANDROID)
+  // Android hasn't implemented NativeTheme::SystemDarkModeEnabled() yet, which
+  // DarkModeHandler relies on to determine "darkness".
+  DarkModeHandler::Initialize(web_ui, source);
+#endif
+  content::WebUIDataSource::Add(profile, source);
 }
 
 FlagsUI::~FlagsUI() {

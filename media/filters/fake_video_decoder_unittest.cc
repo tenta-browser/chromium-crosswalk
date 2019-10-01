@@ -81,9 +81,9 @@ class FakeVideoDecoderTest
     last_decode_status_ = status;
   }
 
-  void FrameReady(const scoped_refptr<VideoFrame>& frame) {
+  void FrameReady(scoped_refptr<VideoFrame> frame) {
     DCHECK(!frame->metadata()->IsTrue(VideoFrameMetadata::END_OF_STREAM));
-    last_decoded_frame_ = frame;
+    last_decoded_frame_ = std::move(frame);
     num_decoded_frames_++;
   }
 
@@ -241,14 +241,14 @@ class FakeVideoDecoderTest
   DISALLOW_COPY_AND_ASSIGN(FakeVideoDecoderTest);
 };
 
-INSTANTIATE_TEST_CASE_P(NoParallelDecode,
-                        FakeVideoDecoderTest,
-                        ::testing::Values(FakeVideoDecoderTestParams(9, 1),
-                                          FakeVideoDecoderTestParams(0, 1)));
-INSTANTIATE_TEST_CASE_P(ParallelDecode,
-                        FakeVideoDecoderTest,
-                        ::testing::Values(FakeVideoDecoderTestParams(9, 3),
-                                          FakeVideoDecoderTestParams(0, 3)));
+INSTANTIATE_TEST_SUITE_P(NoParallelDecode,
+                         FakeVideoDecoderTest,
+                         ::testing::Values(FakeVideoDecoderTestParams(9, 1),
+                                           FakeVideoDecoderTestParams(0, 1)));
+INSTANTIATE_TEST_SUITE_P(ParallelDecode,
+                         FakeVideoDecoderTest,
+                         ::testing::Values(FakeVideoDecoderTestParams(9, 3),
+                                           FakeVideoDecoderTestParams(0, 3)));
 
 TEST_P(FakeVideoDecoderTest, Initialize) {
   Initialize();

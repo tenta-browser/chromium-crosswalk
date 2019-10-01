@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -26,19 +27,16 @@
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
-#include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_list.h"
-#include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/browser/unified_consent/unified_consent_service_factory.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
-#include "components/browser_sync/profile_sync_service.h"
 #include "components/history/core/browser/history_service.h"
+#include "components/language/core/browser/pref_names.h"
 #include "components/omnibox/browser/autocomplete_classifier.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/omnibox_field_trial.h"
 #include "components/omnibox/browser/omnibox_pedal_provider.h"
 #include "components/prefs/pref_service.h"
+#include "components/sync/driver/sync_service.h"
 #include "components/unified_consent/url_keyed_data_collection_consent_helper.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/notification_service.h"
@@ -54,6 +52,9 @@
 #endif
 
 #if !defined(OS_ANDROID)
+#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/upgrade_detector/upgrade_detector.h"
 #endif
 
@@ -89,11 +90,9 @@ ChromeAutocompleteProviderClient::ChromeAutocompleteProviderClient(
       url_consent_helper_(
           unified_consent::UrlKeyedDataCollectionConsentHelper::
               NewPersonalizedDataCollectionConsentHelper(
-                  ProfileSyncServiceFactory::GetSyncServiceForProfile(
-                      profile_))),
+                  ProfileSyncServiceFactory::GetForProfile(profile_))),
       storage_partition_(nullptr) {
-  if (OmniboxFieldTrial::GetPedalSuggestionMode() !=
-      OmniboxFieldTrial::PedalSuggestionMode::NONE)
+  if (OmniboxFieldTrial::IsPedalSuggestionsEnabled())
     pedal_provider_ = std::make_unique<OmniboxPedalProvider>(*this);
 }
 
@@ -172,8 +171,7 @@ ChromeAutocompleteProviderClient::GetDocumentSuggestionsService(
 OmniboxPedalProvider* ChromeAutocompleteProviderClient::GetPedalProvider()
     const {
   // If Pedals are disabled, we should never get here to use the provider.
-  DCHECK_NE(OmniboxFieldTrial::GetPedalSuggestionMode(),
-            OmniboxFieldTrial::PedalSuggestionMode::NONE);
+  DCHECK(OmniboxFieldTrial::IsPedalSuggestionsEnabled());
   DCHECK(pedal_provider_);
   return pedal_provider_.get();
 }
@@ -200,7 +198,7 @@ ChromeAutocompleteProviderClient::GetKeywordExtensionsDelegate(
 }
 
 std::string ChromeAutocompleteProviderClient::GetAcceptLanguages() const {
-  return profile_->GetPrefs()->GetString(prefs::kAcceptLanguages);
+  return profile_->GetPrefs()->GetString(language::prefs::kAcceptLanguages);
 }
 
 std::string
@@ -291,7 +289,7 @@ bool ChromeAutocompleteProviderClient::IsAuthenticated() const {
 
 bool ChromeAutocompleteProviderClient::IsSyncActive() const {
   syncer::SyncService* sync =
-      ProfileSyncServiceFactory::GetSyncServiceForProfile(profile_);
+      ProfileSyncServiceFactory::GetForProfile(profile_);
   return sync && sync->IsSyncFeatureActive();
 }
 
@@ -328,6 +326,9 @@ void ChromeAutocompleteProviderClient::DeleteMatchingURLsForKeywordFromHistory(
 }
 
 void ChromeAutocompleteProviderClient::PrefetchImage(const GURL& url) {
+  // Note: Android uses different image fetching mechanism to avoid
+  // penalty of copying byte buffers from C++ to Java.
+#if !defined(OS_ANDROID)
   BitmapFetcherService* image_service =
       BitmapFetcherServiceFactory::GetForBrowserContext(profile_);
   DCHECK(image_service);
@@ -373,6 +374,7 @@ void ChromeAutocompleteProviderClient::PrefetchImage(const GURL& url) {
         })");
 
   image_service->Prefetch(url, traffic_annotation);
+#endif  // !defined(OS_ANDROID)
 }
 
 void ChromeAutocompleteProviderClient::StartServiceWorker(
@@ -416,8 +418,7 @@ bool ChromeAutocompleteProviderClient::IsTabOpenWithURL(
     active_tab = active_browser->tab_strip_model()->GetActiveWebContents();
   for (auto* browser : *BrowserList::GetInstance()) {
     // Only look at same profile (and anonymity level).
-    if (browser->profile()->IsSameProfile(profile_) &&
-        browser->profile()->GetProfileType() == profile_->GetProfileType()) {
+    if (browser->profile()->IsSameProfileAndType(profile_)) {
       for (int i = 0; i < browser->tab_strip_model()->count(); ++i) {
         content::WebContents* web_contents =
             browser->tab_strip_model()->GetWebContentsAt(i);

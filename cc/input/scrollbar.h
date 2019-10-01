@@ -10,13 +10,24 @@
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
 
+static const int kPixelsPerLineStep = 40;
+static const float kMinFractionToStepWhenPaging = 0.875f;
+
 namespace cc {
 
 enum ScrollbarOrientation { HORIZONTAL, VERTICAL };
 enum ScrollDirection { SCROLL_BACKWARD, SCROLL_FORWARD };
-// For now, TRACK includes everything but the thumb including background and
-// buttons.
-enum ScrollbarPart { THUMB, TRACK, TICKMARKS };
+
+enum ScrollbarPart {
+  THUMB,
+  TRACK,
+  TICKMARKS,
+  BACK_BUTTON,
+  FORWARD_BUTTON,
+  BACK_TRACK,
+  FORWARD_TRACK,
+  NO_PART,
+};
 
 class Scrollbar {
  public:
@@ -30,6 +41,8 @@ class Scrollbar {
   virtual int ThumbThickness() const = 0;
   virtual int ThumbLength() const = 0;
   virtual gfx::Rect TrackRect() const = 0;
+  virtual gfx::Rect BackButtonRect() const = 0;
+  virtual gfx::Rect ForwardButtonRect() const = 0;
   virtual float ThumbOpacity() const = 0;
   virtual bool HasTickmarks() const = 0;
   virtual bool NeedsPaintPart(ScrollbarPart part) const = 0;

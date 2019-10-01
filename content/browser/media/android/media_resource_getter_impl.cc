@@ -71,7 +71,8 @@ void CheckPolicyForCookies(const GURL& url,
                            int render_process_id,
                            int render_frame_id,
                            MediaResourceGetterImpl::GetCookieCB callback,
-                           const net::CookieList& cookie_list) {
+                           const net::CookieList& cookie_list,
+                           const net::CookieStatusList& excluded_cookies) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   // AllowGetCookie has to be called on IO thread.
@@ -160,8 +161,8 @@ void MediaResourceGetterImpl::GetCookies(const GURL& url,
 
   net::CookieOptions options;
   options.set_include_httponly();
-  options.set_same_site_cookie_mode(
-      net::CookieOptions::SameSiteCookieMode::INCLUDE_STRICT_AND_LAX);
+  options.set_same_site_cookie_context(
+      net::CookieOptions::SameSiteCookieContext::SAME_SITE_STRICT);
   options.set_do_not_update_access_time();
   GetCookieServiceForContext(browser_context_)
       ->GetCookieList(

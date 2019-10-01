@@ -7,10 +7,10 @@
 #include <string.h>
 
 #include <algorithm>
+#include <atomic>
 #include <utility>
 #include <vector>
 
-#include "base/atomicops.h"
 #include "base/containers/stack_container.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
@@ -157,7 +157,7 @@ int Node::GetPort(const PortName& port_name, PortRef* port_ref) {
 
 #if defined(OS_ANDROID) && defined(ARCH_CPU_ARM64)
   // Workaround for https://crbug.com/665869.
-  base::subtle::MemoryBarrier();
+  std::atomic_thread_fence(std::memory_order_seq_cst);
 #endif
 
   *port_ref = PortRef(port_name, iter->second);
@@ -879,7 +879,7 @@ int Node::MergePortsInternal(const PortRef& port0_ref,
   {
     // Needed to swap peer map entries below.
     PortLocker::AssertNoPortsLockedOnCurrentThread();
-    base::Optional<base::AutoLock> ports_locker(base::in_place, ports_lock_);
+    base::ReleasableAutoLock ports_locker(&ports_lock_);
 
     base::Optional<PortLocker> locker(base::in_place, port_refs, 2);
     auto* port0 = locker->GetPort(port0_ref);
@@ -910,7 +910,7 @@ int Node::MergePortsInternal(const PortRef& port0_ref,
       const bool close_port1 =
           port1->state == Port::kReceiving || allow_close_on_bad_state;
       locker.reset();
-      ports_locker.reset();
+      ports_locker.Release();
       if (close_port0)
         ClosePort(port0_ref);
       if (close_port1)

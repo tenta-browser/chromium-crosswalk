@@ -63,7 +63,7 @@ class APP_LIST_EXPORT AppsContainerView : public HorizontalPage {
 
   // Updates the visibility of the items in this view according to
   // |app_list_state| and |is_in_drag|.
-  void UpdateControlVisibility(AppListViewState app_list_state,
+  void UpdateControlVisibility(ash::AppListViewState app_list_state,
                                bool is_in_drag);
 
   // Updates y position and opacity of the items in this view during dragging.
@@ -97,6 +97,9 @@ class APP_LIST_EXPORT AppsContainerView : public HorizontalPage {
   }
   AppListFolderView* app_list_folder_view() { return app_list_folder_view_; }
 
+  // Updates suggestion chips from app list model.
+  void UpdateSuggestionChips();
+
  private:
   enum ShowState {
     SHOW_NONE,  // initial state
@@ -106,9 +109,6 @@ class APP_LIST_EXPORT AppsContainerView : public HorizontalPage {
   };
 
   void SetShowState(ShowState show_state, bool show_apps_with_animation);
-
-  // Updates suggestion chips from app list model.
-  void UpdateSuggestionChips();
 
   // Suggestion chips and apps grid view become unfocusable if |disabled| is
   // true. This is used to trap focus within the folder when it is opened.

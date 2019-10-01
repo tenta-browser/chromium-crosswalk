@@ -32,7 +32,7 @@ class MediaStreamRemoteVideoSource::RemoteVideoSourceDelegate
  public:
   RemoteVideoSourceDelegate(
       scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
-      const VideoCaptureDeliverFrameCB& new_frame_callback);
+      const blink::VideoCaptureDeliverFrameCB& new_frame_callback);
 
  protected:
   friend class base::RefCountedThreadSafe<RemoteVideoSourceDelegate>;
@@ -43,14 +43,13 @@ class MediaStreamRemoteVideoSource::RemoteVideoSourceDelegate
   // thread.
   void OnFrame(const webrtc::VideoFrame& frame) override;
 
-  void DoRenderFrameOnIOThread(
-      const scoped_refptr<media::VideoFrame>& video_frame);
+  void DoRenderFrameOnIOThread(scoped_refptr<media::VideoFrame> video_frame);
 
  private:
   scoped_refptr<base::SingleThreadTaskRunner> io_task_runner_;
 
   // |frame_callback_| is accessed on the IO thread.
-  VideoCaptureDeliverFrameCB frame_callback_;
+  blink::VideoCaptureDeliverFrameCB frame_callback_;
 
   // Timestamp of the first received frame.
   base::TimeDelta start_timestamp_;
@@ -62,7 +61,7 @@ class MediaStreamRemoteVideoSource::RemoteVideoSourceDelegate
 MediaStreamRemoteVideoSource::RemoteVideoSourceDelegate::
     RemoteVideoSourceDelegate(
         scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
-        const VideoCaptureDeliverFrameCB& new_frame_callback)
+        const blink::VideoCaptureDeliverFrameCB& new_frame_callback)
     : io_task_runner_(io_task_runner),
       frame_callback_(new_frame_callback),
       start_timestamp_(media::kNoTimestamp),
@@ -123,8 +122,7 @@ void MediaStreamRemoteVideoSource::RemoteVideoSourceDelegate::OnFrame(
       break;
     }
     case webrtc::VideoFrameBuffer::Type::kI420: {
-      rtc::scoped_refptr<webrtc::I420BufferInterface> yuv_buffer =
-          buffer->ToI420();
+      const webrtc::I420BufferInterface* yuv_buffer = buffer->GetI420();
       video_frame = media::VideoFrame::WrapExternalYuvData(
           media::PIXEL_FORMAT_I420, size, gfx::Rect(size), size,
           yuv_buffer->StrideY(), yuv_buffer->StrideU(), yuv_buffer->StrideV(),
@@ -134,7 +132,7 @@ void MediaStreamRemoteVideoSource::RemoteVideoSourceDelegate::OnFrame(
       break;
     }
     case webrtc::VideoFrameBuffer::Type::kI444: {
-      webrtc::I444BufferInterface* yuv_buffer = buffer->GetI444();
+      const webrtc::I444BufferInterface* yuv_buffer = buffer->GetI444();
       video_frame = media::VideoFrame::WrapExternalYuvData(
           media::PIXEL_FORMAT_I444, size, gfx::Rect(size), size,
           yuv_buffer->StrideY(), yuv_buffer->StrideU(), yuv_buffer->StrideV(),
@@ -144,7 +142,7 @@ void MediaStreamRemoteVideoSource::RemoteVideoSourceDelegate::OnFrame(
       break;
     }
     case webrtc::VideoFrameBuffer::Type::kI010: {
-      webrtc::I010BufferInterface* yuv_buffer = buffer->GetI010();
+      const webrtc::I010BufferInterface* yuv_buffer = buffer->GetI010();
       // WebRTC defines I010 data as uint16 whereas Chromium uses uint8 for all
       // video formats, so conversion and cast is needed.
       video_frame = media::VideoFrame::WrapExternalYuvData(
@@ -190,6 +188,8 @@ void MediaStreamRemoteVideoSource::RemoteVideoSourceDelegate::OnFrame(
     video_frame->metadata()->SetTimeTicks(
         media::VideoFrameMetadata::REFERENCE_TIME, render_time);
   }
+  video_frame->metadata()->SetTimeTicks(media::VideoFrameMetadata::DECODE_TIME,
+                                        base::TimeTicks::Now());
 
   io_task_runner_->PostTask(
       FROM_HERE,
@@ -197,13 +197,12 @@ void MediaStreamRemoteVideoSource::RemoteVideoSourceDelegate::OnFrame(
                      video_frame));
 }
 
-void MediaStreamRemoteVideoSource::
-RemoteVideoSourceDelegate::DoRenderFrameOnIOThread(
-    const scoped_refptr<media::VideoFrame>& video_frame) {
+void MediaStreamRemoteVideoSource::RemoteVideoSourceDelegate::
+    DoRenderFrameOnIOThread(scoped_refptr<media::VideoFrame> video_frame) {
   DCHECK(io_task_runner_->BelongsToCurrentThread());
   TRACE_EVENT0("webrtc", "RemoteVideoSourceDelegate::DoRenderFrameOnIOThread");
   // TODO(hclam): Give the estimated capture time.
-  frame_callback_.Run(video_frame, base::TimeTicks());
+  frame_callback_.Run(std::move(video_frame), base::TimeTicks());
 }
 
 MediaStreamRemoteVideoSource::MediaStreamRemoteVideoSource(
@@ -211,8 +210,8 @@ MediaStreamRemoteVideoSource::MediaStreamRemoteVideoSource(
     : observer_(std::move(observer)) {
   // The callback will be automatically cleared when 'observer_' goes out of
   // scope and no further callbacks will occur.
-  observer_->SetCallback(base::Bind(&MediaStreamRemoteVideoSource::OnChanged,
-      base::Unretained(this)));
+  observer_->SetCallback(base::BindRepeating(
+      &MediaStreamRemoteVideoSource::OnChanged, base::Unretained(this)));
 }
 
 MediaStreamRemoteVideoSource::~MediaStreamRemoteVideoSource() {
@@ -226,7 +225,7 @@ void MediaStreamRemoteVideoSource::OnSourceTerminated() {
 }
 
 void MediaStreamRemoteVideoSource::StartSourceImpl(
-    const VideoCaptureDeliverFrameCB& frame_callback) {
+    const blink::VideoCaptureDeliverFrameCB& frame_callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!delegate_.get());
   delegate_ = new RemoteVideoSourceDelegate(io_task_runner(), frame_callback);
@@ -244,7 +243,7 @@ void MediaStreamRemoteVideoSource::StopSourceImpl() {
   // longer receives the video track.
   if (!observer_)
     return;
-  DCHECK(state() != MediaStreamVideoSource::ENDED);
+  DCHECK(state() != blink::MediaStreamVideoSource::ENDED);
   scoped_refptr<webrtc::VideoTrackInterface> video_track(
       static_cast<webrtc::VideoTrackInterface*>(observer_->track().get()));
   video_track->RemoveSink(delegate_.get());

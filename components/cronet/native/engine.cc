@@ -18,6 +18,7 @@
 #include "components/cronet/cronet_url_request_context.h"
 #include "components/cronet/native/generated/cronet.idl_impl_struct.h"
 #include "components/cronet/native/include/cronet_c.h"
+#include "components/cronet/native/runnables.h"
 #include "components/cronet/url_request_context_config.h"
 #include "components/cronet/version.h"
 #include "components/grpc_support/include/bidirectional_stream_c.h"
@@ -36,13 +37,15 @@ class SharedEngineState {
   // Marks |storage_path| in use, so multiple engines would not use it at the
   // same time. Returns |true| if marked successfully, |false| if it is in use
   // by another engine.
-  bool MarkStoragePathInUse(const std::string& storage_path) {
+  bool MarkStoragePathInUse(const std::string& storage_path)
+      LOCKS_EXCLUDED(lock_) {
     base::AutoLock lock(lock_);
     return in_use_storage_paths_.emplace(storage_path).second;
   }
 
   // Unmarks |storage_path| in use, so another engine could use it.
-  void UnmarkStoragePathInUse(const std::string& storage_path) {
+  void UnmarkStoragePathInUse(const std::string& storage_path)
+      LOCKS_EXCLUDED(lock_) {
     base::AutoLock lock(lock_);
     in_use_storage_paths_.erase(storage_path);
   }
@@ -59,7 +62,7 @@ class SharedEngineState {
   const std::string default_user_agent_;
   // Protecting shared state.
   base::Lock lock_;
-  std::unordered_set<std::string> in_use_storage_paths_;
+  std::unordered_set<std::string> in_use_storage_paths_ GUARDED_BY(lock_);
 
   DISALLOW_COPY_AND_ASSIGN(SharedEngineState);
 };
@@ -261,18 +264,72 @@ Cronet_RESULT Cronet_EngineImpl::Shutdown() {
 void Cronet_EngineImpl::AddRequestFinishedListener(
     Cronet_RequestFinishedInfoListenerPtr listener,
     Cronet_ExecutorPtr executor) {
-  NOTIMPLEMENTED();
+  if (listener == nullptr || executor == nullptr) {
+    LOG(DFATAL) << "Both listener and executor must be non-null. listener: "
+                << listener << " executor: " << executor << ".";
+    return;
+  }
+  base::AutoLock lock(lock_);
+  if (request_finished_registrations_.count(listener) > 0) {
+    LOG(DFATAL) << "Listener " << listener
+                << " already registered with executor "
+                << request_finished_registrations_[listener]
+                << ", *NOT* changing to new executor " << executor << ".";
+    return;
+  }
+  request_finished_registrations_.insert({listener, executor});
 }
 
 void Cronet_EngineImpl::RemoveRequestFinishedListener(
     Cronet_RequestFinishedInfoListenerPtr listener) {
-  NOTIMPLEMENTED();
+  base::AutoLock lock(lock_);
+  if (request_finished_registrations_.erase(listener) != 1) {
+    LOG(DFATAL) << "Asked to erase non-existent RequestFinishedInfoListener "
+                << listener << ".";
+  }
+}
+
+using RequestInfo = base::RefCountedData<Cronet_RequestFinishedInfo>;
+
+void Cronet_EngineImpl::ReportRequestFinished(
+    scoped_refptr<RequestInfo> request_info) {
+  base::flat_map<Cronet_RequestFinishedInfoListenerPtr, Cronet_ExecutorPtr>
+      registrations;
+  {
+    base::AutoLock lock(lock_);
+    // We copy under to avoid calling callbacks (which may run on direct
+    // executors and call Engine methods) with the lock held.
+    //
+    // The map holds only pointers and shouldn't be very large.
+    registrations = request_finished_registrations_;
+  }
+  for (auto& pair : registrations) {
+    auto* request_finished_listener = pair.first;
+    auto* request_finished_executor = pair.second;
+
+    request_finished_executor->Execute(
+        new cronet::OnceClosureRunnable(base::BindOnce(
+            [](scoped_refptr<RequestInfo> request_info,
+               Cronet_RequestFinishedInfoListenerPtr
+                   request_finished_listener) {
+              // TODO(crbug.com/879208): Pass-though UrlResponseInfo and Error
+              // too.
+              request_finished_listener->OnRequestFinished(&request_info->data,
+                                                           nullptr, nullptr);
+            },
+            request_info, request_finished_listener)));
+  }
 }
 
 Cronet_RESULT Cronet_EngineImpl::CheckResult(Cronet_RESULT result) {
   if (enable_check_result_)
     CHECK_EQ(Cronet_RESULT_SUCCESS, result);
   return result;
+}
+
+bool Cronet_EngineImpl::HasRequestFinishedListener() {
+  base::AutoLock lock(lock_);
+  return request_finished_registrations_.size() > 0;
 }
 
 // The struct stream_engine for grpc support.
@@ -302,7 +359,7 @@ class Cronet_EngineImpl::Callback : public CronetURLRequestContext::Callback {
   ~Callback() override;
 
   // CronetURLRequestContext::Callback implementation:
-  void OnInitNetworkThread() override;
+  void OnInitNetworkThread() override LOCKS_EXCLUDED(engine_->lock_);
   void OnDestroyNetworkThread() override;
   void OnEffectiveConnectionTypeChanged(
       net::EffectiveConnectionType effective_connection_type) override;
@@ -317,7 +374,7 @@ class Cronet_EngineImpl::Callback : public CronetURLRequestContext::Callback {
       int32_t throughput_kbps,
       int32_t timestamp_ms,
       net::NetworkQualityObservationSource source) override;
-  void OnStopNetLogCompleted() override;
+  void OnStopNetLogCompleted() override LOCKS_EXCLUDED(engine_->lock_);
 
  private:
   // The engine which owns context that owns |this| callback.
@@ -399,7 +456,7 @@ stream_engine* Cronet_EngineImpl::GetBidirectionalStreamEngine() {
   return stream_engine_.get();
 }
 
-};  // namespace cronet
+}  // namespace cronet
 
 CRONET_EXPORT Cronet_EnginePtr Cronet_Engine_Create() {
   return new cronet::Cronet_EngineImpl();

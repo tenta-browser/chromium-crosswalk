@@ -6,7 +6,6 @@ package org.chromium.chrome.browser.partnercustomizations;
 
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
-import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Build;
 import android.support.test.InstrumentationRegistry;
@@ -22,8 +21,6 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ContextUtils;
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
@@ -42,6 +39,7 @@ import org.chromium.chrome.test.partnercustomizations.TestPartnerBrowserCustomiz
 import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.content_public.browser.test.util.Criteria;
 import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.content_public.browser.test.util.TouchCommon;
 import org.chromium.content_public.browser.test.util.UiUtils;
 import org.chromium.net.test.EmbeddedTestServer;
@@ -63,16 +61,6 @@ public class PartnerHomepageIntegrationTest {
 
     @Before
     public void setUp() throws InterruptedException {
-        ThreadUtils.runOnUiThreadBlocking(new Runnable(){
-            @Override
-            public void run() {
-                // TODO(newt): Remove this once SharedPreferences is cleared automatically at the
-                // beginning of every test. http://crbug.com/441859
-                SharedPreferences sp = ContextUtils.getAppSharedPreferences();
-                sp.edit().clear().apply();
-            }
-        });
-
         mActivityTestRule.startMainActivityFromLauncher();
     }
 
@@ -143,14 +131,9 @@ public class PartnerHomepageIntegrationTest {
 
         // Assert no homepage button.
         Assert.assertFalse(HomepageManager.isHomepageEnabled());
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                Assert.assertEquals("Homepage button is shown", View.GONE,
-                        mActivityTestRule.getActivity()
-                                .findViewById(R.id.home_button)
-                                .getVisibility());
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            Assert.assertEquals("Homepage button is shown", View.GONE,
+                    mActivityTestRule.getActivity().findViewById(R.id.home_button).getVisibility());
         });
 
         // Enable homepage.
@@ -164,14 +147,9 @@ public class PartnerHomepageIntegrationTest {
 
         // Assert homepage button.
         Assert.assertTrue(HomepageManager.isHomepageEnabled());
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                Assert.assertEquals("Homepage button is shown", View.VISIBLE,
-                        mActivityTestRule.getActivity()
-                                .findViewById(R.id.home_button)
-                                .getVisibility());
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            Assert.assertEquals("Homepage button is shown", View.VISIBLE,
+                    mActivityTestRule.getActivity().findViewById(R.id.home_button).getVisibility());
         });
     }
 
@@ -201,7 +179,7 @@ public class PartnerHomepageIntegrationTest {
         // Change home page custom URI on hompage edit screen.
         final Preferences editHomepagePreferenceActivity =
                 mActivityTestRule.startPreferences(HomepageEditor.class.getName());
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
+        TestThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             // TODO(crbug.com/635567): Fix this properly.
             @SuppressLint("SetTextI18n")

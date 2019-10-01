@@ -4,6 +4,7 @@
 
 #include "chrome/browser/media/router/providers/cast/cast_session_tracker.h"
 
+#include "base/bind.h"
 #include "base/stl_util.h"
 #include "chrome/browser/media/router/providers/cast/chrome_cast_message_handler.h"
 #include "chrome/browser/media/router/providers/cast/dual_media_sink_service.h"
@@ -12,6 +13,8 @@
 namespace media_router {
 
 CastSessionTracker::Observer::~Observer() = default;
+
+CastSessionTracker::~CastSessionTracker() = default;
 
 // static
 CastSessionTracker* CastSessionTracker::GetInstance() {
@@ -64,8 +67,6 @@ CastSessionTracker::CastSessionTracker(
                         base::BindOnce(&CastSessionTracker::InitOnIoThread,
                                        base::Unretained(this)));
 }
-
-CastSessionTracker::~CastSessionTracker() = default;
 
 // This method needs to be separate from the constructor because the constructor
 // needs to be called from the UI thread, but observers can only be added in an

@@ -30,6 +30,7 @@
 #include "third_party/blink/renderer/core/svg_names.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 
 namespace blink {
@@ -216,6 +217,8 @@ class CORE_EXPORT SVGElement : public Element {
   bool IsPresentationAttribute(const QualifiedName&) const override;
   virtual bool IsPresentationAttributeWithSVGDOM(const QualifiedName&) const;
 
+  bool HasSVGParent() const;
+
  protected:
   SVGElement(const QualifiedName&,
              Document&,
@@ -241,8 +244,6 @@ class CORE_EXPORT SVGElement : public Element {
   static void MarkForLayoutAndParentResourceInvalidation(LayoutObject&);
 
   virtual bool SelfHasRelativeLengths() const { return false; }
-
-  bool HasSVGParent() const;
 
   SVGElementSet* SetOfIncomingReferences() const;
 
@@ -274,7 +275,7 @@ class CORE_EXPORT SVGElement : public Element {
       PseudoId pseudo_element_specifier = kPseudoIdNone) final {
     return EnsureComputedStyle(pseudo_element_specifier);
   }
-  void WillRecalcStyle(StyleRecalcChange) override;
+  void WillRecalcStyle(const StyleRecalcChange) override;
   static SVGElementSet& GetDependencyTraversalVisitedSet();
 
   HeapHashSet<WeakMember<SVGElement>> elements_with_relative_lengths_;
@@ -334,6 +335,11 @@ FloatRect ComputeSVGTransformReferenceBox(const LayoutObject&);
 
 DEFINE_ELEMENT_TYPE_CASTS(SVGElement, IsSVGElement());
 
+template <>
+struct DowncastTraits<SVGElement> {
+  static bool AllowFrom(const Node& node) { return node.IsSVGElement(); }
+};
+
 template <typename T>
 bool IsElementOfType(const SVGElement&);
 template <>
@@ -342,7 +348,8 @@ inline bool IsElementOfType<const SVGElement>(const SVGElement&) {
 }
 
 inline bool Node::HasTagName(const SVGQualifiedName& name) const {
-  return IsSVGElement() && ToSVGElement(*this).HasTagName(name);
+  auto* svg_element = DynamicTo<SVGElement>(this);
+  return svg_element && svg_element->HasTagName(name);
 }
 
 // This requires IsSVG*Element(const SVGElement&).
@@ -353,7 +360,8 @@ inline bool Node::HasTagName(const SVGQualifiedName& name) const {
     return element && Is##thisType(*element);                              \
   }                                                                        \
   inline bool Is##thisType(const Node& node) {                             \
-    return node.IsSVGElement() && Is##thisType(ToSVGElement(node));        \
+    auto* svg_element = DynamicTo<SVGElement>(node);                       \
+    return svg_element && Is##thisType(svg_element);                       \
   }                                                                        \
   inline bool Is##thisType(const Node* node) {                             \
     return node && Is##thisType(*node);                                    \

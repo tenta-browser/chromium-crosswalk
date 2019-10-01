@@ -71,6 +71,8 @@ class RenderFrameHostTester {
   static bool TestOnMessageReceived(RenderFrameHost* rfh,
                                     const IPC::Message& msg);
 
+  // Commit the load pending in the given |controller| if any.
+  // TODO(ahemery): This should take a WebContents directly.
   static void CommitPendingLoad(NavigationController* controller);
 
   virtual ~RenderFrameHostTester() {}
@@ -89,26 +91,6 @@ class RenderFrameHostTester {
 
   // Simulates a navigation stopping in the RenderFrameHost.
   virtual void SimulateNavigationStop() = 0;
-
-  // Calls DidCommitProvisionalLoad on the RenderFrameHost with the given
-  // information with various sets of parameters. These are helper functions for
-  // simulating the most common types of loads.
-  //
-  // Guidance for calling this:
-  // - nav_entry_id should be 0 if simulating a renderer-initiated navigation;
-  //   if simulating a browser-initiated one, pass the GetUniqueID() value of
-  //   the NavigationController's PendingEntry.
-  // - did_create_new_entry should be true if simulating a navigation that
-  //   created a new navigation entry; false for history navigations, reloads,
-  //   and other navigations that don't affect the history list.
-  virtual void SendNavigateWithTransition(int nav_entry_id,
-                                          bool did_create_new_entry,
-                                          const GURL& url,
-                                          ui::PageTransition transition) = 0;
-
-  // If set, future loads will have |mime_type| set as the mime type.
-  // If not set, the mime type will default to "text/html".
-  virtual void SetContentsMimeType(const std::string& mime_type) = 0;
 
   // Calls OnBeforeUnloadACK on this RenderFrameHost with the given parameter.
   virtual void SendBeforeUnloadACK(bool proceed) = 0;
@@ -240,7 +222,11 @@ class RenderViewHostTestHarness : public testing::Test {
 
   // Cover for |contents()->NavigateAndCommit(url)|. See
   // WebContentsTester::NavigateAndCommit for details.
-  void NavigateAndCommit(const GURL& url);
+  // Optional parameter transition allows transition type to be controlled for
+  // greater flexibility for tests.
+  void NavigateAndCommit(
+      const GURL& url,
+      ui::PageTransition transition = ui::PAGE_TRANSITION_LINK);
 
   // Sets the focused frame to the main frame of the WebContents for tests that
   // rely on the focused frame not being null.

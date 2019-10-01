@@ -35,21 +35,19 @@ class BrowserDMTokenStorage {
   // Returns the global singleton object. Must be called from the UI thread.
   // This implementation is platform dependant.
   static BrowserDMTokenStorage* Get();
-  // Returns a client ID unique to the machine. Virtual for tests.
-  virtual std::string RetrieveClientId();
+  // Returns a client ID unique to the machine.
+  std::string RetrieveClientId();
   // Returns the serial number of the machine.
   std::string RetrieveSerialNumber();
-  // Returns the enrollment token, or an empty string if there is none. Virtual
-  // for tests.
-  virtual std::string RetrieveEnrollmentToken();
+  // Returns the enrollment token, or an empty string if there is none.
+  std::string RetrieveEnrollmentToken();
   // Asynchronously stores |dm_token| and calls |callback| with a boolean to
   // indicate success or failure. It is an error to attempt concurrent store
-  // operations. Virtual for tests.
-  virtual void StoreDMToken(const std::string& dm_token,
-                            StoreCallback callback);
+  // operations.
+  void StoreDMToken(const std::string& dm_token, StoreCallback callback);
   // Returns an already stored DM token. An empty token is returned if no DM
-  // token exists on the system or an error is encountered. Virtual for tests.
-  virtual std::string RetrieveDMToken();
+  // token exists on the system or an error is encountered.
+  std::string RetrieveDMToken();
   // Must be called after the DM token is saved, to ensure that the callback is
   // invoked.
   void OnDMTokenStored(bool success);
@@ -63,10 +61,6 @@ class BrowserDMTokenStorage {
   static void SetForTesting(BrowserDMTokenStorage* storage) {
     storage_for_testing_ = storage;
   }
-
-  // Schedules a task to delete the empty policy directory that contains DM
-  // token.
-  void ScheduleUnusedPolicyDirectoryDeletion();
 
  protected:
   friend class base::NoDestructor<BrowserDMTokenStorage>;
@@ -99,9 +93,6 @@ class BrowserDMTokenStorage {
   virtual bool InitEnrollmentErrorOption() = 0;
   // Saves the DM token. This implementation is platform dependant.
   virtual void SaveDMToken(const std::string& token) = 0;
-
-  // Deletes the policy directory if it's empty.
-  virtual void DeletePolicyDirectory();
 
   // Will be called after the DM token is stored.
   StoreCallback store_callback_;

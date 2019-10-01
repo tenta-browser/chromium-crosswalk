@@ -316,6 +316,11 @@ function unload() {
   // Releases keep awake just in case (should be released on unloading video).
   chrome.power.releaseKeepAwake();
 
+  if (useNativeControls) {
+    nativePlayer.savePosition(true);
+    return;
+  }
+
   if (!player.controls || !player.controls.getMedia()) {
     return;
   }
@@ -422,6 +427,7 @@ VideoPlayer.prototype.loadVideo_ = function(video, opt_callback) {
       videoPlayerElement.removeAttribute('casting');
 
       this.videoElement_ = document.createElement('video');
+      this.videoElement_.autoPictureInPicture = true;
       getRequiredElement('video-container').appendChild(this.videoElement_);
 
       var videoUrl = video.toURL();

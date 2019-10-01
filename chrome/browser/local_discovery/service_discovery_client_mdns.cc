@@ -17,10 +17,10 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/local_discovery/service_discovery_client_impl.h"
-#include "components/net_log/chrome_net_log.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/network_service_instance.h"
+#include "net/base/net_errors.h"
 #include "net/socket/datagram_server_socket.h"
 
 namespace net {
@@ -122,13 +122,12 @@ namespace {
 const int kMaxRestartAttempts = 10;
 const int kRestartDelayOnNetworkChangeSeconds = 3;
 
-using MdnsInitCallback = base::Callback<void(bool)>;
+using MdnsInitCallback = base::Callback<void(int)>;
 
 class SocketFactory : public net::MDnsSocketFactory {
  public:
-  SocketFactory(const net::InterfaceIndexFamilyList& interfaces,
-                net::NetLog* net_log)
-      : interfaces_(interfaces), net_log_(net_log) {}
+  explicit SocketFactory(const net::InterfaceIndexFamilyList& interfaces)
+      : interfaces_(interfaces) {}
 
   // net::MDnsSocketFactory implementation:
   void CreateSockets(std::vector<std::unique_ptr<net::DatagramServerSocket>>*
@@ -137,7 +136,7 @@ class SocketFactory : public net::MDnsSocketFactory {
       DCHECK(interfaces_[i].second == net::ADDRESS_FAMILY_IPV4 ||
              interfaces_[i].second == net::ADDRESS_FAMILY_IPV6);
       std::unique_ptr<net::DatagramServerSocket> socket(CreateAndBindMDnsSocket(
-          interfaces_[i].second, interfaces_[i].first, net_log_));
+          interfaces_[i].second, interfaces_[i].first, nullptr /* net_log */));
       if (socket)
         sockets->push_back(std::move(socket));
     }
@@ -146,15 +145,13 @@ class SocketFactory : public net::MDnsSocketFactory {
  private:
   net::InterfaceIndexFamilyList interfaces_;
 
-  // Owned by |g_browser_process|.
-  net::NetLog* const net_log_;
+  DISALLOW_COPY_AND_ASSIGN(SocketFactory);
 };
 
 void InitMdns(const MdnsInitCallback& on_initialized,
               const net::InterfaceIndexFamilyList& interfaces,
-              net::MDnsClient* mdns,
-              net::NetLog* net_log) {
-  SocketFactory socket_factory(interfaces, net_log);
+              net::MDnsClient* mdns) {
+  SocketFactory socket_factory(interfaces);
   base::PostTaskWithTraits(
       FROM_HERE, {BrowserThread::UI},
       base::BindOnce(on_initialized, mdns->StartListening(&socket_factory)));
@@ -179,7 +176,7 @@ class ProxyBase : public ServiceDiscoveryClientMdns::Proxy, public T {
 
   void OnMdnsDestroy() override {
     DeleteOnMdnsThread(implementation_.release());
-  };
+  }
 
  protected:
   void set_implementation(std::unique_ptr<T> implementation) {
@@ -276,7 +273,7 @@ class ServiceResolverProxy : public ProxyBase<ServiceResolver> {
       PostToMdnsThread(base::Bind(&ServiceResolver::StartResolving,
                                   base::Unretained(implementation())));
     }
-  };
+  }
 
   std::string GetName() const override { return service_name_; }
 
@@ -316,7 +313,7 @@ class LocalDomainResolverProxy : public ProxyBase<LocalDomainResolver> {
       PostToMdnsThread(base::Bind(&LocalDomainResolver::Start,
                                   base::Unretained(implementation())));
     }
-  };
+  }
 
  private:
   static void OnCallback(const WeakPtr& proxy,
@@ -424,13 +421,12 @@ void ServiceDiscoveryClientMdns::OnInterfaceListReady(
       base::BindOnce(&InitMdns,
                      base::Bind(&ServiceDiscoveryClientMdns::OnMdnsInitialized,
                                 weak_ptr_factory_.GetWeakPtr()),
-                     interfaces, base::Unretained(mdns_.get()),
-                     g_browser_process->net_log()));
+                     interfaces, base::Unretained(mdns_.get())));
 }
 
-void ServiceDiscoveryClientMdns::OnMdnsInitialized(bool success) {
+void ServiceDiscoveryClientMdns::OnMdnsInitialized(int net_error) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  if (!success) {
+  if (net_error != net::OK) {
     ScheduleStartNewClient();
     return;
   }

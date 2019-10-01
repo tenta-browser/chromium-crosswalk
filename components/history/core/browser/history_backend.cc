@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_enumerator.h"
 #include "base/metrics/histogram_macros.h"
@@ -196,16 +197,18 @@ bool HistoryBackend::IsTypedIncrement(ui::PageTransition transition) {
 }
 
 HistoryBackend::HistoryBackend(
-    Delegate* delegate,
+    std::unique_ptr<Delegate> delegate,
     std::unique_ptr<HistoryBackendClient> backend_client,
     scoped_refptr<base::SequencedTaskRunner> task_runner)
-    : delegate_(delegate),
+    : delegate_(std::move(delegate)),
       scheduled_kill_db_(false),
       expirer_(this, backend_client.get(), task_runner),
       recent_redirects_(kMaxRedirectCount),
       segment_queried_(false),
       backend_client_(std::move(backend_client)),
-      task_runner_(task_runner) {}
+      task_runner_(task_runner) {
+  DCHECK(delegate_);
+}
 
 HistoryBackend::~HistoryBackend() {
   DCHECK(scheduled_commit_.IsCancelled()) << "Deleting without cleanup";
@@ -264,10 +267,6 @@ void HistoryBackend::Closing() {
   // Any scheduled commit will have a reference to us, we must make it
   // release that reference before we can be destroyed.
   CancelScheduledCommit();
-
-  // Release our reference to the delegate, this reference will be keeping the
-  // history service alive.
-  delegate_.reset();
 }
 
 #if defined(OS_IOS)
@@ -1087,14 +1086,13 @@ bool HistoryBackend::GetURLByID(URLID url_id, URLRow* url_row) {
   return false;
 }
 
-void HistoryBackend::QueryURL(const GURL& url,
-                              bool want_visits,
-                              QueryURLResult* result) {
-  DCHECK(result);
-  result->success = db_ && db_->GetRowForURL(url, &result->row);
+QueryURLResult HistoryBackend::QueryURL(const GURL& url, bool want_visits) {
+  QueryURLResult result;
+  result.success = db_ && db_->GetRowForURL(url, &result.row);
   // Optionally query the visits.
-  if (result->success && want_visits)
-    db_->GetVisitsForURL(result->row.id(), &result->visits);
+  if (result.success && want_visits)
+    db_->GetVisitsForURL(result.row.id(), &result.visits);
+  return result;
 }
 
 base::WeakPtr<syncer::ModelTypeControllerDelegate>
@@ -1132,9 +1130,7 @@ void HistoryBackend::SetKeywordSearchTermsForURL(const GURL& url,
   }
 
   db_->SetKeywordSearchTermsForURL(row.id(), keyword_id, term);
-
-  if (delegate_)
-    delegate_->NotifyKeywordSearchTermUpdated(row, keyword_id, term);
+  delegate_->NotifyKeywordSearchTermUpdated(row, keyword_id, term);
 
   ScheduleCommit();
 }
@@ -1155,9 +1151,7 @@ void HistoryBackend::DeleteKeywordSearchTermForURL(const GURL& url) {
   if (!url_id)
     return;
   db_->DeleteKeywordSearchTermForURL(url_id);
-
-  if (delegate_)
-    delegate_->NotifyKeywordSearchTermDeleted(url_id);
+  delegate_->NotifyKeywordSearchTermDeleted(url_id);
 
   ScheduleCommit();
 }
@@ -1249,22 +1243,22 @@ void HistoryBackend::RemoveDownloads(const std::set<uint32_t>& ids) {
   DCHECK_GE(ids.size(), num_downloads_deleted);
 }
 
-void HistoryBackend::QueryHistory(const base::string16& text_query,
-                                  const QueryOptions& options,
-                                  QueryResults* query_results) {
-  DCHECK(query_results);
+QueryResults HistoryBackend::QueryHistory(const base::string16& text_query,
+                                          const QueryOptions& options) {
+  QueryResults query_results;
   base::TimeTicks beginning_time = base::TimeTicks::Now();
   if (db_) {
     if (text_query.empty()) {
       // Basic history query for the main database.
-      QueryHistoryBasic(options, query_results);
+      QueryHistoryBasic(options, &query_results);
     } else {
       // Text history query.
-      QueryHistoryText(text_query, options, query_results);
+      QueryHistoryText(text_query, options, &query_results);
     }
   }
   UMA_HISTOGRAM_TIMES("History.QueryHistory",
                       TimeTicks::Now() - beginning_time);
+  return query_results;
 }
 
 // Basic time-based querying of history.
@@ -1348,32 +1342,32 @@ void HistoryBackend::QueryHistoryText(const base::string16& text_query,
     result->set_reached_beginning(true);
 }
 
-void HistoryBackend::QueryRedirectsFrom(const GURL& from_url,
-                                        RedirectList* redirects) {
-  redirects->clear();
+RedirectList HistoryBackend::QueryRedirectsFrom(const GURL& from_url) {
   if (!db_)
-    return;
+    return {};
 
   URLID from_url_id = db_->GetRowForURL(from_url, nullptr);
   VisitID cur_visit = db_->GetMostRecentVisitForURL(from_url_id, nullptr);
   if (!cur_visit)
-    return;  // No visits for URL.
+    return {};  // No visits for URL.
 
-  GetRedirectsFromSpecificVisit(cur_visit, redirects);
+  RedirectList redirects;
+  GetRedirectsFromSpecificVisit(cur_visit, &redirects);
+  return redirects;
 }
 
-void HistoryBackend::QueryRedirectsTo(const GURL& to_url,
-                                      RedirectList* redirects) {
-  redirects->clear();
+RedirectList HistoryBackend::QueryRedirectsTo(const GURL& to_url) {
   if (!db_)
-    return;
+    return {};
 
   URLID to_url_id = db_->GetRowForURL(to_url, nullptr);
   VisitID cur_visit = db_->GetMostRecentVisitForURL(to_url_id, nullptr);
   if (!cur_visit)
-    return;  // No visits for URL.
+    return {};  // No visits for URL.
 
-  GetRedirectsToSpecificVisit(cur_visit, redirects);
+  RedirectList redirects;
+  GetRedirectsToSpecificVisit(cur_visit, &redirects);
+  return redirects;
 }
 
 void HistoryBackend::GetVisibleVisitCountToHost(
@@ -1402,8 +1396,7 @@ void HistoryBackend::QueryMostVisitedURLs(int result_count,
       url_filter);
 
   for (const std::unique_ptr<PageUsageData>& current_data : data) {
-    RedirectList redirects;
-    QueryRedirectsFrom(current_data->GetURL(), &redirects);
+    RedirectList redirects = QueryRedirectsFrom(current_data->GetURL());
     result->emplace_back(current_data->GetURL(), current_data->GetTitle(),
                          redirects);
   }
@@ -1452,8 +1445,8 @@ void HistoryBackend::GetRedirectsToSpecificVisit(VisitID cur_visit,
 }
 
 void HistoryBackend::ScheduleAutocomplete(
-    const base::Callback<void(HistoryBackend*, URLDatabase*)>& callback) {
-  callback.Run(this, db_.get());
+    base::OnceCallback<void(HistoryBackend*, URLDatabase*)> callback) {
+  std::move(callback).Run(this, db_.get());
 }
 
 void HistoryBackend::DeleteFTSIndexDatabases() {
@@ -2419,7 +2412,7 @@ void HistoryBackend::ProcessDBTaskImpl() {
 ////////////////////////////////////////////////////////////////////////////////
 
 void HistoryBackend::DeleteURLs(const std::vector<GURL>& urls) {
-  expirer_.DeleteURLs(urls);
+  expirer_.DeleteURLs(urls, base::Time::Max());
 
   db_->GetStartDate(&first_recorded_time_);
   // Force a commit, if the user is deleting something for privacy reasons, we
@@ -2428,8 +2421,19 @@ void HistoryBackend::DeleteURLs(const std::vector<GURL>& urls) {
 }
 
 void HistoryBackend::DeleteURL(const GURL& url) {
-  expirer_.DeleteURL(url);
+  expirer_.DeleteURL(url, base::Time::Max());
 
+  db_->GetStartDate(&first_recorded_time_);
+  // Force a commit, if the user is deleting something for privacy reasons, we
+  // want to get it on disk ASAP.
+  Commit();
+}
+
+void HistoryBackend::DeleteURLsUntil(
+    const std::vector<std::pair<GURL, base::Time>>& urls_and_timestamps) {
+  for (const auto& pair : urls_and_timestamps) {
+    expirer_.DeleteURL(pair.first, pair.second);
+  }
   db_->GetStartDate(&first_recorded_time_);
   // Force a commit, if the user is deleting something for privacy reasons, we
   // want to get it on disk ASAP.
@@ -2550,7 +2554,7 @@ void HistoryBackend::URLsNoLongerBookmarked(const std::set<GURL>& urls) {
     // that we can delete all associated icons in the case of deleting an
     // unvisited bookmarked URL.
     if (visits.empty())
-      expirer_.DeleteURL(*i);  // There are no more visits; nuke the URL.
+      expirer_.DeleteURL(*i, base::Time::Max());
   }
 }
 
@@ -2626,8 +2630,7 @@ void HistoryBackend::ProcessDBTask(
 
 void HistoryBackend::NotifyFaviconsChanged(const std::set<GURL>& page_urls,
                                            const GURL& icon_url) {
-  if (delegate_)
-    delegate_->NotifyFaviconsChanged(page_urls, icon_url);
+  delegate_->NotifyFaviconsChanged(page_urls, icon_url);
 }
 
 void HistoryBackend::NotifyURLVisited(ui::PageTransition transition,
@@ -2637,8 +2640,7 @@ void HistoryBackend::NotifyURLVisited(ui::PageTransition transition,
   for (HistoryBackendObserver& observer : observers_)
     observer.OnURLVisited(this, transition, row, redirects, visit_time);
 
-  if (delegate_)
-    delegate_->NotifyURLVisited(transition, row, redirects, visit_time);
+  delegate_->NotifyURLVisited(transition, row, redirects, visit_time);
 }
 
 void HistoryBackend::NotifyURLsModified(const URLRows& changed_urls,
@@ -2646,8 +2648,7 @@ void HistoryBackend::NotifyURLsModified(const URLRows& changed_urls,
   for (HistoryBackendObserver& observer : observers_)
     observer.OnURLsModified(this, changed_urls, is_from_expiration);
 
-  if (delegate_)
-    delegate_->NotifyURLsModified(changed_urls);
+  delegate_->NotifyURLsModified(changed_urls);
 }
 
 void HistoryBackend::NotifyURLsDeleted(DeletionInfo deletion_info) {
@@ -2664,8 +2665,7 @@ void HistoryBackend::NotifyURLsDeleted(DeletionInfo deletion_info) {
         deletion_info.deleted_rows(), deletion_info.favicon_urls());
   }
 
-  if (delegate_)
-    delegate_->NotifyURLsDeleted(std::move(deletion_info));
+  delegate_->NotifyURLsDeleted(std::move(deletion_info));
 }
 
 // Deleting --------------------------------------------------------------------

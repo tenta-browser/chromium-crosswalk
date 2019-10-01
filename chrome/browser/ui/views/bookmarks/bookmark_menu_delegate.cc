@@ -10,6 +10,7 @@
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/bookmarks/managed_bookmark_service_factory.h"
+#include "chrome/browser/favicon/favicon_utils.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/ui/bookmarks/bookmark_drag_drop.h"
@@ -107,13 +108,13 @@ void BookmarkMenuDelegate::Init(views::MenuDelegate* real_delegate,
     bool show_forced_folders = show_options == SHOW_PERMANENT_FOLDERS &&
                                node == model->bookmark_bar_node();
     bool show_managed =
-        show_forced_folders && !managed->managed_node()->empty();
+        show_forced_folders && !managed->managed_node()->children().empty();
     bool has_children =
         (start_child_index < node->child_count()) || show_managed;
-    int initial_count = parent->GetSubmenu() ?
-        parent->GetSubmenu()->GetMenuItemCount() : 0;
-    if (has_children && initial_count > 0)
+    if (has_children && parent->GetSubmenu() &&
+        !parent->GetSubmenu()->GetMenuItems().empty())
       parent->AppendSeparator();
+
     if (show_managed)
       BuildMenuForManagedNode(parent);
     BuildMenu(node, start_child_index, parent);
@@ -331,9 +332,10 @@ bool BookmarkMenuDelegate::ShowContextMenu(MenuItemView* source,
   DCHECK(menu_id_to_node_map_.find(id) != menu_id_to_node_map_.end());
   const BookmarkNode* node = menu_id_to_node_map_[id];
   std::vector<const BookmarkNode*> nodes(1, node);
-  context_menu_.reset(new BookmarkContextMenu(
-      parent_, browser_, profile_, page_navigator_, node->parent(), nodes,
-      ShouldCloseOnRemove(node)));
+  context_menu_.reset(
+      new BookmarkContextMenu(parent_, browser_, profile_, page_navigator_,
+                              BOOKMARK_LAUNCH_LOCATION_APP_MENU, node->parent(),
+                              nodes, ShouldCloseOnRemove(node)));
   context_menu_->set_observer(this);
   context_menu_->RunMenuAt(p, source_type);
   return true;
@@ -367,7 +369,7 @@ int BookmarkMenuDelegate::GetMaxWidthForMenu(MenuItemView* menu) {
 void BookmarkMenuDelegate::WillShowMenu(MenuItemView* menu) {
   auto iter = menu_id_to_node_map_.find(menu->GetCommand());
   if ((iter != menu_id_to_node_map_.end()) && iter->second->child_count() &&
-      !menu->GetSubmenu()->GetMenuItemCount())
+      menu->GetSubmenu()->GetMenuItems().empty())
     BuildMenu(iter->second, 0, menu);
 }
 
@@ -382,11 +384,9 @@ void BookmarkMenuDelegate::BookmarkNodeFaviconChanged(
     return;  // We're not showing a menu item for the node.
 
   const gfx::Image& image = model->GetFavicon(node);
-  const gfx::ImageSkia* icon =
-      image.IsEmpty()
-          ? ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
-                IDR_DEFAULT_FAVICON)
-          : image.ToImageSkia();
+  const gfx::ImageSkia* icon = image.IsEmpty()
+                                   ? favicon::GetDefaultFavicon().ToImageSkia()
+                                   : image.ToImageSkia();
   menu_pair->second->SetIcon(*icon);
 }
 
@@ -410,7 +410,7 @@ void BookmarkMenuDelegate::WillRemoveBookmarks(
       // to delete an empty folder.
       if (parent) {
         changed_parent_menus.insert(parent);
-        parent->RemoveMenuItemAt(menu->parent()->GetIndexOf(menu));
+        parent->RemoveMenuItem(menu);
       }
       node_to_menu_map_.erase(node_to_menu);
       menu_id_to_node_map_.erase(menu->GetCommand());
@@ -535,7 +535,8 @@ void BookmarkMenuDelegate::BuildMenuForManagedNode(MenuItemView* menu) {
 void BookmarkMenuDelegate::BuildMenu(const BookmarkNode* parent,
                                      int start_child_index,
                                      MenuItemView* menu) {
-  DCHECK(parent->empty() || start_child_index < parent->child_count());
+  DCHECK(parent->children().empty() ||
+         start_child_index < parent->child_count());
   ui::ResourceBundle* rb = &ui::ResourceBundle::GetSharedInstance();
   const gfx::ImageSkia folder_icon =
       chrome::GetBookmarkFolderIcon(TextColorForMenu(menu, parent_));

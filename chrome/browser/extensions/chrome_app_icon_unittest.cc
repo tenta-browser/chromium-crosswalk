@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "ash/public/cpp/app_list/app_list_config.h"
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "chrome/browser/extensions/chrome_app_icon.h"
@@ -182,8 +183,8 @@ bool AreAllImageRepresentationsDifferent(const gfx::ImageSkia& image1,
 
 void WaitForIconUpdates(const gfx::ImageSkia& icon) {
   icon.EnsureRepsForSupportedScales();
-  std::unique_ptr<gfx::ImageSkia> reference_image = icon.DeepCopy();
-  while (!AreAllImageRepresentationsDifferent(*reference_image, icon))
+  gfx::ImageSkia reference_image = icon.DeepCopy();
+  while (!AreAllImageRepresentationsDifferent(reference_image, icon))
     base::RunLoop().RunUntilIdle();
 }
 
@@ -313,8 +314,7 @@ TEST_F(ChromeAppIconWithModelTest, IconsTheSame) {
   ChromeAppListItem* app_list_item = FindAppListItem(kTestAppId);
   ASSERT_TRUE(app_list_item);
   WaitForIconUpdates(app_list_item->icon());
-  std::unique_ptr<gfx::ImageSkia> app_list_item_image =
-      app_list_item->icon().DeepCopy();
+  gfx::ImageSkia app_list_item_image = app_list_item->icon().DeepCopy();
 
   const ChromeAppIconService::ResizeFunction resize_function =
       base::BindRepeating(&app_list::MaybeResizeAndPadIconForMd);
@@ -332,7 +332,7 @@ TEST_F(ChromeAppIconWithModelTest, IconsTheSame) {
 
   // Now compare with app list icon snapshot.
   EXPECT_TRUE(
-      AreEqual(reference_icon_app_list.image_skia(), *app_list_item_image));
+      AreEqual(reference_icon_app_list.image_skia(), app_list_item_image));
 
   // Load reference icon sized for the search result.
   TestAppIcon reference_icon_search(
@@ -387,7 +387,6 @@ TEST_F(ChromeAppIconTest, ChromeBadging) {
   const gfx::ImageSkia image_before_badging = reference_icon.image_skia();
 
   // Badging should be applied once package is installed.
-  arc_test.app_instance()->RefreshAppList();
   std::vector<arc::mojom::AppInfo> fake_apps = arc_test.fake_apps();
   fake_apps[0].package_name = arc_test.fake_packages()[0]->package_name;
   arc_test.app_instance()->SendRefreshAppList(fake_apps);

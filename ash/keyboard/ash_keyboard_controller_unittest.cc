@@ -7,11 +7,15 @@
 #include <memory>
 #include <vector>
 
+#include "ash/keyboard/ui/container_behavior.h"
+#include "ash/keyboard/ui/keyboard_controller.h"
+#include "ash/keyboard/ui/test/keyboard_test_util.h"
 #include "ash/public/cpp/test/test_keyboard_controller_observer.h"
 #include "ash/public/interfaces/keyboard_controller.mojom.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/test/ash_test_helper.h"
+#include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/test/scoped_task_environment.h"
@@ -19,8 +23,7 @@
 #include "services/service_manager/public/cpp/connector.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/aura/window.h"
-#include "ui/keyboard/container_behavior.h"
-#include "ui/keyboard/keyboard_controller.h"
+#include "ui/display/manager/display_manager.h"
 
 using keyboard::mojom::KeyboardConfig;
 using keyboard::mojom::KeyboardConfigPtr;
@@ -139,6 +142,8 @@ class TestClient {
     keyboard_controller_ptr_.FlushForTesting();
   }
 
+  void FlushMojoForTesting() { keyboard_controller_ptr_.FlushForTesting(); }
+
   int got_keyboard_config_count() const { return got_keyboard_config_count_; }
   const KeyboardConfig& keyboard_config() const { return keyboard_config_; }
 
@@ -160,7 +165,7 @@ class TestClient {
 
 class TestContainerBehavior : public keyboard::ContainerBehavior {
  public:
-  TestContainerBehavior() : keyboard::ContainerBehavior(nullptr){};
+  TestContainerBehavior() : keyboard::ContainerBehavior(nullptr) {}
   ~TestContainerBehavior() override = default;
 
   // keyboard::ContainerBehavior
@@ -184,11 +189,6 @@ class TestContainerBehavior : public keyboard::ContainerBehavior {
                           const gfx::Rect& display_bounds) override {}
 
   bool IsOverscrollAllowed() const override { return true; }
-
-  bool IsDragHandle(const gfx::Vector2d& offset,
-                    const gfx::Size& keyboard_size) const override {
-    return false;
-  }
 
   void SavePosition(const gfx::Rect& keyboard_bounds_in_screen,
                     const gfx::Size& screen_size) override {}
@@ -396,16 +396,10 @@ TEST_F(AshKeyboardControllerTest, SetContainerType) {
       target_bounds.size(),
       keyboard_controller()->GetKeyboardWindow()->GetTargetBounds().size());
 
-  // Set the container type to kFullscreen.
-  EXPECT_TRUE(test_client()->SetContainerType(
-      keyboard::mojom::ContainerType::kFullscreen, base::nullopt));
-  EXPECT_EQ(keyboard::mojom::ContainerType::kFullscreen,
-            keyboard_controller()->GetActiveContainerType());
-
   // Setting the container type to the current type should fail.
   EXPECT_FALSE(test_client()->SetContainerType(
-      keyboard::mojom::ContainerType::kFullscreen, base::nullopt));
-  EXPECT_EQ(keyboard::mojom::ContainerType::kFullscreen,
+      keyboard::mojom::ContainerType::kFloating, base::nullopt));
+  EXPECT_EQ(keyboard::mojom::ContainerType::kFloating,
             keyboard_controller()->GetActiveContainerType());
 }
 
@@ -455,6 +449,56 @@ TEST_F(AshKeyboardControllerTest, SetDraggableArea) {
   gfx::Rect bounds(10, 20, 30, 40);
   test_client()->SetDraggableArea(bounds);
   EXPECT_EQ(bounds, behavior->draggable_area());
+}
+
+TEST_F(AshKeyboardControllerTest, ChangingSessionRebuildsKeyboard) {
+  // Enable the keyboard.
+  test_client()->SetEnableFlag(KeyboardEnableFlag::kExtensionEnabled);
+
+  // LOGGED_IN_NOT_ACTIVE session state needs to rebuild keyboard for supervised
+  // user profile.
+  Shell::Get()->ash_keyboard_controller()->OnSessionStateChanged(
+      session_manager::SessionState::LOGGED_IN_NOT_ACTIVE);
+  test_client()->FlushMojoForTesting();
+  EXPECT_EQ(1, test_observer()->destroyed_count());
+
+  // ACTIVE session state also needs to rebuild keyboard for guest user profile.
+  Shell::Get()->ash_keyboard_controller()->OnSessionStateChanged(
+      session_manager::SessionState::ACTIVE);
+  test_client()->FlushMojoForTesting();
+  EXPECT_EQ(2, test_observer()->destroyed_count());
+}
+
+TEST_F(AshKeyboardControllerTest, VisualBoundsInMultipleDisplays) {
+  UpdateDisplay("800x600,1024x768");
+
+  test_client()->SetEnableFlag(KeyboardEnableFlag::kExtensionEnabled);
+
+  // Show the keyboard in the second display.
+  keyboard_controller()->ShowKeyboardInDisplay(
+      Shell::Get()->display_manager()->GetSecondaryDisplay());
+  ASSERT_TRUE(keyboard::WaitUntilShown());
+
+  gfx::Rect root_bounds = keyboard_controller()->visual_bounds_in_root();
+  EXPECT_EQ(0, root_bounds.x());
+
+  gfx::Rect screen_bounds = keyboard_controller()->GetVisualBoundsInScreen();
+  EXPECT_EQ(800, screen_bounds.x());
+}
+
+TEST_F(AshKeyboardControllerTest, OccludedBoundsInMultipleDisplays) {
+  UpdateDisplay("800x600,1024x768");
+
+  test_client()->SetEnableFlag(KeyboardEnableFlag::kExtensionEnabled);
+
+  // Show the keyboard in the second display.
+  keyboard_controller()->ShowKeyboardInDisplay(
+      Shell::Get()->display_manager()->GetSecondaryDisplay());
+  ASSERT_TRUE(keyboard::WaitUntilShown());
+
+  gfx::Rect screen_bounds =
+      keyboard_controller()->GetWorkspaceOccludedBoundsInScreen();
+  EXPECT_EQ(800, screen_bounds.x());
 }
 
 }  // namespace ash

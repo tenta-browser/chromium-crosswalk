@@ -139,7 +139,9 @@ void OculusRenderLoop::StopRuntime() {
   ovr_frame_index_ = 0;
 }
 
-void OculusRenderLoop::OnSessionStart() {}
+void OculusRenderLoop::OnSessionStart() {
+  LogViewerType(VrViewerType::OCULUS_UNKNOWN);
+}
 
 bool OculusRenderLoop::PreComposite() {
   // If our current swap chain has a different size than the recommended size
@@ -260,7 +262,7 @@ void OculusRenderLoop::DestroyOvrSwapChain() {
 }
 
 void OculusRenderLoop::OnLayerBoundsChanged() {
-};
+}
 
 std::vector<mojom::XRInputSourceStatePtr> OculusRenderLoop::GetInputState(
     const ovrTrackingState& tracking_state) {
@@ -301,6 +303,8 @@ std::vector<mojom::XRInputSourceStatePtr> OculusRenderLoop::GetInputState(
           primary_input_pressed[ovrControllerType_Remote]) {
         state->primary_input_clicked = true;
       }
+
+      // TODO(https://crbug.com/956190): Expose remote as a gamepad to WebXR.
 
       primary_input_pressed[ovrControllerType_Remote] =
           state->primary_input_pressed;
@@ -368,6 +372,8 @@ device::mojom::XRInputSourceStatePtr OculusRenderLoop::GetTouchData(
   desc->pointer_offset->RotateAboutXAxis(-kGripRotationXDelta);
 
   state->description = std::move(desc);
+
+  state->gamepad = OculusGamepadHelper::CreateGamepad(session_, hand);
 
   return state;
 }

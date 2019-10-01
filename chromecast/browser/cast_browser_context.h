@@ -5,8 +5,11 @@
 #ifndef CHROMECAST_BROWSER_CAST_BROWSER_CONTEXT_H_
 #define CHROMECAST_BROWSER_CAST_BROWSER_CONTEXT_H_
 
+#include <vector>
+
 #include "base/files/file_path.h"
 #include "base/macros.h"
+#include "components/keyed_service/core/simple_factory_key.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/content_browser_client.h"
 
@@ -60,6 +63,14 @@ class CastBrowserContext final : public content::BrowserContext {
 
   net::URLRequestContextGetter* GetSystemRequestContext();
 
+  void SetCorsOriginAccessListForOrigin(
+      const url::Origin& source_origin,
+      std::vector<network::mojom::CorsOriginPatternPtr> allow_patterns,
+      std::vector<network::mojom::CorsOriginPatternPtr> block_patterns,
+      base::OnceClosure closure) override;
+  const content::SharedCorsOriginAccessList* GetSharedCorsOriginAccessList()
+      const override;
+
  private:
   class CastResourceContext;
 
@@ -71,6 +82,9 @@ class CastBrowserContext final : public content::BrowserContext {
   base::FilePath path_;
   std::unique_ptr<CastResourceContext> resource_context_;
   std::unique_ptr<content::PermissionControllerDelegate> permission_manager_;
+  std::unique_ptr<SimpleFactoryKey> simple_factory_key_;
+  scoped_refptr<content::SharedCorsOriginAccessList>
+      shared_cors_origin_access_list_;
 
   DISALLOW_COPY_AND_ASSIGN(CastBrowserContext);
 };

@@ -8,7 +8,6 @@
 #include <memory>
 
 #include "base/macros.h"
-#include "base/supports_user_data.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_data.h"
 #include "content/public/browser/navigation_data.h"
 
@@ -16,8 +15,7 @@ namespace net {
 class URLRequest;
 }
 
-class ChromeNavigationData : public content::NavigationData,
-                             public base::SupportsUserData::Data {
+class ChromeNavigationData : public content::NavigationData {
  public:
   ChromeNavigationData();
   ~ChromeNavigationData() override;
@@ -26,7 +24,7 @@ class ChromeNavigationData : public content::NavigationData,
   // changes to the original after the clone is created will not be reflected in
   // the clone.
   // |data_reduction_proxy_data_| is deep copied.
-  std::unique_ptr<content::NavigationData> Clone() const override;
+  std::unique_ptr<content::NavigationData> Clone() override;
 
   // Takes ownership of |data_reduction_proxy_data|.
   void SetDataReductionProxyData(

@@ -38,6 +38,7 @@ BookmarkContextMenu::BookmarkContextMenu(
     Browser* browser,
     Profile* profile,
     PageNavigator* page_navigator,
+    BookmarkLaunchLocation opened_from,
     const BookmarkNode* parent,
     const std::vector<const BookmarkNode*>& selection,
     bool close_on_remove)
@@ -47,6 +48,7 @@ BookmarkContextMenu::BookmarkContextMenu(
           browser,
           profile,
           page_navigator,
+          opened_from,
           parent,
           selection)),
       parent_widget_(parent_widget),
@@ -79,7 +81,7 @@ void BookmarkContextMenu::RunMenuAt(const gfx::Point& point,
   // width/height don't matter here.
   menu_runner_->RunMenuAt(parent_widget_, nullptr,
                           gfx::Rect(point.x(), point.y(), 0, 0),
-                          views::MENU_ANCHOR_TOPLEFT, source_type);
+                          views::MenuAnchorPosition::kTopLeft, source_type);
 }
 
 void BookmarkContextMenu::SetPageNavigator(PageNavigator* navigator) {

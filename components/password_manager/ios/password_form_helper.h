@@ -19,6 +19,7 @@ NS_ASSUME_NONNULL_BEGIN
 namespace autofill {
 struct PasswordForm;
 struct PasswordFormFillData;
+struct FormData;
 }  // namespace autofill
 
 namespace password_manager {
@@ -88,6 +89,21 @@ class WebState;
                                     password:(NSString*)password
                            completionHandler:
                                (nullable void (^)(BOOL))completionHandler;
+
+// Finds the password form named |formName| and calls
+// |completionHandler| with the populated |FormData| data structure. |found| is
+// YES if the current form was found successfully, NO otherwise.
+- (void)extractPasswordFormData:(NSString*)formName
+              completionHandler:
+                  (void (^)(BOOL found,
+                            const autofill::FormData& form))completionHandler;
+
+// Finds given field, identified by |fieldIdentifier| in the given |formName|
+// and focus it, which should trigger a form focus event. Invokes
+// |completionHandler| when finished with YES if successful and NO otherwise.
+- (void)focusOnForm:(NSString*)formName
+      fieldIdentifier:(NSString*)fieldIdentifier
+    completionHandler:(nullable void (^)(BOOL))completionHandler;
 
 // Creates a instance with the given WebState, observer and delegate.
 - (instancetype)initWithWebState:(web::WebState*)webState

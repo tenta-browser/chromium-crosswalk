@@ -28,7 +28,6 @@
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 #include "chrome/browser/ui/views/location_bar/location_icon_view.h"
-#include "chrome/browser/ui/views/sync/bubble_sync_promo_view.h"
 #include "chrome/browser/ui/views/toolbar/browser_actions_container.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
 #include "chrome/common/url_constants.h"
@@ -37,6 +36,7 @@
 #include "components/bubble/bubble_controller.h"
 #include "components/signin/core/browser/account_info.h"
 #include "components/signin/core/browser/signin_buildflags.h"
+#include "components/signin/core/browser/signin_metrics.h"
 #include "extensions/common/extension.h"
 #include "ui/base/buildflags.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -48,9 +48,8 @@
 #include "ui/views/controls/link_listener.h"
 #include "ui/views/layout/box_layout.h"
 
-#if BUILDFLAG(ENABLE_DICE_SUPPORT)
-#include "chrome/browser/signin/account_consistency_mode_manager.h"
-#include "chrome/browser/ui/views/sync/dice_bubble_sync_promo_view.h"
+#if !defined(OS_CHROMEOS)
+#include "chrome/browser/ui/views/sync/bubble_sync_promo_view_util.h"
 #endif
 
 using extensions::Extension;
@@ -95,7 +94,7 @@ views::View* AnchorViewForBrowser(ExtensionInstalledBubble* controller,
   }
 
   // Default case.
-  if (!reference_view || !reference_view->visible())
+  if (!reference_view || !reference_view->GetVisible())
     return browser_view->toolbar_button_provider()->GetAppMenuButton();
   return reference_view;
 }
@@ -215,29 +214,26 @@ bool ExtensionInstalledBubbleView::ShouldShowWindowIcon() const {
 }
 
 views::View* ExtensionInstalledBubbleView::CreateFootnoteView() {
+#if defined(OS_CHROMEOS)
+  // ChromeOS does not show the signin promo.
+  return nullptr;
+#else
   if (!(controller_->options() & ExtensionInstalledBubble::SIGN_IN_PROMO))
     return nullptr;
 
-#if BUILDFLAG(ENABLE_DICE_SUPPORT)
-  Profile* profile = browser()->profile();
-  if (AccountConsistencyModeManager::IsDiceEnabledForProfile(profile)) {
-    return new DiceBubbleSyncPromoView(
-        profile, this,
-        signin_metrics::AccessPoint::ACCESS_POINT_EXTENSION_INSTALL_BUBBLE,
-        IDS_EXTENSION_INSTALLED_DICE_PROMO_SIGNIN_MESSAGE,
-        IDS_EXTENSION_INSTALLED_DICE_PROMO_SYNC_MESSAGE);
-  } else {
-    return new BubbleSyncPromoView(
-        this,
-        signin_metrics::AccessPoint::ACCESS_POINT_EXTENSION_INSTALL_BUBBLE,
-        IDS_EXTENSION_INSTALLED_SYNC_PROMO_LINK_NEW,
-        IDS_EXTENSION_INSTALLED_SYNC_PROMO_NEW);
-  }
-#else
-  return new BubbleSyncPromoView(
-      this, signin_metrics::AccessPoint::ACCESS_POINT_EXTENSION_INSTALL_BUBBLE,
-      IDS_EXTENSION_INSTALLED_SYNC_PROMO_LINK_NEW,
-      IDS_EXTENSION_INSTALLED_SYNC_PROMO_NEW);
+  BubbleSyncPromoViewParams params;
+  params.link_text_resource_id = IDS_EXTENSION_INSTALLED_SYNC_PROMO_LINK_NEW;
+  params.message_text_resource_id = IDS_EXTENSION_INSTALLED_SYNC_PROMO_NEW;
+  params.dice_no_accounts_promo_message_resource_id =
+      IDS_EXTENSION_INSTALLED_DICE_PROMO_SIGNIN_MESSAGE;
+  params.dice_accounts_promo_message_resource_id =
+      IDS_EXTENSION_INSTALLED_DICE_PROMO_SYNC_MESSAGE;
+
+  return CreateBubbleSyncPromoView(
+             browser()->profile(), this,
+             signin_metrics::AccessPoint::ACCESS_POINT_EXTENSION_INSTALL_BUBBLE,
+             params)
+      .release();
 #endif
 }
 
@@ -281,7 +277,7 @@ void ExtensionInstalledBubbleView::Init() {
           provider->GetDistanceMetric(DISTANCE_UNRELATED_CONTROL_HORIZONTAL),
       0, 0));
   layout->set_cross_axis_alignment(
-      views::BoxLayout::CROSS_AXIS_ALIGNMENT_START);
+      views::BoxLayout::CrossAxisAlignment::kStart);
   SetLayoutManager(std::move(layout));
 
   if (controller_->options() & ExtensionInstalledBubble::HOW_TO_USE)

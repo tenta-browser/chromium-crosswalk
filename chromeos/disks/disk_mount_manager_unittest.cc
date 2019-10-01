@@ -17,19 +17,16 @@
 #include "base/test/scoped_task_environment.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/fake_cros_disks_client.h"
+#include "chromeos/dbus/power/power_manager_client.h"
 #include "chromeos/disks/disk.h"
 #include "chromeos/disks/disk_mount_manager.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using base::StringPrintf;
-using chromeos::disks::Disk;
-using chromeos::disks::DiskMountManager;
-using chromeos::CrosDisksClient;
-using chromeos::DBusThreadManager;
-using chromeos::FakeCrosDisksClient;
-using chromeos::MountError;
-using chromeos::MountType;
-using chromeos::disks::MountCondition;
+
+namespace chromeos {
+
+namespace disks {
 
 namespace {
 
@@ -45,7 +42,6 @@ const char kFileSystemType2[] = "exfat";
 struct TestDiskInfo {
   const char* source_path;
   const char* mount_path;
-  const char* system_path;
   const char* file_path;
   const char* device_label;
   const char* drive_label;
@@ -54,7 +50,7 @@ struct TestDiskInfo {
   const char* product_id;
   const char* product_name;
   const char* fs_uuid;
-  const char* system_path_prefix;
+  const char* storage_device_path;
   chromeos::DeviceType device_type;
   uint64_t size_in_bytes;
   bool is_read_only;
@@ -75,7 +71,6 @@ const TestDiskInfo kTestDisks[] = {
     {
         kDevice1SourcePath,
         kDevice1MountPath,
-        "/device/prefix/system_path",
         "/device/file_path",
         "/device/device_label",
         "/device/drive_label",
@@ -94,7 +89,6 @@ const TestDiskInfo kTestDisks[] = {
     {
         kDevice2SourcePath,
         "",     // not mounted initially
-        "/device/prefix/system_path2",
         "/device/file_path2",
         "/device/device_label2",
         "/device/drive_label2",
@@ -113,7 +107,6 @@ const TestDiskInfo kTestDisks[] = {
     {
         kReadOnlyDeviceSourcePath,
         kReadOnlyDeviceMountPath,
-        "/device/prefix/system_path_3",
         "/device/file_path_3",
         "/device/device_label_3",
         "/device/drive_label_3",
@@ -505,6 +498,7 @@ class DiskMountManagerTest : public testing::Test {
     fake_cros_disks_client_ = new FakeCrosDisksClient;
     DBusThreadManager::GetSetterForTesting()->SetCrosDisksClient(
         std::unique_ptr<CrosDisksClient>(fake_cros_disks_client_));
+    PowerManagerClient::InitializeFake();
 
     DiskMountManager::Initialize();
 
@@ -519,6 +513,7 @@ class DiskMountManagerTest : public testing::Test {
   void TearDown() override {
     DiskMountManager::GetInstance()->RemoveObserver(observer_.get());
     DiskMountManager::Shutdown();
+    PowerManagerClient::Shutdown();
     DBusThreadManager::Shutdown();
   }
 
@@ -538,7 +533,6 @@ class DiskMountManagerTest : public testing::Test {
         Disk::Builder()
             .SetDevicePath(disk.source_path)
             .SetMountPath(disk.mount_path)
-            .SetSystemPath(disk.system_path)
             .SetFilePath(disk.file_path)
             .SetDeviceLabel(disk.device_label)
             .SetDriveLabel(disk.drive_label)
@@ -547,7 +541,7 @@ class DiskMountManagerTest : public testing::Test {
             .SetProductId(disk.product_id)
             .SetProductName(disk.product_name)
             .SetFileSystemUUID(disk.fs_uuid)
-            .SetSystemPathPrefix(disk.system_path_prefix)
+            .SetStorageDevicePath(disk.storage_device_path)
             .SetDeviceType(disk.device_type)
             .SetSizeInBytes(disk.size_in_bytes)
             .SetIsReadOnlyHardware(disk.is_read_only)
@@ -1535,3 +1529,6 @@ TEST_F(DiskMountManagerTest, UnmountDeviceRecursively_FailFirst) {
 }
 
 }  // namespace
+
+}  // namespace disks
+}  // namespace chromeos

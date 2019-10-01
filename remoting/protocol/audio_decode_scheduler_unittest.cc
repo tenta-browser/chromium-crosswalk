@@ -4,10 +4,12 @@
 
 #include "remoting/protocol/audio_decode_scheduler.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread.h"
 #include "remoting/base/auto_thread.h"
 #include "remoting/base/auto_thread_task_runner.h"
@@ -34,9 +36,9 @@ class FakeAudioConsumer : public AudioStub {
 
   // AudioStub implementation.
   void ProcessAudioPacket(std::unique_ptr<AudioPacket> packet,
-                          const base::Closure& done) override {
+                          base::OnceClosure done) override {
     if (!done.is_null())
-      done.Run();
+      std::move(done).Run();
   }
 
  private:
@@ -55,7 +57,7 @@ class AudioDecodeSchedulerTest : public ::testing::Test {
   void TearDown() override;
 
  protected:
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   base::RunLoop run_loop_;
   scoped_refptr<AutoThreadTaskRunner> audio_decode_task_runner_;
   scoped_refptr<AutoThreadTaskRunner> main_task_runner_;
@@ -63,8 +65,9 @@ class AudioDecodeSchedulerTest : public ::testing::Test {
 };
 
 void AudioDecodeSchedulerTest::SetUp() {
-  main_task_runner_ = new AutoThreadTaskRunner(message_loop_.task_runner(),
-                                               run_loop_.QuitClosure());
+  main_task_runner_ = new AutoThreadTaskRunner(
+      scoped_task_environment_.GetMainThreadTaskRunner(),
+      run_loop_.QuitClosure());
   audio_decode_task_runner_ = AutoThread::Create("decode", main_task_runner_);
   session_config_ = SessionConfig::ForTestWithAudio();
 }

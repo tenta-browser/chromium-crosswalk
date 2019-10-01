@@ -6,8 +6,13 @@
 
 #include <memory>
 
+#include "ash/keyboard/ui/keyboard_controller.h"
+#include "ash/keyboard/ui/keyboard_ui.h"
+#include "ash/keyboard/ui/keyboard_util.h"
+#include "ash/keyboard/ui/test/keyboard_test_util.h"
+#include "ash/public/cpp/keyboard/keyboard_switches.h"
 #include "ash/public/cpp/shell_window_ids.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/session/test_session_controller_client.h"
 #include "ash/shelf/shelf_constants.h"
 #include "ash/shell.h"
@@ -37,11 +42,6 @@
 #include "ui/display/test/display_manager_test_api.h"
 #include "ui/events/test/event_generator.h"
 #include "ui/events/test/test_event_handler.h"
-#include "ui/keyboard/keyboard_controller.h"
-#include "ui/keyboard/keyboard_ui.h"
-#include "ui/keyboard/keyboard_util.h"
-#include "ui/keyboard/public/keyboard_switches.h"
-#include "ui/keyboard/test/keyboard_test_util.h"
 #include "ui/views/controls/menu/menu_controller.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_delegate.h"
@@ -348,6 +348,50 @@ TEST_F(RootWindowControllerTest, MoveWindows_LockWindowsInUnified) {
   EXPECT_EQ("0,0 600x500", lock_screen->GetNativeWindow()->bounds().ToString());
 }
 
+// Tests that the moved windows (except the active one) are put under existing
+// ones.
+TEST_F(RootWindowControllerTest, MoveWindows_UnderExisting) {
+  UpdateDisplay("600x600,300x300");
+
+  display::Screen* screen = display::Screen::GetScreen();
+  const display::Display primary_display = screen->GetPrimaryDisplay();
+  const display::Display secondary_display = GetSecondaryDisplay();
+
+  views::Widget* existing = CreateTestWidget(gfx::Rect(0, 10, 100, 100));
+  ASSERT_EQ(primary_display.id(),
+            screen->GetDisplayNearestWindow(existing->GetNativeWindow()).id());
+
+  views::Widget* moved = CreateTestWidget(gfx::Rect(650, 10, 100, 100));
+  ASSERT_EQ(secondary_display.id(),
+            screen->GetDisplayNearestWindow(moved->GetNativeWindow()).id());
+
+  views::Widget* active = CreateTestWidget(gfx::Rect(650, 10, 100, 100));
+  ASSERT_TRUE(active->IsActive());
+  ASSERT_EQ(secondary_display.id(),
+            screen->GetDisplayNearestWindow(active->GetNativeWindow()).id());
+
+  // Switch to single display.
+  UpdateDisplay("600x500");
+
+  // |active| is still active.
+  ASSERT_TRUE(active->IsActive());
+
+  // |moved| should be put under |existing|.
+  ASSERT_EQ(moved->GetNativeWindow()->parent(),
+            existing->GetNativeWindow()->parent());
+  bool found_existing = false;
+  bool found_moved = false;
+  for (auto* child : moved->GetNativeWindow()->parent()->children()) {
+    if (child == existing->GetNativeWindow())
+      found_existing = true;
+    if (child == moved->GetNativeWindow()) {
+      found_moved = true;
+      break;
+    }
+  }
+  EXPECT_TRUE(found_moved && !found_existing);
+}
+
 TEST_F(RootWindowControllerTest, ModalContainer) {
   UpdateDisplay("600x600");
   RootWindowController* controller = Shell::GetPrimaryRootWindowController();
@@ -361,7 +405,7 @@ TEST_F(RootWindowControllerTest, ModalContainer) {
             controller->GetSystemModalLayoutManager(
                 session_modal_widget->GetNativeWindow()));
 
-  Shell::Get()->session_controller()->LockScreenAndFlushForTest();
+  GetSessionControllerClient()->LockScreen();
   EXPECT_TRUE(Shell::Get()->session_controller()->IsScreenLocked());
   EXPECT_EQ(
       GetLayoutManager(controller, kShellWindowId_LockSystemModalContainer),
@@ -386,7 +430,8 @@ TEST_F(RootWindowControllerTest, ModalContainerNotLoggedInLoggedIn) {
   UpdateDisplay("600x600");
 
   // Configure login screen environment.
-  SessionController* session_controller = Shell::Get()->session_controller();
+  SessionControllerImpl* session_controller =
+      Shell::Get()->session_controller();
   ClearLogin();
   EXPECT_EQ(0, session_controller->NumberOfLoggedInUsers());
   EXPECT_FALSE(session_controller->IsActiveUserSessionStarted());
@@ -651,24 +696,20 @@ TEST_F(RootWindowControllerTest, ContextMenuDisappearsInTabletMode) {
   ui::test::EventGenerator generator(controller->GetRootWindow());
   generator.PressRightButton();
   generator.ReleaseRightButton();
-  EXPECT_TRUE(controller->menu_model_);
-  EXPECT_TRUE(controller->menu_runner_);
+  EXPECT_TRUE(controller->root_window_menu_model_adapter_);
 
   // Verify menu closes on entering tablet mode.
   Shell::Get()->tablet_mode_controller()->EnableTabletModeWindowManager(true);
-  EXPECT_FALSE(controller->menu_model_);
-  EXPECT_FALSE(controller->menu_runner_);
+  EXPECT_FALSE(controller->root_window_menu_model_adapter_);
 
   // Open context menu.
   generator.PressRightButton();
   generator.ReleaseRightButton();
-  EXPECT_TRUE(controller->menu_model_);
-  EXPECT_TRUE(controller->menu_runner_);
+  EXPECT_TRUE(controller->root_window_menu_model_adapter_);
 
   // Verify menu closes on exiting tablet mode.
   Shell::Get()->tablet_mode_controller()->EnableTabletModeWindowManager(false);
-  EXPECT_FALSE(controller->menu_model_);
-  EXPECT_FALSE(controller->menu_runner_);
+  EXPECT_FALSE(controller->root_window_menu_model_adapter_);
 }
 
 class VirtualKeyboardRootWindowControllerTest
@@ -794,9 +835,9 @@ TEST_F(VirtualKeyboardRootWindowControllerTest, RestoreWorkspaceAfterLogin) {
   }
 
   // Mock a login user profile change to reinitialize the keyboard.
-  mojom::SessionInfoPtr info = mojom::SessionInfo::New();
-  info->state = session_manager::SessionState::ACTIVE;
-  Shell::Get()->session_controller()->SetSessionInfo(std::move(info));
+  SessionInfo info;
+  info.state = session_manager::SessionState::ACTIVE;
+  Shell::Get()->session_controller()->SetSessionInfo(info);
   EXPECT_EQ(display::Screen::GetScreen()->GetPrimaryDisplay().work_area(),
             before);
 }

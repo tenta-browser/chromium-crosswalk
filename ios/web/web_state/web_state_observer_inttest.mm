@@ -6,6 +6,7 @@
 #include <string>
 
 #include "base/base_paths.h"
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/ios/ios_util.h"
 #include "base/path_service.h"
@@ -15,14 +16,16 @@
 #import "base/test/ios/wait_util.h"
 #include "base/test/scoped_feature_list.h"
 #include "ios/testing/embedded_test_server_handlers.h"
+#include "ios/web/common/features.h"
+#include "ios/web/navigation/web_kit_constants.h"
 #include "ios/web/navigation/wk_navigation_util.h"
-#import "ios/web/public/crw_navigation_item_storage.h"
-#import "ios/web/public/crw_session_storage.h"
-#include "ios/web/public/features.h"
+#import "ios/web/public/deprecated/crw_native_content_holder.h"
+#import "ios/web/public/deprecated/test_native_content.h"
+#import "ios/web/public/deprecated/test_native_content_provider.h"
 #import "ios/web/public/navigation_item.h"
 #import "ios/web/public/navigation_manager.h"
-#import "ios/web/public/test/fakes/test_native_content.h"
-#import "ios/web/public/test/fakes/test_native_content_provider.h"
+#import "ios/web/public/session/crw_navigation_item_storage.h"
+#import "ios/web/public/session/crw_session_storage.h"
 #include "ios/web/public/test/fakes/test_web_state_observer.h"
 #import "ios/web/public/test/navigation_test_util.h"
 #import "ios/web/public/test/web_view_content_test_util.h"
@@ -117,6 +120,75 @@ ACTION_P5(VerifyPageStartedContext,
   EXPECT_EQ(url, item->GetURL());
 }
 
+// Verifies correctness of |NavigationContext| (|arg1|) for new page navigation
+// passed to |DidStartNavigation|. Stores |NavigationContext| in |context|
+// pointer. This action is used to verify one of multiple pending navigations.
+ACTION_P6(VerifyPageConcurrentlyStartedContext,
+          web_state,
+          context_url,
+          item_url,
+          transition,
+          context,
+          nav_id) {
+  *context = arg1;
+  ASSERT_TRUE(*context);
+  EXPECT_EQ(web_state, arg0);
+  EXPECT_EQ(web_state, (*context)->GetWebState());
+  *nav_id = (*context)->GetNavigationId();
+  EXPECT_NE(0, *nav_id);
+  EXPECT_EQ(context_url, (*context)->GetUrl());
+  EXPECT_TRUE((*context)->HasUserGesture());
+  ui::PageTransition actual_transition = (*context)->GetPageTransition();
+  EXPECT_TRUE(PageTransitionCoreTypeIs(transition, actual_transition))
+      << "Got unexpected transition: " << actual_transition;
+  EXPECT_FALSE((*context)->IsSameDocument());
+  EXPECT_FALSE((*context)->HasCommitted());
+  EXPECT_FALSE((*context)->IsDownload());
+  EXPECT_FALSE((*context)->IsPost());
+  EXPECT_FALSE((*context)->GetError());
+  EXPECT_FALSE((*context)->IsRendererInitiated());
+  ASSERT_FALSE((*context)->GetResponseHeaders());
+  ASSERT_TRUE(web_state->IsLoading());
+  // GetPendingItem() returns last pending item. Not item associated with
+  // the given navigation context.
+  NavigationManager* navigation_manager = web_state->GetNavigationManager();
+  NavigationItem* item = navigation_manager->GetPendingItem();
+  EXPECT_EQ(item_url, item->GetURL());
+}
+
+// Verifies correctness of |NavigationContext| (|arg1|) for data navigation
+// passed to |DidStartNavigation|. Stores |NavigationContext| in |context|
+// pointer.
+ACTION_P5(VerifyDataStartedContext,
+          web_state,
+          url,
+          transition,
+          context,
+          nav_id) {
+  *context = arg1;
+  ASSERT_TRUE(*context);
+  EXPECT_EQ(web_state, arg0);
+  EXPECT_EQ(web_state, (*context)->GetWebState());
+  *nav_id = (*context)->GetNavigationId();
+  EXPECT_NE(0, *nav_id);
+  EXPECT_EQ(url, (*context)->GetUrl());
+  EXPECT_TRUE((*context)->HasUserGesture());
+  ui::PageTransition actual_transition = (*context)->GetPageTransition();
+  EXPECT_TRUE(PageTransitionCoreTypeIs(transition, actual_transition))
+      << "Got unexpected transition: " << actual_transition;
+  EXPECT_FALSE((*context)->IsSameDocument());
+  EXPECT_FALSE((*context)->HasCommitted());
+  EXPECT_FALSE((*context)->IsDownload());
+  EXPECT_FALSE((*context)->IsPost());
+  EXPECT_FALSE((*context)->GetError());
+  EXPECT_FALSE((*context)->IsRendererInitiated());
+  ASSERT_FALSE((*context)->GetResponseHeaders());
+  ASSERT_FALSE(web_state->IsLoading());
+  NavigationManager* navigation_manager = web_state->GetNavigationManager();
+  NavigationItem* item = navigation_manager->GetLastCommittedItem();
+  EXPECT_EQ(url, item->GetURL());
+}
+
 // Verifies correctness of |NavigationContext| (|arg1|) for navigation for
 // stopped load. Stores |NavigationContext| in |context| pointer.
 ACTION_P5(VerifyAbortedNavigationStartedContext,
@@ -144,9 +216,16 @@ ACTION_P5(VerifyAbortedNavigationStartedContext,
   EXPECT_FALSE((*context)->IsRendererInitiated());
   ASSERT_FALSE((*context)->GetResponseHeaders());
   ASSERT_FALSE(web_state->IsLoading());
-  // TODO(crbug.com/899827): Pending URL should exist and be owned by
-  // NavigationContext.
-  ASSERT_FALSE(web_state->GetNavigationManager()->GetPendingItem());
+  NavigationItem* pendig_item =
+      web_state->GetNavigationManager()->GetPendingItem();
+  if (web::features::StorePendingItemInContext()) {
+    ASSERT_TRUE(pendig_item);
+    EXPECT_EQ(url, pendig_item->GetURL());
+  } else {
+    // TODO(crbug.com/899827): Pending URL should exist and be owned by
+    // NavigationContext.
+    ASSERT_FALSE(pendig_item);
+  }
 }
 
 // Verifies correctness of |NavigationContext| (|arg1|) for new page navigation
@@ -175,11 +254,14 @@ ACTION_P6(VerifyNewPageFinishedContext,
   EXPECT_FALSE((*context)->IsPost());
   EXPECT_FALSE((*context)->GetError());
   EXPECT_FALSE((*context)->IsRendererInitiated());
-  ASSERT_TRUE((*context)->GetResponseHeaders());
-  std::string actual_mime_type;
-  (*context)->GetResponseHeaders()->GetMimeType(&actual_mime_type);
+  if (!url.SchemeIs(url::kAboutScheme)) {
+    ASSERT_TRUE((*context)->GetResponseHeaders());
+    std::string actual_mime_type;
+    (*context)->GetResponseHeaders()->GetMimeType(&actual_mime_type);
+    EXPECT_EQ(mime_type, actual_mime_type);
+    EXPECT_EQ(mime_type, actual_mime_type);
+  }
   ASSERT_TRUE(web_state->IsLoading());
-  EXPECT_EQ(mime_type, actual_mime_type);
   ASSERT_EQ(content_is_html, web_state->ContentIsHTML());
   NavigationManager* navigation_manager = web_state->GetNavigationManager();
   NavigationItem* item = navigation_manager->GetLastCommittedItem();
@@ -211,6 +293,41 @@ ACTION_P4(VerifyPdfFileUrlFinishedContext, web_state, url, context, nav_id) {
   ASSERT_TRUE(web_state->IsLoading());
   ASSERT_FALSE(web_state->ContentIsHTML());
   ASSERT_EQ("application/pdf", web_state->GetContentsMimeType());
+  NavigationManager* navigation_manager = web_state->GetNavigationManager();
+  NavigationItem* item = navigation_manager->GetLastCommittedItem();
+  EXPECT_TRUE(!item->GetTimestamp().is_null());
+  EXPECT_EQ(url, item->GetURL());
+}
+
+// Verifies correctness of |NavigationContext| (|arg1|) for data navigation
+// passed to |DidFinishNavigation|. Asserts that |NavigationContext| the same as
+// |context|.
+ACTION_P5(VerifyDataFinishedContext,
+          web_state,
+          url,
+          mime_type,
+          context,
+          nav_id) {
+  ASSERT_EQ(*context, arg1);
+  EXPECT_EQ(web_state, arg0);
+  ASSERT_TRUE((*context));
+  EXPECT_EQ(web_state, (*context)->GetWebState());
+  EXPECT_EQ(*nav_id, (*context)->GetNavigationId());
+  EXPECT_EQ(url, (*context)->GetUrl());
+  EXPECT_TRUE((*context)->HasUserGesture());
+  EXPECT_TRUE(
+      PageTransitionCoreTypeIs(ui::PageTransition::PAGE_TRANSITION_TYPED,
+                               (*context)->GetPageTransition()));
+  EXPECT_FALSE((*context)->IsSameDocument());
+  EXPECT_FALSE((*context)->HasCommitted());
+  EXPECT_FALSE((*context)->IsDownload());
+  EXPECT_FALSE((*context)->IsPost());
+  EXPECT_FALSE((*context)->GetError());
+  EXPECT_FALSE((*context)->IsRendererInitiated());
+  EXPECT_FALSE((*context)->GetResponseHeaders());
+  EXPECT_TRUE(web_state->ContentIsHTML());
+  EXPECT_EQ(mime_type, web_state->GetContentsMimeType());
+  EXPECT_FALSE(web_state->IsLoading());
   NavigationManager* navigation_manager = web_state->GetNavigationManager();
   NavigationItem* item = navigation_manager->GetLastCommittedItem();
   EXPECT_TRUE(!item->GetTimestamp().is_null());
@@ -750,7 +867,8 @@ class WebStateObserverTest
                                            virtualURL:GURL::EmptyGURL()];
 
     WebStateImpl* web_state_impl = reinterpret_cast<WebStateImpl*>(web_state());
-    web_state_impl->GetWebController().nativeProvider = provider_;
+    [web_state_impl->GetWebController() nativeContentHolder].nativeProvider =
+        provider_;
 
     test_server_ = std::make_unique<EmbeddedTestServer>();
     test_server_->RegisterRequestHandler(
@@ -817,6 +935,72 @@ TEST_P(WebStateObserverTest, NewPageNavigation) {
   EXPECT_CALL(observer_,
               PageLoaded(web_state(), PageLoadCompletionStatus::SUCCESS));
   ASSERT_TRUE(LoadUrl(url));
+}
+
+// Tests loading about://newtab and immediately loading another web page without
+// waiting until about://newtab navigation finishes.
+TEST_P(WebStateObserverTest, AboutNewTabNavigation) {
+  if (!web::features::StorePendingItemInContext()) {
+    return;
+  }
+
+  GURL first_url("about://newtab/");
+  const GURL second_url = test_server_->GetURL("/echoall");
+
+  // Perform about://newtab navigation and immediately perform the second
+  // navigation without waiting until the first navigation finishes.
+  NavigationContext* context = nullptr;
+  int32_t nav_id = 0;
+  EXPECT_CALL(observer_, DidStartLoading(web_state()));
+  EXPECT_CALL(observer_, DidStopLoading(web_state()));
+
+  EXPECT_CALL(observer_, DidStartLoading(web_state()));
+
+  WebStatePolicyDecider::RequestInfo expected_request_info(
+      ui::PageTransition::PAGE_TRANSITION_TYPED,
+      /*target_main_frame=*/true, /*has_user_gesture=*/false);
+  EXPECT_CALL(*decider_,
+              ShouldAllowRequest(_, RequestInfoMatch(expected_request_info)))
+      .WillOnce(Return(true));
+  EXPECT_CALL(observer_, DidStartNavigation(web_state(), _))
+      .WillOnce(VerifyPageConcurrentlyStartedContext(
+          web_state(), first_url, second_url,
+          ui::PageTransition::PAGE_TRANSITION_TYPED, &context, &nav_id));
+  EXPECT_CALL(observer_, DidFinishNavigation(web_state(), _))
+      .WillOnce(VerifyNewPageFinishedContext(
+          web_state(), first_url, /*mime_type=*/std::string(),
+          /*content_is_html=*/false, &context, &nav_id));
+  EXPECT_CALL(observer_,
+              PageLoaded(web_state(), PageLoadCompletionStatus::SUCCESS));
+  EXPECT_CALL(*decider_,
+              ShouldAllowRequest(_, RequestInfoMatch(expected_request_info)))
+      .WillOnce(Return(true));
+  EXPECT_CALL(observer_, DidStartNavigation(web_state(), _))
+      .WillOnce(VerifyPageStartedContext(
+          web_state(), second_url, ui::PageTransition::PAGE_TRANSITION_TYPED,
+          &context, &nav_id));
+  EXPECT_CALL(*decider_, ShouldAllowResponse(_, /*for_main_frame=*/true))
+      .WillOnce(Return(true));
+  if (GetWebClient()->IsSlimNavigationManagerEnabled()) {
+    EXPECT_CALL(observer_, DidChangeBackForwardState(web_state()));
+  }
+  EXPECT_CALL(observer_, DidFinishNavigation(web_state(), _))
+      .WillOnce(VerifyNewPageFinishedContext(
+          web_state(), second_url, kExpectedMimeType, /*content_is_html=*/true,
+          &context, &nav_id));
+  EXPECT_CALL(observer_, TitleWasSet(web_state()))
+      .WillOnce(VerifyTitle(second_url.GetContent()));
+  EXPECT_CALL(observer_, TitleWasSet(web_state()))
+      .WillOnce(VerifyTitle("EmbeddedTestServer - EchoAll"));
+  EXPECT_CALL(observer_, DidStopLoading(web_state()));
+  EXPECT_CALL(observer_,
+              PageLoaded(web_state(), PageLoadCompletionStatus::SUCCESS));
+
+  test::LoadUrl(web_state(), first_url);
+  test::LoadUrl(web_state(), second_url);
+  EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForPageLoadTimeout, ^{
+    return !web_state()->IsLoading();
+  }));
 }
 
 // Tests that if web usage is already enabled, enabling it again would not cause
@@ -921,24 +1105,61 @@ TEST_P(WebStateObserverTest, WebViewUnsupportedSchemeNavigation) {
   ASSERT_TRUE(test::WaitForPageToFinishLoading(web_state()));
 }
 
-// Tests failed navigation because URL scheme is not supported by WebState.
-// TODO(crbug.com/917176): Actual callbacks for this navigation should not be
-// different from callbacks observed in WebViewUnsupportedSchemeNavigation.
-TEST_P(WebStateObserverTest, WebStateUnsupportedSchemeNavigation) {
-  GURL url("ftp://foo.test/");
+// Tests failed navigation because URL with a space is not supported by
+// WKWebView (crbug.com/934379).
+TEST_P(WebStateObserverTest, WebViewUnsupportedUrlNavigation) {
+  GURL url("http:// .test");
 
-  // Perform a navigation to url with unsupported scheme.
+  // Perform a navigation to url with unsupported url, which will fail.
+  NavigationContext* context = nullptr;
+  int32_t nav_id = 0;
   EXPECT_CALL(observer_, DidStartLoading(web_state()));
-  EXPECT_CALL(observer_, DidStopLoading(web_state()));
-
   WebStatePolicyDecider::RequestInfo expected_request_info(
       ui::PageTransition::PAGE_TRANSITION_TYPED,
       /*target_main_frame=*/true, /*has_user_gesture=*/false);
   EXPECT_CALL(*decider_,
               ShouldAllowRequest(_, RequestInfoMatch(expected_request_info)))
       .WillOnce(Return(true));
+  EXPECT_CALL(observer_, DidStartNavigation(web_state(), _))
+      .WillOnce(VerifyPageStartedContext(
+          web_state(), url, ui::PageTransition::PAGE_TRANSITION_TYPED, &context,
+          &nav_id));
+  EXPECT_CALL(observer_, DidFinishNavigation(web_state(), _))
+      .WillOnce(VerifyErrorFinishedContext(web_state(), url, &context, &nav_id,
+                                           web::kWebKitErrorCannotShowUrl));
+  EXPECT_CALL(observer_, DidStopLoading(web_state()));
+  EXPECT_CALL(observer_,
+              PageLoaded(web_state(), PageLoadCompletionStatus::FAILURE));
   test::LoadUrl(web_state(), url);
   ASSERT_TRUE(test::WaitForPageToFinishLoading(web_state()));
+}
+
+// Tests failed navigation because URL scheme is not supported by WebState.
+TEST_P(WebStateObserverTest, WebStateUnsupportedSchemeNavigation) {
+  GURL url("ftp://foo.test/");
+
+  // Perform a navigation to url with unsupported scheme.
+  EXPECT_CALL(observer_, DidStartLoading(web_state()));
+  if (!web::features::StorePendingItemInContext()) {
+    EXPECT_CALL(observer_, DidStopLoading(web_state()));
+  }
+  // ShouldAllowRequest is called to give embedder a chance to handle
+  // this unsupported URL scheme.
+  WebStatePolicyDecider::RequestInfo expected_request_info(
+      ui::PageTransition::PAGE_TRANSITION_TYPED,
+      /*target_main_frame=*/true, /*has_user_gesture=*/false);
+  EXPECT_CALL(*decider_,
+              ShouldAllowRequest(_, RequestInfoMatch(expected_request_info)))
+      .WillOnce(Return(true));
+  if (web::features::StorePendingItemInContext()) {
+    EXPECT_CALL(observer_, DidStopLoading(web_state()));
+  }
+
+  test::LoadUrl(web_state(), url);
+  ASSERT_TRUE(test::WaitForPageToFinishLoading(web_state()));
+
+  // Typed URL should be discarded after the navigation is rejected.
+  EXPECT_FALSE(web_state()->GetNavigationManager()->GetVisibleItem());
 }
 
 // Tests web page reload navigation.
@@ -1421,51 +1642,6 @@ TEST_P(WebStateObserverTest, GoBackToNativeContent) {
 
 // Tests successful navigation to a new page with post HTTP method.
 TEST_P(WebStateObserverTest, UserInitiatedPostNavigation) {
-  // Prior to iOS 11, POST navigation is implemented as an XMLHttpRequest in
-  // JavaScript. This doesn't create a WKBackForwardListItem in WKWebView on
-  // which to attach the pending NavigationItem, if WKBasedNavigationManager is
-  // used. When POST is the first navigation in an empty web view, this causes a
-  // DCHECK in WKBasedNavigationManagerImpl::CommitPendingItem(). When it is not
-  // the first navigation, it attaches the pending NavigationItem to the wrong
-  // WKBackForwardListItem. However, this is not worth fixing now. Load an
-  // initial request to the web view to stop this test from crashing, even
-  // though this doesn't fix the underlying bug.
-  // TODO(crbug.com/740987): remove this hack once support for iOS10 is dropped.
-  if (!base::ios::IsRunningOnIOS11OrLater() &&
-      GetParam() == TEST_WK_BASED_NAVIGATION_MANAGER) {
-    const GURL url = test_server_->GetURL("/echoall?bar");
-
-    // Perform new page navigation.
-    NavigationContext* context = nullptr;
-    int32_t nav_id = 0;
-    EXPECT_CALL(observer_, DidStartLoading(web_state()));
-    WebStatePolicyDecider::RequestInfo expected_request_info(
-        ui::PageTransition::PAGE_TRANSITION_TYPED,
-        /*target_main_frame=*/true, /*has_user_gesture=*/false);
-    EXPECT_CALL(*decider_,
-                ShouldAllowRequest(_, RequestInfoMatch(expected_request_info)))
-        .WillOnce(Return(true));
-    EXPECT_CALL(observer_, DidStartNavigation(web_state(), _))
-        .WillOnce(VerifyPageStartedContext(
-            web_state(), url, ui::PageTransition::PAGE_TRANSITION_TYPED,
-            &context, &nav_id));
-    EXPECT_CALL(*decider_, ShouldAllowResponse(_, /*for_main_frame=*/true))
-        .WillOnce(Return(true));
-    EXPECT_CALL(observer_, DidFinishNavigation(web_state(), _))
-        .WillOnce(VerifyNewPageFinishedContext(
-            web_state(), url, kExpectedMimeType, /*content_is_html=*/true,
-            &context, &nav_id));
-    EXPECT_CALL(observer_, TitleWasSet(web_state()))
-        .WillOnce(VerifyTitle(url.GetContent()));
-    EXPECT_CALL(observer_, TitleWasSet(web_state()))
-        .WillOnce(VerifyTitle("EmbeddedTestServer - EchoAll"));
-    EXPECT_CALL(observer_, DidStopLoading(web_state()));
-    EXPECT_CALL(observer_,
-                PageLoaded(web_state(), PageLoadCompletionStatus::SUCCESS));
-    ASSERT_TRUE(LoadUrl(url));
-    ASSERT_TRUE(WaitForWebViewContainingText(web_state(), "bar"));
-  }
-
   const GURL url = test_server_->GetURL("/echo");
 
   // Perform new page navigation.
@@ -1482,10 +1658,8 @@ TEST_P(WebStateObserverTest, UserInitiatedPostNavigation) {
       .WillOnce(VerifyPostStartedContext(
           web_state(), url, /*has_user_gesture=*/true, &context, &nav_id,
           /*renderer_initiated=*/false));
-  if (@available(iOS 11, *)) {
-    EXPECT_CALL(*decider_, ShouldAllowResponse(_, /*for_main_frame=*/true))
-        .WillOnce(Return(true));
-  }
+  EXPECT_CALL(*decider_, ShouldAllowResponse(_, /*for_main_frame=*/true))
+      .WillOnce(Return(true));
   EXPECT_CALL(observer_, DidFinishNavigation(web_state(), _))
       .WillOnce(VerifyPostFinishedContext(
           web_state(), url, /*has_user_gesture=*/true, &context, &nav_id,
@@ -1729,12 +1903,6 @@ TEST_P(WebStateObserverTest, ForwardPostNavigation) {
       .WillOnce(Return(true));
 
   EXPECT_CALL(observer_, DidStartNavigation(web_state(), _));
-  if (@available(iOS 12, *)) {
-    // On iOS 11 and earlier, ShouldAllowResponse is not called when going back
-    // after form submission.
-    EXPECT_CALL(*decider_, ShouldAllowResponse(_, /*for_main_frame=*/true))
-        .WillOnce(Return(true));
-  }
   EXPECT_CALL(observer_, DidFinishNavigation(web_state(), _));
   EXPECT_CALL(observer_, TitleWasSet(web_state()))
       .WillOnce(VerifyTitle(url.GetContent()));
@@ -1789,7 +1957,12 @@ TEST_P(WebStateObserverTest, ForwardPostNavigation) {
 
 // Tests server redirect navigation.
 TEST_P(WebStateObserverTest, RedirectNavigation) {
-  const GURL url = test_server_->GetURL("/server-redirect?echoall");
+  const GURL url = test_server_->GetURL("/server-redirect-301?"
+                                        "server-redirect-302?"
+                                        "server-redirect-303?"
+                                        "server-redirect-307?"
+                                        "server-redirect-308?"
+                                        "echoall");
   const GURL redirect_url = test_server_->GetURL("/echoall");
 
   // Load url which replies with redirect.
@@ -1806,14 +1979,17 @@ TEST_P(WebStateObserverTest, RedirectNavigation) {
       .WillOnce(VerifyPageStartedContext(
           web_state(), url, ui::PageTransition::PAGE_TRANSITION_TYPED, &context,
           &nav_id));
-  // Second ShouldAllowRequest call is for redirect_url.
+
+  // 5 calls on ShouldAllowRequest for redirections.
   WebStatePolicyDecider::RequestInfo expected_redirect_request_info(
       ui::PageTransition::PAGE_TRANSITION_CLIENT_REDIRECT,
       /*target_main_frame=*/true, /*has_user_gesture=*/false);
   EXPECT_CALL(
       *decider_,
       ShouldAllowRequest(_, RequestInfoMatch(expected_redirect_request_info)))
-      .WillOnce(Return(true));
+      .Times(5)
+      .WillRepeatedly(Return(true));
+
   EXPECT_CALL(*decider_, ShouldAllowResponse(_, /*for_main_frame=*/true))
       .WillOnce(Return(true));
   EXPECT_CALL(observer_, DidFinishNavigation(web_state(), _))
@@ -1860,13 +2036,13 @@ TEST_P(WebStateObserverTest, DownloadNavigation) {
 }
 
 // Tests failed load after the navigation is sucessfully finished.
-// TODO(crbug.com/845879): test is flaky (probably since crrev.com/1056203).
+// TODO(crbug.com/954232): this test is flaky on device.
 #if TARGET_IPHONE_SIMULATOR
 #define MAYBE_FailedLoad FailedLoad
 #else
 #define MAYBE_FailedLoad FLAKY_FailedLoad
 #endif
-TEST_P(WebStateObserverTest, FLAKY_FailedLoad) {
+TEST_P(WebStateObserverTest, MAYBE_FailedLoad) {
   GURL url = test_server_->GetURL("/exabyte_response");
 
   NavigationContext* context = nullptr;
@@ -1947,6 +2123,9 @@ TEST_P(WebStateObserverTest, DisallowRequest) {
   EXPECT_CALL(observer_, DidStopLoading(web_state()));
   test::LoadUrl(web_state(), test_server_->GetURL("/echo"));
   ASSERT_TRUE(test::WaitForPageToFinishLoading(web_state()));
+
+  // Typed URL should be discarded after the navigation is rejected.
+  EXPECT_FALSE(web_state()->GetNavigationManager()->GetVisibleItem());
 }
 
 // Tests rejecting the navigation from ShouldAllowResponse. PageLoaded callback
@@ -1980,7 +2159,7 @@ TEST_P(WebStateObserverTest, DisallowResponse) {
 
 // Tests stopping a navigation. Did FinishLoading and PageLoaded are never
 // called.
-TEST_P(WebStateObserverTest, ImmidiatelyStopNavigation) {
+TEST_P(WebStateObserverTest, ImmediatelyStopNavigation) {
   EXPECT_CALL(observer_, DidStartLoading(web_state()));
   EXPECT_CALL(observer_, DidStopLoading(web_state()));
   WebStatePolicyDecider::RequestInfo expected_request_info(
@@ -1996,7 +2175,10 @@ TEST_P(WebStateObserverTest, ImmidiatelyStopNavigation) {
 
 // Tests stopping a navigation after allowing the navigation from
 // WebStatePolicyDecider. DidStartNavigation and DidFinishNavigation callbacks
-// are still called.
+// are still called on simulator. On iOS 12.2 device the navigation never
+// starts, which is ok, but the behavior can not be tested so the test is
+// simulator-only.
+#if TARGET_IPHONE_SIMULATOR
 TEST_P(WebStateObserverTest, StopNavigationAfterPolicyDeciderCallback) {
   GURL url(test_server_->GetURL("/hung"));
   NavigationContext* context = nullptr;
@@ -2025,6 +2207,7 @@ TEST_P(WebStateObserverTest, StopNavigationAfterPolicyDeciderCallback) {
     return page_loaded_observer_ptr->did_finish_navigation_info();
   }));
 }
+#endif  // TARGET_IPHONE_SIMULATOR
 
 // Tests stopping a finished navigation. PageLoaded is never called.
 TEST_P(WebStateObserverTest, StopFinishedNavigation) {
@@ -2255,6 +2438,8 @@ TEST_P(WebStateObserverTest, RestoreSession) {
   CRWSessionStorage* session_storage = [[CRWSessionStorage alloc] init];
   session_storage.itemStorages = item_storages;
   auto web_state = WebState::CreateWithStorageSession(params, session_storage);
+  web_state->SetKeepRenderProcessAlive(true);
+
   StrictMock<WebStateObserverMock> observer;
   ScopedObserver<WebState, WebStateObserver> scoped_observer(&observer);
   scoped_observer.Add(web_state.get());
@@ -2376,15 +2561,6 @@ TEST_P(WebStateObserverTest, RestoreSessionOnline) {
                                              /*for_main_frame=*/true))
       .WillOnce(Return(true));
 
-  // decide policy for restore_session.html?targetUrl=url0 again due to reload
-  // in onpopstate().
-  EXPECT_CALL(*decider_,
-              ShouldAllowRequest(URLMatch(CreateRedirectUrl(url0)), _))
-      .WillOnce(Return(true));
-  EXPECT_CALL(*decider_, ShouldAllowResponse(URLMatch(CreateRedirectUrl(url0)),
-                                             /*for_main_frame=*/true))
-      .WillOnce(Return(true));
-
   // Client-side redirect to |url0|.
   EXPECT_CALL(*decider_, ShouldAllowRequest(URLMatch(url0), _))
       .WillOnce(Return(true));
@@ -2450,7 +2626,59 @@ TEST_P(WebStateObserverTest, PdfFileUrlNavigation) {
   ASSERT_TRUE(LoadWithParams(params));
 }
 
-INSTANTIATE_TEST_CASE_P(
+// Tests loading Data in place of a normal URL.
+TEST_P(WebStateObserverTest, LoadData) {
+  // Perform first navigation.
+  const GURL first_url = test_server_->GetURL("/echoall");
+  EXPECT_CALL(observer_, DidStartLoading(web_state()));
+  WebStatePolicyDecider::RequestInfo expected_request_info(
+      ui::PageTransition::PAGE_TRANSITION_TYPED,
+      /*target_main_frame=*/true, /*has_user_gesture=*/false);
+  EXPECT_CALL(*decider_,
+              ShouldAllowRequest(_, RequestInfoMatch(expected_request_info)))
+      .WillOnce(Return(true));
+  NavigationContext* context = nullptr;
+  int32_t nav_id = 0;
+  EXPECT_CALL(observer_, DidStartNavigation(web_state(), _))
+      .WillOnce(VerifyPageStartedContext(
+          web_state(), first_url, ui::PageTransition::PAGE_TRANSITION_TYPED,
+          &context, &nav_id));
+  EXPECT_CALL(*decider_, ShouldAllowResponse(_, /*for_main_frame=*/true))
+      .WillOnce(Return(true));
+  EXPECT_CALL(observer_, DidFinishNavigation(web_state(), _))
+      .WillOnce(VerifyNewPageFinishedContext(
+          web_state(), first_url, kExpectedMimeType, /*content_is_html=*/true,
+          &context, &nav_id));
+  EXPECT_CALL(observer_, TitleWasSet(web_state()))
+      .WillOnce(VerifyTitle(first_url.GetContent()));
+  EXPECT_CALL(observer_, TitleWasSet(web_state()))
+      .WillOnce(VerifyTitle("EmbeddedTestServer - EchoAll"));
+  EXPECT_CALL(observer_, DidStopLoading(web_state()));
+  EXPECT_CALL(observer_,
+              PageLoaded(web_state(), PageLoadCompletionStatus::SUCCESS));
+  ASSERT_TRUE(LoadUrl(first_url));
+
+  NSString* html = @"<html><body>foo</body></html>";
+  GURL data_url("https://www.chromium.test");
+  EXPECT_CALL(*decider_, ShouldAllowRequest(_, _)).WillOnce(Return(true));
+  // ShouldAllowResponse is not called on loadData navigation.
+  EXPECT_CALL(observer_, DidStartNavigation(web_state(), _))
+      .WillOnce(VerifyDataStartedContext(
+          web_state(), data_url, ui::PageTransition::PAGE_TRANSITION_TYPED,
+          &context, &nav_id));
+  EXPECT_CALL(observer_, DidFinishNavigation(web_state(), _))
+      .WillOnce(VerifyDataFinishedContext(web_state(), data_url, "text/html",
+                                          &context, &nav_id));
+  EXPECT_CALL(observer_, TitleWasSet(web_state()))
+      .WillOnce(VerifyTitle("https://www.chromium.test"));
+  EXPECT_CALL(observer_,
+              PageLoaded(web_state(), PageLoadCompletionStatus::SUCCESS));
+  web_state()->LoadData([html dataUsingEncoding:NSUTF8StringEncoding],
+                        @"text/html", data_url);
+  EXPECT_TRUE(test::WaitForWebViewContainingText(web_state(), "foo"));
+}
+
+INSTANTIATE_TEST_SUITE_P(
     ProgrammaticWebStateObserverTest,
     WebStateObserverTest,
     ::testing::Values(

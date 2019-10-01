@@ -14,13 +14,11 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
-#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
@@ -32,7 +30,6 @@
 #include "content/browser/appcache/appcache_quota_client.h"
 #include "content/browser/appcache/appcache_response.h"
 #include "content/browser/appcache/appcache_service_impl.h"
-#include "content/public/common/content_switches.h"
 #include "net/base/cache_type.h"
 #include "net/base/net_errors.h"
 #include "sql/database.h"
@@ -52,7 +49,6 @@ constexpr const int kMB = 1024 * 1024;
 // Hard coded default when not using quota management.
 constexpr const int kDefaultQuota = 5 * kMB;
 
-constexpr const int kMaxAppCacheDiskCacheSize = 250 * kMB;
 constexpr const int kMaxAppCacheMemDiskCacheSize = 10 * kMB;
 
 constexpr base::FilePath::CharType kDiskCacheDirectoryName[] =
@@ -86,14 +82,11 @@ bool DeleteGroupAndRelatedRecords(
 
 }  // namespace
 
-// Destroys |database|. If there is appcache data to be deleted
-// (|force_keep_session_state| is false), deletes session-only appcache data.
+// static
 void AppCacheStorageImpl::ClearSessionOnlyOrigins(
-    AppCacheDatabase* database,
+    std::unique_ptr<AppCacheDatabase> database,
     scoped_refptr<storage::SpecialStoragePolicy> special_storage_policy,
     bool force_keep_session_state) {
-  std::unique_ptr<AppCacheDatabase> database_to_delete(database);
-
   // If saving session state, only delete the database.
   if (force_keep_session_state)
     return;
@@ -132,8 +125,8 @@ void AppCacheStorageImpl::ClearSessionOnlyOrigins(
         return;
       }
       std::vector<int64_t> deletable_response_ids;
-      bool success = DeleteGroupAndRelatedRecords(database, group.group_id,
-                                                  &deletable_response_ids);
+      bool success = DeleteGroupAndRelatedRecords(
+          database.get(), group.group_id, &deletable_response_ids);
       success = success && transaction.Commit();
       DCHECK(success);
     }  // for each group
@@ -147,7 +140,7 @@ class AppCacheStorageImpl::DatabaseTask
  public:
   explicit DatabaseTask(AppCacheStorageImpl* storage)
       : storage_(storage),
-        database_(storage->database_),
+        database_(storage->database_.get()),
         io_thread_(base::SequencedTaskRunnerHandle::Get()) {
     DCHECK(io_thread_.get());
   }
@@ -181,7 +174,7 @@ class AppCacheStorageImpl::DatabaseTask
   virtual ~DatabaseTask() {}
 
   AppCacheStorageImpl* storage_;
-  AppCacheDatabase* database_;
+  AppCacheDatabase* const database_;
   DelegateReferenceVector delegates_;
 
  private:
@@ -189,7 +182,7 @@ class AppCacheStorageImpl::DatabaseTask
   void CallRunCompleted(base::TimeTicks schedule_time);
   void OnFatalError();
 
-  scoped_refptr<base::SequencedTaskRunner> io_thread_;
+  const scoped_refptr<base::SequencedTaskRunner> io_thread_;
 };
 
 void AppCacheStorageImpl::DatabaseTask::Schedule() {
@@ -381,7 +374,8 @@ void AppCacheStorageImpl::GetAllInfoTask::Run() {
       blink::mojom::AppCacheInfo info;
       info.manifest_url = group.manifest_url;
       info.creation_time = group.creation_time;
-      info.size = cache_record.cache_size;
+      info.response_sizes = cache_record.cache_size;
+      info.padding_sizes = cache_record.padding_size;
       info.last_access_time = group.last_access_time;
       info.last_update_time = cache_record.update_time;
       info.cache_id = cache_record.cache_id;
@@ -579,9 +573,10 @@ void AppCacheStorageImpl::GroupLoadTask::Run() {
       database_->FindCacheForGroup(group_record_.group_id, &cache_record_) &&
       FindRelatedCacheRecords(cache_record_.cache_id);
 
-  if (success_)
+  if (success_) {
     database_->LazyUpdateLastAccessTime(group_record_.group_id,
                                         base::Time::Now());
+  }
 }
 
 void AppCacheStorageImpl::GroupLoadTask::RunCompleted() {
@@ -631,7 +626,6 @@ class AppCacheStorageImpl::StoreGroupAndCacheTask : public StoreOrLoadTask {
   bool would_exceed_quota_;
   int64_t space_available_;
   int64_t new_origin_usage_;
-  int64_t max_appcache_origin_cache_size_;
   std::vector<int64_t> newly_deletable_response_ids_;
 };
 
@@ -645,10 +639,7 @@ AppCacheStorageImpl::StoreGroupAndCacheTask::StoreGroupAndCacheTask(
       success_(false),
       would_exceed_quota_(false),
       space_available_(-1),
-      new_origin_usage_(-1),
-      // TODO(crbug.com/895825): Remove max_appcache_origin_cache_size_ in Feb
-      // 2019.
-      max_appcache_origin_cache_size_(kDefaultQuota) {
+      new_origin_usage_(-1) {
   group_record_.group_id = group->group_id();
   group_record_.manifest_url = group->manifest_url();
   group_record_.origin = url::Origin::Create(group_record_.manifest_url);
@@ -662,15 +653,6 @@ AppCacheStorageImpl::StoreGroupAndCacheTask::StoreGroupAndCacheTask(
       &intercept_namespace_records_,
       &fallback_namespace_records_,
       &online_whitelist_records_);
-
-  base::CommandLine& command_line = *base::CommandLine::ForCurrentProcess();
-  if (command_line.HasSwitch(switches::kMaxAppCacheOriginCacheSizeMb)) {
-    if (base::StringToInt64(command_line.GetSwitchValueASCII(
-                                switches::kMaxAppCacheOriginCacheSizeMb),
-                            &max_appcache_origin_cache_size_)) {
-      max_appcache_origin_cache_size_ *= kMB;
-    }
-  }
 }
 
 void AppCacheStorageImpl::StoreGroupAndCacheTask::GetQuotaThenSchedule() {
@@ -717,7 +699,7 @@ void AppCacheStorageImpl::StoreGroupAndCacheTask::OnQuotaCallback(
 
 void AppCacheStorageImpl::StoreGroupAndCacheTask::Run() {
   DCHECK(!success_);
-  sql::Database* connection = database_->db_connection();
+  sql::Database* const connection = database_->db_connection();
   if (!connection)
     return;
 
@@ -792,10 +774,9 @@ void AppCacheStorageImpl::StoreGroupAndCacheTask::Run() {
     return;
   }
 
-  // Use the value in --max-appcache-disk-cache-size-mb (or a hard-coded
-  // default) when no QuotaManager is wired in.
+  // Use a simple hard-coded value when not using quota management.
   if (space_available_ == -1) {
-    if (new_origin_usage_ > max_appcache_origin_cache_size_) {
+    if (new_origin_usage_ > kDefaultQuota) {
       would_exceed_quota_ = true;
       success_ = false;
       return;
@@ -914,7 +895,7 @@ class NetworkNamespaceHelper {
   // Key is cache id
   using WhiteListMap = std::map<int64_t, std::vector<AppCacheNamespace>>;
   WhiteListMap namespaces_map_;
-  AppCacheDatabase* database_;
+  AppCacheDatabase* const database_;
 };
 
 }  // namespace
@@ -1427,13 +1408,12 @@ AppCacheStorageImpl::~AppCacheStorageImpl() {
 
   if (database_ &&
       !db_task_runner_->PostTask(
-          FROM_HERE, base::BindOnce(&ClearSessionOnlyOrigins, database_,
-                                    base::WrapRefCounted(
-                                        service_->special_storage_policy()),
-                                    service()->force_keep_session_state()))) {
-    delete database_;
+          FROM_HERE,
+          base::BindOnce(
+              &ClearSessionOnlyOrigins, std::move(database_),
+              base::WrapRefCounted(service_->special_storage_policy()),
+              service()->force_keep_session_state()))) {
   }
-  database_ = nullptr;  // So no further database tasks can be scheduled.
 }
 
 void AppCacheStorageImpl::Initialize(
@@ -1445,7 +1425,7 @@ void AppCacheStorageImpl::Initialize(
   base::FilePath db_file_path;
   if (!is_incognito_)
     db_file_path = cache_directory_.Append(kAppCacheDatabaseName);
-  database_ = new AppCacheDatabase(db_file_path);
+  database_ = std::make_unique<AppCacheDatabase>(db_file_path);
 
   db_task_runner_ = db_task_runner;
 
@@ -1911,20 +1891,8 @@ AppCacheDiskCache* AppCacheStorageImpl::disk_cache() {
     } else {
       expecting_cleanup_complete_on_disable_ = true;
 
-      const base::CommandLine& command_line =
-          *base::CommandLine::ForCurrentProcess();
-      int64_t max_appcache_disk_cache_size = kMaxAppCacheDiskCacheSize;
-      if (command_line.HasSwitch(switches::kMaxAppCacheDiskCacheSizeMb)) {
-        if (base::StringToInt64(command_line.GetSwitchValueASCII(
-                                    switches::kMaxAppCacheDiskCacheSizeMb),
-                                &max_appcache_disk_cache_size)) {
-          max_appcache_disk_cache_size *= kMB;
-        }
-      }
-
       rv = disk_cache_->InitWithDiskBackend(
-          cache_directory_.Append(kDiskCacheDirectoryName),
-          max_appcache_disk_cache_size, false,
+          cache_directory_.Append(kDiskCacheDirectoryName), false,
           base::BindOnce(&AppCacheStorageImpl::OnDiskCacheCleanupComplete,
                          weak_factory_.GetWeakPtr()),
           base::BindOnce(&AppCacheStorageImpl::OnDiskCacheInitialized,

@@ -70,11 +70,11 @@ void CastServiceSimple::StartInternal() {
 
   CastWebView::CreateParams params;
   params.delegate = this;
-  params.enabled_for_dev = true;
+  params.web_contents_params.delegate = this;
+  params.web_contents_params.enabled_for_dev = true;
   params.window_params.delegate = this;
   cast_web_view_ =
       web_contents_manager_->CreateWebView(params, nullptr, /* site_instance */
-                                           nullptr,         /* extension */
                                            GURL() /* initial_url */);
   cast_web_view_->LoadUrl(startup_url_);
   cast_web_view_->GrantScreenAccess();
@@ -101,7 +101,7 @@ void CastServiceSimple::OnWindowDestroyed() {}
 void CastServiceSimple::OnKeyEvent(const ui::KeyEvent& key_event) {}
 
 bool CastServiceSimple::OnAddMessageToConsoleReceived(
-    int32_t level,
+    blink::mojom::ConsoleMessageLevel log_level,
     const base::string16& message,
     int32_t line_no,
     const base::string16& source_id) {

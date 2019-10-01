@@ -9,14 +9,21 @@
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/android/jni_utils.h"
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/json/json_writer.h"
+#include "chrome/browser/android/profile_key_util.h"
 #include "chrome/browser/offline_pages/android/offline_page_bridge.h"
 #include "chrome/browser/offline_pages/offline_page_model_factory.h"
 #include "chrome/browser/offline_pages/prefetch/prefetch_service_factory.h"
 #include "chrome/browser/offline_pages/request_coordinator_factory.h"
+#include "chrome/browser/profiles/profile_android.h"
+#include "chrome/browser/profiles/profile_key.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "components/offline_pages/core/background/request_coordinator.h"
 #include "components/offline_pages/core/offline_page_model.h"
+#include "components/offline_pages/core/prefetch/prefetch_prefs.h"
+#include "content/public/browser/network_service_instance.h"
 #include "content/public/test/url_loader_interceptor.h"
 #include "jni/OfflineTestUtil_jni.h"
 
@@ -103,6 +110,54 @@ class Interceptor {
 // This is a raw pointer because global destructors are disallowed.
 Interceptor* g_interceptor = nullptr;
 
+// Waits for the connection type to change to a desired value.
+class NetworkConnectionObserver
+    : public network::NetworkConnectionTracker::NetworkConnectionObserver {
+ public:
+  // Waits for connection type to change to |type|.
+  static void WaitForConnectionType(
+      network::mojom::ConnectionType type_to_wait_for,
+      base::android::ScopedJavaGlobalRef<jobject> callback) {
+    // NetworkConnectionObserver manages it's own lifetime.
+    new NetworkConnectionObserver(type_to_wait_for, std::move(callback));
+  }
+
+ private:
+  NetworkConnectionObserver(
+      network::mojom::ConnectionType type_to_wait_for,
+      base::android::ScopedJavaGlobalRef<jobject> callback)
+      : type_to_wait_for_(type_to_wait_for), callback_(std::move(callback)) {
+    content::GetNetworkConnectionTracker()->AddNetworkConnectionObserver(this);
+
+    // Call OnConnectionChanged() with the current state.
+    network::mojom::ConnectionType current_type;
+    if (content::GetNetworkConnectionTracker()->GetConnectionType(
+            &current_type,
+            base::BindOnce(&NetworkConnectionObserver::OnConnectionChanged,
+                           weak_factory_.GetWeakPtr()))) {
+      OnConnectionChanged(current_type);
+    }
+  }
+
+  ~NetworkConnectionObserver() override {
+    content::GetNetworkConnectionTracker()->RemoveNetworkConnectionObserver(
+        this);
+  }
+
+  // network::NetworkConnectionTracker::NetworkConnectionObserver:
+  void OnConnectionChanged(network::mojom::ConnectionType type) override {
+    if (type == type_to_wait_for_) {
+      base::android::RunRunnableAndroid(callback_);
+      delete this;
+    }
+  }
+
+  network::mojom::ConnectionType type_to_wait_for_ =
+      network::mojom::ConnectionType::CONNECTION_UNKNOWN;
+  base::android::ScopedJavaGlobalRef<jobject> callback_;
+  base::WeakPtrFactory<NetworkConnectionObserver> weak_factory_{this};
+};
+
 }  // namespace
 
 void JNI_OfflineTestUtil_GetRequestsInQueue(
@@ -141,12 +196,15 @@ void JNI_OfflineTestUtil_DeletePagesByOfflineId(
     const JavaParamRef<jlongArray>& j_offline_ids_array,
     const JavaParamRef<jobject>& j_callback_obj) {
   ScopedJavaGlobalRef<jobject> j_callback_ref(env, j_callback_obj);
+
   std::vector<int64_t> offline_ids;
   base::android::JavaLongArrayToInt64Vector(env, j_offline_ids_array,
                                             &offline_ids);
-  GetOfflinePageModel()->DeletePagesByOfflineId(
-      offline_ids,
-      base::BindOnce(&OnDeletePageDone, std::move(j_callback_ref)));
+
+  PageCriteria criteria;
+  criteria.offline_ids = std::move(offline_ids);
+  GetOfflinePageModel()->DeletePagesWithCriteria(
+      criteria, base::BindOnce(&OnDeletePageDone, std::move(j_callback_ref)));
 }
 
 JNI_EXPORT void JNI_OfflineTestUtil_StartRequestCoordinatorProcessing(
@@ -184,6 +242,28 @@ void JNI_OfflineTestUtil_DumpRequestCoordinatorState(
       },
       base::android::ScopedJavaGlobalRef<jobject>(env, j_callback));
   DumpRequestCoordinatorState(std::move(wrap_callback));
+}
+
+void JNI_OfflineTestUtil_WaitForConnectivityState(
+    JNIEnv* env,
+    jboolean connected,
+    const base::android::JavaParamRef<jobject>& callback) {
+  network::mojom::ConnectionType type =
+      connected ? network::mojom::ConnectionType::CONNECTION_UNKNOWN
+                : network::mojom::ConnectionType::CONNECTION_NONE;
+  NetworkConnectionObserver::WaitForConnectionType(
+      type, base::android::ScopedJavaGlobalRef<jobject>(env, callback));
+}
+
+void JNI_OfflineTestUtil_SetPrefetchingEnabledByServer(
+    JNIEnv* env,
+    const jboolean enabled) {
+  ProfileKey* key = ::android::GetMainProfileKey();
+
+  prefetch_prefs::SetEnabledByServer(key->GetPrefs(), enabled);
+  if (!enabled) {
+    prefetch_prefs::ResetForbiddenStateForTesting(key->GetPrefs());
+  }
 }
 
 }  // namespace offline_pages

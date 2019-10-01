@@ -161,6 +161,7 @@ bool g_egl_robust_resource_init_supported = false;
 bool g_egl_display_texture_share_group_supported = false;
 bool g_egl_create_context_client_arrays_supported = false;
 bool g_egl_android_native_fence_sync_supported = false;
+bool g_egl_ext_pixel_format_float_supported = false;
 
 constexpr const char kSwapEventTraceCategories[] = "gpu";
 
@@ -750,8 +751,8 @@ bool GLSurfaceEGL::InitializeOneOffCommon() {
 
     // Ensure context supports GL_OES_surfaceless_context.
     if (g_egl_surfaceless_context_supported) {
-      g_egl_surfaceless_context_supported = context->HasExtension(
-          "GL_OES_surfaceless_context");
+      g_egl_surfaceless_context_supported =
+          context->HasExtension("GL_OES_surfaceless_context");
       context->ReleaseCurrent(surface.get());
     }
   }
@@ -772,6 +773,9 @@ bool GLSurfaceEGL::InitializeOneOffCommon() {
     g_egl_android_native_fence_sync_supported = true;
   }
 #endif
+
+  g_egl_ext_pixel_format_float_supported =
+      HasEGLExtension("EGL_EXT_pixel_format_float");
 
   initialized_ = true;
   return true;
@@ -874,6 +878,10 @@ bool GLSurfaceEGL::IsCreateContextClientArraysSupported() {
 
 bool GLSurfaceEGL::IsAndroidNativeFenceSyncSupported() {
   return g_egl_android_native_fence_sync_supported;
+}
+
+bool GLSurfaceEGL::IsPixelFormatFloatSupported() {
+  return g_egl_ext_pixel_format_float_supported;
 }
 
 GLSurfaceEGL::~GLSurfaceEGL() {}
@@ -1113,6 +1121,8 @@ void NativeViewGLSurfaceEGL::SetEnableSwapTimestamps() {
   // called twice.
   supported_egl_timestamps_.clear();
   supported_event_names_.clear();
+  presentation_feedback_index_ = -1;
+  composition_start_index_ = -1;
 
   eglSurfaceAttrib(GetDisplay(), surface_, EGL_TIMESTAMPS_ANDROID, EGL_TRUE);
 
@@ -1154,6 +1164,8 @@ void NativeViewGLSurfaceEGL::SetEnableSwapTimestamps() {
         // all_timestamps.
         presentation_feedback_index_ =
             static_cast<int>(supported_egl_timestamps_.size());
+        composition_start_index_ =
+            static_cast<int>(supported_egl_timestamps_.size());
         presentation_flags_ = 0;
         break;
       case EGL_DISPLAY_PRESENT_TIME_ANDROID:
@@ -1169,12 +1181,10 @@ void NativeViewGLSurfaceEGL::SetEnableSwapTimestamps() {
     supported_egl_timestamps_.push_back(ts.egl_name);
     supported_event_names_.push_back(ts.name);
   }
+  DCHECK_GE(presentation_feedback_index_, 0);
+  DCHECK_GE(composition_start_index_, 0);
 
   use_egl_timestamps_ = !supported_egl_timestamps_.empty();
-}
-
-bool NativeViewGLSurfaceEGL::SupportsPresentationCallback() {
-  return true;
 }
 
 bool NativeViewGLSurfaceEGL::InitializeNativeWindow() {
@@ -1199,7 +1209,7 @@ bool NativeViewGLSurfaceEGL::IsOffscreen() {
 }
 
 gfx::SwapResult NativeViewGLSurfaceEGL::SwapBuffers(
-    const PresentationCallback& callback) {
+    PresentationCallback callback) {
   TRACE_EVENT2("gpu", "NativeViewGLSurfaceEGL:RealSwapBuffers",
       "width", GetSize().width(),
       "height", GetSize().height());
@@ -1219,7 +1229,7 @@ gfx::SwapResult NativeViewGLSurfaceEGL::SwapBuffers(
     new_frame_id = -1;
 
   GLSurfacePresentationHelper::ScopedSwapBuffers scoped_swap_buffers(
-      presentation_helper_.get(), callback, new_frame_id);
+      presentation_helper_.get(), std::move(callback), new_frame_id);
 
   if (!eglSwapBuffers(GetDisplay(), surface_)) {
     DVLOG(1) << "eglSwapBuffers failed with error "
@@ -1467,6 +1477,15 @@ bool NativeViewGLSurfaceEGL::GetFrameTimestampInfoIfAvailable(
   // reporting purpose.
   std::vector<EGLnsecsANDROID> egl_timestamps(supported_egl_timestamps_.size(),
                                               EGL_TIMESTAMP_INVALID_ANDROID);
+
+  // TODO(vikassoni): File a driver bug for eglGetFrameTimestampsANDROID().
+  // See https://bugs.chromium.org/p/chromium/issues/detail?id=966638.
+  // As per the spec, the driver is expected to return a valid timestamp from
+  // the call eglGetFrameTimestampsANDROID() when its not
+  // EGL_TIMESTAMP_PENDING_ANDROID or EGL_TIMESTAMP_INVALID_ANDROID. But
+  // currently some buggy drivers an invalid timestamp 0.
+  // This is currentlt handled in chrome for by setting the presentation time to
+  // TimeTicks::Now() (snapped to the next vsync) instead of 0.
   if ((frame_id < 0) ||
       !eglGetFrameTimestampsANDROID(
           GetDisplay(), surface_, frame_id,
@@ -1478,6 +1497,7 @@ bool NativeViewGLSurfaceEGL::GetFrameTimestampInfoIfAvailable(
     return true;
   }
   DCHECK_GE(presentation_feedback_index_, 0);
+  DCHECK_GE(composition_start_index_, 0);
 
   // Get the presentation time.
   EGLnsecsANDROID presentation_time_ns =
@@ -1488,19 +1508,25 @@ bool NativeViewGLSurfaceEGL::GetFrameTimestampInfoIfAvailable(
     return false;
   }
   if (presentation_time_ns == EGL_TIMESTAMP_INVALID_ANDROID) {
-    *presentation_time = base::TimeTicks::Now();
+    presentation_time_ns = egl_timestamps[composition_start_index_];
+    if (presentation_time_ns == EGL_TIMESTAMP_INVALID_ANDROID ||
+        presentation_time_ns == EGL_TIMESTAMP_PENDING_ANDROID) {
+      *presentation_time = base::TimeTicks::Now();
+    } else {
+      *presentation_time = base::TimeTicks() + base::TimeDelta::FromNanoseconds(
+                                                   presentation_time_ns);
+    }
   } else {
     *presentation_time = base::TimeTicks() +
                          base::TimeDelta::FromNanoseconds(presentation_time_ns);
     *presentation_flags = presentation_flags_;
   }
-  DCHECK(!presentation_time->is_null());
   return true;
 }
 
 gfx::SwapResult NativeViewGLSurfaceEGL::SwapBuffersWithDamage(
     const std::vector<int>& rects,
-    const PresentationCallback& callback) {
+    PresentationCallback callback) {
   DCHECK(supports_swap_buffer_with_damage_);
   if (!CommitAndClearPendingOverlays()) {
     DVLOG(1) << "Failed to commit pending overlay planes.";
@@ -1508,7 +1534,7 @@ gfx::SwapResult NativeViewGLSurfaceEGL::SwapBuffersWithDamage(
   }
 
   GLSurfacePresentationHelper::ScopedSwapBuffers scoped_swap_buffers(
-      presentation_helper_.get(), callback);
+      presentation_helper_.get(), std::move(callback));
   if (!eglSwapBuffersWithDamageKHR(GetDisplay(), surface_,
                                    const_cast<EGLint*>(rects.data()),
                                    static_cast<EGLint>(rects.size() / 4))) {
@@ -1524,7 +1550,7 @@ gfx::SwapResult NativeViewGLSurfaceEGL::PostSubBuffer(
     int y,
     int width,
     int height,
-    const PresentationCallback& callback) {
+    PresentationCallback callback) {
   DCHECK(supports_post_sub_buffer_);
   if (!CommitAndClearPendingOverlays()) {
     DVLOG(1) << "Failed to commit pending overlay planes.";
@@ -1538,7 +1564,7 @@ gfx::SwapResult NativeViewGLSurfaceEGL::PostSubBuffer(
   }
 
   GLSurfacePresentationHelper::ScopedSwapBuffers scoped_swap_buffers(
-      presentation_helper_.get(), callback);
+      presentation_helper_.get(), std::move(callback));
   if (!eglPostSubBufferNV(GetDisplay(), surface_, x, y, width, height)) {
     DVLOG(1) << "eglPostSubBufferNV failed with error "
              << GetLastEGLErrorString();
@@ -1556,13 +1582,13 @@ bool NativeViewGLSurfaceEGL::SupportsCommitOverlayPlanes() {
 }
 
 gfx::SwapResult NativeViewGLSurfaceEGL::CommitOverlayPlanes(
-    const PresentationCallback& callback) {
+    PresentationCallback callback) {
   DCHECK(SupportsCommitOverlayPlanes());
   // Here we assume that the overlays scheduled on this surface will display
   // themselves to the screen right away in |CommitAndClearPendingOverlays|,
   // rather than being queued and waiting for a "swap" signal.
   GLSurfacePresentationHelper::ScopedSwapBuffers scoped_swap_buffers(
-      presentation_helper_.get(), callback);
+      presentation_helper_.get(), std::move(callback));
   if (!CommitAndClearPendingOverlays())
     scoped_swap_buffers.set_result(gfx::SwapResult::SWAP_FAILED);
   return scoped_swap_buffers.result();
@@ -1697,7 +1723,7 @@ bool PbufferGLSurfaceEGL::IsOffscreen() {
 }
 
 gfx::SwapResult PbufferGLSurfaceEGL::SwapBuffers(
-    const PresentationCallback& callback) {
+    PresentationCallback callback) {
   NOTREACHED() << "Attempted to call SwapBuffers on a PbufferGLSurfaceEGL.";
   return gfx::SwapResult::SWAP_FAILED;
 }
@@ -1773,8 +1799,7 @@ bool SurfacelessEGL::IsSurfaceless() const {
   return true;
 }
 
-gfx::SwapResult SurfacelessEGL::SwapBuffers(
-    const PresentationCallback& callback) {
+gfx::SwapResult SurfacelessEGL::SwapBuffers(PresentationCallback callback) {
   LOG(ERROR) << "Attempted to call SwapBuffers with SurfacelessEGL.";
   return gfx::SwapResult::SWAP_FAILED;
 }

@@ -12,9 +12,9 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "chrome/browser/bookmarks/bookmark_stats.h"
 #include "chrome/browser/ui/bookmarks/bookmark_bar.h"
 #include "chrome/browser/ui/bookmarks/bookmark_bubble_observer.h"
+#include "chrome/browser/ui/bookmarks/bookmark_stats.h"
 #include "chrome/browser/ui/views/bookmarks/bookmark_menu_controller_observer.h"
 #include "components/bookmarks/browser/bookmark_model_observer.h"
 #include "components/bookmarks/browser/bookmark_node_data.h"
@@ -151,9 +151,6 @@ class BookmarkBarView : public views::AccessiblePaneView,
       const GURL& url,
       const base::string16& title);
 
-  // Returns true if Bookmarks Bar is currently detached from the Toolbar.
-  bool IsDetached() const;
-
   // Returns the current amount of overlap atop the browser toolbar.
   int GetToolbarOverlap() const;
 
@@ -162,7 +159,7 @@ class BookmarkBarView : public views::AccessiblePaneView,
   gfx::Size GetMinimumSize() const override;
   void Layout() override;
   void ViewHierarchyChanged(
-      const ViewHierarchyChangedDetails& details) override;
+      const views::ViewHierarchyChangedDetails& details) override;
   void PaintChildren(const views::PaintInfo& paint_info) override;
   bool GetDropFormats(int* formats,
                       std::set<ui::ClipboardFormatType>* format_types) override;
@@ -229,7 +226,7 @@ class BookmarkBarView : public views::AccessiblePaneView,
                            const gfx::Point& p) override;
 
   // views::MenuButtonListener:
-  void OnMenuButtonClicked(views::MenuButton* source,
+  void OnMenuButtonClicked(views::Button* source,
                            const gfx::Point& point,
                            const ui::Event* event) override;
 
@@ -237,9 +234,9 @@ class BookmarkBarView : public views::AccessiblePaneView,
   void ButtonPressed(views::Button* sender, const ui::Event& event) override;
 
   // views::ContextMenuController:
-  void ShowContextMenuForView(views::View* source,
-                              const gfx::Point& point,
-                              ui::MenuSourceType source_type) override;
+  void ShowContextMenuForViewImpl(views::View* source,
+                                  const gfx::Point& point,
+                                  ui::MenuSourceType source_type) override;
 
  private:
   class ButtonSeparatorView;
@@ -443,9 +440,6 @@ class BookmarkBarView : public views::AccessiblePaneView,
   views::Button* throbbing_view_;
 
   BookmarkBar::State bookmark_bar_state_;
-
-  // Are we animating to or from the detached state?
-  bool animating_detached_;
 
   base::ObserverList<BookmarkBarViewObserver>::Unchecked observers_;
 

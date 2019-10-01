@@ -59,11 +59,6 @@ ChromeDataUseAscriber::~ChromeDataUseAscriber() {
   DCHECK(main_render_frame_entry_map_.empty());
   DCHECK(subframe_to_mainframe_map_.empty());
 
-  if (page_capping_observer_) {
-    // Remove the |page_capping_observer_| before the ObserverList is deleted.
-    RemoveObserver(page_capping_observer_.get());
-  }
-
   // DCHECK(pending_navigation_data_use_map_.empty());
   // DCHECK(data_use_recorders_.empty());
 }
@@ -121,7 +116,7 @@ ChromeDataUseAscriber::GetOrCreateDataUseRecorderEntry(
   if (!request->url().SchemeIsHTTPOrHTTPS())
     return data_use_recorders_.end();
 
-  const content::ResourceRequestInfo* request_info =
+  content::ResourceRequestInfo* request_info =
       content::ResourceRequestInfo::ForRequest(request);
   if (!request_info ||
       request_info->GetGlobalRequestID() == content::GlobalRequestID()) {
@@ -133,7 +128,7 @@ ChromeDataUseAscriber::GetOrCreateDataUseRecorderEntry(
     return entry;
   }
 
-  if (request_info->GetResourceType() == content::RESOURCE_TYPE_MAIN_FRAME) {
+  if (request_info->GetResourceType() == content::ResourceType::kMainFrame) {
     auto new_entry =
         CreateNewDataUseRecorder(request, DataUse::TrafficType::USER_TRAFFIC);
     new_entry->set_main_frame_request_id(request_info->GetGlobalRequestID());
@@ -248,10 +243,10 @@ void ChromeDataUseAscriber::OnUrlRequestCompletedOrDestroyed(
   }
 
   {
-    const content::ResourceRequestInfo* request_info =
+    content::ResourceRequestInfo* request_info =
         content::ResourceRequestInfo::ForRequest(request);
     if (request_info &&
-        request_info->GetResourceType() == content::RESOURCE_TYPE_MAIN_FRAME &&
+        request_info->GetResourceType() == content::ResourceType::kMainFrame &&
         !request->status().is_success()) {
       // If mainframe request was not successful, then NavigationHandle in
       // DidFinishMainFrameNavigation will not have GlobalRequestID. So we erase
@@ -274,13 +269,13 @@ void ChromeDataUseAscriber::OnUrlRequestCompletedOrDestroyed(
   // map.
   bool page_load_is_tracked = frame_is_tracked;
 
-  const content::ResourceRequestInfo* request_info =
+  content::ResourceRequestInfo* request_info =
       content::ResourceRequestInfo::ForRequest(request);
 
   // If the frame is not tracked, but this is a main frame request, it might be
   // the case that the navigation has not commit yet.
   if (!frame_is_tracked && request_info &&
-      request_info->GetResourceType() == content::RESOURCE_TYPE_MAIN_FRAME) {
+      request_info->GetResourceType() == content::ResourceType::kMainFrame) {
     page_load_is_tracked =
         pending_navigation_data_use_map_.find(entry->main_frame_request_id()) !=
         pending_navigation_data_use_map_.end();

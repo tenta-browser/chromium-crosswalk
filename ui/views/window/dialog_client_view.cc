@@ -30,12 +30,12 @@ namespace {
 
 // The group used by the buttons.  This name is chosen voluntarily big not to
 // conflict with other groups that could be in the dialog content.
-const int kButtonGroup = 6666;
+constexpr int kButtonGroup = 6666;
 
 // Returns true if the given view should be shown (i.e. exists and is
 // visible).
 bool ShouldShow(View* view) {
-  return view && view->visible();
+  return view && view->GetVisible();
 }
 
 // Returns the bounding box required to contain |size1| and |size2|, placed one
@@ -223,7 +223,7 @@ void DialogClientView::ViewHierarchyChanged(
     extra_view_ = nullptr;
 }
 
-void DialogClientView::OnNativeThemeChanged(const ui::NativeTheme* theme) {
+void DialogClientView::OnThemeChanged() {
   // The old dialog style needs an explicit background color, while the new
   // dialog style simply inherits the bubble's frame view color.
   const DialogDelegate* dialog = GetDialogDelegate();
@@ -264,16 +264,11 @@ DialogDelegate* DialogClientView::GetDialogDelegate() const {
   return GetWidget()->widget_delegate()->AsDialogDelegate();
 }
 
-void DialogClientView::ChildPreferredSizeChanged(View* child) {
-  if (!adding_or_removing_views_ && child == extra_view_)
-    Layout();
-}
-
 void DialogClientView::ChildVisibilityChanged(View* child) {
   // Showing or hiding |extra_view_| can alter which columns have linked sizes.
   if (child == extra_view_)
     UpdateDialogButtons();
-  ChildPreferredSizeChanged(child);
+  InvalidateLayout();
 }
 
 void DialogClientView::OnDialogChanged() {
@@ -301,7 +296,7 @@ void DialogClientView::UpdateDialogButton(LabelButton** member,
     // MdTextButton, make it so. Note that some overrides may not always update
     // the title (they should). See http://crbug.com/697303 .
     const base::string16 title = delegate->GetDialogButtonLabel(type);
-    LabelButton* button = nullptr;
+    std::unique_ptr<LabelButton> button = nullptr;
 
     const bool is_default = delegate->GetDefaultDialogButton() == type &&
                             (type != ui::DIALOG_BUTTON_CANCEL ||
@@ -316,7 +311,7 @@ void DialogClientView::UpdateDialogButton(LabelButton** member,
 
     button->SetGroup(kButtonGroup);
 
-    *member = button;
+    *member = button.release();
   }
 
   delegate->UpdateButton(*member, type);

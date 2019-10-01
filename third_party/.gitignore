@@ -21,6 +21,7 @@
 /android_tools/
 /android_tools_internal/
 /android_webview_glue/src
+/androidx/lib/
 /angle
 /angle_dx11
 /apache-portable-runtime/src
@@ -29,13 +30,16 @@
 /apache-win32/bin/iconv/*.so
 /apache-win32/modules/*.so
 /apache-win32/modules/*.dll
+/apache-mac/bin/httpd
+/apache-mac/bin/openssl
+/apache-mac/lib/*.dylib
+/apache-mac/libexec/apache2/*.so
 /apk-patch-size-estimator/lib/
 /arcore-android-sdk/src/
 /arcore-android-sdk/test-apks/arcore/*.apk
 /asan
 /auto/src
 /bazel/desugar/Desugar.jar
-/bidichecker
 /bison
 /boringssl/src
 /bouncycastle/lib/
@@ -58,12 +62,14 @@
 /cros_system_api
 /custom_tabs_client/src
 /cygwin
+/dav1d/libdav1d
 /dawn
 /depot_tools
 /devtools-node-modules
 /directxsdk
 /dom_distiller_js/dist
 /elfutils/src
+/emoji-segmenter/src
 /errorprone/lib
 /espresso/lib/
 /eyesfree/src
@@ -86,7 +92,7 @@
 /google_toolbox_for_mac/src
 /googlemac
 /googletest/src
-/grpc
+/grpc/src
 /gson/lib/
 /gvr-android-sdk/common_library.aar
 /gvr-android-sdk/test-libraries/controller_test_api.aar
@@ -107,6 +113,7 @@
 /instrumented_libraries/scripts/*.tgz
 /instrumented_libraries/scripts/out/*
 /javax_inject/lib/
+/jacoco/lib/
 /jsoncpp/source
 /jsr-305/src
 /junit/src
@@ -159,8 +166,8 @@
 /nss
 /objenesis/lib/
 /omaha/src/omaha
-/openmax_dl/
 /openh264/src
+/openscreen/src
 /ow2_asm/lib/
 /pdfsqueeze
 /pdfium
@@ -174,7 +181,6 @@
 /pthreads-win32
 /py_trace_event/src
 /pyelftools
-/pyftpdlib/src
 /pylib
 /pymox/src
 /python_24
@@ -210,7 +216,6 @@
 /usrsctp/usrsctplib
 /v8-i18n
 /valgrind
-/visualmetrics
 /wayland/src
 /wayland-protocols/src
 /wds/src

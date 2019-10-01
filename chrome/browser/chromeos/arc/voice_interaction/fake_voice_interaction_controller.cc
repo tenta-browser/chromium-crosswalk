@@ -39,8 +39,9 @@ void FakeVoiceInteractionController::NotifyHotwordEnabled(bool enabled) {
   voice_interaction_hotword_enabled_ = enabled;
 }
 
-void FakeVoiceInteractionController::NotifySetupCompleted(bool completed) {
-  voice_interaction_setup_completed_ = completed;
+void FakeVoiceInteractionController::NotifyConsentStatus(
+    ash::mojom::ConsentStatus consent_status) {
+  consent_status_ = consent_status;
 }
 
 void FakeVoiceInteractionController::NotifyFeatureAllowed(
@@ -60,6 +61,16 @@ void FakeVoiceInteractionController::NotifyLocaleChanged(
 void FakeVoiceInteractionController::NotifyLaunchWithMicOpen(
     bool launch_with_mic_open) {
   launch_with_mic_open_ = launch_with_mic_open;
+}
+
+void FakeVoiceInteractionController::NotifyArcPlayStoreEnabledChanged(
+    bool enabled) {
+  arc_play_store_enabled_ = enabled;
+}
+
+void FakeVoiceInteractionController::NotifyLockedFullScreenStateChanged(
+    bool enabled) {
+  locked_full_screen_enabled_ = enabled;
 }
 
 }  // namespace arc

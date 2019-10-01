@@ -35,8 +35,8 @@ void ExternalFileURLRequestJob::Start() {
   // delegate, because NotifyStartError is not legal to call synchronously in
   // Start().
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&ExternalFileURLRequestJob::StartAsync,
-                            weak_ptr_factory_.GetWeakPtr()));
+      FROM_HERE, base::BindOnce(&ExternalFileURLRequestJob::StartAsync,
+                                weak_ptr_factory_.GetWeakPtr()));
 }
 
 void ExternalFileURLRequestJob::StartAsync() {
@@ -62,7 +62,7 @@ void ExternalFileURLRequestJob::OnRedirectURLObtained(
 
 void ExternalFileURLRequestJob::OnStreamObtained(
     const std::string& mime_type,
-    std::unique_ptr<IsolatedFileSystemScope> isolated_file_system_scope,
+    storage::IsolatedContext::ScopedFSHandle isolated_file_system_scope,
     std::unique_ptr<storage::FileStreamReader> stream_reader,
     int64_t size) {
   mime_type_ = mime_type;
@@ -82,7 +82,7 @@ void ExternalFileURLRequestJob::Kill() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   resolver_.reset();
   stream_reader_.reset();
-  isolated_file_system_scope_.reset();
+  isolated_file_system_scope_ = {};
   net::URLRequestJob::Kill();
   weak_ptr_factory_.InvalidateWeakPtrs();
 }

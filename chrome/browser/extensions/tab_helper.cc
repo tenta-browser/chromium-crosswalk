@@ -29,6 +29,7 @@
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/web_applications/components/web_app_helpers.h"
+#include "chrome/browser/web_applications/extensions/bookmark_app_util.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/manifest_handlers/app_launch_info.h"
 #include "chrome/common/render_messages.h"
@@ -191,17 +192,17 @@ void TabHelper::InvokeForContentRulesRegistries(const Func& func) {
 void TabHelper::FinishCreateBookmarkApp(
     const Extension* extension,
     const WebApplicationInfo& web_app_info) {
-  // Send the 'appinstalled' event and ensure any beforeinstallpromptevent
-  // cannot trigger installation again.
-  if (banners::AppBannerManagerDesktop::IsEnabled() &&
-      web_app_info.open_as_window) {
+  const bool success = (extension != nullptr);
+
+  if (success && web_app_info.open_as_window) {
+    // Send the 'appinstalled' event and ensure any beforeinstallpromptevent
+    // cannot trigger installation again.
     banners::AppBannerManagerDesktop::FromWebContents(web_contents())
         ->OnInstall(false /* is_native app */,
                     blink::kWebDisplayModeStandalone);
   }
   pending_web_app_action_ = NONE;
 
-  const bool success = !!extension;
   const ExtensionId app_id = extension ? extension->id() : ExtensionId();
   std::move(install_callback_).Run(app_id, success);
 }
@@ -224,18 +225,13 @@ void TabHelper::DidFinishNavigation(
   ExtensionRegistry* registry = ExtensionRegistry::Get(context);
   const ExtensionSet& enabled_extensions = registry->enabled_extensions();
 
-  if (util::IsNewBookmarkAppsEnabled()) {
-    Browser* browser = chrome::FindBrowserWithWebContents(web_contents());
-    if (browser && browser->is_app()) {
-      const Extension* extension = registry->GetExtensionById(
-          web_app::GetAppIdFromApplicationName(browser->app_name()),
-          ExtensionRegistry::EVERYTHING);
-      if (extension && AppLaunchInfo::GetFullLaunchURL(extension).is_valid())
-        SetExtensionApp(extension);
-    } else {
-      UpdateExtensionAppIcon(
-          enabled_extensions.GetExtensionOrAppByURL(
-              navigation_handle->GetURL()));
+  Browser* browser = chrome::FindBrowserWithWebContents(web_contents());
+  if (browser && browser->is_app()) {
+    const Extension* extension = registry->GetExtensionById(
+        web_app::GetAppIdFromApplicationName(browser->app_name()),
+        ExtensionRegistry::EVERYTHING);
+    if (extension && AppLaunchInfo::GetFullLaunchURL(extension).is_valid()) {
+      SetExtensionApp(extension);
     }
   } else {
     UpdateExtensionAppIcon(
@@ -271,8 +267,6 @@ void TabHelper::OnDidGetWebApplicationInfo(
     chrome::mojom::ChromeRenderFrameAssociatedPtr chrome_render_frame,
     bool shortcut_app_requested,
     const WebApplicationInfo& info) {
-  web_app_info_ = info;
-
   content::WebContents* contents = web_contents();
   NavigationEntry* entry = contents->GetController().GetLastCommittedEntry();
   if (!entry || last_committed_nav_entry_unique_id_ != entry->GetUniqueID())
@@ -281,16 +275,17 @@ void TabHelper::OnDidGetWebApplicationInfo(
 
   switch (pending_web_app_action_) {
     case CREATE_HOSTED_APP: {
-      if (web_app_info_.app_url.is_empty())
-        web_app_info_.app_url = contents->GetLastCommittedURL();
+      auto web_app_info = std::make_unique<WebApplicationInfo>(info);
+      if (web_app_info->app_url.is_empty())
+        web_app_info->app_url = contents->GetLastCommittedURL();
 
-      if (web_app_info_.title.empty())
-        web_app_info_.title = contents->GetTitle();
-      if (web_app_info_.title.empty())
-        web_app_info_.title = base::UTF8ToUTF16(web_app_info_.app_url.spec());
+      if (web_app_info->title.empty())
+        web_app_info->title = contents->GetTitle();
+      if (web_app_info->title.empty())
+        web_app_info->title = base::UTF8ToUTF16(web_app_info->app_url.spec());
 
       bookmark_app_helper_.reset(
-          new BookmarkAppHelper(profile_, web_app_info_, contents,
+          new BookmarkAppHelper(profile_, std::move(web_app_info), contents,
                                 InstallableMetrics::GetInstallSource(
                                     contents, InstallTrigger::MENU)));
       if (shortcut_app_requested)

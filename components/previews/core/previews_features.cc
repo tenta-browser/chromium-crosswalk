@@ -27,14 +27,8 @@ const base::Feature kOfflinePreviews{"OfflinePreviews",
                                      base::FEATURE_ENABLED_BY_DEFAULT};
 
 // Enables the Client Lo-Fi previews.
-const base::Feature kClientLoFi {
-  "ClientLoFi",
-#if defined(OS_ANDROID)
-      base::FEATURE_ENABLED_BY_DEFAULT
-#else   // !defined(OS_ANDROID)
-      base::FEATURE_DISABLED_BY_DEFAULT
-#endif  // defined(OS_ANDROID)
-};
+const base::Feature kClientLoFi{"ClientLoFi",
+                                base::FEATURE_DISABLED_BY_DEFAULT};
 
 // Enables the NoScript previews for Android.
 const base::Feature kNoScriptPreviews {
@@ -74,39 +68,51 @@ const base::Feature kOptimizationHintsExperiments{
     "OptimizationHintsExperiments", base::FEATURE_DISABLED_BY_DEFAULT};
 
 // Enables the application of the resource loading hints when loading resources.
-const base::Feature kResourceLoadingHints{"ResourceLoadingHints",
-                                          base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kResourceLoadingHints {
+  "ResourceLoadingHints",
+#if defined(OS_ANDROID)
+      base::FEATURE_ENABLED_BY_DEFAULT
+#else   // !defined(OS_ANDROID)
+      base::FEATURE_DISABLED_BY_DEFAULT
+#endif  // defined(OS_ANDROID)
+};
 
 // Enables client redirects to a server-rendered lite page preview.
 const base::Feature kLitePageServerPreviews{"LitePageServerPreviews",
                                             base::FEATURE_DISABLED_BY_DEFAULT};
 
-// Shows a Previews icon and string in the Android Omnibox instead of an Infobar
-// when enabled. Only works and is honored on Android..
-const base::Feature kAndroidOmniboxPreviewsBadge{
-    "AndroidOmniboxPreviewsBadge", base::FEATURE_DISABLED_BY_DEFAULT};
-
 // Provides slow page triggering parameters.
 const base::Feature kSlowPageTriggering{"PreviewsSlowPageTriggering",
                                         base::FEATURE_DISABLED_BY_DEFAULT};
-
-// A feature to prevent previews on all reloads.
-const base::Feature kPreviewsDisallowedOnReloads{
-    "PreviewsDisallowedOnReloads", base::FEATURE_DISABLED_BY_DEFAULT};
 
 // Allows HTTPS previews to be served via a URLLoader when network service is
 // enabled.
 const base::Feature kHTTPSServerPreviewsUsingURLLoader{
     "HTTPSServerPreviewsUsingURLLoader", base::FEATURE_DISABLED_BY_DEFAULT};
 
-// Uses 'Lite Mode' strings instead of 'Data Saver'.
-const base::Feature kDataSaverLiteModeRebranding{
-    "DataSaverLiteModeRebranding", base::FEATURE_DISABLED_BY_DEFAULT};
+// Enables fetching optimization hints from a remote Optimization Guide Service.
+const base::Feature kOptimizationHintsFetching{
+    "OptimizationHintsFetching", base::FEATURE_DISABLED_BY_DEFAULT};
 
-// When enabled, reloading on a preview will cause the session (5 minute) rule
-// to trigger.
-const base::Feature kPreviewsReloadsAreSoftOptOuts{
-    "PreviewsReloadsAreSoftOptOuts", base::FEATURE_DISABLED_BY_DEFAULT};
+// Enables the use of a pref to only trigger Offline Previews when there is a
+// high chance that there is one to serve.
+const base::Feature kOfflinePreviewsFalsePositivePrevention{
+    "OfflinePreviewsFalsePositivePrevention",
+    base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Enables a per-page load holdback experiment using a random coin flip.
+const base::Feature kCoinFlipHoldback{"PreviewsCoinFlipHoldback_UKMOnly",
+                                      base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Enables filtering navigation URLs by suffix to exclude navigation that look
+// like media resources from triggering previews. For example,
+// http://chromium.org/video.mp4 would be excluded.
+const base::Feature kExcludedMediaSuffixes{"PreviewsExcludedMediaSuffixes",
+                                           base::FEATURE_ENABLED_BY_DEFAULT};
+
+// Enables DeferAllScript previews.
+const base::Feature kDeferAllScriptPreviews{"DeferAllScript",
+                                            base::FEATURE_DISABLED_BY_DEFAULT};
 
 }  // namespace features
 }  // namespace previews

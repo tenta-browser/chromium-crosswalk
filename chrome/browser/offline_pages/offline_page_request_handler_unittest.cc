@@ -22,6 +22,7 @@
 #include "base/test/metrics/histogram_tester.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/default_clock.h"
+#include "build/build_config.h"
 #include "chrome/browser/offline_pages/offline_page_model_factory.h"
 #include "chrome/browser/offline_pages/offline_page_request_interceptor.h"
 #include "chrome/browser/offline_pages/offline_page_tab_helper.h"
@@ -57,6 +58,11 @@
 #include "services/network/public/cpp/resource_request.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
+
+#if defined(OS_ANDROID)
+#include "components/gcm_driver/instance_id/instance_id_android.h"
+#include "components/gcm_driver/instance_id/scoped_use_fake_instance_id_android.h"
+#endif  // OS_ANDROID
 
 namespace offline_pages {
 
@@ -323,7 +329,7 @@ class TestURLLoaderClient : public network::mojom::URLLoaderClient {
     observer_->OnReceiveRedirect(redirect_info.new_url);
   }
 
-  void OnReceiveCachedMetadata(const std::vector<uint8_t>& data) override {}
+  void OnReceiveCachedMetadata(mojo_base::BigBuffer data) override {}
 
   void OnTransferSizeUpdated(int32_t transfer_size_diff) override {}
 
@@ -517,7 +523,7 @@ class OfflinePageRequestHandlerTestBase : public testing::Test {
 
  private:
   static std::unique_ptr<KeyedService> BuildTestOfflinePageModel(
-      content::BrowserContext* context);
+      SimpleFactoryKey* key);
 
   // TODO(https://crbug.com/809610): The static members below will be removed
   // once the reference to BuildTestOfflinePageModel in SetUp is converted to a
@@ -546,6 +552,18 @@ class OfflinePageRequestHandlerTestBase : public testing::Test {
   bool is_offline_page_set_in_navigation_data_;
   OfflinePageItem page_;
   OfflinePageHeader offline_page_header_;
+
+#if defined(OS_ANDROID)
+  // OfflinePageTabHelper instantiates PrefetchService which in turn requests a
+  // fresh GCM token automatically. These two lines mock out InstanceID (the
+  // component which actually requests the token from play services). Without
+  // this, each test takes an extra 30s waiting on the token (because
+  // content::TestBrowserThreadBundle tries to finish all pending tasks before
+  // ending the test).
+  instance_id::InstanceIDAndroid::ScopedBlockOnAsyncTasksForTesting
+      block_async_;
+  instance_id::ScopedUseFakeInstanceIDAndroid use_fake_;
+#endif  // OS_ANDROID
 
   // These are not thread-safe. But they can be used in the pattern that
   // setting the state is done first from one thread and reading this state
@@ -602,7 +620,7 @@ void OfflinePageRequestHandlerTestBase::SetUp() {
   public_archives_dir_ = public_archives_temp_base_dir_.GetPath().AppendASCII(
       kPublicOfflineFileDir);
   OfflinePageModelFactory::GetInstance()->SetTestingFactoryAndUse(
-      profile(),
+      profile()->GetProfileKey(),
       base::BindRepeating(
           &OfflinePageRequestHandlerTestBase::BuildTestOfflinePageModel));
 
@@ -672,7 +690,7 @@ void OfflinePageRequestHandlerTestBase::CreateFileWithContentOnIO(
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
   }
   std::string file_name("test");
-  file_name += base::IntToString(file_name_sequence_num_++);
+  file_name += base::NumberToString(file_name_sequence_num_++);
   file_name += ".mht";
   temp_file_path_ = temp_dir_.GetPath().AppendASCII(file_name);
   ASSERT_NE(base::WriteFile(temp_file_path_, content.c_str(), content.length()),
@@ -877,7 +895,7 @@ std::string OfflinePageRequestHandlerTestBase::UseOfflinePageHeader(
   DCHECK_NE(OfflinePageHeader::Reason::NONE, reason);
   offline_page_header_.reason = reason;
   if (offline_id)
-    offline_page_header_.id = base::Int64ToString(offline_id);
+    offline_page_header_.id = base::NumberToString(offline_id);
   return offline_page_header_.GetCompleteHeaderString();
 }
 
@@ -888,7 +906,7 @@ std::string OfflinePageRequestHandlerTestBase::UseOfflinePageHeaderForIntent(
   DCHECK_NE(OfflinePageHeader::Reason::NONE, reason);
   DCHECK(offline_id);
   offline_page_header_.reason = reason;
-  offline_page_header_.id = base::Int64ToString(offline_id);
+  offline_page_header_.id = base::NumberToString(offline_id);
   offline_page_header_.intent_url = intent_url;
   return offline_page_header_.GetCompleteHeaderString();
 }
@@ -943,7 +961,7 @@ int64_t OfflinePageRequestHandlerTestBase::SavePage(
   OfflinePageModel::SavePageParams save_page_params;
   save_page_params.url = url;
   save_page_params.client_id =
-      ClientId(kDownloadNamespace, base::IntToString(item_counter));
+      ClientId(kDownloadNamespace, base::NumberToString(item_counter));
   save_page_params.original_url = original_url;
   OfflinePageModelFactory::GetForBrowserContext(profile())->SavePage(
       save_page_params, std::move(archiver), nullptr,
@@ -956,12 +974,12 @@ int64_t OfflinePageRequestHandlerTestBase::SavePage(
 // static
 std::unique_ptr<KeyedService>
 OfflinePageRequestHandlerTestBase::BuildTestOfflinePageModel(
-    content::BrowserContext* context) {
+    SimpleFactoryKey* key) {
   scoped_refptr<base::SingleThreadTaskRunner> task_runner =
       base::ThreadTaskRunnerHandle::Get();
 
   base::FilePath store_path =
-      context->GetPath().Append(chrome::kOfflinePageMetadataDirname);
+      key->GetPath().Append(chrome::kOfflinePageMetadataDirname);
   std::unique_ptr<OfflinePageMetadataStore> metadata_store(
       new OfflinePageMetadataStore(task_runner, store_path));
   std::unique_ptr<SystemDownloadManager> download_manager(
@@ -1140,14 +1158,13 @@ std::unique_ptr<net::URLRequest> OfflinePageRequestJobBuilder::CreateRequest(
 
   content::ResourceRequestInfo::AllocateForTesting(
       request.get(),
-      is_main_frame ? content::RESOURCE_TYPE_MAIN_FRAME
-                    : content::RESOURCE_TYPE_SUB_FRAME,
+      is_main_frame ? content::ResourceType::kMainFrame
+                    : content::ResourceType::kSubFrame,
       nullptr,
       /*render_process_id=*/1,
       /*render_view_id=*/-1,
       /*render_frame_id=*/1,
-      /*is_main_frame=*/true,
-      /*allow_download=*/true,
+      /*is_main_frame=*/true, content::ResourceInterceptPolicy::kAllowAll,
       /*is_async=*/true,
       test_base_->allow_preview() ? content::OFFLINE_PAGE_ON
                                   : content::PREVIEWS_OFF,
@@ -1191,7 +1208,7 @@ void OfflinePageRequestJobBuilder::ReadCompletedOnIO(
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
 
   bool is_offline_page_set_in_navigation_data = false;
-  const content::ResourceRequestInfo* info =
+  content::ResourceRequestInfo* info =
       content::ResourceRequestInfo::ForRequest(request_.get());
   ChromeNavigationUIData* navigation_data =
       static_cast<ChromeNavigationUIData*>(info->GetNavigationUIData());
@@ -1429,7 +1446,7 @@ typedef testing::Types<OfflinePageRequestJobBuilder,
                        OfflinePageURLLoaderBuilder>
     MyTypes;
 
-TYPED_TEST_CASE(OfflinePageRequestHandlerTest, MyTypes);
+TYPED_TEST_SUITE(OfflinePageRequestHandlerTest, MyTypes);
 
 TYPED_TEST(OfflinePageRequestHandlerTest, FailedToCreateRequestJob) {
   this->SimulateHasNetworkConnectivity(false);
@@ -1836,7 +1853,7 @@ TYPED_TEST(OfflinePageRequestHandlerTest,
 
   // Check if the original URL is still present.
   OfflinePageItem page = this->GetPage(offline_id);
-  EXPECT_EQ(kUrl, page.original_url);
+  EXPECT_EQ(kUrl, page.original_url_if_different);
 
   // No redirect should be triggered when original URL is same as final URL.
   this->LoadPage(kUrl);

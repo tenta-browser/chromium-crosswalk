@@ -111,7 +111,6 @@ Polymer({
   onPrinterDiscoveryDone_: function() {
     this.discovering_ = false;
     this.$$('add-printer-list').style.maxHeight = kPrinterListFullHeight + 'px';
-    this.$.noPrinterMessage.hidden = !!this.discoveredPrinters.length;
 
     if (!this.discoveredPrinters.length) {
       this.selectedPrinter = getEmptyPrinter_();
@@ -198,25 +197,172 @@ Polymer({
   },
 
   /**
-   * @param {string} name
-   * @param {string} address
    * @return {boolean} Whether the add printer button is enabled.
    * @private
    */
-  canAddPrinter_: function(name, address) {
-    return settings.printing.isNameAndAddressValid(name, address);
+  canAddPrinter_: function() {
+    return settings.printing.isNameAndAddressValid(this.newPrinter);
   },
 });
 
 Polymer({
   is: 'add-printer-manufacturer-model-dialog',
 
-  behaviors: [
-    SetManufacturerModelBehavior,
+  properties: {
+    /** @type {!CupsPrinterInfo} */
+    activePrinter: {
+      type: Object,
+      notify: true,
+    },
+
+    /** @type {?Array<string>} */
+    manufacturerList: Array,
+
+    /** @type {?Array<string>} */
+    modelList: Array,
+
+    /**
+     * Whether the user selected PPD file is valid.
+     * @private
+     */
+    invalidPPD_: {
+      type: Boolean,
+      value: false,
+    },
+
+    /**
+     * The base name of a newly selected PPD file.
+     * @private
+     */
+    newUserPPD_: String,
+
+    /**
+     * The URL to a printer's EULA.
+     * @private
+     */
+    eulaUrl_: {
+      type: String,
+      value: '',
+    },
+  },
+
+  observers: [
+    'selectedManufacturerChanged_(activePrinter.ppdManufacturer)',
+    'selectedModelChanged_(activePrinter.ppdModel)',
   ],
+
+  /** @override */
+  attached: function() {
+    settings.CupsPrintersBrowserProxyImpl.getInstance()
+        .getCupsPrinterManufacturersList()
+        .then(this.manufacturerListChanged_.bind(this));
+  },
 
   close: function() {
     this.$$('add-printer-dialog').close();
+  },
+
+  /**
+   * If the printer is a nearby printer, return make + model with the subtext.
+   * Otherwise, return printer name.
+   * @return {string} The additional information subtext of the manufacturer and
+   * model dialog.
+   * @private
+   */
+  getManufacturerAndModelSubtext_: function() {
+    if (this.activePrinter.printerMakeAndModel) {
+      return loadTimeData.getStringF(
+          'manufacturerAndModelAdditionalInformation',
+          this.activePrinter.printerMakeAndModel);
+    }
+    return loadTimeData.getStringF(
+        'manufacturerAndModelAdditionalInformation',
+        this.activePrinter.printerName);
+  },
+
+  /**
+   * @param {string} manufacturer The manufacturer for which we are retrieving
+   *     models.
+   * @private
+   */
+  selectedManufacturerChanged_: function(manufacturer) {
+    // Reset model if manufacturer is changed.
+    this.set('activePrinter.ppdModel', '');
+    this.modelList = [];
+    if (manufacturer && manufacturer.length != 0) {
+      settings.CupsPrintersBrowserProxyImpl.getInstance()
+          .getCupsPrinterModelsList(manufacturer)
+          .then(this.modelListChanged_.bind(this));
+    }
+  },
+
+  /**
+   * Attempts to get the EULA Url if the selected printer has one.
+   * @private
+   */
+  selectedModelChanged_: function() {
+    if (!this.activePrinter.ppdManufacturer || !this.activePrinter.ppdModel) {
+      // Do not check for an EULA unless both |ppdManufacturer| and |ppdModel|
+      // are set. Set |eulaUrl_| to be empty in this case.
+      this.onGetEulaUrlCompleted_('' /* eulaUrl */);
+      return;
+    }
+
+    settings.CupsPrintersBrowserProxyImpl.getInstance()
+        .getEulaUrl(
+            this.activePrinter.ppdManufacturer, this.activePrinter.ppdModel)
+        .then(this.onGetEulaUrlCompleted_.bind(this));
+  },
+
+  /**
+   * @param {string} eulaUrl The URL for the printer's EULA.
+   * @private
+   */
+  onGetEulaUrlCompleted_: function(eulaUrl) {
+    this.eulaUrl_ = eulaUrl;
+  },
+
+  /**
+   * @param {!ManufacturersInfo} manufacturersInfo
+   * @private
+   */
+  manufacturerListChanged_: function(manufacturersInfo) {
+    if (!manufacturersInfo.success) {
+      return;
+    }
+    this.manufacturerList = manufacturersInfo.manufacturers;
+    if (this.activePrinter.ppdManufacturer.length != 0) {
+      settings.CupsPrintersBrowserProxyImpl.getInstance()
+          .getCupsPrinterModelsList(this.activePrinter.ppdManufacturer)
+          .then(this.modelListChanged_.bind(this));
+    }
+  },
+
+  /**
+   * @param {!ModelsInfo} modelsInfo
+   * @private
+   */
+  modelListChanged_: function(modelsInfo) {
+    if (modelsInfo.success) {
+      this.modelList = modelsInfo.models;
+    }
+  },
+
+  /** @private */
+  onBrowseFile_: function() {
+    settings.CupsPrintersBrowserProxyImpl.getInstance()
+        .getCupsPrinterPPDPath()
+        .then(this.printerPPDPathChanged_.bind(this));
+  },
+
+  /**
+   * @param {string} path The full path to the selected PPD file
+   * @private
+   */
+  printerPPDPathChanged_: function(path) {
+    this.set('activePrinter.printerPPDPath', path);
+    this.invalidPPD_ = !path;
+    this.newUserPPD_ = settings.printing.getBaseName(path);
   },
 
   /** @private */
@@ -260,9 +406,8 @@ Polymer({
   },
 
   /** @private */
-  onCancelConfiguringTap_: function() {
+  onCloseConfiguringTap_: function() {
     this.close();
-    this.fire('configuring-dialog-closed');
   },
 
   close: function() {
@@ -315,7 +460,6 @@ Polymer({
   },
 
   listeners: {
-    'configuring-dialog-closed': 'configuringDialogClosed_',
     'open-manually-add-printer-dialog': 'openManuallyAddPrinterDialog_',
     'open-configuring-printer-dialog': 'openConfiguringPrinterDialog_',
     'open-discovery-printers-dialog': 'openDiscoveryPrintersDialog_',
@@ -325,7 +469,8 @@ Polymer({
 
   /** @override */
   ready: function() {
-    this.addWebUIListener('on-add-cups-printer', this.onAddPrinter_.bind(this));
+    this.addWebUIListener(
+        'on-add-or-edit-cups-printer', this.onAddPrinter_.bind(this));
     this.addWebUIListener(
         'on-manually-add-discovered-printer',
         this.onManuallyAddDiscoveredPrinter_.bind(this));
@@ -419,7 +564,7 @@ Polymer({
           this.newPrinter.printerId);
     } else if (this.previousDialog_ == AddPrinterDialogs.MANUFACTURER) {
       this.configuringDialogTitle =
-          loadTimeData.getString('selectManufacturerAndModelTitle');
+          loadTimeData.getString('manufacturerAndModelDialogTitle');
       this.addPrinter_();
     } else if (this.previousDialog_ == AddPrinterDialogs.MANUALLY) {
       this.configuringDialogTitle =
@@ -441,26 +586,6 @@ Polymer({
     this.switchDialog_(
         this.currentDialog_, AddPrinterDialogs.MANUFACTURER,
         'showManufacturerDialog_');
-  },
-
-  /** @private */
-  configuringDialogClosed_: function() {
-    // If the configuring dialog is closed, we want to return whence we came.
-    //
-    // TODO(justincarlson) - This shouldn't need to be a conditional;
-    // clean up the way we switch dialogs so we don't have to supply
-    // redundant information and can just return to the previous
-    // dialog.
-    if (this.previousDialog_ == AddPrinterDialogs.DISCOVERY) {
-      this.switchDialog_(
-          this.currentDialog_, this.previousDialog_, 'showDiscoveryDialog_');
-    } else if (this.previousDialog_ == AddPrinterDialogs.MANUALLY) {
-      this.switchDialog_(
-          this.currentDialog_, this.previousDialog_, 'showManuallyAddDialog_');
-    } else if (this.previousDialog_ == AddPrinterDialogs.MANUFACTURER) {
-      this.switchDialog_(
-          this.currentDialog_, this.previousDialog_, 'showManufacturerDialog_');
-    }
   },
 
   /** @private */

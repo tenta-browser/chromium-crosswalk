@@ -54,11 +54,11 @@ class CONTENT_EXPORT BrowserThread {
     UI,
 
     // This is the thread that processes non-blocking IO, i.e. IPC and network.
-    // Blocking I/O should happen in TaskScheduler.
+    // Blocking I/O should happen in ThreadPool.
     IO,
 
     // NOTE: do not add new threads here. Instead you should just use
-    // base::Create*TaskRunnerWithTraits to run tasks on the TaskScheduler.
+    // base::Create*TaskRunnerWithTraits to run tasks on the ThreadPool.
 
     // This identifier does not represent a thread.  Instead it counts the
     // number of well-known threads.  Insert new well-known threads before this
@@ -103,10 +103,29 @@ class CONTENT_EXPORT BrowserThread {
   //
   // TODO(crbug.com/887407): Replace callsites with PostTaskWithTraits and
   // appropriate traits (TBD).
+  //
+  // DEPRECATED(carlscab): This method is deprecated and will go away soon,
+  // consider posting the task with priority BEST_EFFORT. For example:
+  // base::PostTaskWithTraits(
+  //   FROM_HERE, {content::BrowserThread::UI, base::TaskPriority::BEST_EFFORT},
+  //   base::BindOnce(...));
+  // Or if you need to run in a special TaskRunner by using the
+  // PostBestEffortTask function below
   static void PostAfterStartupTask(
       const base::Location& from_here,
       const scoped_refptr<base::TaskRunner>& task_runner,
       base::OnceClosure task);
+
+  // Posts a |task| to run at BEST_EFFORT priority using an arbitrary
+  // |task_runner| for which we do not control the priority
+  //
+  // This is useful when a task needs to run on |task_runner| (for thread-safety
+  // reasons) but should be delayed until after critical phases (e.g. startup).
+  // TODO(crbug.com/793069): Add support for sequence-funneling and remove this
+  // method.
+  static void PostBestEffortTask(const base::Location& from_here,
+                                 scoped_refptr<base::TaskRunner> task_runner,
+                                 base::OnceClosure task);
 
   // Callable on any thread.  Returns whether the given well-known thread is
   // initialized.
@@ -140,9 +159,9 @@ class CONTENT_EXPORT BrowserThread {
   // creating thread etc). Note: see base::OnTaskRunnerDeleter and
   // base::RefCountedDeleteOnSequence to bind to SequencedTaskRunner instead of
   // specific BrowserThreads.
-  template<ID thread>
+  template <ID thread>
   struct DeleteOnThread {
-    template<typename T>
+    template <typename T>
     static void Destruct(const T* x) {
       if (CurrentlyOn(thread)) {
         delete x;
@@ -180,11 +199,23 @@ class CONTENT_EXPORT BrowserThread {
   //
   // Note: see base::OnTaskRunnerDeleter and base::RefCountedDeleteOnSequence to
   // bind to SequencedTaskRunner instead of specific BrowserThreads.
-  struct DeleteOnUIThread : public DeleteOnThread<UI> { };
-  struct DeleteOnIOThread : public DeleteOnThread<IO> { };
+  struct DeleteOnUIThread : public DeleteOnThread<UI> {};
+  struct DeleteOnIOThread : public DeleteOnThread<IO> {};
 
   // Returns an appropriate error message for when DCHECK_CURRENTLY_ON() fails.
   static std::string GetDCheckCurrentlyOnErrorMessage(ID expected);
+
+  // Runs all pending tasks for the given thread. Tasks posted after this method
+  // is called (in particular any task posted from within any of the pending
+  // tasks) will be queued but not run. Conceptually this call will disable all
+  // queues, run any pending tasks, and re-enable all the queues.
+  //
+  // If any of the pending tasks posted a task, these could be run by calling
+  // this method again or running a regular RunLoop. But if that were the case
+  // you should probably rewrite you tests to wait for a specific event instead.
+  //
+  // NOTE: Can only be called from the UI thread.
+  static void RunAllPendingTasksOnThreadForTesting(ID identifier);
 
  protected:
   // For DeleteSoon(). Requires that the BrowserThread with the provided

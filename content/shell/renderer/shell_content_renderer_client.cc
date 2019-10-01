@@ -113,11 +113,10 @@ void ShellContentRendererClient::RenderThreadStarted() {
 
   auto registry = std::make_unique<service_manager::BinderRegistry>();
   registry->AddInterface<mojom::TestService>(
-      base::Bind(&CreateRendererTestService),
+      base::BindRepeating(&CreateRendererTestService),
       base::ThreadTaskRunnerHandle::Get());
   registry->AddInterface<mojom::PowerMonitorTest>(
-      base::Bind(&PowerMonitorTestImpl::MakeStrongBinding,
-                 base::Passed(std::make_unique<PowerMonitorTestImpl>())),
+      base::BindRepeating(&PowerMonitorTestImpl::MakeStrongBinding),
       base::ThreadTaskRunnerHandle::Get());
   content::ChildThread::Get()
       ->GetServiceManagerConnection()
@@ -143,7 +142,7 @@ void ShellContentRendererClient::PrepareErrorPage(
     *error_html =
         "<head><title>Error</title></head><body>Could not load the requested "
         "resource.<br/>Error code: " +
-        base::IntToString(error.reason()) +
+        base::NumberToString(error.reason()) +
         (error.reason() < 0 ? " (" + net::ErrorToString(error.reason()) + ")"
                             : "") +
         "</body>";
@@ -160,7 +159,7 @@ void ShellContentRendererClient::PrepareErrorPageForHttpStatusError(
   if (error_html) {
     *error_html =
         "<head><title>Error</title></head><body>Server returned HTTP status " +
-        base::IntToString(http_status) + "</body>";
+        base::NumberToString(http_status) + "</body>";
   }
 }
 

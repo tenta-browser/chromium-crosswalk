@@ -18,8 +18,6 @@ from telemetry.testing import browser_test_context
 import gpu_project_config
 
 from gpu_tests import gpu_integration_test
-from gpu_tests import gpu_test_expectations
-
 
 class _BaseSampleIntegrationTest(gpu_integration_test.GpuIntegrationTest):
   _test_state = {}
@@ -62,6 +60,11 @@ class SimpleTest(_BaseSampleIntegrationTest):
   }
 
   @classmethod
+  def GenerateTags(cls, finder_options, possible_browser):
+    del finder_options, possible_browser
+    return ['foo']
+
+  @classmethod
   def Name(cls):
     return 'simple_integration_unittest'
 
@@ -72,14 +75,6 @@ class SimpleTest(_BaseSampleIntegrationTest):
     yield ('expected_skip', 'failure.html', ())
     yield ('unexpected_failure', 'failure.html', ())
     yield ('unexpected_error', 'error.html', ())
-
-  @classmethod
-  def _CreateExpectations(cls):
-    expectations = gpu_test_expectations.GpuTestExpectations()
-    expectations.Fail('expected_failure')
-    expectations.Flaky('expected_flaky', max_num_retries=3)
-    expectations.Skip('expected_skip')
-    return expectations
 
   @classmethod
   def StartBrowser(cls):
@@ -96,6 +91,13 @@ class SimpleTest(_BaseSampleIntegrationTest):
         self.fail('Expected flaky failure')
     elif file_path == 'error.html':
       raise Exception('Expected exception')
+
+  @classmethod
+  def ExpectationsFiles(cls):
+    return [
+      os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                   ('test_expectations/'
+                    'simple_integration_unittest_expectations.txt'))]
 
 
 class BrowserStartFailureTest(_BaseSampleIntegrationTest):
@@ -120,10 +122,6 @@ class BrowserStartFailureTest(_BaseSampleIntegrationTest):
     cls.browser = None
     cls.SetBrowserOptions(cls._finder_options)
     cls.StartBrowser()
-
-  @classmethod
-  def _CreateExpectations(cls):
-    return gpu_test_expectations.GpuTestExpectations()
 
   @classmethod
   def CrashOnStart(cls):
@@ -172,10 +170,6 @@ class BrowserCrashAfterStartTest(_BaseSampleIntegrationTest):
     cls.StartBrowser()
 
   @classmethod
-  def _CreateExpectations(cls):
-    return gpu_test_expectations.GpuTestExpectations()
-
-  @classmethod
   def CrashAfterStart(cls, browser):
     cls._test_state['num_browser_starts'] += 1
     if cls._test_state['num_browser_crashes'] < 2:
@@ -203,6 +197,38 @@ class BrowserCrashAfterStartTest(_BaseSampleIntegrationTest):
     # is successful based on the parameters.
     pass
 
+class RunTestsWithExpectationsFiles(_BaseSampleIntegrationTest):
+  _flaky_test_run = 0
+
+  @classmethod
+  def GenerateTags(cls, finder_options, possible_browser):
+    del finder_options, possible_browser
+    return ['foo']
+
+  @classmethod
+  def Name(cls):
+    return 'run_tests_with_expectations_files'
+
+  @classmethod
+  def GenerateGpuTests(cls, options):
+    tests = [('a/b/unexpected-fail.html', 'failure.html', ()),
+             ('a/b/expected-fail.html', 'failure.html', ()),
+             ('a/b/expected-flaky.html', 'flaky.html', ()),
+             ('should_skip', 'skip.html', ())]
+    for test in tests:
+      yield test
+
+  def RunActualGpuTest(self, file_path, *args):
+    if file_path == 'failure.html' or self.__class__._flaky_test_run < 3:
+      self.__class__._flaky_test_run += file_path == 'flaky.html'
+      self.fail()
+
+  @classmethod
+  def ExpectationsFiles(cls):
+    return [
+      os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                   ('test_expectations/'
+                    'run_tests_with_expectations_files_expectations.txt'))]
 
 class TestRetryLimit(_BaseSampleIntegrationTest):
   _test_state = {
@@ -216,11 +242,6 @@ class TestRetryLimit(_BaseSampleIntegrationTest):
   @classmethod
   def GenerateGpuTests(cls, options):
     yield ('unexpected_failure', 'failure.html', ())
-
-  @classmethod
-  def _CreateExpectations(cls):
-    expectations = gpu_test_expectations.GpuTestExpectations()
-    return expectations
 
   def RunActualGpuTest(self, file_path, *args):
     self._test_state['num_test_runs'] += 1
@@ -243,11 +264,6 @@ class TestRepeat(_BaseSampleIntegrationTest):
   def GenerateGpuTests(cls, options):
     yield ('success', 'success.html', ())
 
-  @classmethod
-  def _CreateExpectations(cls):
-    expectations = gpu_test_expectations.GpuTestExpectations()
-    return expectations
-
   def RunActualGpuTest(self, file_path, *args):
     self._test_state['num_test_runs'] += 1
     if file_path != 'success.html':
@@ -256,7 +272,8 @@ class TestRepeat(_BaseSampleIntegrationTest):
 
 class TestAlsoRunDisabledTests(_BaseSampleIntegrationTest):
   _test_state = {
-    'num_test_runs': 0,
+    'num_flaky_test_runs': 0,
+    'num_test_runs': 0
   }
 
   @classmethod
@@ -264,19 +281,30 @@ class TestAlsoRunDisabledTests(_BaseSampleIntegrationTest):
     return 'test_also_run_disabled_tests'
 
   @classmethod
-  def GenerateGpuTests(cls, options):
-    yield ('success', 'success.html', ())
+  def GenerateTags(cls, finder_options, possible_browser):
+    del finder_options, possible_browser
+    return ['foo']
 
   @classmethod
-  def _CreateExpectations(cls):
-    expectations = gpu_test_expectations.GpuTestExpectations()
-    expectations.Skip('success')
-    return expectations
+  def GenerateGpuTests(cls, options):
+    tests = [
+      ('skip', 'skip.html', ()),
+      ('expected_failure', 'fail.html', ()),
+      ('flaky', 'flaky.html', ())]
+    for test in tests:
+      yield test
 
   def RunActualGpuTest(self, file_path, *args):
     self._test_state['num_test_runs'] += 1
-    if file_path != 'success.html':
-      raise Exception('Unexpected test name ' + file_path)
+    self._test_state['num_flaky_test_runs'] += file_path == 'flaky.html'
+    raise Exception('Everything fails')
+
+  @classmethod
+  def ExpectationsFiles(cls):
+    return [
+      os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                   ('test_expectations/'
+                    'tests_also_run_disabled_tests_expectations.txt'))]
 
 
 def load_tests(loader, tests, pattern):

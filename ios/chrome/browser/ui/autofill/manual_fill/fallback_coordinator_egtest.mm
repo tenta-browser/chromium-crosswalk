@@ -17,6 +17,7 @@
 #include "components/autofill/ios/browser/autofill_switches.h"
 #include "ios/chrome/browser/application_context.h"
 #import "ios/chrome/browser/autofill/form_suggestion_label.h"
+#import "ios/chrome/browser/autofill/form_suggestion_view.h"
 #include "ios/chrome/browser/autofill/personal_data_manager_factory.h"
 #import "ios/chrome/browser/ui/autofill/manual_fill/address_view_controller.h"
 #import "ios/chrome/browser/ui/autofill/manual_fill/manual_fill_accessory_view_controller.h"
@@ -25,12 +26,11 @@
 #import "ios/chrome/test/earl_grey/chrome_actions.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
+#import "ios/chrome/test/earl_grey/chrome_error_util.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
-#include "ios/web/public/features.h"
 #import "ios/web/public/test/earl_grey/web_view_matchers.h"
 #include "ios/web/public/test/element_selector.h"
-#import "ios/web/public/test/web_view_interaction_test_util.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "url/gurl.h"
 
@@ -48,6 +48,11 @@ constexpr char kFormHTMLFile[] = "/profile_form.html";
 // EarlGrey fails to detect undocked keyboards on screen, so this help check
 // for them.
 static std::atomic_bool gCHRIsKeyboardShown(false);
+
+// Returns a matcher for the scroll view in keyboard accessory bar.
+id<GREYMatcher> FormSuggestionViewMatcher() {
+  return grey_accessibilityID(kFormSuggestionsViewAccessibilityIdentifier);
+}
 
 // Returns a matcher for the profiles icon in the keyboard accessory bar.
 id<GREYMatcher> ProfilesIconMatcher() {
@@ -321,8 +326,9 @@ void DockKeyboard() {
   _personalDataManager->SetSyncingForTest(true);
   GREYAssertTrue(self.testServer->Start(), @"Test server failed to start.");
   const GURL URL = self.testServer->GetURL(kFormHTMLFile);
-  [ChromeEarlGrey loadURL:URL];
-  [ChromeEarlGrey waitForWebViewContainingText:"Profile form"];
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:URL]);
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey waitForWebStateContainingText:"Profile form"]);
 }
 
 - (void)tearDown {
@@ -577,15 +583,18 @@ void DockKeyboard() {
       performAction:chrome_test_util::TapWebElement(kFormElementCity)];
 
   // Verify the profiles icon is visible.
+  [[EarlGrey selectElementWithMatcher:FormSuggestionViewMatcher()]
+      performAction:grey_scrollToContentEdge(kGREYContentEdgeRight)];
   [[EarlGrey selectElementWithMatcher:ProfilesIconMatcher()]
       assertWithMatcher:grey_sufficientlyVisible()];
 
   // Open a tab in incognito.
-  [ChromeEarlGrey openNewIncognitoTab];
-  [ChromeEarlGreyUI focusOmnibox];  // To simulate a user navigating.
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey openNewIncognitoTab]);
   const GURL URL = self.testServer->GetURL(kFormHTMLFile);
-  [ChromeEarlGrey loadURL:URL];
-  [ChromeEarlGrey waitForWebViewContainingText:"Profile form"];
+  NSString* omniboxText = base::SysUTF8ToNSString(URL.spec() + "\n");
+  [ChromeEarlGreyUI focusOmniboxAndType:omniboxText];
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey waitForWebStateContainingText:"Profile form"]);
 
   // Bring up the keyboard by tapping the city, which is the element before the
   // picker.
@@ -593,6 +602,79 @@ void DockKeyboard() {
       performAction:chrome_test_util::TapWebElement(kFormElementCity)];
 
   // Verify the profiles icon is visible.
+  [[EarlGrey selectElementWithMatcher:FormSuggestionViewMatcher()]
+      performAction:grey_scrollToContentEdge(kGREYContentEdgeRight)];
+  [[EarlGrey selectElementWithMatcher:ProfilesIconMatcher()]
+      assertWithMatcher:grey_sufficientlyVisible()];
+}
+
+// Tests the mediator stops observing objects when the incognito BVC is
+// destroyed. Waiting for dealloc was causing a race condition with the
+// autorelease pool, and some times a DCHECK will be hit.
+- (void)testOpeningIncognitoTabsDoNotLeak {
+  const GURL URL = self.testServer->GetURL(kFormHTMLFile);
+  NSString* omniboxText = base::SysUTF8ToNSString(URL.spec() + "\n");
+  std::string webViewText("Profile form");
+  AddAutofillProfile(_personalDataManager);
+
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
+      performAction:chrome_test_util::TapWebElement(kFormElementCity)];
+
+  // Verify the profiles icon is visible.
+  [[EarlGrey selectElementWithMatcher:ProfilesIconMatcher()]
+      assertWithMatcher:grey_sufficientlyVisible()];
+
+  // Open a tab in incognito.
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey openNewIncognitoTab]);
+  [ChromeEarlGreyUI focusOmniboxAndType:omniboxText];
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey waitForWebStateContainingText:webViewText]);
+
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
+      performAction:chrome_test_util::TapWebElement(kFormElementCity)];
+
+  // Verify the profiles icon is visible.
+  [[EarlGrey selectElementWithMatcher:ProfilesIconMatcher()]
+      assertWithMatcher:grey_sufficientlyVisible()];
+
+  [ChromeEarlGrey closeCurrentTab];
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey openNewTab]);
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:URL]);
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey waitForWebStateContainingText:webViewText]);
+
+  // Bring up the keyboard by tapping the city, which is the element before the
+  // picker.
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
+      performAction:chrome_test_util::TapWebElement(kFormElementCity)];
+
+  // Verify the profiles icon is visible.
+  [[EarlGrey selectElementWithMatcher:ProfilesIconMatcher()]
+      assertWithMatcher:grey_sufficientlyVisible()];
+
+  // Open a tab in incognito.
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey openNewIncognitoTab]);
+  [ChromeEarlGreyUI focusOmniboxAndType:omniboxText];
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey waitForWebStateContainingText:webViewText]);
+
+  // Bring up the keyboard by tapping the city, which is the element before the
+  // picker.
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
+      performAction:chrome_test_util::TapWebElement(kFormElementCity)];
+
+  // Open a  regular tab.
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey openNewTab]);
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:URL]);
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey waitForWebStateContainingText:webViewText]);
+
+  // Bring up the keyboard by tapping the city, which is the element before the
+  // picker.
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
+      performAction:chrome_test_util::TapWebElement(kFormElementCity)];
+
+  // This will fail if there is more than one profiles icon in the hierarchy.
   [[EarlGrey selectElementWithMatcher:ProfilesIconMatcher()]
       assertWithMatcher:grey_sufficientlyVisible()];
 }
@@ -612,11 +694,12 @@ void DockKeyboard() {
       assertWithMatcher:grey_sufficientlyVisible()];
 
   // Open a tab in incognito.
-  [ChromeEarlGrey openNewIncognitoTab];
-  [ChromeEarlGreyUI focusOmnibox];  // To simulate a user navigating.
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey openNewIncognitoTab]);
   const GURL URL = self.testServer->GetURL(kFormHTMLFile);
-  [ChromeEarlGrey loadURL:URL];
-  [ChromeEarlGrey waitForWebViewContainingText:"Profile form"];
+  NSString* omniboxText = base::SysUTF8ToNSString(URL.spec() + "\n");
+  [ChromeEarlGreyUI focusOmniboxAndType:omniboxText];
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey waitForWebStateContainingText:"Profile form"]);
 
   // Bring up the keyboard by tapping the city, which is the element before the
   // picker.
@@ -624,9 +707,10 @@ void DockKeyboard() {
       performAction:chrome_test_util::TapWebElement(kFormElementCity)];
 
   // Open a  regular tab.
-  [ChromeEarlGrey openNewTab];
-  [ChromeEarlGrey loadURL:URL];
-  [ChromeEarlGrey waitForWebViewContainingText:"Profile form"];
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey openNewTab]);
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:URL]);
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey waitForWebStateContainingText:"Profile form"]);
 
   // Bring up the keyboard by tapping the city, which is the element before the
   // picker.

@@ -17,7 +17,9 @@ import org.chromium.chrome.browser.ChromeVersionInfo;
 import org.chromium.chrome.browser.crypto.CipherFactory;
 import org.chromium.chrome.browser.tabmodel.TabLaunchType;
 import org.chromium.chrome.browser.util.ColorUtils;
+import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.browser.WebContents;
+import org.chromium.content_public.common.Referrer;
 
 import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
@@ -66,6 +68,9 @@ public class TabState {
      */
     private static final int MAX_BUNDLE_SIZE = 200 * 1024;
 
+    /** A theme color that indicates an unspecified state. */
+    public static final int UNSPECIFIED_THEME_COLOR = Color.TRANSPARENT;
+
     private static final String TAB_STATE_BUNDLE_PREFIX = "tab_";
     private static final String TIMESTAMP_MILLIS = TAB_STATE_BUNDLE_PREFIX + "timestampMillis";
     private static final String CONTENT_STATE_BYTES =
@@ -73,7 +78,6 @@ public class TabState {
     private static final String PARENT_ID = TAB_STATE_BUNDLE_PREFIX + "parentId";
     private static final String OPENER_APP_ID = TAB_STATE_BUNDLE_PREFIX + "openerAppId";
     private static final String VERSION = TAB_STATE_BUNDLE_PREFIX + "version";
-    private static final String SHOULD_PRESERVE = TAB_STATE_BUNDLE_PREFIX + "shouldPreserve";
     private static final String THEME_COLOR = TAB_STATE_BUNDLE_PREFIX + "themeColor";
     private static final String IS_INCOGNITO = TAB_STATE_BUNDLE_PREFIX + "isIncognito";
 
@@ -137,21 +141,21 @@ public class TabState {
     /** Navigation history of the WebContents. */
     public WebContentsState contentsState;
     public int parentId = Tab.INVALID_TAB_ID;
+    public int rootId;
 
     public long timestampMillis = TIMESTAMP_NOT_SET;
     public String openerAppId;
-    public boolean shouldPreserve;
 
-    /** The tab's theme color. */
-    public int themeColor;
+    /**
+     * The tab's brand theme color. Set this to {@link #UNSPECIFIED_THEME_COLOR} for an unspecified
+     * state.
+     */
+    public int themeColor = UNSPECIFIED_THEME_COLOR;
 
     public @Nullable @TabLaunchType Integer tabLaunchTypeAtCreation;
 
     /** Whether this TabState was created from a file containing info about an incognito Tab. */
     protected boolean mIsIncognito;
-
-    /** Whether the theme color was set for this tab. */
-    protected boolean mHasThemeColor;
 
     /** @return Whether a Stable channel build of Chrome is being used. */
     private static boolean isStableChannelBuild() {
@@ -220,9 +224,7 @@ public class TabState {
         tabState.parentId = bundle.getInt(PARENT_ID);
         tabState.openerAppId = bundle.getString(OPENER_APP_ID);
         tabState.contentsState.setVersion(bundle.getInt(VERSION));
-        tabState.shouldPreserve = bundle.getBoolean(SHOULD_PRESERVE);
         tabState.themeColor = bundle.getInt(THEME_COLOR);
-        tabState.mHasThemeColor = ColorUtils.isValidThemeColor(tabState.themeColor);
         tabState.mIsIncognito = bundle.getBoolean(IS_INCOGNITO);
 
         return tabState;
@@ -297,10 +299,9 @@ public class TabState {
             } catch (EOFException eof) {
             }
             try {
-                tabState.shouldPreserve = stream.readBoolean();
+                boolean shouldPreserveNotUsed = stream.readBoolean();
             } catch (EOFException eof) {
                 // Could happen if reading a version of TabState without this flag set.
-                tabState.shouldPreserve = false;
                 Log.w(TAG,
                         "Failed to read shouldPreserve flag from tab state. "
                                 + "Assuming shouldPreserve is false");
@@ -308,14 +309,12 @@ public class TabState {
             tabState.mIsIncognito = encrypted;
             try {
                 tabState.themeColor = stream.readInt();
-                tabState.mHasThemeColor = ColorUtils.isValidThemeColor(tabState.themeColor);
             } catch (EOFException eof) {
                 // Could happen if reading a version of TabState without a theme color.
-                tabState.themeColor = Color.WHITE;
-                tabState.mHasThemeColor = false;
+                tabState.themeColor = UNSPECIFIED_THEME_COLOR;
                 Log.w(TAG,
                         "Failed to read theme color from tab state. "
-                                + "Assuming theme color is white");
+                                + "Assuming theme color is TabState#UNSPECIFIED_THEME_COLOR");
             }
             try {
                 tabState.tabLaunchTypeAtCreation = stream.readInt();
@@ -325,6 +324,14 @@ public class TabState {
                 Log.w(TAG,
                         "Failed to read tab launch type at creation from tab state. "
                                 + "Assuming tab launch type is null");
+            }
+            try {
+                tabState.rootId = stream.readInt();
+            } catch (EOFException eof) {
+                tabState.rootId = Tab.INVALID_TAB_ID;
+                Log.w(TAG,
+                        "Failed to read tab root id from tab state. "
+                                + "Assuming root id is Tab.INVALID_TAB_ID");
             }
             return tabState;
         } finally {
@@ -344,6 +351,51 @@ public class TabState {
             for (int i = 0; i < buffer.limit(); i++) contentsStateBytes[i] = buffer.get(i);
         }
         return contentsStateBytes;
+    }
+
+    /** @return An opaque "state" object that can be persisted to storage. */
+    public static TabState from(Tab tab) {
+        if (!tab.isInitialized()) return null;
+        TabState tabState = new TabState();
+        tabState.contentsState = getWebContentsState(tab);
+        tabState.openerAppId = TabAssociatedApp.getAppId(tab);
+        tabState.parentId = tab.getParentId();
+        tabState.timestampMillis = tab.getTimestampMillis();
+        tabState.tabLaunchTypeAtCreation = tab.getLaunchTypeAtInitialTabCreation();
+        // Don't save the actual default theme color because it could change on night mode state
+        // changed.
+        tabState.themeColor = TabThemeColorHelper.isDefaultColorUsed(tab)
+                ? TabState.UNSPECIFIED_THEME_COLOR
+                : TabThemeColorHelper.getColor(tab);
+        tabState.rootId = tab.getRootId();
+        return tabState;
+    }
+
+    /** Returns an object representing the state of the Tab's WebContents. */
+    private static WebContentsState getWebContentsState(Tab tab) {
+        if (tab.getFrozenContentsState() != null) return tab.getFrozenContentsState();
+
+        // Native call returns null when buffer allocation needed to serialize the state failed.
+        ByteBuffer buffer = getWebContentsStateAsByteBuffer(tab);
+        if (buffer == null) return null;
+
+        WebContentsState state = new WebContentsState(buffer);
+        state.setVersion(CONTENTS_STATE_CURRENT_VERSION);
+        return state;
+    }
+
+    /** Returns an ByteBuffer representing the state of the Tab's WebContents. */
+    private static ByteBuffer getWebContentsStateAsByteBuffer(Tab tab) {
+        LoadUrlParams pendingLoadParams = tab.getPendingLoadParams();
+        if (pendingLoadParams == null) {
+            return getContentsStateAsByteBuffer(tab);
+        } else {
+            Referrer referrer = pendingLoadParams.getReferrer();
+            return createSingleNavigationStateAsByteBuffer(pendingLoadParams.getUrl(),
+                    referrer != null ? referrer.getUrl() : null,
+                    // Policy will be ignored for null referrer url, 0 is just a placeholder.
+                    referrer != null ? referrer.getPolicy() : 0, tab.isIncognito());
+        }
     }
 
     /**
@@ -388,10 +440,11 @@ public class TabState {
             dataOutputStream.writeUTF(state.openerAppId != null ? state.openerAppId : "");
             dataOutputStream.writeInt(state.contentsState.version());
             dataOutputStream.writeLong(-1); // Obsolete sync ID.
-            dataOutputStream.writeBoolean(state.shouldPreserve);
+            dataOutputStream.writeBoolean(false); // Obsolete attribute |SHOULD_PRESERVE|.
             dataOutputStream.writeInt(state.themeColor);
             dataOutputStream.writeInt(
                     state.tabLaunchTypeAtCreation != null ? state.tabLaunchTypeAtCreation : -1);
+            dataOutputStream.writeInt(state.rootId);
         } catch (FileNotFoundException e) {
             Log.w(TAG, "FileNotFoundException while attempting to save TabState.");
         } catch (IOException e) {
@@ -407,9 +460,10 @@ public class TabState {
      * thread.
      * @param bundle Bundle to write the tab's state to.
      * @param state State object obtained from from {@link Tab#getState()}.
+     * @return Whether the tab state was successfully saved.
      */
-    public static void saveState(Bundle bundle, TabState state) {
-        if (state == null || state.contentsState == null) return;
+    public static boolean saveState(Bundle bundle, TabState state) {
+        if (state == null || state.contentsState == null) return false;
 
         byte[] contentsStateBytes = getContentStateByteArray(state.contentsState.buffer());
 
@@ -424,9 +478,9 @@ public class TabState {
         bundle.putInt(PARENT_ID, state.parentId);
         bundle.putString(OPENER_APP_ID, state.openerAppId);
         bundle.putInt(VERSION, state.contentsState.version());
-        bundle.putBoolean(SHOULD_PRESERVE, state.shouldPreserve);
         bundle.putInt(THEME_COLOR, state.themeColor);
         bundle.putBoolean(IS_INCOGNITO, state.isIncognito());
+        return true;
     }
 
     /**
@@ -466,14 +520,14 @@ public class TabState {
         return mIsIncognito;
     }
 
-    /** @return The theme color of the tab or Color.WHITE if not set. */
+    /** @return The theme color of the tab or {@link #UNSPECIFIED_THEME_COLOR} if not set. */
     public int getThemeColor() {
         return themeColor;
     }
 
     /** @return True if the tab has a theme color set. */
     public boolean hasThemeColor() {
-        return mHasThemeColor;
+        return themeColor != UNSPECIFIED_THEME_COLOR && ColorUtils.isValidThemeColor(themeColor);
     }
 
     /**

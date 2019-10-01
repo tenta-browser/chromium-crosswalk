@@ -13,7 +13,6 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
@@ -30,10 +29,10 @@ import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.browser.test.util.Criteria;
 import org.chromium.content_public.browser.test.util.CriteriaHelper;
 import org.chromium.content_public.browser.test.util.DOMUtils;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.ui.DropdownPopupWindowInterface;
 import org.chromium.ui.R;
 
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -63,7 +62,7 @@ public class AutofillPopupWithKeyboardTest {
     @RetryOnFailure
     @DisabledTest
     public void testShowAutofillPopupAndKeyboardimultaneously()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         mActivityTestRule.startMainActivityWithURL(UrlUtils.encodeHtmlDataUri("<html><head>"
                 + "<meta name=\"viewport\""
                 + "content=\"width=device-width, initial-scale=1.0, maximum-scale=1.0\" /></head>"
@@ -89,7 +88,7 @@ public class AutofillPopupWithKeyboardTest {
                 "US", "(415) 888-9999", "john@acme.inc", "en"));
         final AtomicReference<WebContents> webContentsRef = new AtomicReference<WebContents>();
         final AtomicReference<ViewGroup> viewRef = new AtomicReference<ViewGroup>();
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             webContentsRef.set(mActivityTestRule.getActivity().getCurrentWebContents());
             viewRef.set(mActivityTestRule.getActivity().getActivityTab().getContentView());
         });
@@ -118,7 +117,7 @@ public class AutofillPopupWithKeyboardTest {
                         return viewRef.get().findViewById(R.id.dropdown_popup_window) != null;
                     }
                 });
-        Object popupObject = ThreadUtils.runOnUiThreadBlocking(
+        Object popupObject = TestThreadUtils.runOnUiThreadBlockingNoException(
                 () -> viewRef.get().findViewById(R.id.dropdown_popup_window).getTag());
         Assert.assertTrue(popupObject instanceof DropdownPopupWindowInterface);
         final DropdownPopupWindowInterface popup = (DropdownPopupWindowInterface) popupObject;

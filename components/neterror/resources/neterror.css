@@ -423,29 +423,29 @@ a {
   }
 }
 
-.suggestion-with-image .offline-content-suggestion-visual {
+.suggestion-with-image .offline-content-suggestion-thumbnail {
   flex-basis: 8.2em;
   flex-shrink: 0;
 }
 
-.suggestion-with-image .offline-content-suggestion-visual > img {
+.suggestion-with-image .offline-content-suggestion-thumbnail > img {
   height: 100%;
   width: 100%;
 }
 
-#offline-content-list:not(.is-rtl) .suggestion-with-image
-.offline-content-suggestion-visual > img {
+.suggestion-with-image #offline-content-list:not(.is-rtl)
+.offline-content-suggestion-thumbnail > img {
   border-bottom-right-radius: 7px;
   border-top-right-radius: 7px;
 }
 
-#offline-content-list.is-rtl .suggestion-with-image
-.offline-content-suggestion-visual > img {
+.suggestion-with-image #offline-content-list.is-rtl
+.offline-content-suggestion-thumbnail > img {
   border-bottom-left-radius: 7px;
   border-top-left-radius: 7px;
 }
 
-.suggestion-with-icon .offline-content-suggestion-visual {
+.suggestion-with-icon .offline-content-suggestion-thumbnail {
   align-items: center;
   display: flex;
   justify-content: center;
@@ -453,7 +453,7 @@ a {
   min-width: 4.2em;
 }
 
-.suggestion-with-icon .offline-content-suggestion-visual > div {
+.suggestion-with-icon .offline-content-suggestion-thumbnail > div {
   align-items: center;
   background-color: rgb(241, 243, 244);
   border-radius: 50%;
@@ -463,9 +463,24 @@ a {
   width: 2.3em;
 }
 
-.suggestion-with-icon .offline-content-suggestion-visual > div > img {
+.suggestion-with-icon .offline-content-suggestion-thumbnail > div > img {
   height: 1.45em;
   width: 1.45em;
+}
+
+.offline-content-suggestion-favicon {
+  height: 1em;
+  margin-inline-end: 0.4em;
+  width: 1.4em;
+}
+
+.offline-content-suggestion-favicon > img {
+  height: 1.4em;
+  width: 1.4em;
+}
+
+.no-favicon .offline-content-suggestion-favicon {
+  display: none;
 }
 
 .image-video {
@@ -537,6 +552,7 @@ div.offline-content-suggestion {
   color: rgb(95, 99, 104);
   display: flex;
   font-size: .8em;
+  line-height: 1.7em;
 }
 
 .offline-content-suggestion-attribution {
@@ -544,6 +560,7 @@ div.offline-content-suggestion {
   -webkit-line-clamp: 1;
   display: -webkit-box;
   flex-shrink: 1;
+  margin-inline-end: 0.3em;
   overflow-wrap: break-word;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -598,45 +615,6 @@ div.offline-content-suggestion {
   visibility: hidden;
   opacity: 0;
   transition: opacity 0.2s linear, visibility 0s 0.2s;
-}
-
-
-#offline-content-summary {
-  border: 1px solid var(--google-gray-300);
-  border-radius: 12px;
-  padding: 12px;
-  text-align: center;
-}
-
-.offline-content-summary-image-truncate {
-  width: 45px;
-}
-
-.offline-content-summary-images {
-  direction: ltr;
-  display: flex;
-  margin-top: 10px;
-  justify-content: center;
-  padding-bottom: 12px;
-}
-
-.offline-content-summary-images img {
-  background: rgb(241, 243, 244);
-  border-radius: 50%;
-  box-shadow:
-    0px 1px 2px 0px rgb(155, 155, 155),
-    0px 1px 3px 0px rgb(155, 155, 155);
-  padding: 12px;
-  width: 32px;
-}
-
-.offline-content-summary-description {
-  border-top: 1px solid var(--google-gray-300);
-  padding-top: 12px;
-}
-
-.offline-content-summary-action {
-  padding-top: 12px;
 }
 
 #cancel-save-page-button {
@@ -721,13 +699,11 @@ html[subframe] body {
 
 /* Styles for platform dependent separation of controls and details button. */
 .suggested-left > #control-buttons,
-.suggested-left #stale-load-button,
 .suggested-right > #details-button {
   float: left;
 }
 
 .suggested-right > #control-buttons,
-.suggested-right #stale-load-button,
 .suggested-left > #details-button {
   float: right;
 }
@@ -792,18 +768,33 @@ TODO(https://crbug.com/852872): UI for offline suggested content is incomplete.
 
 /* Offline page */
 .offline {
-  transition: -webkit-filter 1.5s cubic-bezier(0.65, 0.05, 0.36, 1),
+  transition: filter 1.5s cubic-bezier(0.65, 0.05, 0.36, 1),
               background-color 1.5s cubic-bezier(0.65, 0.05, 0.36, 1);
-  will-change: -webkit-filter, background-color;
+  will-change: filter, background-color;
+}
+
+.offline body {
+  transition: background-color 1.5s cubic-bezier(0.65, 0.05, 0.36, 1);
 }
 
 .offline #main-message > p {
   display: none;
 }
 
+/* iOS WKWebView inverts the background color set at the HTML level
+whereas Blink does not. */
 .offline.inverted {
-  -webkit-filter: invert(100%);
+  filter: invert(1);
+<if expr="not is_ios">
   background-color: #000;
+</if>
+<if expr="is_ios">
+  background-color: #fff;
+</if>
+}
+
+.offline.inverted body {
+  background-color: #fff;
 }
 
 .offline .interstitial-wrapper {
@@ -848,6 +839,16 @@ TODO(https://crbug.com/852872): UI for offline suggested content is incomplete.
 
 #offline-resources {
   display: none;
+}
+
+#offline-instruction {
+  image-rendering: pixelated;
+  left: 0;
+  margin: auto;
+  position: absolute;
+  right: 0;
+  top: 60px;
+  width: fit-content;
 }
 
 @media (max-width: 420px) {

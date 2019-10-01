@@ -34,6 +34,7 @@
 #include "third_party/blink/renderer/core/xml_names.h"
 #include "third_party/blink/renderer/platform/bindings/exception_messages.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 
@@ -52,10 +53,6 @@ const SVGEnumerationMap& GetEnumerationMap<SVGLengthAdjustType>() {
 // manually.
 class SVGAnimatedTextLength final : public SVGAnimatedLength {
  public:
-  static SVGAnimatedTextLength* Create(SVGTextContentElement* context_element) {
-    return MakeGarbageCollected<SVGAnimatedTextLength>(context_element);
-  }
-
   SVGAnimatedTextLength(SVGTextContentElement* context_element)
       : SVGAnimatedLength(context_element,
                           svg_names::kTextLengthAttr,
@@ -77,12 +74,13 @@ class SVGAnimatedTextLength final : public SVGAnimatedLength {
 SVGTextContentElement::SVGTextContentElement(const QualifiedName& tag_name,
                                              Document& document)
     : SVGGraphicsElement(tag_name, document),
-      text_length_(SVGAnimatedTextLength::Create(this)),
+      text_length_(MakeGarbageCollected<SVGAnimatedTextLength>(this)),
       text_length_is_specified_by_user_(false),
-      length_adjust_(SVGAnimatedEnumeration<SVGLengthAdjustType>::Create(
-          this,
-          svg_names::kLengthAdjustAttr,
-          kSVGLengthAdjustSpacing)) {
+      length_adjust_(
+          MakeGarbageCollected<SVGAnimatedEnumeration<SVGLengthAdjustType>>(
+              this,
+              svg_names::kLengthAdjustAttr,
+              kSVGLengthAdjustSpacing)) {
   AddToPropertyMap(text_length_);
   AddToPropertyMap(length_adjust_);
 }
@@ -94,12 +92,12 @@ void SVGTextContentElement::Trace(blink::Visitor* visitor) {
 }
 
 unsigned SVGTextContentElement::getNumberOfChars() {
-  GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
+  GetDocument().UpdateStyleAndLayoutForNode(this);
   return SVGTextQuery(GetLayoutObject()).NumberOfCharacters();
 }
 
 float SVGTextContentElement::getComputedTextLength() {
-  GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
+  GetDocument().UpdateStyleAndLayoutForNode(this);
   return SVGTextQuery(GetLayoutObject()).TextLength();
 }
 
@@ -107,7 +105,7 @@ float SVGTextContentElement::getSubStringLength(
     unsigned charnum,
     unsigned nchars,
     ExceptionState& exception_state) {
-  GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
+  GetDocument().UpdateStyleAndLayoutForNode(this);
 
   unsigned number_of_chars = getNumberOfChars();
   if (charnum >= number_of_chars) {
@@ -127,7 +125,7 @@ float SVGTextContentElement::getSubStringLength(
 SVGPointTearOff* SVGTextContentElement::getStartPositionOfChar(
     unsigned charnum,
     ExceptionState& exception_state) {
-  GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
+  GetDocument().UpdateStyleAndLayoutForNode(this);
 
   if (charnum >= getNumberOfChars()) {
     exception_state.ThrowDOMException(
@@ -145,7 +143,7 @@ SVGPointTearOff* SVGTextContentElement::getStartPositionOfChar(
 SVGPointTearOff* SVGTextContentElement::getEndPositionOfChar(
     unsigned charnum,
     ExceptionState& exception_state) {
-  GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
+  GetDocument().UpdateStyleAndLayoutForNode(this);
 
   if (charnum >= getNumberOfChars()) {
     exception_state.ThrowDOMException(
@@ -163,7 +161,7 @@ SVGPointTearOff* SVGTextContentElement::getEndPositionOfChar(
 SVGRectTearOff* SVGTextContentElement::getExtentOfChar(
     unsigned charnum,
     ExceptionState& exception_state) {
-  GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
+  GetDocument().UpdateStyleAndLayoutForNode(this);
 
   if (charnum >= getNumberOfChars()) {
     exception_state.ThrowDOMException(
@@ -180,7 +178,7 @@ SVGRectTearOff* SVGTextContentElement::getExtentOfChar(
 float SVGTextContentElement::getRotationOfChar(
     unsigned charnum,
     ExceptionState& exception_state) {
-  GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
+  GetDocument().UpdateStyleAndLayoutForNode(this);
 
   if (charnum >= getNumberOfChars()) {
     exception_state.ThrowDOMException(
@@ -196,7 +194,7 @@ float SVGTextContentElement::getRotationOfChar(
 int SVGTextContentElement::getCharNumAtPosition(
     SVGPointTearOff* point,
     ExceptionState& exception_state) {
-  GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
+  GetDocument().UpdateStyleAndLayoutForNode(this);
   return SVGTextQuery(GetLayoutObject())
       .CharacterNumberAtPosition(point->Target()->Value());
 }
@@ -236,13 +234,13 @@ void SVGTextContentElement::CollectStyleForPresentationAttribute(
 
     if (value == preserve_string) {
       UseCounter::Count(GetDocument(), WebFeature::kWhiteSpacePreFromXMLSpace);
-      AddPropertyToPresentationAttributeStyle(style, CSSPropertyWhiteSpace,
-                                              CSSValuePre);
+      AddPropertyToPresentationAttributeStyle(style, CSSPropertyID::kWhiteSpace,
+                                              CSSValueID::kPre);
     } else {
       UseCounter::Count(GetDocument(),
                         WebFeature::kWhiteSpaceNowrapFromXMLSpace);
-      AddPropertyToPresentationAttributeStyle(style, CSSPropertyWhiteSpace,
-                                              CSSValueNowrap);
+      AddPropertyToPresentationAttributeStyle(style, CSSPropertyID::kWhiteSpace,
+                                              CSSValueID::kNowrap);
     }
   } else {
     SVGGraphicsElement::CollectStyleForPresentationAttribute(name, value,
@@ -282,7 +280,7 @@ SVGTextContentElement* SVGTextContentElement::ElementFromLineLayoutItem(
       (!line_layout_item.IsSVGText() && !line_layout_item.IsSVGInline()))
     return nullptr;
 
-  SVGElement* element = ToSVGElement(line_layout_item.GetNode());
+  auto* element = To<SVGElement>(line_layout_item.GetNode());
   DCHECK(element);
   return IsSVGTextContentElement(*element) ? ToSVGTextContentElement(element)
                                            : nullptr;

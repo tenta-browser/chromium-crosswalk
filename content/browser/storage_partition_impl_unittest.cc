@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/run_loop.h"
@@ -67,8 +68,9 @@ const char kCacheValue[] = "cached value";
 const char kTestOrigin1[] = "http://host1:1/";
 const char kTestOrigin2[] = "http://host2:1/";
 const char kTestOrigin3[] = "http://host3:1/";
-const char kTestOriginDevTools[] = "chrome-devtools://abcdefghijklmnopqrstuvw/";
+const char kTestOriginDevTools[] = "devtools://abcdefghijklmnopqrstuvw/";
 const char kTestURL[] = "http://host4/script.js";
+const char kFilterURLForCodeCache[] = "http://host5/script.js";
 
 #if BUILDFLAG(ENABLE_PLUGINS)
 const char kWidevineCdmPluginId[] = "application_x-ppapi-widevine-cdm";
@@ -82,6 +84,7 @@ const url::Origin kOrigin3 = url::Origin::Create(GURL(kTestOrigin3));
 const url::Origin kOriginDevTools =
     url::Origin::Create(GURL(kTestOriginDevTools));
 const GURL kResourceURL(kTestURL);
+const GURL kFilterResourceURLForCodeCache(kFilterURLForCodeCache);
 
 const blink::mojom::StorageType kTemporary =
     blink::mojom::StorageType::kTemporary;
@@ -134,16 +137,13 @@ class AwaitCompletionHelper {
 
 class RemoveCookieTester {
  public:
-  explicit RemoveCookieTester(TestBrowserContext* context)
-      : get_cookie_success_(false),
-        cookie_store_(context->GetRequestContext()
-                          ->GetURLRequestContext()
-                          ->cookie_store()) {}
+  explicit RemoveCookieTester(StoragePartition* storage_partition)
+      : get_cookie_success_(false), storage_partition_(storage_partition) {}
 
   // Returns true, if the given cookie exists in the cookie store.
   bool ContainsCookie() {
     get_cookie_success_ = false;
-    cookie_store_->GetCookieListWithOptionsAsync(
+    storage_partition_->GetCookieManagerForBrowserProcess()->GetCookieList(
         kOrigin1.GetURL(), net::CookieOptions(),
         base::BindOnce(&RemoveCookieTester::GetCookieListCallback,
                        base::Unretained(this)));
@@ -152,15 +152,20 @@ class RemoveCookieTester {
   }
 
   void AddCookie() {
-    cookie_store_->SetCookieWithOptionsAsync(
-        kOrigin1.GetURL(), "A=1", net::CookieOptions(),
+    CanonicalCookie::CookieInclusionStatus status;
+    std::unique_ptr<net::CanonicalCookie> cc(net::CanonicalCookie::Create(
+        kOrigin1.GetURL(), "A=1", base::Time::Now(), net::CookieOptions(),
+        &status));
+    storage_partition_->GetCookieManagerForBrowserProcess()->SetCanonicalCookie(
+        *cc, kOrigin1.scheme(), net::CookieOptions(),
         base::BindOnce(&RemoveCookieTester::SetCookieCallback,
                        base::Unretained(this)));
     await_completion_.BlockUntilNotified();
   }
 
  private:
-  void GetCookieListCallback(const net::CookieList& cookie_list) {
+  void GetCookieListCallback(const net::CookieList& cookie_list,
+                             const net::CookieStatusList& excluded_cookies) {
     std::string cookie_line =
         net::CanonicalCookie::BuildCookieLine(cookie_list);
     if (cookie_line == "A=1") {
@@ -172,14 +177,14 @@ class RemoveCookieTester {
     await_completion_.Notify();
   }
 
-  void SetCookieCallback(bool result) {
-    ASSERT_TRUE(result);
+  void SetCookieCallback(CanonicalCookie::CookieInclusionStatus result) {
+    ASSERT_EQ(CanonicalCookie::CookieInclusionStatus::INCLUDE, result);
     await_completion_.Notify();
   }
 
   bool get_cookie_success_;
   AwaitCompletionHelper await_completion_;
-  net::CookieStore* cookie_store_;
+  StoragePartition* storage_partition_;
 
   DISALLOW_COPY_AND_ASSIGN(RemoveCookieTester);
 };
@@ -312,6 +317,17 @@ class RemoveCodeCacheTester {
     base::RunLoop().RunUntilIdle();
   }
 
+  void SetLastUseTime(Cache cache,
+                      GURL url,
+                      GURL origin_lock,
+                      base::Time time) {
+    GetCache(cache)->SetLastUsedTimeForTest(
+        url, origin_lock, time,
+        base::BindRepeating(&RemoveCodeCacheTester::SetTimeCallback,
+                            base::Unretained(this)));
+    await_completion_.BlockUntilNotified();
+  }
+
   std::string received_data() { return received_data_; }
 
  private:
@@ -332,6 +348,8 @@ class RemoveCodeCacheTester {
     }
     await_completion_.Notify();
   }
+
+  void SetTimeCallback() { await_completion_.Notify(); }
 
   bool entry_exists_;
   AwaitCompletionHelper await_completion_;
@@ -559,28 +577,28 @@ class RemovePluginPrivateDataTester {
 #endif  // BUILDFLAG(ENABLE_PLUGINS)
 
 bool IsWebSafeSchemeForTest(const std::string& scheme) {
-  return scheme == "http";
+  return scheme == url::kHttpScheme;
 }
 
 bool DoesOriginMatchForUnprotectedWeb(
-    const GURL& origin,
+    const url::Origin& origin,
     storage::SpecialStoragePolicy* special_storage_policy) {
   if (IsWebSafeSchemeForTest(origin.scheme()))
-    return !special_storage_policy->IsStorageProtected(origin.GetOrigin());
+    return !special_storage_policy->IsStorageProtected(origin.GetURL());
 
   return false;
 }
 
 bool DoesOriginMatchForBothProtectedAndUnprotectedWeb(
-    const GURL& origin,
+    const url::Origin& origin,
     storage::SpecialStoragePolicy* special_storage_policy) {
   return true;
 }
 
 bool DoesOriginMatchUnprotected(
-    const GURL& origin,
+    const url::Origin& origin,
     storage::SpecialStoragePolicy* special_storage_policy) {
-  return origin.GetOrigin().scheme() != kOriginDevTools.scheme();
+  return origin.scheme() != kOriginDevTools.scheme();
 }
 
 void ClearQuotaData(content::StoragePartition* partition,
@@ -668,8 +686,18 @@ void ClearData(content::StoragePartition* partition,
 }
 
 void ClearCodeCache(content::StoragePartition* partition,
+                    base::Time begin_time,
+                    base::Time end_time,
+                    base::RepeatingCallback<bool(const GURL&)> url_predicate,
                     base::RunLoop* run_loop) {
-  partition->ClearCodeCaches(run_loop->QuitClosure());
+  partition->ClearCodeCaches(begin_time, end_time, url_predicate,
+                             run_loop->QuitClosure());
+}
+
+bool FilterURL(const GURL& url) {
+  if (url == kFilterResourceURLForCodeCache)
+    return true;
+  return false;
 }
 
 #if BUILDFLAG(ENABLE_PLUGINS)
@@ -1125,14 +1153,12 @@ TEST_F(StoragePartitionImplTest, RemoveQuotaManagedIgnoreDevTools) {
 }
 
 TEST_F(StoragePartitionImplTest, RemoveCookieForever) {
-  RemoveCookieTester tester(browser_context());
+  StoragePartition* partition =
+      BrowserContext::GetDefaultStoragePartition(browser_context());
 
+  RemoveCookieTester tester(partition);
   tester.AddCookie();
   ASSERT_TRUE(tester.ContainsCookie());
-
-  StoragePartitionImpl* partition = static_cast<StoragePartitionImpl*>(
-      BrowserContext::GetDefaultStoragePartition(browser_context()));
-  partition->SetURLRequestContext(browser_context()->GetRequestContext());
 
   base::RunLoop run_loop;
   base::ThreadTaskRunnerHandle::Get()->PostTask(
@@ -1144,15 +1170,14 @@ TEST_F(StoragePartitionImplTest, RemoveCookieForever) {
 }
 
 TEST_F(StoragePartitionImplTest, RemoveCookieLastHour) {
-  RemoveCookieTester tester(browser_context());
+  StoragePartition* partition =
+      BrowserContext::GetDefaultStoragePartition(browser_context());
 
+  RemoveCookieTester tester(partition);
   tester.AddCookie();
   ASSERT_TRUE(tester.ContainsCookie());
 
-  StoragePartitionImpl* partition = static_cast<StoragePartitionImpl*>(
-      BrowserContext::GetDefaultStoragePartition(browser_context()));
   base::Time an_hour_ago = base::Time::Now() - base::TimeDelta::FromHours(1);
-  partition->SetURLRequestContext(browser_context()->GetRequestContext());
 
   base::RunLoop run_loop;
   base::ThreadTaskRunnerHandle::Get()->PostTask(
@@ -1164,14 +1189,12 @@ TEST_F(StoragePartitionImplTest, RemoveCookieLastHour) {
 }
 
 TEST_F(StoragePartitionImplTest, RemoveCookieWithDeleteInfo) {
-  RemoveCookieTester tester(browser_context());
+  StoragePartition* partition =
+      BrowserContext::GetDefaultStoragePartition(browser_context());
 
+  RemoveCookieTester tester(partition);
   tester.AddCookie();
   ASSERT_TRUE(tester.ContainsCookie());
-
-  StoragePartitionImpl* partition = static_cast<StoragePartitionImpl*>(
-      BrowserContext::GetDefaultStoragePartition(browser_context()));
-  partition->SetURLRequestContext(browser_context()->GetRequestContext());
 
   base::RunLoop run_loop2;
   base::ThreadTaskRunnerHandle::Get()->PostTask(
@@ -1310,11 +1333,106 @@ TEST_F(StoragePartitionImplTest, ClearCodeCache) {
 
   base::RunLoop run_loop;
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(&ClearCodeCache, partition, &run_loop));
+      FROM_HERE,
+      base::BindOnce(&ClearCodeCache, partition, base::Time(), base::Time(),
+                     base::RepeatingCallback<bool(const GURL&)>(), &run_loop));
   run_loop.Run();
 
   EXPECT_FALSE(
       tester.ContainsEntry(RemoveCodeCacheTester::kJs, kResourceURL, origin));
+
+  // Make sure there isn't a second invalid callback sitting in the queue.
+  // (this used to be a bug).
+  base::RunLoop().RunUntilIdle();
+}
+
+TEST_F(StoragePartitionImplTest, ClearCodeCacheSpecificURL) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(net::features::kIsolatedCodeCache);
+  ASSERT_TRUE(base::FeatureList::IsEnabled(net::features::kIsolatedCodeCache));
+
+  StoragePartitionImpl* partition = static_cast<StoragePartitionImpl*>(
+      BrowserContext::GetDefaultStoragePartition(browser_context()));
+  // Ensure code cache is initialized.
+  base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(partition->GetGeneratedCodeCacheContext() != nullptr);
+
+  RemoveCodeCacheTester tester(partition->GetGeneratedCodeCacheContext());
+
+  GURL origin = GURL(kTestOrigin1);
+  std::string data("SomeData");
+  tester.AddEntry(RemoveCodeCacheTester::kJs, kResourceURL, origin, data);
+  tester.AddEntry(RemoveCodeCacheTester::kJs, kFilterResourceURLForCodeCache,
+                  origin, data);
+  EXPECT_TRUE(
+      tester.ContainsEntry(RemoveCodeCacheTester::kJs, kResourceURL, origin));
+  EXPECT_TRUE(tester.ContainsEntry(RemoveCodeCacheTester::kJs,
+                                   kFilterResourceURLForCodeCache, origin));
+  EXPECT_EQ(tester.received_data(), data);
+
+  base::RunLoop run_loop;
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE,
+      base::BindOnce(&ClearCodeCache, partition, base::Time(), base::Time(),
+                     base::BindRepeating(&FilterURL), &run_loop));
+  run_loop.Run();
+
+  EXPECT_TRUE(
+      tester.ContainsEntry(RemoveCodeCacheTester::kJs, kResourceURL, origin));
+  EXPECT_FALSE(tester.ContainsEntry(RemoveCodeCacheTester::kJs,
+                                    kFilterResourceURLForCodeCache, origin));
+
+  // Make sure there isn't a second invalid callback sitting in the queue.
+  // (this used to be a bug).
+  base::RunLoop().RunUntilIdle();
+}
+
+TEST_F(StoragePartitionImplTest, ClearCodeCacheDateRange) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(net::features::kIsolatedCodeCache);
+  ASSERT_TRUE(base::FeatureList::IsEnabled(net::features::kIsolatedCodeCache));
+
+  StoragePartitionImpl* partition = static_cast<StoragePartitionImpl*>(
+      BrowserContext::GetDefaultStoragePartition(browser_context()));
+  // Ensure code cache is initialized.
+  base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(partition->GetGeneratedCodeCacheContext() != nullptr);
+
+  RemoveCodeCacheTester tester(partition->GetGeneratedCodeCacheContext());
+
+  base::Time current_time = base::Time::NowFromSystemTime();
+  base::Time out_of_range_time = current_time - base::TimeDelta::FromHours(3);
+  base::Time begin_time = current_time - base::TimeDelta::FromHours(2);
+  base::Time in_range_time = current_time - base::TimeDelta::FromHours(1);
+
+  GURL origin = GURL(kTestOrigin1);
+  std::string data("SomeData");
+  tester.AddEntry(RemoveCodeCacheTester::kJs, kResourceURL, origin, data);
+  EXPECT_TRUE(
+      tester.ContainsEntry(RemoveCodeCacheTester::kJs, kResourceURL, origin));
+  EXPECT_EQ(tester.received_data(), data);
+  tester.SetLastUseTime(RemoveCodeCacheTester::kJs, kResourceURL, origin,
+                        out_of_range_time);
+
+  // Add a new entry.
+  tester.AddEntry(RemoveCodeCacheTester::kJs, kFilterResourceURLForCodeCache,
+                  origin, data);
+  EXPECT_TRUE(tester.ContainsEntry(RemoveCodeCacheTester::kJs,
+                                   kFilterResourceURLForCodeCache, origin));
+  tester.SetLastUseTime(RemoveCodeCacheTester::kJs,
+                        kFilterResourceURLForCodeCache, origin, in_range_time);
+
+  base::RunLoop run_loop;
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE,
+      base::BindOnce(&ClearCodeCache, partition, begin_time, current_time,
+                     base::BindRepeating(&FilterURL), &run_loop));
+  run_loop.Run();
+
+  EXPECT_TRUE(
+      tester.ContainsEntry(RemoveCodeCacheTester::kJs, kResourceURL, origin));
+  EXPECT_FALSE(tester.ContainsEntry(RemoveCodeCacheTester::kJs,
+                                    kFilterResourceURLForCodeCache, origin));
 
   // Make sure there isn't a second invalid callback sitting in the queue.
   // (this used to be a bug).
@@ -1348,7 +1466,9 @@ TEST_F(StoragePartitionImplTest, ClearWasmCodeCache) {
 
   base::RunLoop run_loop;
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(&ClearCodeCache, partition, &run_loop));
+      FROM_HERE,
+      base::BindOnce(&ClearCodeCache, partition, base::Time(), base::Time(),
+                     base::RepeatingCallback<bool(const GURL&)>(), &run_loop));
   run_loop.Run();
 
   EXPECT_FALSE(tester.ContainsEntry(RemoveCodeCacheTester::kWebAssembly,
@@ -1374,7 +1494,9 @@ TEST_F(StoragePartitionImplTest, ClearCodeCacheNoIsolatedCodeCache) {
   base::RunLoop run_loop;
   // This shouldn't crash.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(&ClearCodeCache, partition, &run_loop));
+      FROM_HERE,
+      base::BindOnce(&ClearCodeCache, partition, base::Time(), base::Time(),
+                     base::RepeatingCallback<bool(const GURL&)>(), &run_loop));
   run_loop.Run();
 }
 
@@ -1394,7 +1516,9 @@ TEST_F(StoragePartitionImplTest, ClearCodeCacheIncognito) {
   base::RunLoop run_loop;
   // This shouldn't crash.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(&ClearCodeCache, partition, &run_loop));
+      FROM_HERE,
+      base::BindOnce(&ClearCodeCache, partition, base::Time(), base::Time(),
+                     base::RepeatingCallback<bool(const GURL&)>(), &run_loop));
   run_loop.Run();
 }
 

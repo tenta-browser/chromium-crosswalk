@@ -78,6 +78,7 @@ class ChromeBrowsingDataRemoverDelegate
     DATA_TYPE_HOSTED_APP_DATA_TEST_ONLY = DATA_TYPE_EMBEDDER_BEGIN << 8,
     DATA_TYPE_CONTENT_SETTINGS = DATA_TYPE_EMBEDDER_BEGIN << 9,
     DATA_TYPE_BOOKMARKS = DATA_TYPE_EMBEDDER_BEGIN << 10,
+    DATA_TYPE_ISOLATED_ORIGINS = DATA_TYPE_EMBEDDER_BEGIN << 11,
 
     // Group datatypes.
 
@@ -92,7 +93,7 @@ class ChromeBrowsingDataRemoverDelegate
         DATA_TYPE_WEB_APP_DATA |
 #endif
         DATA_TYPE_SITE_USAGE_DATA | DATA_TYPE_DURABLE_PERMISSION |
-        DATA_TYPE_EXTERNAL_PROTOCOL_DATA,
+        DATA_TYPE_EXTERNAL_PROTOCOL_DATA | DATA_TYPE_ISOLATED_ORIGINS,
 
     // Datatypes protected by Important Sites.
     IMPORTANT_SITES_DATA_TYPES =
@@ -160,15 +161,14 @@ class ChromeBrowsingDataRemoverDelegate
 
   // BrowsingDataRemoverDelegate:
   content::BrowsingDataRemoverDelegate::EmbedderOriginTypeMatcher
-  GetOriginTypeMatcher() const override;
-  bool MayRemoveDownloadHistory() const override;
-  void RemoveEmbedderData(
-      const base::Time& delete_begin,
-      const base::Time& delete_end,
-      int remove_mask,
-      const content::BrowsingDataFilterBuilder& filter_builder,
-      int origin_type_mask,
-      base::OnceClosure callback) override;
+  GetOriginTypeMatcher() override;
+  bool MayRemoveDownloadHistory() override;
+  void RemoveEmbedderData(const base::Time& delete_begin,
+                          const base::Time& delete_end,
+                          int remove_mask,
+                          content::BrowsingDataFilterBuilder* filter_builder,
+                          int origin_type_mask,
+                          base::OnceClosure callback) override;
 
 #if defined(OS_ANDROID)
   void OverrideWebappRegistryForTesting(
@@ -182,7 +182,7 @@ class ChromeBrowsingDataRemoverDelegate
 #endif
 
   using DomainReliabilityClearer = base::RepeatingCallback<void(
-      const content::BrowsingDataFilterBuilder& filter_builder,
+      content::BrowsingDataFilterBuilder* filter_builder,
       network::mojom::NetworkContext_DomainReliabilityClearMode,
       network::mojom::NetworkContext::ClearDomainReliabilityCallback)>;
   void OverrideDomainReliabilityClearerForTesting(
@@ -191,19 +191,64 @@ class ChromeBrowsingDataRemoverDelegate
  private:
   using WebRtcEventLogManager = webrtc_event_logging::WebRtcEventLogManager;
 
-  // Called by the closures returned by CreatePendingTaskCompletionClosure().
+  // For debugging purposes. Please add new deletion tasks at the end.
+  // This enum is recorded in a histogram, so don't change or reuse ids.
+  // Entries must also be added to ChromeBrowsingDataRemoverTasks in enums.xml.
+  enum class TracingDataType {
+    kSynchronous = 1,
+    kHistory = 2,
+    kHostNameResolution = 3,
+    kNaclCache = 4,
+    kPnaclCache = 5,
+    kAutofillData = 6,
+    kAutofillOrigins = 7,
+    kPluginData = 8,
+    kFlashLsoHelper = 9,
+    kDomainReliability = 10,
+    kNetworkPredictor = 11,
+    kWebrtcLogs = 12,
+    kVideoDecodeHistory = 13,
+    kCookies = 14,
+    kPasswords = 15,
+    kHttpAuthCache = 16,
+    kDisableAutoSignin = 17,
+    kPasswordsStatistics = 18,
+    kKeywordsModel = 19,
+    kReportingCache = 20,
+    kNetworkErrorLogging = 21,
+    kFlashDeauthorization = 22,
+    kOfflinePages = 23,
+    kPrecache = 24,
+    kExploreSites = 25,
+    kLegacyStrikes = 26,
+    kWebrtcEventLogs = 27,
+    kDrmLicenses = 28,
+    kHostCache = 29,
+    kTpmAttestationKeys = 30,
+    kStrikes = 31,
+    kMaxValue = kStrikes,
+  };
+
+  // Called by CreateTaskCompletionClosure().
+  void OnTaskStarted(TracingDataType data_type);
+
+  // Called by the closures returned by CreateTaskCompletionClosure().
   // Checks if all tasks have completed, and if so, calls callback_.
-  void OnTaskComplete();
+  void OnTaskComplete(TracingDataType data_type);
 
   // Increments the number of pending tasks by one, and returns a OnceClosure
   // that calls OnTaskComplete(). The Remover is complete once all the closures
   // created by this method have been invoked.
-  base::OnceClosure CreatePendingTaskCompletionClosure();
+  base::OnceClosure CreateTaskCompletionClosure(TracingDataType data_type);
 
-  // Same as CreatePendingTaskCompletionClosure() but guarantees that
+  // Same as CreateTaskCompletionClosure() but guarantees that
   // OnTaskComplete() is called if the task is dropped. That can typically
   // happen when the connection is closed while an interface call is made.
-  base::OnceClosure CreatePendingTaskCompletionClosureForMojo();
+  base::OnceClosure CreateTaskCompletionClosureForMojo(
+      TracingDataType data_type);
+
+  // Records unfinished tasks from |pending_sub_tasks_| after a delay.
+  void RecordUnfinishedSubTasks();
 
   // Callback for when TemplateURLService has finished loading. Clears the data,
   // clears the respective waiting flag, and invokes NotifyIfDone.
@@ -248,8 +293,12 @@ class ChromeBrowsingDataRemoverDelegate
   // Completion callback to call when all data are deleted.
   base::OnceClosure callback_;
 
-  // Keeps track of number of tasks to be completed.
-  int num_pending_tasks_ = 0;
+  // Records which tasks of a deletion are currently active.
+  std::set<TracingDataType> pending_sub_tasks_;
+
+  // Fires after some time to track slow tasks. Cancelled when all tasks
+  // are finished.
+  base::CancelableClosure slow_pending_tasks_closure_;
 
 #if BUILDFLAG(ENABLE_PLUGINS)
   // Used to delete plugin data.

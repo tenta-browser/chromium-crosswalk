@@ -34,17 +34,16 @@ class SwitchAccessInterface {
 
   /**
    * Return a list of the names of all user commands.
-   * @return {!Array<string>}
+   * @return {!Array<!SAConstants.Command>}
    */
   getCommands() {}
 
   /**
-   * Return the default key code for a command.
-   *
+   * Checks if the given string is a valid Switch Access command.
    * @param {string} command
-   * @return {number}
+   * @return {boolean}
    */
-  getDefaultKeyCodeFor(command) {}
+  hasCommand(command) {}
 
   /**
    * Forwards keycodes received from keyPress events to |callback|.
@@ -59,7 +58,7 @@ class SwitchAccessInterface {
 
   /**
    * Run the function binding for the specified command.
-   * @param {string} command
+   * @param {!SAConstants.Command} command
    */
   runCommand(command) {}
 
@@ -70,40 +69,45 @@ class SwitchAccessInterface {
   performedUserAction() {}
 
   /**
-   * Set the value of the preference |key| to |value| in chrome.storage.sync.
-   * this.prefs_ is not set until handleStorageChange_.
-   *
-   * @param {string} key
-   * @param {boolean|string|number} value
+   * Handle a change in user preferences.
+   * @param {!Object} changes
    */
-  setPref(key, value) {}
+  onPreferencesChanged(changes) {}
 
   /**
-   * Get the value of type 'boolean' of the preference |key|. Will throw a type
-   * error if the value of |key| is not 'boolean'.
+   * Set the value of the preference |key| to |value| in chrome.storage.sync.
+   * The behavior is not updated until the storage update is complete.
    *
-   * @param  {string} key
+   * @param {SAConstants.Preference} key
+   * @param {boolean|number} value
+   */
+  setPreference(key, value) {}
+
+  /**
+   * Get the boolean value for the given key. Will throw a type error if the
+   * value associated with |key| is not a boolean, or undefined.
+   *
+   * @param  {SAConstants.Preference} key
    * @return {boolean}
    */
-  getBooleanPref(key) {}
+  getBooleanPreference(key) {}
 
   /**
-   * Get the value of type 'number' of the preference |key|. Will throw a type
-   * error if the value of |key| is not 'number'.
+   * Get the number value for the given key. Will throw a type error if the
+   * value associated with |key| is not a number, or undefined.
    *
-   * @param  {string} key
+   * @param  {SAConstants.Preference} key
    * @return {number}
    */
-  getNumberPref(key) {}
+  getNumberPreference(key) {}
 
   /**
-   * Get the value of type 'string' of the preference |key|. Will throw a type
-   * error if the value of |key| is not 'string'.
+   * Get the number value for the given key, or |null| if none exists.
    *
-   * @param  {string} key
-   * @return {string}
+   * @param  {SAConstants.Preference} key
+   * @return {number|null}
    */
-  getStringPref(key) {}
+  getNumberPreferenceIfDefined(key) {}
 
   /**
    * Returns true if |keyCode| is already used to run a command from the
@@ -113,4 +117,11 @@ class SwitchAccessInterface {
    * @return {boolean}
    */
   keyCodeIsUsed(keyCode) {}
+
+  /**
+   * Sets up the connection between the menuPanel and the menuManager.
+   * @param {!PanelInterface} menuPanel
+   * @return {MenuManager}
+   */
+  connectMenuPanel(menuPanel) {}
 }

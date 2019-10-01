@@ -170,8 +170,6 @@ class InputMethodPrivateShowInputViewFunction
   ResponseAction Run() override;
 
  private:
-  void OnGetIsEnabled(bool enabled);
-
   DECLARE_EXTENSION_FUNCTION("inputMethodPrivate.showInputView",
                              INPUTMETHODPRIVATE_SHOWINPUTVIEW)
   DISALLOW_COPY_AND_ASSIGN(InputMethodPrivateShowInputViewFunction);
@@ -240,6 +238,19 @@ class InputMethodPrivateSetSettingFunction : public UIThreadExtensionFunction {
   DECLARE_EXTENSION_FUNCTION("inputMethodPrivate.setSetting",
                              INPUTMETHODPRIVATE_SETSETTING)
   DISALLOW_COPY_AND_ASSIGN(InputMethodPrivateSetSettingFunction);
+};
+
+class InputMethodPrivateSetCompositionRangeFunction
+    : public UIThreadExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("inputMethodPrivate.setCompositionRange",
+                             INPUTMETHODPRIVATE_SETCOMPOSITIONRANGE)
+
+ protected:
+  ~InputMethodPrivateSetCompositionRangeFunction() override {}
+
+  // UIThreadExtensionFunction:
+  ResponseAction Run() override;
 };
 
 class InputMethodAPI : public BrowserContextKeyedAPI,

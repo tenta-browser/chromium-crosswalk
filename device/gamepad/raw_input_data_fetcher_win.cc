@@ -6,11 +6,13 @@
 
 #include <stddef.h>
 
+#include "base/bind.h"
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/trace_event.h"
 #include "device/gamepad/gamepad_standard_mappings.h"
 #include "device/gamepad/gamepad_uma.h"
+#include "device/gamepad/nintendo_controller.h"
 
 namespace device {
 
@@ -171,6 +173,12 @@ void RawInputDataFetcher::EnumerateDevices() {
         const int version_number = new_device->GetVersionNumber();
         const std::wstring product_string = new_device->GetProductString();
 
+        if (NintendoController::IsNintendoController(vendor_int, product_int)) {
+          // Nintendo devices are handled by the Nintendo data fetcher.
+          new_device->Shutdown();
+          continue;
+        }
+
         // Record gamepad metrics before excluding XInput devices. This allows
         // us to recognize XInput devices even though the XInput API masks
         // the vendor and product IDs.
@@ -207,13 +215,14 @@ void RawInputDataFetcher::EnumerateDevices() {
         state->axis_mask = 0;
         state->button_mask = 0;
 
-        swprintf(pad.id, Gamepad::kIdLengthCap,
+        swprintf(base::as_writable_wcstr(pad.id), Gamepad::kIdLengthCap,
                  L"%ls (%lsVendor: %04x Product: %04x)", product_string.c_str(),
                  state->mapper ? L"STANDARD GAMEPAD " : L"", vendor_int,
                  product_int);
 
         if (state->mapper)
-          swprintf(pad.mapping, Gamepad::kMappingLengthCap, L"standard");
+          swprintf(base::as_writable_wcstr(pad.mapping),
+                   Gamepad::kMappingLengthCap, L"standard");
         else
           pad.mapping[0] = 0;
       }

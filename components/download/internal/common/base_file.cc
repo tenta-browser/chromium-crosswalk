@@ -25,6 +25,11 @@
 #include "components/download/quarantine/quarantine.h"
 #include "crypto/secure_hash.h"
 
+#if defined(OS_ANDROID)
+#include "base/android/content_uri_utils.h"
+#include "components/download/internal/common/android/download_collection_bridge.h"
+#endif  // defined(OS_ANDROID)
+
 #define CONDITIONAL_TRACE(trace)                  \
   do {                                            \
     if (download_id_ != DownloadItem::kInvalidId) \
@@ -62,6 +67,29 @@ class FileErrorData : public base::trace_event::ConvertableToTraceFormat {
   DownloadInterruptReason interrupt_reason_;
   DISALLOW_COPY_AND_ASSIGN(FileErrorData);
 };
+
+void InitializeFile(base::File* file, const base::FilePath& file_path) {
+#if defined(OS_ANDROID)
+  if (file_path.IsContentUri()) {
+    *file = DownloadCollectionBridge::OpenIntermediateUri(file_path);
+    return;
+  }
+#endif  // defined(OS_ANDROID)
+  file->Initialize(file_path, base::File::FLAG_OPEN_ALWAYS |
+                                  base::File::FLAG_WRITE |
+                                  base::File::FLAG_READ);
+}
+
+void DeleteFile(const base::FilePath& file_path) {
+#if defined(OS_ANDROID)
+  if (file_path.IsContentUri()) {
+    DownloadCollectionBridge::DeleteIntermediateUri(file_path);
+    return;
+  }
+#endif  // defined(OS_ANDROID)
+  base::DeleteFile(file_path, false);
+}
+
 }  // namespace
 
 BaseFile::BaseFile(uint32_t download_id) : download_id_(download_id) {
@@ -126,9 +154,10 @@ DownloadInterruptReason BaseFile::WriteDataToFile(int64_t offset,
   if (detached_)
     RecordDownloadCount(APPEND_TO_DETACHED_FILE_COUNT);
 
-  if (!file_.IsValid())
+  if (!file_.IsValid()) {
     return LogInterruptReason("No file stream on append", 0,
                               DOWNLOAD_INTERRUPT_REASON_FILE_FAILED);
+  }
 
   // TODO(phajdan.jr): get rid of this check.
   if (data_len == 0)
@@ -176,6 +205,27 @@ DownloadInterruptReason BaseFile::WriteDataToFile(int64_t offset,
   return DOWNLOAD_INTERRUPT_REASON_NONE;
 }
 
+bool BaseFile::ValidateDataInFile(int64_t offset,
+                                  const char* data,
+                                  size_t data_len) {
+  if (!file_.IsValid())
+    return false;
+
+  // Only validate the first chunk of the file. So |offset| cannot be
+  // larger than bytes received.
+  if (offset > bytes_so_far_)
+    return false;
+
+  if (data_len <= 0)
+    return true;
+
+  std::unique_ptr<char[]> buffer(new char[data_len]);
+  if (file_.Read(offset, buffer.get(), data_len) <= 0)
+    return false;
+
+  return memcmp(data, buffer.get(), data_len) == 0;
+}
+
 DownloadInterruptReason BaseFile::Rename(const base::FilePath& new_path) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DownloadInterruptReason rename_result = DOWNLOAD_INTERRUPT_REASON_NONE;
@@ -194,12 +244,21 @@ DownloadInterruptReason BaseFile::Rename(const base::FilePath& new_path) {
   CONDITIONAL_TRACE(BEGIN2("download", "DownloadFileRename", "old_filename",
                            full_path_.AsUTF8Unsafe(), "new_filename",
                            new_path.AsUTF8Unsafe()));
+  bool need_to_move_file = true;
+#if defined(OS_ANDROID)
+  if (new_path.IsContentUri()) {
+    rename_result = DownloadCollectionBridge::MoveFileToIntermediateUri(
+        full_path_, new_path);
+    need_to_move_file = false;
+  }
+#endif
+  if (need_to_move_file) {
+    base::CreateDirectory(new_path.DirName());
 
-  base::CreateDirectory(new_path.DirName());
-
-  // A simple rename wouldn't work here since we want the file to have
-  // permissions / security descriptors that makes sense in the new directory.
-  rename_result = MoveFileAndAdjustPermissions(new_path);
+    // A simple rename wouldn't work here since we want the file to have
+    // permissions / security descriptors that makes sense in the new directory.
+    rename_result = MoveFileAndAdjustPermissions(new_path);
+  }
 
   CONDITIONAL_TRACE(END0("download", "DownloadFileRename"));
 
@@ -236,7 +295,7 @@ void BaseFile::Cancel() {
   if (!full_path_.empty()) {
     CONDITIONAL_TRACE(
         INSTANT0("download", "DownloadFileDeleted", TRACE_EVENT_SCOPE_THREAD));
-    base::DeleteFile(full_path_, false);
+    DeleteFile(full_path_);
   }
 
   Detach();
@@ -334,9 +393,7 @@ DownloadInterruptReason BaseFile::Open(const std::string& hash_so_far,
 
   // Create a new file if it is not provided.
   if (!file_.IsValid()) {
-    file_.Initialize(full_path_, base::File::FLAG_OPEN_ALWAYS |
-                                     base::File::FLAG_WRITE |
-                                     base::File::FLAG_READ);
+    InitializeFile(&file_, full_path_);
     if (!file_.IsValid()) {
       return LogNetError("Open/Initialize File",
                          net::FileErrorToNetError(file_.error_details()));
@@ -445,6 +502,19 @@ DownloadInterruptReason BaseFile::LogInterruptReason(
                              std::move(error_data)));
   return reason;
 }
+
+#if defined(OS_ANDROID)
+DownloadInterruptReason BaseFile::PublishDownload() {
+  Close();
+  base::FilePath new_path =
+      DownloadCollectionBridge::PublishDownload(full_path_);
+  if (!new_path.empty()) {
+    full_path_ = new_path;
+    return DOWNLOAD_INTERRUPT_REASON_NONE;
+  }
+  return DOWNLOAD_INTERRUPT_REASON_FILE_FAILED;
+}
+#endif  // defined(OS_ANDROID)
 
 #if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX)
 

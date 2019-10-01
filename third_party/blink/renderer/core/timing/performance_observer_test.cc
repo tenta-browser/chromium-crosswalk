@@ -9,6 +9,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_performance_observer_callback.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
+#include "third_party/blink/renderer/core/timing/layout_shift.h"
 #include "third_party/blink/renderer/core/timing/performance.h"
 #include "third_party/blink/renderer/core/timing/performance_mark.h"
 #include "third_party/blink/renderer/core/timing/performance_observer_init.h"
@@ -60,6 +61,27 @@ TEST_F(PerformanceObserverTest, Observe) {
 
   observer_->observe(options, exception_state);
   EXPECT_TRUE(IsRegistered());
+}
+
+TEST_F(PerformanceObserverTest, ObserveWithBufferedFlag) {
+  V8TestingScope scope;
+  Initialize(scope.GetScriptState());
+
+  NonThrowableExceptionState exception_state;
+  PerformanceObserverInit* options = PerformanceObserverInit::Create();
+  options->setType("layoutShift");
+  options->setBuffered(true);
+  EXPECT_EQ(0, NumPerformanceEntries());
+
+  // add a layoutjank to performance so getEntries() returns it
+  auto* entry = MakeGarbageCollected<LayoutShift>(0.0, 1234);
+  base_->AddLayoutJankBuffer(*entry);
+
+  // call observe with the buffered flag
+  observer_->observe(options, exception_state);
+  EXPECT_TRUE(IsRegistered());
+  // Verify that the entry was added to the performance entries
+  EXPECT_EQ(1, NumPerformanceEntries());
 }
 
 TEST_F(PerformanceObserverTest, Enqueue) {

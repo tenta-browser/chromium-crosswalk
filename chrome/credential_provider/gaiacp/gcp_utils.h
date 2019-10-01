@@ -5,6 +5,9 @@
 #ifndef CHROME_CREDENTIAL_PROVIDER_GAIACP_GCP_UTILS_H_
 #define CHROME_CREDENTIAL_PROVIDER_GAIACP_GCP_UTILS_H_
 
+#include <memory>
+#include <string>
+
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/strings/string16.h"
@@ -35,6 +38,26 @@ namespace credential_provider {
 
 // Windows supports a maximum of 20 characters plus null in username.
 constexpr int kWindowsUsernameBufferLength = 21;
+
+// Maximum domain length is 256 characters including null.
+// https://support.microsoft.com/en-ca/help/909264/naming-conventions-in-active-directory-for-computers-domains-sites-and
+constexpr int kWindowsDomainBufferLength = 256;
+
+// According to:
+// https://stackoverflow.com/questions/1140528/what-is-the-maximum-length-of-a-sid-in-sddl-format
+constexpr int kWindowsSidBufferLength = 184;
+
+// Max number of attempts to find a new username when a user already exists
+// with the same username.
+constexpr int kMaxUsernameAttempts = 10;
+
+// First index to append to a username when another user with the same name
+// already exists.
+constexpr int kInitialDuplicateUsernameIndex = 2;
+
+// Default extension used as a fallback if the picture_url returned from gaia
+// does not have a file extension.
+extern const wchar_t kDefaultProfilePictureFileExtension[];
 
 // Because of some strange dependency problems with windows header files,
 // define STATUS_SUCCESS here instead of including ntstatus.h or SubAuth.h
@@ -107,7 +130,8 @@ HRESULT WaitForProcess(base::win::ScopedHandle::Handle process_handle,
                        int buffer_size);
 
 // Creates a restricted, batch or interactive login token for the given user.
-HRESULT CreateLogonToken(const wchar_t* username,
+HRESULT CreateLogonToken(const wchar_t* domain,
+                         const wchar_t* username,
                          const wchar_t* password,
                          bool interactive,
                          base::win::ScopedHandle* token);
@@ -172,11 +196,14 @@ HRESULT GetCommandLineForEntrypoint(HINSTANCE dll_handle,
                                     const wchar_t* entrypoint,
                                     base::CommandLine* command_line);
 
-// Enrolls the machine to with the Google MDM server if not already.
-HRESULT EnrollToGoogleMdmIfNeeded(const base::DictionaryValue& properties);
+// Looks up the name associated to the |sid| (if any). Returns an error on any
+// failure or no name is associated with the |sid|.
+HRESULT LookupLocalizedNameBySid(PSID sid, base::string16* localized_name);
 
-// Gets the auth package id for NEGOSSP_NAME_A.
-HRESULT GetAuthenticationPackageId(ULONG* id);
+// Looks up the name associated to the well known |sid_type| (if any). Returns
+// an error on any failure or no name is associated with the |sid_type|.
+HRESULT LookupLocalizedNameForWellKnownSid(WELL_KNOWN_SID_TYPE sid_type,
+                                           base::string16* localized_name);
 
 // Handles the writing and deletion of a startup sentinel file used to ensure
 // that the GCPW does not crash continuously on startup and render the
@@ -190,16 +217,23 @@ base::string16 GetStringResource(int base_message_id);
 // Gets the language selected by the base::win::i18n::LanguageSelector.
 base::string16 GetSelectedLanguage();
 
-// Helpers to get strings from DictionaryValues.
-base::string16 GetDictString(const base::DictionaryValue* dict,
+// Securely clear a base::Value that may be a dictionary value that may
+// have a password field.
+void SecurelyClearDictionaryValue(base::Optional<base::Value>* value);
+
+// Helpers to get strings from base::Values that are expected to be
+// DictionaryValues.
+base::string16 GetDictString(const base::Value& dict, const char* name);
+base::string16 GetDictString(const std::unique_ptr<base::Value>& dict,
                              const char* name);
-base::string16 GetDictString(const std::unique_ptr<base::DictionaryValue>& dict,
-                             const char* name);
-std::string GetDictStringUTF8(const base::DictionaryValue* dict,
+std::string GetDictStringUTF8(const base::Value& dict, const char* name);
+std::string GetDictStringUTF8(const std::unique_ptr<base::Value>& dict,
                               const char* name);
-std::string GetDictStringUTF8(
-    const std::unique_ptr<base::DictionaryValue>& dict,
-    const char* name);
+
+// Returns the major build version of Windows by reading the registry.
+// See:
+// https://stackoverflow.com/questions/31072543/reliable-way-to-get-windows-version-from-registry
+base::string16 GetWindowsVersion();
 
 class OSUserManager;
 class OSProcessManager;
@@ -220,6 +254,20 @@ struct FakesForTesting {
 // static data.  This way the production DLL does not need to include binary
 // code used only for testing.
 typedef void CALLBACK (*SetFakesForTestingFn)(const FakesForTesting* fakes);
+
+// Initializes the members of a Windows STRING struct (UNICODE_STRING or
+// LSA_STRING) to point to the string pointed to by |string|.
+template <class WindowsStringT,
+          class WindowsStringCharT = decltype(WindowsStringT().Buffer[0])>
+void InitWindowsStringWithString(const WindowsStringCharT* string,
+                                 WindowsStringT* windows_string) {
+  constexpr size_t buffer_char_size = sizeof(WindowsStringCharT);
+  windows_string->Buffer = const_cast<WindowsStringCharT*>(string);
+  windows_string->Length = static_cast<USHORT>(
+      std::char_traits<WindowsStringCharT>::length((windows_string->Buffer)) *
+      buffer_char_size);
+  windows_string->MaximumLength = windows_string->Length + buffer_char_size;
+}
 
 }  // namespace credential_provider
 

@@ -51,10 +51,6 @@ class HTMLImportsController final
     : public GarbageCollected<HTMLImportsController>,
       public NameClient {
  public:
-  static HTMLImportsController* Create(Document& master) {
-    return MakeGarbageCollected<HTMLImportsController>(master);
-  }
-
   explicit HTMLImportsController(Document&);
 
   HTMLImportTreeRoot* Root() const { return root_; }
@@ -84,7 +80,7 @@ class HTMLImportsController final
                                HTMLImport* parent,
                                HTMLImportChildClient*);
 
-  TraceWrapperMember<HTMLImportTreeRoot> root_;
+  Member<HTMLImportTreeRoot> root_;
   using LoaderList = HeapVector<Member<HTMLImportLoader>>;
   LoaderList loaders_;
 };

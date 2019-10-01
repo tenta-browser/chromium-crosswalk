@@ -9,7 +9,7 @@
 #include "device/vr/isolated_gamepad_data_fetcher.h"
 #include "device/vr/openvr/openvr_api_wrapper.h"
 #include "device/vr/openvr/openvr_device.h"
-#include "device/vr/openvr/test/test_hook.h"
+#include "device/vr/test/test_hook.h"
 #include "third_party/openvr/src/headers/openvr.h"
 
 namespace device {
@@ -18,8 +18,7 @@ void OpenVRDeviceProvider::RecordRuntimeAvailability() {
   XrRuntimeAvailable runtime = XrRuntimeAvailable::NONE;
   if (vr::VR_IsRuntimeInstalled())
     runtime = XrRuntimeAvailable::OPENVR;
-  UMA_HISTOGRAM_ENUMERATION("XR.RuntimeAvailable", runtime,
-                            XrRuntimeAvailable::COUNT);
+  UMA_HISTOGRAM_ENUMERATION("XR.RuntimeAvailable", runtime);
 }
 
 OpenVRDeviceProvider::OpenVRDeviceProvider() = default;
@@ -52,7 +51,7 @@ void OpenVRDeviceProvider::Initialize(
   std::move(initialization_complete).Run();
 }
 
-void OpenVRDeviceProvider::SetTestHook(OpenVRTestHook* test_hook) {
+void OpenVRDeviceProvider::SetTestHook(VRTestHook* test_hook) {
   OpenVRWrapper::SetTestHook(test_hook);
 }
 

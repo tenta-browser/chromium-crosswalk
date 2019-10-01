@@ -7,11 +7,13 @@
 #include <set>
 
 #include "ash/public/cpp/notification_utils.h"
+#include "ash/public/cpp/system_tray_client.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/system/model/system_tray_model.h"
 #include "ash/system/power/power_status.h"
+#include "base/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/time_format.h"
@@ -126,10 +128,7 @@ std::unique_ptr<Notification> DualRoleNotification::CreateNotification() {
   auto delegate =
       base::MakeRefCounted<message_center::HandleNotificationClickDelegate>(
           base::BindRepeating([]() {
-            Shell::Get()
-                ->system_tray_model()
-                ->client_ptr()
-                ->ShowPowerSettings();
+            Shell::Get()->system_tray_model()->client()->ShowPowerSettings();
           }));
 
   std::unique_ptr<Notification> notification = ash::CreateSystemNotification(

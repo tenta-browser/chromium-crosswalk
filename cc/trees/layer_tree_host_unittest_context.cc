@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "base/bind.h"
 #include "base/stl_util.h"
 #include "build/build_config.h"
 #include "cc/layers/heads_up_display_layer.h"
@@ -933,8 +934,10 @@ class LayerTreeHostContextTestDontUseLostResources
         TextureLayer::CreateForMailbox(nullptr);
     texture->SetBounds(gfx::Size(10, 10));
     texture->SetIsDrawable(true);
+    constexpr gfx::Size size(64, 64);
     auto resource = viz::TransferableResource::MakeGL(
-        mailbox, GL_LINEAR, GL_TEXTURE_2D, sync_token);
+        mailbox, GL_LINEAR, GL_TEXTURE_2D, sync_token, size,
+        false /* is_overlay_candidate */);
     texture->SetTransferableResource(
         resource, viz::SingleReleaseCallback::Create(base::BindOnce(
                       &LayerTreeHostContextTestDontUseLostResources::

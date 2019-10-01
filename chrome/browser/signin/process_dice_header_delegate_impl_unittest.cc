@@ -10,7 +10,7 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "chrome/common/webui_url_constants.h"
+#include "chrome/common/url_constants.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "components/signin/core/browser/account_consistency_method.h"
 #include "content/public/browser/web_contents.h"
@@ -161,14 +161,14 @@ TEST_P(ProcessDiceHeaderDelegateImplTestEnableSync, EnableSync) {
   delegate->EnableSync(account_id_);
   EXPECT_EQ(GetParam().callback_called, enable_sync_called_);
   GURL expected_url =
-      GetParam().show_ntp ? GURL(chrome::kChromeUINewTabURL) : kSigninURL;
+      GetParam().show_ntp ? GURL(chrome::kChromeSearchLocalNtpUrl) : kSigninURL;
   EXPECT_EQ(expected_url, web_contents()->GetVisibleURL());
   EXPECT_FALSE(show_error_called_);
 }
 
-INSTANTIATE_TEST_CASE_P(/* no prefix */,
-                        ProcessDiceHeaderDelegateImplTestEnableSync,
-                        ::testing::ValuesIn(kEnableSyncTestCases));
+INSTANTIATE_TEST_SUITE_P(/* no prefix */,
+                         ProcessDiceHeaderDelegateImplTestEnableSync,
+                         ::testing::ValuesIn(kEnableSyncTestCases));
 
 TestConfiguration kHandleTokenExchangeFailureTestCases[] = {
     // clang-format off
@@ -206,11 +206,11 @@ TEST_P(ProcessDiceHeaderDelegateImplTestHandleTokenExchangeFailure,
   EXPECT_FALSE(enable_sync_called_);
   EXPECT_EQ(GetParam().callback_called, show_error_called_);
   GURL expected_url =
-      GetParam().show_ntp ? GURL(chrome::kChromeUINewTabURL) : kSigninURL;
+      GetParam().show_ntp ? GURL(chrome::kChromeSearchLocalNtpUrl) : kSigninURL;
   EXPECT_EQ(expected_url, web_contents()->GetVisibleURL());
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     /* no prefix */,
     ProcessDiceHeaderDelegateImplTestHandleTokenExchangeFailure,
     ::testing::ValuesIn(kHandleTokenExchangeFailureTestCases));

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "base/stl_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/prerender/prerender_contents.h"
@@ -95,13 +96,9 @@ HistoryTabHelper::CreateHistoryAddPageArgs(
   // If this navigation attempted a Preview, remove those URLS from the redirect
   // chain so that they are not seen by the user. See http://crbug.com/914404.
   DCHECK(!add_page_args.redirects.empty());
-  add_page_args.redirects.erase(
-      std::remove_if(add_page_args.redirects.begin(),
-                     add_page_args.redirects.end(),
-                     [](const GURL& url) {
-                       return previews::IsLitePageRedirectPreviewURL(url);
-                     }),
-      add_page_args.redirects.end());
+  base::EraseIf(add_page_args.redirects, [](const GURL& url) {
+    return previews::IsLitePageRedirectPreviewURL(url);
+  });
   if (ui::PageTransitionIsMainFrame(navigation_handle->GetPageTransition()) &&
       virtual_url != navigation_handle->GetURL()) {
     // Hack on the "virtual" URL so that it will appear in history. For some
@@ -145,10 +142,9 @@ void HistoryTabHelper::DidFinishNavigation(
   // the WebContents' URL getter does.
   NavigationEntry* last_committed =
       web_contents()->GetController().GetLastCommittedEntry();
-  const history::HistoryAddPageArgs& add_page_args =
-      CreateHistoryAddPageArgs(
-          web_contents()->GetURL(), last_committed->GetTimestamp(),
-          last_committed->GetUniqueID(), navigation_handle);
+  const history::HistoryAddPageArgs& add_page_args = CreateHistoryAddPageArgs(
+      web_contents()->GetLastCommittedURL(), last_committed->GetTimestamp(),
+      last_committed->GetUniqueID(), navigation_handle);
 
   prerender::PrerenderManager* prerender_manager =
       prerender::PrerenderManagerFactory::GetForBrowserContext(
@@ -235,8 +231,8 @@ void HistoryTabHelper::WebContentsDestroyed() {
     NavigationEntry* entry = tab->GetController().GetLastCommittedEntry();
     history::ContextID context_id = history::ContextIDForWebContents(tab);
     if (entry) {
-      hs->UpdateWithPageEndTime(context_id, entry->GetUniqueID(), tab->GetURL(),
-                                base::Time::Now());
+      hs->UpdateWithPageEndTime(context_id, entry->GetUniqueID(),
+                                tab->GetLastCommittedURL(), base::Time::Now());
     }
     hs->ClearCachedDataForContextID(context_id);
   }

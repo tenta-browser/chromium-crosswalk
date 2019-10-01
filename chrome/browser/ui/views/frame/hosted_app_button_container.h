@@ -16,6 +16,7 @@
 #include "chrome/browser/ui/views/location_bar/content_setting_image_view.h"
 #include "chrome/browser/ui/views/page_action/page_action_icon_view.h"
 #include "chrome/browser/ui/views/toolbar/browser_actions_container.h"
+#include "ui/gfx/color_palette.h"
 #include "ui/views/accessible_pane_view.h"
 #include "ui/views/controls/button/menu_button.h"
 #include "ui/views/controls/button/menu_button_listener.h"
@@ -32,7 +33,6 @@ class HostedAppOriginText;
 class HostedAppMenuButton;
 
 namespace views {
-class MenuButton;
 class Widget;
 }
 
@@ -71,6 +71,8 @@ class HostedAppButtonContainer : public views::AccessiblePaneView,
 
   void UpdateStatusIconsVisibility();
 
+  void UpdateCaptionColors();
+
   // Sets the container to paints its buttons the active/inactive color.
   void SetPaintAsActive(bool active);
 
@@ -87,7 +89,7 @@ class HostedAppButtonContainer : public views::AccessiblePaneView,
   const char* GetClassName() const override;
 
   // BrowserActionsContainer::Delegate:
-  views::MenuButton* GetOverflowReferenceView() override;
+  views::LabelButton* GetOverflowReferenceView() override;
   base::Optional<int> GetMaxBrowserActionsWidth() const override;
   std::unique_ptr<ToolbarActionsBar> CreateToolbarActionsBar(
       ToolbarActionsBarDelegate* delegate,
@@ -111,7 +113,8 @@ class HostedAppButtonContainer : public views::AccessiblePaneView,
 
   // ToolbarButtonProvider:
   BrowserActionsContainer* GetBrowserActionsContainer() override;
-  PageActionIconContainerView* GetPageActionIconContainerView() override;
+  OmniboxPageActionIconContainerView* GetOmniboxPageActionIconContainerView()
+      override;
   AppMenuButton* GetAppMenuButton() override;
   gfx::Rect GetFindBarBoundingBox(int contents_height) const override;
   void FocusToolbar() override;
@@ -151,7 +154,7 @@ class HostedAppButtonContainer : public views::AccessiblePaneView,
   const std::vector<ContentSettingImageView*>&
   GetContentSettingViewsForTesting() const;
 
-  SkColor GetIconColor() const;
+  SkColor GetCaptionColor() const;
   void UpdateChildrenColor();
 
   // Whether we're waiting for the widget to become visible.
@@ -168,13 +171,14 @@ class HostedAppButtonContainer : public views::AccessiblePaneView,
 
   // Button and text colors.
   bool paint_as_active_ = true;
-  const SkColor active_color_;
-  const SkColor inactive_color_;
+  SkColor active_color_;
+  SkColor inactive_color_;
 
   // Owned by the views hierarchy.
   HostedAppOriginText* hosted_app_origin_text_ = nullptr;
   ContentSettingsContainer* content_settings_container_ = nullptr;
-  PageActionIconContainerView* page_action_icon_container_view_ = nullptr;
+  OmniboxPageActionIconContainerView* omnibox_page_action_icon_container_view_ =
+      nullptr;
   BrowserActionsContainer* browser_actions_container_ = nullptr;
   HostedAppMenuButton* app_menu_button_ = nullptr;
 

@@ -27,6 +27,7 @@ goog.require('cvox.TtsCategory');
 goog.require('cvox.ValueSelectionSpan');
 goog.require('cvox.ValueSpan');
 goog.require('goog.i18n.MessageFormat');
+goog.require('LanguageSwitching');
 
 goog.scope(function() {
 var AutomationNode = chrome.automation.AutomationNode;
@@ -229,12 +230,10 @@ Output.ROLE_INFO_ = {
     msgId: 'role_img',
   },
   inputTime: {msgId: 'input_type_time', inherits: 'abstractContainer'},
-  layoutTable: {inherits: 'table'},
-  layoutTableCell: {msgId: '', inherits: 'cell'},
-  layoutTableRow: {msgId: 'role_row', inherits: 'row'},
   link: {msgId: 'role_link', earconId: 'LINK'},
-  list: {msgId: 'role_list'},
-  listBox: {msgId: 'role_listbox', earconId: 'LISTBOX'},
+  list: {msgId: 'role_list', inherits: 'abstractList'},
+  listBox:
+      {msgId: 'role_listbox', earconId: 'LISTBOX', inherits: 'abstractList'},
   listBoxOption: {msgId: 'role_listitem', earconId: 'LIST_ITEM'},
   listGrid: {msgId: 'role_list_grid', inherits: 'table'},
   listItem:
@@ -379,6 +378,10 @@ Output.RULES = {
           $if($posInSet, @describe_index($posInSet, $setSize))
           $description $restriction`
     },
+    abstractList: {
+      enter: `$nameFromNode $role @@list_with_items($setSize)
+          $restriction $description`
+    },
     abstractNameFromContents: {
       speak: `$nameOrDescendants $node(activeDescendant) $value $state
           $restriction $role $description`,
@@ -450,7 +453,8 @@ Output.RULES = {
           $restriction $description`
     },
     image: {
-      speak: `$if($name, $name, $urlFilename)
+      speak: `$if($name, $name,
+          $if($imageAnnotation, $imageAnnotation, $urlFilename))
           $value $state $role $description`,
     },
     inlineTextBox: {speak: `$name=`},
@@ -465,14 +469,8 @@ Output.RULES = {
           $if($inPageLinkTarget, @internal_link, $role) $description`,
     },
     list: {
-      enter: `$role @@list_with_items($countChildren(listItem))`,
       speak: `$nameFromNode $descendants $role
-          @@list_with_items($countChildren(listItem)) $description $state`
-    },
-    listBox: {
-      enter: `$nameFromNode
-          $role @@list_with_items($countChildren(listBoxOption))
-          $restriction $description`
+          @@list_with_items($setSize) $description $state`
     },
     listBoxOption: {
       speak: `$state $name $role @describe_index($posInSet, $setSize)
@@ -486,29 +484,23 @@ Output.RULES = {
     menu: {
       enter: `$name $role `,
       speak: `$name $node(activeDescendant)
-          $role @@list_with_items(
-              $countChildren(menuItem, menuItemCheckBox, menuItemRadio))
-          $description $state $restriction`
+          $role @@list_with_items($setSize) $description $state $restriction`
     },
     menuItem: {
-      speak: `$name $role $if($haspopup, @has_submenu)
-          @describe_index($if($posInSet, $posInSet, $indexInParent(menuItem, menuItemCheckBox, menuItemRadio)),
-              $if($setSize, $setSize, $parentChildCount(menuItem, menuItemCheckBox, menuItemRadio)))
-          $description $state $restriction`
+      speak: `$name $role $if($hasPopup, @has_submenu)
+          @describe_index($posInSet, $setSize) $description $state $restriction`
     },
     menuItemCheckBox: {
       speak: `$if($checked, $earcon(CHECK_ON), $earcon(CHECK_OFF))
           $name $role $checked $state $restriction $description
-          @describe_index($if($posInSet, $posInSet, $indexInParent(menuItem, menuItemCheckBox, menuItemRadio)),
-              $if($setSize, $setSize, $parentChildCount(menuItem, menuItemCheckBox, menuItemRadio))) `
+          @describe_index($posInSet, $setSize)`
     },
     menuItemRadio: {
       speak: `$if($checked, $earcon(CHECK_ON), $earcon(CHECK_OFF))
           $if($checked, @describe_radio_selected($name),
           @describe_radio_unselected($name)) $state $roleDescription
           $restriction $description
-          @describe_index($if($posInSet, $posInSet, $indexInParent(menuItem, menuItemCheckBox, menuItemRadio)),
-              $if($setSize, $setSize, $parentChildCount(menuItem, menuItemCheckBox, menuItemRadio))) `
+          @describe_index($posInSet, $setSize)`
     },
     menuListOption: {
       speak: `$name $role @describe_index($posInSet, $setSize) $state
@@ -579,10 +571,7 @@ Output.RULES = {
           $name $role $pressed $description $state $restriction`
     },
     toolbar: {enter: `$name $role $description $restriction`},
-    tree: {
-      enter: `$name $role @@list_with_items($countChildren(treeItem))
-          $restriction`
-    },
+    tree: {enter: `$name $role @@list_with_items($setSize) $restriction`},
     treeItem: {
       enter: `$role $expanded $collapsed $restriction
           @describe_index($posInSet, $setSize)
@@ -724,12 +713,16 @@ Output.isTruthy = function(node, attrib) {
   switch (attrib) {
     case 'checked':
       return node.checked && node.checked !== 'false';
+    case 'hasPopup':
+      return node.hasPopup && node.hasPopup !== 'false';
 
     // Chrome automatically calculates these attributes.
     case 'posInSet':
-      return node.htmlAttributes['aria-posinset'];
+      return node.htmlAttributes['aria-posinset'] ||
+          (node.root.role != RoleType.ROOT_WEB_AREA && node.posInSet);
     case 'setSize':
-      return node.htmlAttributes['aria-setsize'];
+      return node.htmlAttributes['aria-setsize'] ||
+          (node.root.role != RoleType.ROOT_WEB_AREA && node.setSize);
 
     // These attributes default to false for empty strings.
     case 'roleDescription':
@@ -1090,7 +1083,11 @@ Output.prototype = {
 
     // Display.
     if (this.speechCategory_ != cvox.TtsCategory.LIVE)
-      chrome.accessibilityPrivate.setFocusRing(this.locations_);
+      chrome.accessibilityPrivate.setFocusRings([{
+        rects: this.locations_,
+        type: chrome.accessibilityPrivate.FocusType.GLOW,
+        color: constants.FOCUS_COLOR
+      }]);
   },
 
   /**
@@ -1245,6 +1242,12 @@ Output.prototype = {
 
           this.append_(buff, node.name || '', options);
           ruleStr.writeTokenWithValue(token, node.name);
+          // Language Switching. Only execute if feature is enabled.
+          if (localStorage['languageSwitching'] === 'true') {
+            speechProps = new Output.SpeechProperties();
+            speechProps['lang'] =
+                LanguageSwitching.updateCurrentLanguageForNode(node);
+          }
         } else if (token == 'description') {
           if (node.name == node.description)
             return;
@@ -1307,25 +1310,6 @@ Output.prototype = {
               if (node === child)
                 break;
             }
-            this.append_(buff, String(count));
-            ruleStr.writeTokenWithValue(token, String(count));
-          }
-        } else if (token == 'parentChildCount') {
-          if (node.parent) {
-            options.annotation.push(token);
-            var roles;
-            if (tree.firstChild) {
-              roles = this.createRoles_(tree);
-            } else {
-              roles = new Set();
-              roles.add(node.role);
-            }
-
-            var count = node.parent.children
-                            .filter(function(child) {
-                              return roles.has(child.role);
-                            })
-                            .length;
             this.append_(buff, String(count));
             ruleStr.writeTokenWithValue(token, String(count));
           }
@@ -1426,12 +1410,12 @@ Output.prototype = {
           } else if (info) {
             if (this.formatOptions_.braille)
               msg = Msgs.getMsg(info.msgId + '_brl');
-            else
+            else if (info.msgId)
               msg = Msgs.getMsg(info.msgId);
           } else {
-            var errorMsg = 'Missing role info for ' + node.role;
-            ruleStr.writeError(errorMsg);
-            console.error(errorMsg);
+            // We can safely ignore this role. ChromeVox output tests cover
+            // message id validity.
+            return;
           }
           this.append_(buff, msg || '', options);
           ruleStr.writeTokenWithValue(token, msg);
@@ -1579,13 +1563,9 @@ Output.prototype = {
             this.format_(node, '$indexInParent', buff, ruleStr);
           }
         } else if (token == 'setSize') {
-          if (node.setSize !== undefined) {
-            this.append_(buff, String(node.setSize));
-            ruleStr.writeTokenWithValue(token, String(node.setSize));
-          } else {
-            ruleStr.writeToken(token);
-            this.format_(node, '$parentChildCount', buff, ruleStr);
-          }
+          var size = node.setSize ? node.setSize : 0;
+          this.append_(buff, String(size));
+          ruleStr.writeTokenWithValue(token, String(node.setSize));
         } else if (tree.firstChild) {
           // Custom functions.
           if (token == 'if') {
@@ -1619,16 +1599,6 @@ Output.prototype = {
                 tree.firstChild.value, node.location || undefined));
             this.append_(buff, '', options);
             ruleStr.writeTokenWithValue(token, tree.firstChild.value);
-          } else if (token == 'countChildren') {
-            var roles = this.createRoles_(tree);
-
-            var count = node.children
-                            .filter(function(e) {
-                              return roles.has(e.role);
-                            })
-                            .length;
-            this.append_(buff, String(count));
-            ruleStr.writeTokenWithValue(token, String(count));
           }
         }
       } else if (prefix == '@') {
@@ -2074,6 +2044,10 @@ Output.prototype = {
    */
   hint_: function(range, uniqueAncestors, type, buff, ruleStr) {
     if (!this.enableHints_ || localStorage['useVerboseMode'] != 'true')
+      return;
+
+    // No hints for alerts, which can be targeted at controls.
+    if (type == EventType.ALERT)
       return;
 
     // Hints are not yet specialized for braille.

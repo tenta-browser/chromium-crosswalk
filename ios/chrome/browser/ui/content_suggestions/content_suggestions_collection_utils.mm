@@ -11,12 +11,10 @@
 #import "ios/chrome/browser/ui/location_bar/location_bar_constants.h"
 #import "ios/chrome/browser/ui/ntp/new_tab_page_header_constants.h"
 #import "ios/chrome/browser/ui/toolbar/public/toolbar_utils.h"
-#include "ios/chrome/browser/ui/ui_feature_flags.h"
 #include "ios/chrome/browser/ui/util/dynamic_type_util.h"
 #include "ios/chrome/browser/ui/util/ui_util.h"
 #import "ios/chrome/browser/ui/util/uikit_ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
-#include "ios/web/public/features.h"
 #include "ui/base/l10n/l10n_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -24,11 +22,6 @@
 #endif
 
 namespace {
-
-// Spacing between tiles.
-const CGFloat kHorizontalSpacingRegularXRegular = 19;
-const CGFloat kHorizontalSpacingOther = 9;
-const CGFloat kVerticalSpacing = 16;
 
 // Width of search field.
 const CGFloat kSearchFieldLarge = 432;
@@ -64,45 +57,12 @@ const CGFloat kNonGoogleSearchDoodleHeight = 60;
 // Height for the header view on tablet when Google is not the default search
 // engine.
 const CGFloat kNonGoogleSearchHeaderHeightIPad = 10;
-
 }
 
 namespace content_suggestions {
 
 const int kSearchFieldBackgroundColor = 0xF1F3F4;
 const CGFloat kHintTextScale = 0.15;
-
-const NSUInteger kMostVisitedItemsPerLine = 4;
-
-NSUInteger numberOfTilesForWidth(CGFloat availableWidth) {
-  return kMostVisitedItemsPerLine;
-}
-
-CGFloat horizontalSpacingBetweenTiles() {
-  return (!IsCompactWidth() && !IsCompactHeight())
-             ? kHorizontalSpacingRegularXRegular
-             : kHorizontalSpacingOther;
-}
-
-CGFloat verticalSpacingBetweenTiles() {
-  return kVerticalSpacing;
-}
-
-CGFloat centeredTilesMarginForWidth(CGFloat width) {
-  CGFloat horizontalSpace = horizontalSpacingBetweenTiles();
-  NSUInteger columns = numberOfTilesForWidth(width - 2 * horizontalSpace);
-  CGFloat whitespace =
-      width -
-      (columns * [ContentSuggestionsMostVisitedCell defaultSize].width) -
-      ((columns - 1) * horizontalSpace);
-  CGFloat margin = AlignValueToPixel(whitespace / 2);
-  // Allow for less spacing as an edge case on smaller devices.
-  if (margin < horizontalSpace) {
-    DCHECK(width < 400);  // For now this is only expected on small widths.
-    return fmaxf(margin, 0);
-  }
-  return margin;
-}
 
 CGFloat doodleHeight(BOOL logoIsShowing) {
   if (!IsRegularXRegularSizeClass() && !logoIsShowing)
@@ -114,12 +74,6 @@ CGFloat doodleHeight(BOOL logoIsShowing) {
 CGFloat doodleTopMargin(BOOL toolbarPresent, CGFloat topInset) {
   if (!IsCompactWidth() && !IsCompactHeight())
     return kDoodleTopMarginRegularXRegular;
-  if (base::FeatureList::IsEnabled(
-          web::features::kBrowserContainerFullscreen) &&
-      base::FeatureList::IsEnabled(web::features::kOutOfWebFullscreen) &&
-      !base::FeatureList::IsEnabled(kBrowserContainerContainsNTP)) {
-    topInset = StatusBarHeight();
-  }
   return topInset + kDoodleTopMarginOther +
          AlignValueToPixel(kDoodleScaledTopMarginOther *
                            SystemSuggestedFontSizeMultiplier());
@@ -164,10 +118,6 @@ void configureSearchHintLabel(UILabel* searchHintLabel,
                               UIView* searchTapTarget) {
   [searchHintLabel setTranslatesAutoresizingMaskIntoConstraints:NO];
   [searchTapTarget addSubview:searchHintLabel];
-
-  [searchHintLabel.centerXAnchor
-      constraintEqualToAnchor:searchTapTarget.centerXAnchor]
-      .active = YES;
 
   [searchHintLabel setText:l10n_util::GetNSString(IDS_OMNIBOX_EMPTY_HINT)];
   if (base::i18n::IsRTL()) {

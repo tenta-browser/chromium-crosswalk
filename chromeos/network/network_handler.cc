@@ -5,12 +5,12 @@
 #include "chromeos/network/network_handler.h"
 
 #include "base/threading/thread_task_runner_handle.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/network/auto_connect_handler.h"
+#include "chromeos/network/cellular_metrics_logger.h"
 #include "chromeos/network/client_cert_resolver.h"
 #include "chromeos/network/geolocation_handler.h"
 #include "chromeos/network/managed_network_configuration_handler_impl.h"
-#include "chromeos/network/network_activation_handler.h"
+#include "chromeos/network/network_activation_handler_impl.h"
 #include "chromeos/network/network_cert_loader.h"
 #include "chromeos/network/network_cert_migrator.h"
 #include "chromeos/network/network_certificate_handler.h"
@@ -31,8 +31,6 @@ static NetworkHandler* g_network_handler = NULL;
 
 NetworkHandler::NetworkHandler()
     : task_runner_(base::ThreadTaskRunnerHandle::Get()) {
-  CHECK(DBusThreadManager::IsInitialized());
-
   network_state_handler_.reset(new NetworkStateHandler());
   network_device_handler_.reset(new NetworkDeviceHandlerImpl());
   network_profile_handler_.reset(new NetworkProfileHandler());
@@ -46,8 +44,9 @@ NetworkHandler::NetworkHandler()
     network_certificate_handler_.reset(new NetworkCertificateHandler());
     client_cert_resolver_.reset(new ClientCertResolver());
   }
-  network_activation_handler_.reset(new NetworkActivationHandler());
+  network_activation_handler_.reset(new NetworkActivationHandlerImpl());
   network_connection_handler_.reset(new NetworkConnectionHandlerImpl());
+  cellular_metrics_logger_.reset(new CellularMetricsLogger());
   network_sms_handler_.reset(new NetworkSmsHandler());
   geolocation_handler_.reset(new GeolocationHandler());
 }
@@ -70,6 +69,8 @@ void NetworkHandler::Init() {
       network_state_handler_.get(),
       network_configuration_handler_.get(),
       managed_network_configuration_handler_.get());
+  cellular_metrics_logger_->Init(network_state_handler_.get(),
+                                 network_connection_handler_.get());
   if (network_cert_migrator_)
     network_cert_migrator_->Init(network_state_handler_.get());
   if (client_cert_resolver_) {

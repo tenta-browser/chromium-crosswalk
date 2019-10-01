@@ -31,16 +31,17 @@ class CORE_EXPORT CompositingReasonFinder {
   // Returns the direct reasons for compositing the given layer.
   static CompositingReasons DirectReasons(const PaintLayer&);
 
+  static CompositingReasons DirectReasonsForPaintProperties(
+      const LayoutObject&);
+
   static bool RequiresCompositingForScrollableFrame(const LayoutView&);
   static CompositingReasons CompositingReasonsForAnimation(
       const ComputedStyle&);
-  static bool RequiresCompositingForOpacityAnimation(const ComputedStyle&);
-  static bool RequiresCompositingForFilterAnimation(const ComputedStyle&);
-  static bool RequiresCompositingForBackdropFilterAnimation(
+  static CompositingReasons CompositingReasonsForWillChange(
       const ComputedStyle&);
-  static bool RequiresCompositingForTransformAnimation(const ComputedStyle&);
-  static bool RequiresCompositingForTransform(const LayoutObject&);
+  static bool RequiresCompositingFor3DTransform(const LayoutObject&);
   static bool RequiresCompositingForRootScroller(const PaintLayer&);
+  static bool RequiresCompositingForScrollTimeline(const PaintLayer&);
 
   static bool RequiresCompositingForScrollDependentPosition(const PaintLayer&);
 };

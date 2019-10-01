@@ -19,16 +19,14 @@ ResizeArea::ResizeArea(ResizeAreaDelegate* delegate)
       initial_position_(0) {
 }
 
-ResizeArea::~ResizeArea() {
-}
+ResizeArea::~ResizeArea() = default;
 
 const char* ResizeArea::GetClassName() const {
   return kViewClassName;
 }
 
 gfx::NativeCursor ResizeArea::GetCursor(const ui::MouseEvent& event) {
-  return enabled() ? GetNativeEastWestResizeCursor()
-                   : gfx::kNullCursor;
+  return GetEnabled() ? GetNativeEastWestResizeCursor() : gfx::kNullCursor;
 }
 
 void ResizeArea::OnGestureEvent(ui::GestureEvent* event) {

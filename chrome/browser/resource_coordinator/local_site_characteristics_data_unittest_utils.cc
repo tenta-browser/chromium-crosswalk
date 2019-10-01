@@ -4,7 +4,10 @@
 
 #include "chrome/browser/resource_coordinator/local_site_characteristics_data_unittest_utils.h"
 
+#include <utility>
+
 #include "base/task/post_task.h"
+#include "chrome/browser/performance_manager/performance_manager.h"
 #include "chrome/browser/resource_coordinator/local_site_characteristics_data_store_factory.h"
 #include "chrome/browser/resource_coordinator/local_site_characteristics_webcontents_observer.h"
 #include "chrome/browser/resource_coordinator/tab_helper.h"
@@ -23,8 +26,7 @@ GetLocalSiteCharacteristicsDataImplForWC(content::WebContents* web_contents) {
   ResourceCoordinatorTabHelper* tab_helper =
       ResourceCoordinatorTabHelper::FromWebContents(web_contents);
   DCHECK(tab_helper);
-  auto* wc_observer =
-      tab_helper->local_site_characteristics_wc_observer_for_testing();
+  auto* wc_observer = tab_helper->local_site_characteristics_wc_observer();
   DCHECK(wc_observer);
 
   auto* writer = static_cast<LocalSiteCharacteristicsDataWriter*>(
@@ -79,7 +81,7 @@ void NoopLocalSiteCharacteristicsDatabase::ReadSiteCharacteristicsFromDB(
 
 void NoopLocalSiteCharacteristicsDatabase::WriteSiteCharacteristicsIntoDB(
     const url::Origin& origin,
-    const SiteCharacteristicsProto& site_characteristic_proto) {}
+    const SiteDataProto& site_characteristic_proto) {}
 
 void NoopLocalSiteCharacteristicsDatabase::RemoveSiteCharacteristicsFromDB(
     const std::vector<url::Origin>& site_origins) {}
@@ -94,9 +96,6 @@ void NoopLocalSiteCharacteristicsDatabase::GetDatabaseSize(
 ChromeTestHarnessWithLocalDB::ChromeTestHarnessWithLocalDB() {
   scoped_feature_list_.InitAndEnableFeature(
       features::kSiteCharacteristicsDatabase);
-
-  LocalSiteCharacteristicsWebContentsObserver::
-      SkipObserverRegistrationForTesting();
 }
 
 ChromeTestHarnessWithLocalDB::~ChromeTestHarnessWithLocalDB() = default;
@@ -106,7 +105,11 @@ void ChromeTestHarnessWithLocalDB::SetUp() {
   // ChromeRenderViewHostTestHarness::SetUp(), this will prevent the creation
   // of a non-mock version of a data store when browser_context() gets
   // initialized.
+  performance_manager_ = performance_manager::PerformanceManager::Create();
+
   LocalSiteCharacteristicsDataStoreFactory::EnableForTesting();
+
+  // TODO(siggi): Can this die now?
   content::ServiceManagerConnection::SetForProcess(
       content::ServiceManagerConnection::Create(
           mojo::MakeRequest(&service_),
@@ -117,6 +120,9 @@ void ChromeTestHarnessWithLocalDB::SetUp() {
 }
 
 void ChromeTestHarnessWithLocalDB::TearDown() {
+  performance_manager::PerformanceManager::Destroy(
+      std::move(performance_manager_));
+
   content::ServiceManagerConnection::DestroyForProcess();
   ChromeRenderViewHostTestHarness::TearDown();
 }

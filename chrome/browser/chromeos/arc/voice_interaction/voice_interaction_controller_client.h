@@ -20,9 +20,9 @@ namespace arc {
 // states and notifies Ash side.  It can also be used to notify some specific
 // state changes that does not have an observer interface.
 class VoiceInteractionControllerClient
-    : public ArcSessionManager::Observer,
-      public content::NotificationObserver,
-      public user_manager::UserManager::UserSessionStateObserver {
+    : public content::NotificationObserver,
+      public user_manager::UserManager::UserSessionStateObserver,
+      public ArcSessionManager::Observer {
  public:
   class Observer {
    public:
@@ -36,6 +36,8 @@ class VoiceInteractionControllerClient
 
   // Notify the controller about state changes.
   void NotifyStatusChanged(ash::mojom::VoiceInteractionState state);
+
+  void NotifyLockedFullScreenStateChanged(bool enabled);
 
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
@@ -57,7 +59,7 @@ class VoiceInteractionControllerClient
   void NotifyContextEnabled();
   void NotifyHotwordEnabled();
   void NotifyHotwordAlwaysOn();
-  void NotifySetupCompleted();
+  void NotifyConsentStatus();
   void NotifyFeatureAllowed();
   void NotifyNotificationEnabled();
   void NotifyLocaleChanged();
@@ -66,13 +68,13 @@ class VoiceInteractionControllerClient
   // user_manager::UserManager::UserSessionStateObserver overrides:
   void ActiveUserChanged(const user_manager::User* active_user) override;
 
-  // ArcSessionManager::Observer overrides:
-  void OnArcPlayStoreEnabledChanged(bool enabled) override;
-
   // content::NotificationObserver:
   void Observe(int type,
                const content::NotificationSource& source,
                const content::NotificationDetails& details) override;
+
+  // Override ArcSessionManager::Observer
+  void OnArcPlayStoreEnabledChanged(bool enabled) override;
 
   void SetProfile(Profile* profile);
 

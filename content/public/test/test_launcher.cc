@@ -15,6 +15,7 @@
 
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
+#include "base/debug/debugger.h"
 #include "base/environment.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
@@ -75,7 +76,11 @@ const char kPreTestPrefix[] = "PRE_";
 const char kManualTestPrefix[] = "MANUAL_";
 
 TestLauncherDelegate* g_launcher_delegate = nullptr;
+#if !defined(OS_ANDROID)
+// ContentMain is not run on Android in the test process, and is run via
+// java for child processes. So ContentMainParams does not exist there.
 ContentMainParams* g_params = nullptr;
+#endif
 
 std::string RemoveAnyPrePrefixes(const std::string& test_name) {
   std::string result(test_name);
@@ -136,6 +141,8 @@ class WrapperTestLauncherDelegate : public base::TestLauncherDelegate {
 
   // base::TestLauncherDelegate:
   bool GetTests(std::vector<base::TestIdentifier>* output) override;
+  bool WillRunTest(const std::string& test_case_name,
+                   const std::string& test_name) override;
   bool ShouldRunTest(const std::string& test_case_name,
                      const std::string& test_name) override;
   size_t RunTests(base::TestLauncher* test_launcher,
@@ -151,25 +158,18 @@ class WrapperTestLauncherDelegate : public base::TestLauncherDelegate {
         base::TestLauncher* test_launcher,
         std::vector<std::string>&& next_test_names,
         const std::string& test_name,
-        const base::FilePath& output_file,
-        std::unique_ptr<TestState> test_state)
+        const base::FilePath& output_file)
         : base::ProcessLifetimeObserver(),
           test_launcher_delegate_(test_launcher_delegate),
           test_launcher_(test_launcher),
           next_test_names_(std::move(next_test_names)),
           test_name_(test_name),
-          output_file_(output_file),
-          test_state_(std::move(test_state)) {}
+          output_file_(output_file) {}
     ~ChildProcessLifetimeObserver() override {
       DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
     }
 
    private:
-    // base::ProcessLifetimeObserver:
-    void OnLaunched(base::ProcessHandle handle, base::ProcessId id) override {
-      if (test_state_)
-        test_state_->ChildProcessLaunched(handle, id);
-    }
 
     void OnTimedOut(const base::CommandLine& command_line) override {
       test_launcher_delegate_->OnTestTimedOut(command_line);
@@ -181,8 +181,8 @@ class WrapperTestLauncherDelegate : public base::TestLauncherDelegate {
                      const std::string& output) override {
       DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
       test_launcher_delegate_->GTestCallback(
-          test_launcher_, next_test_names_, test_name_, output_file_,
-          std::move(test_state_), exit_code, elapsed_time, was_timeout, output);
+          test_launcher_, next_test_names_, test_name_, output_file_, exit_code,
+          elapsed_time, was_timeout, output);
     }
 
     SEQUENCE_CHECKER(sequence_checker_);
@@ -191,7 +191,6 @@ class WrapperTestLauncherDelegate : public base::TestLauncherDelegate {
     std::vector<std::string> next_test_names_;
     std::string test_name_;
     base::FilePath output_file_;
-    std::unique_ptr<TestState> test_state_;
 
     DISALLOW_COPY_AND_ASSIGN(ChildProcessLifetimeObserver);
   };
@@ -219,7 +218,6 @@ class WrapperTestLauncherDelegate : public base::TestLauncherDelegate {
                      const std::vector<std::string>& test_names,
                      const std::string& test_name,
                      const base::FilePath& output_file,
-                     std::unique_ptr<TestState> test_state,
                      int exit_code,
                      const base::TimeDelta& elapsed_time,
                      bool was_timeout,
@@ -261,9 +259,8 @@ bool IsPreTestName(const std::string& test_name) {
                           base::CompareCase::SENSITIVE);
 }
 
-bool WrapperTestLauncherDelegate::ShouldRunTest(
-    const std::string& test_case_name,
-    const std::string& test_name) {
+bool WrapperTestLauncherDelegate::WillRunTest(const std::string& test_case_name,
+                                              const std::string& test_name) {
   all_test_names_.insert(test_case_name + "." + test_name);
 
   if (base::StartsWith(test_name, kManualTestPrefix,
@@ -271,6 +268,15 @@ bool WrapperTestLauncherDelegate::ShouldRunTest(
       !base::CommandLine::ForCurrentProcess()->HasSwitch(kRunManualTestsFlag)) {
     return false;
   }
+
+  return true;
+}
+
+bool WrapperTestLauncherDelegate::ShouldRunTest(
+    const std::string& test_case_name,
+    const std::string& test_name) {
+  if (!WillRunTest(test_case_name, test_name))
+    return false;
 
   if (IsPreTestName(test_name)) {
     // We will actually run PRE_ tests, but to ensure they run on the same shard
@@ -408,11 +414,9 @@ void WrapperTestLauncherDelegate::DoRunTests(
   base::TestLauncher::LaunchOptions test_launch_options;
   test_launch_options.flags = base::TestLauncher::USE_JOB_OBJECTS |
                               base::TestLauncher::ALLOW_BREAKAWAY_FROM_JOB;
-  std::unique_ptr<TestState> test_state_ptr =
-      launcher_delegate_->PreRunTest(&cmd_line, &test_launch_options);
+  launcher_delegate_->PreRunTest();
   CHECK(launcher_delegate_->AdjustChildProcessCommandLine(
             &cmd_line, user_data_dir_map_[test_name_no_pre]));
-
   base::CommandLine new_cmd_line(cmd_line.GetProgram());
   base::CommandLine::SwitchMap switches = cmd_line.GetSwitches();
 
@@ -444,8 +448,7 @@ void WrapperTestLauncherDelegate::DoRunTests(
   char* browser_wrapper = getenv("BROWSER_WRAPPER");
 
   auto observer = std::make_unique<ChildProcessLifetimeObserver>(
-      this, test_launcher, std::move(test_names_copy), test_name, output_file,
-      std::move(test_state_ptr));
+      this, test_launcher, std::move(test_names_copy), test_name, output_file);
   test_launcher->LaunchChildGTestProcess(
       new_cmd_line, browser_wrapper ? browser_wrapper : std::string(),
       TestTimeouts::action_max_timeout(), test_launch_options,
@@ -462,10 +465,10 @@ void WrapperTestLauncherDelegate::RunDependentTest(
     test_list.push_back(test_name);
     DoRunTests(test_launcher, test_list);
   } else {
-    // Otherwise skip the test.
+    // Otherwise mark the test as a failure.
     base::TestResult test_result;
     test_result.full_name = test_name;
-    test_result.status = base::TestResult::TEST_SKIPPED;
+    test_result.status = base::TestResult::TEST_FAILURE;
     test_launcher->OnTestFinished(test_result);
 
     if (base::ContainsKey(dependent_test_map_, test_name)) {
@@ -486,7 +489,6 @@ void WrapperTestLauncherDelegate::GTestCallback(
     const std::vector<std::string>& test_names,
     const std::string& test_name,
     const base::FilePath& output_file,
-    std::unique_ptr<TestState> test_state,
     int exit_code,
     const base::TimeDelta& elapsed_time,
     bool was_timeout,
@@ -574,12 +576,6 @@ const char kSingleProcessTestsFlag[]   = "single_process";
 
 const char kWaitForDebuggerWebUI[] = "wait-for-debugger-webui";
 
-std::unique_ptr<TestState> TestLauncherDelegate::PreRunTest(
-    base::CommandLine* command_line,
-    base::TestLauncher::LaunchOptions* test_launch_options) {
-  return nullptr;
-}
-
 void AppendCommandLineSwitches() {
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
 
@@ -607,9 +603,15 @@ int LaunchTests(TestLauncherDelegate* launcher_delegate,
     return 0;
   }
 
+#if !defined(OS_ANDROID)
+  // The ContentMainDelegate is set for browser tests on Android by the
+  // browser test target and is not created by the |launcher_delegate|.
   std::unique_ptr<ContentMainDelegate> content_main_delegate(
       launcher_delegate->CreateContentMainDelegate());
+  // ContentMain is not run on Android in the test process, and is run via
+  // java for child processes.
   ContentMainParams params(content_main_delegate.get());
+#endif
 
 #if defined(OS_WIN)
   sandbox::SandboxInterfaceInfo sandbox_info = {0};
@@ -643,7 +645,9 @@ int LaunchTests(TestLauncherDelegate* launcher_delegate,
        command_line->HasSwitch(base::kGTestFilterFlag)) ||
       command_line->HasSwitch(base::kGTestListTestsFlag) ||
       command_line->HasSwitch(base::kGTestHelpFlag)) {
+#if !defined(OS_ANDROID)
     g_params = &params;
+#endif
     return launcher_delegate->RunTestSuite(argc, argv);
   }
 
@@ -658,6 +662,8 @@ int LaunchTests(TestLauncherDelegate* launcher_delegate,
       "--single_process (to run the test in one launcher/browser process) or\n"
       "--single-process (to do the above, and also run Chrome in single-"
           "process mode).\n");
+
+  base::debug::VerifyDebugger();
 
   base::MessageLoopForIO message_loop;
 #if defined(OS_POSIX)
@@ -678,9 +684,11 @@ TestLauncherDelegate* GetCurrentTestLauncherDelegate() {
   return g_launcher_delegate;
 }
 
+#if !defined(OS_ANDROID)
 ContentMainParams* GetContentMainParams() {
   return g_params;
 }
+#endif
 
 bool IsPreTest() {
   auto* test = testing::UnitTest::GetInstance();

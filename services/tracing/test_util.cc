@@ -5,6 +5,7 @@
 #include "services/tracing/test_util.h"
 
 #include <string>
+#include <utility>
 
 #include "services/tracing/public/mojom/tracing.mojom.h"
 

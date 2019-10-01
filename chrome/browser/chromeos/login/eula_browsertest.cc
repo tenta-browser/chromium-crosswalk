@@ -8,16 +8,32 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/callback.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/post_task.h"
+#include "base/test/bind_test_util.h"
+#include "chrome/browser/browser_process.h"
+#include "chrome/browser/chromeos/login/test/dialog_window_waiter.h"
+#include "chrome/browser/chromeos/login/test/js_checker.h"
 #include "chrome/browser/chromeos/login/test/oobe_base_test.h"
 #include "chrome/browser/chromeos/login/test/oobe_screen_waiter.h"
+#include "chrome/browser/chromeos/login/test/scoped_help_app_for_test.h"
+#include "chrome/browser/chromeos/login/test/webview_content_extractor.h"
 #include "chrome/browser/chromeos/login/ui/login_display_host.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
+#include "chrome/browser/chromeos/settings/stats_reporting_controller.h"
+#include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/ui/webui/chromeos/login/eula_screen_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
+#include "chrome/grit/generated_resources.h"
+#include "chrome/installer/util/google_update_settings.h"
+#include "chromeos/dbus/cryptohome/fake_cryptohome_client.h"
 #include "components/guest_view/browser/guest_view_manager.h"
+#include "components/metrics/metrics_pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_ui.h"
@@ -26,6 +42,7 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 
 using net::test_server::BasicHttpResponse;
@@ -37,7 +54,6 @@ namespace {
 
 constexpr char kFakeOnlineEulaPath[] = "/intl/en-US/chrome/eula_text.html";
 constexpr char kFakeOnlineEula[] = "No obligations at all";
-
 #if defined(GOOGLE_CHROME_BUILD)
 // See IDS_ABOUT_TERMS_OF_SERVICE for the complete text.
 constexpr char kOfflineEULAWarning[] = "Chrome OS Terms";
@@ -108,22 +124,9 @@ class EulaTest : public OobeBaseTest {
   }
 
   void ShowEulaScreen() {
-    LoginDisplayHost::default_host()->StartWizard(OobeScreen::SCREEN_OOBE_EULA);
+    LoginDisplayHost::default_host()->StartWizard(EulaView::kScreenId);
     OverrideOnlineEulaUrl();
-    OobeScreenWaiter(OobeScreen::SCREEN_OOBE_EULA).Wait();
-  }
-
-  std::string GetLoadedEulaAsText() {
-    // Wait the contents to load.
-    WebContentsLoadFinishedWaiter(FindEulaContents()).Wait();
-
-    std::string eula_text;
-    EXPECT_TRUE(content::ExecuteScriptAndExtractString(
-        FindEulaContents(),
-        "window.domAutomationController.send(document.body.textContent);",
-        &eula_text));
-
-    return eula_text;
+    OobeScreenWaiter(EulaView::kScreenId).Wait();
   }
 
   void set_allow_online_eula(bool allow) { allow_online_eula_ = allow; }
@@ -150,6 +153,55 @@ class EulaTest : public OobeBaseTest {
                             kUniqueEulaWebviewName));
     EXPECT_EQ(1u, frame_set.size());
     return *frame_set.begin();
+  }
+
+  // Returns an Oobe JSChecker that sends 'click' events instead of 'tap'
+  // events when interacting with UI elements.
+  test::JSChecker NonPolymerOobeJS() {
+    test::JSChecker js = test::OobeJS();
+    js.set_polymer_ui(false);
+    return js;
+  }
+
+  base::OnceClosure SetCollectStatsConsentClosure(bool consented) {
+    return base::BindOnce(
+        base::IgnoreResult(&GoogleUpdateSettings::SetCollectStatsConsent),
+        consented);
+  }
+
+  // Calls |GoogleUpdateSettings::SetCollectStatsConsent| asynchronously on its
+  // task runner. Blocks until task is executed.
+  void SetGoogleCollectStatsConsent(bool consented) {
+    base::RunLoop runloop;
+    GoogleUpdateSettings::CollectStatsConsentTaskRunner()->PostTaskAndReply(
+        FROM_HERE, SetCollectStatsConsentClosure(consented),
+        runloop.QuitClosure());
+    runloop.Run();
+  }
+
+  // Calls |GoogleUpdateSettings::GetCollectStatsConsent| asynchronously on its
+  // task runner. Blocks until task is executed and returns the result.
+  bool GetGoogleCollectStatsConsent() {
+    bool consented = false;
+
+    // Callback runs after GetCollectStatsConsent is executed. Sets the local
+    // variable |consented| to the result of GetCollectStatsConsent.
+    auto on_get_collect_stats_consent_callback =
+        [](base::OnceClosure quit_closure, bool* consented_out,
+           bool consented_result) {
+          *consented_out = consented_result;
+          std::move(quit_closure).Run();
+        };
+
+    base::RunLoop runloop;
+    base::PostTaskAndReplyWithResult(
+        GoogleUpdateSettings::CollectStatsConsentTaskRunner(), FROM_HERE,
+        base::BindOnce(&GoogleUpdateSettings::GetCollectStatsConsent),
+        base::BindOnce(on_get_collect_stats_consent_callback,
+                       runloop.QuitClosure(), &consented));
+    runloop.Run();
+
+    return consented;
   }
 
  private:
@@ -188,7 +240,8 @@ IN_PROC_BROWSER_TEST_F(EulaTest, DISABLED_LoadOnline) {
   set_allow_online_eula(true);
   ShowEulaScreen();
 
-  EXPECT_TRUE(GetLoadedEulaAsText().find(kFakeOnlineEula) != std::string::npos);
+  EXPECT_TRUE(test::GetWebViewContents({"oobe-eula-md", "crosEulaFrame"})
+                  .find(kFakeOnlineEula) != std::string::npos);
 }
 
 // Tests that offline version is shown when the online version is not
@@ -206,9 +259,116 @@ IN_PROC_BROWSER_TEST_F(EulaTest, LoadOffline) {
     WebContentsLoadFinishedWaiter(eula_contents).Wait();
   }
 
-  EXPECT_TRUE(GetLoadedEulaAsText().find(kOfflineEULAWarning) !=
-              std::string::npos);
+  EXPECT_TRUE(test::GetWebViewContents({"oobe-eula-md", "crosEulaFrame"})
+                  .find(kOfflineEULAWarning) != std::string::npos);
+}
+
+// Tests that clicking on "System security settings" button opens a dialog
+// showing the TPM password.
+IN_PROC_BROWSER_TEST_F(EulaTest, DisplaysTpmPassword) {
+  ShowEulaScreen();
+
+  NonPolymerOobeJS().TapOnPath({"oobe-eula-md", "installationSettings"});
+  test::OobeJS().ExpectVisiblePath(
+      {"oobe-eula-md", "installationSettingsDialog"});
+
+  test::OobeJS().CreateWaiter(
+      "$('oobe-eula-md').$$('#eula-password').textContent.trim() !== ''");
+  test::OobeJS().ExpectEQ(
+      "$('oobe-eula-md').$$('#eula-password').textContent.trim()",
+      std::string(FakeCryptohomeClient::kStubTpmPassword));
+}
+
+// Verifies statistic collection accepted flow.
+// Advaces to the next screen and verifies stats collection is enabled.
+// Flaky on LSAN/ASAN: crbug.com/952482.
+IN_PROC_BROWSER_TEST_F(EulaTest, EnableUsageStats) {
+  ShowEulaScreen();
+
+  // Verify that toggle is enabled by default.
+  test::OobeJS().ExpectTrue("$('oobe-eula-md').$$('#usageStats').checked");
+
+  ASSERT_TRUE(StatsReportingController::IsInitialized());
+
+  // Explicitly set as false to make sure test modifies these values.
+  StatsReportingController::Get()->SetEnabled(
+      ProfileManager::GetActiveUserProfile(), false);
+  g_browser_process->local_state()->SetBoolean(
+      metrics::prefs::kMetricsReportingEnabled, false);
+  SetGoogleCollectStatsConsent(false);
+
+  // Start Listening for StatsReportingController updates.
+  base::RunLoop runloop;
+  auto subscription =
+      StatsReportingController::Get()->AddObserver(runloop.QuitClosure());
+
+  // Advance to the next screen for changes to take effect.
+  test::OobeJS().TapOnPath({"oobe-eula-md", "acceptButton"});
+
+  // Wait for StartReporting update.
+  runloop.Run();
+
+  // Verify stats collection is enabled.
+  EXPECT_TRUE(StatsReportingController::Get()->IsEnabled());
+  EXPECT_TRUE(g_browser_process->local_state()->GetBoolean(
+      metrics::prefs::kMetricsReportingEnabled));
+  EXPECT_TRUE(GetGoogleCollectStatsConsent());
+}
+
+// Verify statistic collection denied flow. Clicks on usage stats toggle,
+// advaces to the next screen and verifies stats collection is disabled.
+IN_PROC_BROWSER_TEST_F(EulaTest, DisableUsageStats) {
+  ShowEulaScreen();
+
+  // Verify that toggle is enabled by default.
+  test::OobeJS().ExpectTrue("$('oobe-eula-md').$$('#usageStats').checked");
+
+  ASSERT_TRUE(StatsReportingController::IsInitialized());
+
+  // Explicitly set as true to make sure test modifies these values.
+  StatsReportingController::Get()->SetEnabled(
+      ProfileManager::GetActiveUserProfile(), true);
+  g_browser_process->local_state()->SetBoolean(
+      metrics::prefs::kMetricsReportingEnabled, true);
+  SetGoogleCollectStatsConsent(true);
+
+  // Start Listening for StatsReportingController updates.
+  base::RunLoop runloop;
+  auto subscription =
+      StatsReportingController::Get()->AddObserver(runloop.QuitClosure());
+
+  // Click on the toggle to disable stats collection and advance to the next
+  // screen for changes to take effect.
+  NonPolymerOobeJS().TapOnPath({"oobe-eula-md", "usageStats"});
+  test::OobeJS().TapOnPath({"oobe-eula-md", "acceptButton"});
+
+  // Wait for StartReportingController update.
+  runloop.Run();
+
+  // Verify stats collection is disabled.
+  EXPECT_FALSE(StatsReportingController::Get()->IsEnabled());
+  EXPECT_FALSE(g_browser_process->local_state()->GetBoolean(
+      metrics::prefs::kMetricsReportingEnabled));
+  EXPECT_FALSE(GetGoogleCollectStatsConsent());
+}
+
+// Tests that clicking on "Learn more" button opens a help dialog.
+IN_PROC_BROWSER_TEST_F(EulaTest, LearnMore) {
+  ShowEulaScreen();
+
+  // Load HelperApp extension.
+  ScopedHelpAppForTest scoped_help_app;
+
+  // Start listening for help dialog creation.
+  DialogWindowWaiter waiter(
+      l10n_util::GetStringUTF16(IDS_LOGIN_OOBE_HELP_DIALOG_TITLE));
+
+  NonPolymerOobeJS().TapOnPath({"oobe-eula-md", "learn-more"});
+
+  // Wait until help dialog is displayed.
+  waiter.Wait();
 }
 
 }  // namespace
+
 }  // namespace chromeos

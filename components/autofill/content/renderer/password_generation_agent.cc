@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "base/auto_reset.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/stl_util.h"
@@ -334,6 +335,12 @@ void PasswordGenerationAgent::DidCommitProvisionalLoad(
   generation_enabled_fields_.clear();
 }
 
+void PasswordGenerationAgent::DidChangeScrollOffset() {
+  if (!current_generation_item_)
+    return;
+  GetPasswordGenerationDriver()->FrameWasScrolled();
+}
+
 void PasswordGenerationAgent::DidFinishDocumentLoad() {
   FindPossibleGenerationForm();
 }
@@ -453,6 +460,8 @@ void PasswordGenerationAgent::GeneratedPasswordAccepted(
       password_generation::PASSWORD_ACCEPTED);
   LogMessage(Logger::STRING_GENERATION_RENDERER_GENERATED_PASSWORD_ACCEPTED);
   for (auto& password_element : current_generation_item_->password_elements_) {
+    base::AutoReset<bool> auto_reset_update_confirmation_password(
+        &current_generation_item_->updating_other_password_fileds_, true);
     password_element.SetAutofillValue(blink::WebString::FromUTF16(password));
     // setAutofillValue() above may have resulted in JavaScript closing the
     // frame.
@@ -495,7 +504,7 @@ PasswordGenerationAgent::CreatePasswordFormToPresave() {
     password_form = password_agent_->GetPasswordFormFromUnownedInputElements();
   }
   if (password_form) {
-    password_form->type = PasswordForm::TYPE_GENERATED;
+    password_form->type = PasswordForm::Type::kGenerated;
     password_form->password_value =
         current_generation_item_->generation_element_.Value().Utf16();
   }
@@ -691,7 +700,6 @@ bool PasswordGenerationAgent::FocusedNodeHasChanged(
 
   const blink::WebElement web_element = node.ToConst<blink::WebElement>();
   if (!web_element.GetDocument().GetFrame()) {
-    AutomaticGenerationStatusChanged(false);
     return false;
   }
 
@@ -718,6 +726,7 @@ bool PasswordGenerationAgent::FocusedNodeHasChanged(
     if (current_generation_item_->generation_element_.Value().length() <
         kMinimumLengthForEditedPassword) {
       PasswordNoLongerGenerated();
+      MaybeOfferAutomaticGeneration();
       if (current_generation_item_->generation_element_.Value().IsEmpty())
         current_generation_item_->generation_element_.SetShouldRevealPassword(
             false);
@@ -738,7 +747,6 @@ bool PasswordGenerationAgent::FocusedNodeHasChanged(
     return true;
   }
 
-  AutomaticGenerationStatusChanged(false);
   return false;
 }
 
@@ -746,7 +754,7 @@ void PasswordGenerationAgent::DidEndTextFieldEditing(
     const blink::WebInputElement& element) {
   if (!element.IsNull() && current_generation_item_ &&
       element == current_generation_item_->generation_element_) {
-    AutomaticGenerationStatusChanged(false);
+    GetPasswordGenerationDriver()->GenerationElementLostFocus();
     current_generation_item_->generation_element_.SetShouldRevealPassword(
         false);
   }
@@ -812,36 +820,29 @@ bool PasswordGenerationAgent::TextDidChangeInTextField(
 void PasswordGenerationAgent::MaybeOfferAutomaticGeneration() {
   // TODO(crbug.com/852309): Add this check to the generation element class.
   if (!current_generation_item_->is_manually_triggered_) {
-    AutomaticGenerationStatusChanged(true /* available */);
+    AutomaticGenerationAvailable();
   }
 }
 
-void PasswordGenerationAgent::AutomaticGenerationStatusChanged(bool available) {
-  if (available) {
-    if (!render_frame())
-      return;
-    DCHECK(current_generation_item_);
-    DCHECK(!current_generation_item_->generation_element_.IsNull());
-    LogMessage(
-        Logger::STRING_GENERATION_RENDERER_AUTOMATIC_GENERATION_AVAILABLE);
-    autofill::password_generation::PasswordGenerationUIData
-        password_generation_ui_data(
-            render_frame()->GetRenderView()->ElementBoundsInWindow(
-                current_generation_item_->generation_element_),
-            current_generation_item_->generation_element_.MaxLength(),
-            current_generation_item_->generation_element_.NameForAutofill()
-                .Utf16(),
-            GetTextDirectionForElement(
-                current_generation_item_->generation_element_),
-            current_generation_item_->form_);
-    current_generation_item_->generation_popup_shown_ = true;
-    GetPasswordGenerationDriver()->AutomaticGenerationStatusChanged(
-        true, password_generation_ui_data);
-  } else {
-    // Hide the generation popup.
-    GetPasswordGenerationDriver()->AutomaticGenerationStatusChanged(
-        false, base::nullopt);
-  }
+void PasswordGenerationAgent::AutomaticGenerationAvailable() {
+  if (!render_frame())
+    return;
+  DCHECK(current_generation_item_);
+  DCHECK(!current_generation_item_->generation_element_.IsNull());
+  LogMessage(Logger::STRING_GENERATION_RENDERER_AUTOMATIC_GENERATION_AVAILABLE);
+  autofill::password_generation::PasswordGenerationUIData
+      password_generation_ui_data(
+          render_frame()->GetRenderView()->ElementBoundsInWindow(
+              current_generation_item_->generation_element_),
+          current_generation_item_->generation_element_.MaxLength(),
+          current_generation_item_->generation_element_.NameForAutofill()
+              .Utf16(),
+          GetTextDirectionForElement(
+              current_generation_item_->generation_element_),
+          current_generation_item_->form_);
+  current_generation_item_->generation_popup_shown_ = true;
+  GetPasswordGenerationDriver()->AutomaticGenerationAvailable(
+      password_generation_ui_data);
 }
 
 void PasswordGenerationAgent::ShowEditingPopup() {
@@ -896,6 +897,9 @@ void PasswordGenerationAgent::MaybeCreateCurrentGenerationItem(
       element.Form().IsNull()
           ? password_agent_->GetPasswordFormFromUnownedInputElements()
           : password_agent_->GetPasswordFormFromWebForm(element.Form());
+
+  if (!password_form)
+    return;
 
   std::vector<blink::WebInputElement> passwords = {element};
 

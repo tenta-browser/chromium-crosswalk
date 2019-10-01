@@ -64,14 +64,26 @@ class SigninErrorController : public KeyedService,
   // Invoked when the auth status has changed.
   void Update();
 
+  // Checks for Secondary Account errors and updates |auth_error_| and
+  // |error_account_id_| accordingly. Does not do anything if no Secondary
+  // Account has any error. Returns true if an error was found in a Secondary
+  // Account, false otherwise.
+  // Note: This function must not be called if |account_mode_| is
+  // |AccountMode::PRIMARY_ACCOUNT|.
+  bool UpdateSecondaryAccountErrors(
+      const std::string& primary_account_id,
+      const std::string& prev_account_id,
+      const GoogleServiceAuthError::State& prev_error_state);
+
   // identity::IdentityManager::Observer:
   void OnEndBatchOfRefreshTokenStateChanges() override;
   void OnErrorStateOfRefreshTokenUpdatedForAccount(
-      const AccountInfo& account_info,
+      const CoreAccountInfo& account_info,
       const GoogleServiceAuthError& error) override;
-  void OnPrimaryAccountSet(const AccountInfo& primary_account_info) override;
+  void OnPrimaryAccountSet(
+      const CoreAccountInfo& primary_account_info) override;
   void OnPrimaryAccountCleared(
-      const AccountInfo& previous_primary_account_info) override;
+      const CoreAccountInfo& previous_primary_account_info) override;
 
   const AccountMode account_mode_;
   identity::IdentityManager* identity_manager_;

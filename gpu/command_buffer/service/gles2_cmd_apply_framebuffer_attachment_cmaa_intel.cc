@@ -26,6 +26,7 @@ ApplyFramebufferAttachmentCMAAINTELResourceManager::
       supports_usampler_(true),
       supports_r8_image_(true),
       is_gles31_compatible_(false),
+      flip_y_(false),
       frame_id_(0),
       width_(0),
       height_(0),
@@ -226,7 +227,7 @@ void ApplyFramebufferAttachmentCMAAINTELResourceManager::
       GLenum internal_format = attachment->internal_format();
 
       // Resize internal structures - only if needed.
-      OnSize(width, height);
+      OnSize(width, height, framebuffer->GetFlipY());
 
       // CMAA internally expects GL_RGBA8 textures.
       // Process using a GL_RGBA8 copy if this is not the case.
@@ -476,6 +477,9 @@ void ApplyFramebufferAttachmentCMAAINTELResourceManager::ApplyCMAAEffectTexture(
     }
     glBindImageTextureEXT(1, dest_texture, 0, GL_FALSE, 0, GL_WRITE_ONLY,
                           GL_RGBA8);
+    // TODO(samans): Investigate why there is an error. https://crbug.com/938597
+    GLenum error = glGetError();
+    DLOG_IF(ERROR, error != GL_NO_ERROR) << "GL ERROR: " << error;
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, working_color_texture_);
@@ -497,14 +501,16 @@ void ApplyFramebufferAttachmentCMAAINTELResourceManager::ApplyCMAAEffectTexture(
 }
 
 void ApplyFramebufferAttachmentCMAAINTELResourceManager::OnSize(GLint width,
-                                                                GLint height) {
-  if (height_ == height && width_ == width)
+                                                                GLint height,
+                                                                bool flip_y) {
+  if (height_ == height && width_ == width && flip_y_ == flip_y)
     return;
 
   ReleaseTextures();
 
   height_ = height;
   width_ = width;
+  flip_y_ = flip_y;
 
   glGenTextures(1, &rgba8_texture_);
   glBindTexture(GL_TEXTURE_2D, rgba8_texture_);
@@ -546,6 +552,10 @@ void ApplyFramebufferAttachmentCMAAINTELResourceManager::OnSize(GLint width,
   // Create the FBO
   glGenFramebuffersEXT(1, &cmaa_framebuffer_);
   glBindFramebufferEXT(GL_FRAMEBUFFER, cmaa_framebuffer_);
+  if (flip_y_) {
+    glFramebufferParameteri(GL_FRAMEBUFFER, GL_FRAMEBUFFER_FLIP_Y_MESA,
+                            GL_TRUE);
+  }
 
   // We need to clear the textures before they are first used.
   // The algorithm self-clears them later.

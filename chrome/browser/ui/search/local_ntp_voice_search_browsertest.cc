@@ -31,7 +31,7 @@ class LocalNTPVoiceSearchSmokeTest : public InProcessBrowserTest {
 
  private:
   void SetUp() override {
-    feature_list_.InitWithFeatures({features::kUseGoogleLocalNtp}, {});
+    feature_list_.InitWithFeatures({}, {features::kRemoveNtpFakebox});
     InProcessBrowserTest::SetUp();
   }
 

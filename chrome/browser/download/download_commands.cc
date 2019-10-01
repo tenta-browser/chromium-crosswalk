@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 #include "base/base64.h"
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
@@ -21,8 +22,6 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/safe_browsing/download_protection/download_protection_service.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
-#include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
 #include "chrome/common/safe_browsing/file_type_policies.h"
 #include "chrome/common/url_constants.h"
 #include "components/google/core/common/google_util.h"
@@ -30,6 +29,12 @@
 #include "content/public/browser/browser_thread.h"
 #include "net/base/url_util.h"
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
+
+#if defined(OS_WIN) || defined(OS_LINUX) || defined(OS_MACOSX)
+#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_finder.h"
+#include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
+#endif
 
 #if defined(OS_WIN)
 #include "chrome/browser/download/download_target_determiner.h"
@@ -63,7 +68,7 @@ class ImageClipboardCopyManager : public ImageDecoder::ImageRequest {
 
   void StartDecoding() {
     base::ScopedBlockingCall scoped_blocking_call(
-        base::BlockingType::WILL_BLOCK);
+        FROM_HERE, base::BlockingType::WILL_BLOCK);
 
     // Re-check the filesize since the file may be modified after downloaded.
     int64_t filesize;
@@ -130,7 +135,7 @@ GURL DownloadCommands::GetLearnMoreURLForInterruptedDownload() const {
       learn_more_url, g_browser_process->GetApplicationLocale());
   return net::AppendQueryParameter(
       learn_more_url, "ctx",
-      base::IntToString(static_cast<int>(model_->download()->GetLastReason())));
+      base::NumberToString(model_->download()->GetLastReason()));
 }
 
 bool DownloadCommands::IsCommandEnabled(Command command) const {
@@ -152,18 +157,18 @@ void DownloadCommands::ExecuteCommand(Command command) {
   model_->ExecuteCommand(this, command);
 }
 
+#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX)
+
 Browser* DownloadCommands::GetBrowser() const {
   chrome::ScopedTabbedBrowserDisplayer browser_displayer(model_->profile());
   DCHECK(browser_displayer.browser());
   return browser_displayer.browser();
 }
 
-#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX)
 bool DownloadCommands::IsDownloadPdf() const {
   base::FilePath path = model_->GetTargetFilePath();
   return path.MatchesExtension(FILE_PATH_LITERAL(".pdf"));
 }
-#endif
 
 bool DownloadCommands::CanOpenPdfInSystemViewer() const {
 #if defined(OS_WIN)
@@ -179,6 +184,8 @@ bool DownloadCommands::CanOpenPdfInSystemViewer() const {
   return IsDownloadPdf();
 #endif
 }
+
+#endif  // defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX)
 
 void DownloadCommands::CopyFileAsImageToClipboard() {
   if (model_->GetState() != download::DownloadItem::COMPLETE ||

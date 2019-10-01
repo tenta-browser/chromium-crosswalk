@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "media/capture/video/chromeos/mock_camera_module.h"
+#include "base/bind.h"
 
 #include <memory>
 #include <utility>
@@ -56,6 +57,13 @@ void MockCameraModule::SetTorchMode(int32_t camera_id,
                                     SetTorchModeCallback callback) {
   DoSetTorchMode(camera_id, enabled, callback);
   std::move(callback).Run(0);
+}
+
+void MockCameraModule::GetVendorTagOps(
+    cros::mojom::VendorTagOpsRequest vendor_tag_ops_request,
+    GetVendorTagOpsCallback callback) {
+  DoGetVendorTagOps(vendor_tag_ops_request, callback);
+  std::move(callback).Run();
 }
 
 cros::mojom::CameraModulePtrInfo MockCameraModule::GetInterfacePtrInfo() {

@@ -21,6 +21,7 @@
 
 struct PrintHostMsg_PreviewIds;
 struct PrintHostMsg_ScriptedPrint_Params;
+struct PrintMsg_Print_Params;
 class Profile;
 
 namespace printing {
@@ -32,6 +33,17 @@ class PrinterQuery;
 // renderer process on the IPC thread.
 class PrintingMessageFilter : public content::BrowserMessageFilter {
  public:
+  class TestDelegate {
+   public:
+    // Returns the print params to be used in OnUpdatePrintSettingsReply().
+    virtual PrintMsg_Print_Params GetPrintParams() = 0;
+
+   protected:
+    virtual ~TestDelegate() = default;
+  };
+
+  static void SetDelegateForTesting(TestDelegate* delegate);
+
   PrintingMessageFilter(int render_process_id, Profile* profile);
 
   // content::BrowserMessageFilter:

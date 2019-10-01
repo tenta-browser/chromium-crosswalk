@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/media/router/mojo/media_router_mojo_impl.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -28,7 +30,7 @@
 #include "chrome/browser/media/router/test/test_helper.h"
 #include "chrome/common/media_router/issue.h"
 #include "chrome/common/media_router/media_route.h"
-#include "chrome/common/media_router/media_source_helper.h"
+#include "chrome/common/media_router/media_source.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
@@ -135,22 +137,6 @@ std::string RouteMessageToString(const RouteMessagePtr& message) {
 }
 
 }  // namespace
-
-class RouteResponseCallbackHandler {
- public:
-  void Invoke(mojom::RoutePresentationConnectionPtr connection,
-              const RouteRequestResult& result) {
-    DoInvoke(result.route(), result.presentation_id(), result.error(),
-             result.result_code(), connection);
-  }
-  // TODO(btolsch): Convert this to pass move-only types directly to the mock.
-  MOCK_METHOD5(DoInvoke,
-               void(const MediaRoute* route,
-                    const std::string& presentation_id,
-                    const std::string& error_text,
-                    RouteRequestResult::ResultCode result_code,
-                    mojom::RoutePresentationConnectionPtr& connection));
-};
 
 class MediaRouterMojoImplTest : public MediaRouterMojoTest {
  public:

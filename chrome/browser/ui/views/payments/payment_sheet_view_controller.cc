@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/i18n/message_formatter.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
@@ -299,7 +300,7 @@ class PaymentSheetRowBuilder {
         std::move(extra_content_view), std::move(chevron),
         /*clickable=*/true, /*extra_trailing_inset=*/true);
     section->set_tag(tag_);
-    section->set_id(id_);
+    section->SetID(id_);
     return section;
   }
 
@@ -351,7 +352,7 @@ class PaymentSheetRowBuilder {
         views::MdTextButton::CreateSecondaryUiBlueButton(listener_,
                                                          button_string));
     button->set_tag(tag_);
-    button->set_id(id_);
+    button->SetID(id_);
     button->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);
     button->SetEnabled(button_enabled);
     return CreatePaymentSheetRow(
@@ -399,7 +400,7 @@ PaymentSheetViewController::CreatePrimaryButton() {
       views::MdTextButton::CreateSecondaryUiBlueButton(
           this, l10n_util::GetStringUTF16(IDS_PAYMENTS_PAY_BUTTON)));
   button->set_tag(static_cast<int>(PaymentRequestCommonTags::PAY_BUTTON_TAG));
-  button->set_id(static_cast<int>(DialogViewID::PAY_BUTTON));
+  button->SetID(static_cast<int>(DialogViewID::PAY_BUTTON));
   button->SetEnabled(state()->is_ready_to_pay());
   return button;
 }
@@ -422,6 +423,13 @@ void PaymentSheetViewController::FillContentView(views::View* content_view) {
   views::ColumnSet* columns = layout->AddColumnSet(0);
   columns->AddColumn(views::GridLayout::FILL, views::GridLayout::CENTER, 1.0,
                      views::GridLayout::USE_PREF, 0, 0);
+
+  if (!spec()->retry_error_message().empty()) {
+    std::unique_ptr<views::View> warning_view =
+        CreateWarningView(spec()->retry_error_message(), true /* show_icon */);
+    layout->StartRow(views::GridLayout::kFixedSize, 0);
+    layout->AddView(warning_view.release());
+  }
 
   // The shipping address and contact info rows are optional.
   std::unique_ptr<PaymentRequestRowView> summary_row =
@@ -481,6 +489,7 @@ void PaymentSheetViewController::ButtonPressed(views::Button* sender,
   if (!dialog()->IsInteractive())
     return;
 
+  bool should_reset_retry_error_message = true;
   switch (sender->tag()) {
     case static_cast<int>(
         PaymentSheetViewControllerTags::SHOW_ORDER_SUMMARY_BUTTON):
@@ -541,7 +550,14 @@ void PaymentSheetViewController::ButtonPressed(views::Button* sender,
 
     default:
       PaymentRequestSheetController::ButtonPressed(sender, event);
+      should_reset_retry_error_message = false;
       break;
+  }
+
+  if (should_reset_retry_error_message &&
+      !spec()->retry_error_message().empty()) {
+    spec()->reset_retry_error_message();
+    UpdateContentView();
   }
 }
 
@@ -927,9 +943,9 @@ std::unique_ptr<views::View> PaymentSheetViewController::CreateDataSourceRow() {
   auto layout = std::make_unique<views::BoxLayout>(
       views::BoxLayout::kVertical,
       gfx::Insets(0, kPaymentRequestRowHorizontalInsets));
-  layout->set_main_axis_alignment(views::BoxLayout::MAIN_AXIS_ALIGNMENT_START);
+  layout->set_main_axis_alignment(views::BoxLayout::MainAxisAlignment::kStart);
   layout->set_cross_axis_alignment(
-      views::BoxLayout::CROSS_AXIS_ALIGNMENT_START);
+      views::BoxLayout::CrossAxisAlignment::kStart);
   content_view->SetLayoutManager(std::move(layout));
 
   base::string16 data_source;
@@ -974,7 +990,7 @@ std::unique_ptr<views::View> PaymentSheetViewController::CreateDataSourceRow() {
   std::unique_ptr<views::StyledLabel> data_source_label =
       std::make_unique<views::StyledLabel>(data_source, this);
   data_source_label->SetBorder(views::CreateEmptyBorder(22, 0, 0, 0));
-  data_source_label->set_id(static_cast<int>(DialogViewID::DATA_SOURCE_LABEL));
+  data_source_label->SetID(static_cast<int>(DialogViewID::DATA_SOURCE_LABEL));
   data_source_label->SetDefaultTextStyle(views::style::STYLE_DISABLED);
 
   views::StyledLabel::RangeStyleInfo link_style =

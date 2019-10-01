@@ -5,6 +5,7 @@
 #include "chrome/browser/gcm/gcm_profile_service_factory.h"
 #include <memory>
 
+#include "base/bind.h"
 #include "base/no_destructor.h"
 #include "base/sequenced_task_runner.h"
 #include "base/task/post_task.h"
@@ -151,7 +152,8 @@ KeyedService* GCMProfileServiceFactory::BuildServiceInstanceFor(
 #endif
 #if BUILDFLAG(ENABLE_OFFLINE_PAGES)
   offline_pages::PrefetchService* prefetch_service =
-      offline_pages::PrefetchServiceFactory::GetForBrowserContext(context);
+      offline_pages::PrefetchServiceFactory::GetForKey(
+          profile->GetProfileKey());
   if (prefetch_service != nullptr) {
     offline_pages::PrefetchGCMHandler* prefetch_gcm_handler =
         prefetch_service->GetPrefetchGCMHandler();

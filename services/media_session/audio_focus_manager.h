@@ -28,7 +28,14 @@ namespace test {
 class MockMediaSession;
 }  // namespace test
 
+class AudioFocusRequest;
 class MediaController;
+
+struct EnforcementState {
+  bool should_duck = false;
+  bool should_stop = false;
+  bool should_suspend = false;
+};
 
 class AudioFocusManager : public mojom::AudioFocusManager,
                           public mojom::AudioFocusManagerDebug,
@@ -67,6 +74,7 @@ class AudioFocusManager : public mojom::AudioFocusManager,
   void CreateMediaControllerForSession(
       mojom::MediaControllerRequest request,
       const base::UnguessableToken& request_id) override;
+  void SuspendAllSessions() override;
 
   // Bind to a mojom::AudioFocusManagerRequest.
   void BindToInterface(mojom::AudioFocusManagerRequest request);
@@ -80,12 +88,9 @@ class AudioFocusManager : public mojom::AudioFocusManager,
 
  private:
   friend class AudioFocusManagerTest;
+  friend class AudioFocusRequest;
   friend class MediaControllerTest;
   friend class test::MockMediaSession;
-
-  // StackRow is an AudioFocusRequestClient and allows a media session to
-  // control its audio focus.
-  class StackRow;
 
   // BindingContext stores associated metadata for mojo binding.
   struct BindingContext {
@@ -96,22 +101,15 @@ class AudioFocusManager : public mojom::AudioFocusManager,
     std::string source_name;
   };
 
-  struct EnforcementState {
-    bool should_duck = false;
-    bool should_stop = false;
-    bool should_suspend = false;
-  };
-
-  void RequestAudioFocusInternal(std::unique_ptr<StackRow>,
-                                 mojom::AudioFocusType,
-                                 base::OnceCallback<void()>);
+  void RequestAudioFocusInternal(std::unique_ptr<AudioFocusRequest>,
+                                 mojom::AudioFocusType);
   void AbandonAudioFocusInternal(RequestId);
 
   void EnforceAudioFocus();
 
   void MaybeUpdateActiveSession();
 
-  std::unique_ptr<StackRow> RemoveFocusEntryIfPresent(RequestId id);
+  std::unique_ptr<AudioFocusRequest> RemoveFocusEntryIfPresent(RequestId id);
 
   // Returns the source name of the binding currently accessing the Audio
   // Focus Manager API over mojo.
@@ -120,12 +118,13 @@ class AudioFocusManager : public mojom::AudioFocusManager,
   bool IsSessionOnTopOfAudioFocusStack(RequestId id,
                                        mojom::AudioFocusType type) const;
 
-  bool ShouldSessionBeSuspended(const StackRow* session,
+  bool ShouldSessionBeSuspended(const AudioFocusRequest* session,
                                 const EnforcementState& state) const;
-  bool ShouldSessionBeDucked(const StackRow* session,
+  bool ShouldSessionBeDucked(const AudioFocusRequest* session,
                              const EnforcementState& state) const;
 
-  void EnforceSingleSession(StackRow* session, const EnforcementState& state);
+  void EnforceSingleSession(AudioFocusRequest* session,
+                            const EnforcementState& state);
 
   // This |MediaController| acts as a proxy for controlling the active
   // |MediaSession| over mojo.
@@ -147,7 +146,7 @@ class AudioFocusManager : public mojom::AudioFocusManager,
 
   // A stack of Mojo interface pointers and their requested audio focus type.
   // A MediaSession must abandon audio focus before its destruction.
-  std::list<std::unique_ptr<StackRow>> audio_focus_stack_;
+  std::list<std::unique_ptr<AudioFocusRequest>> audio_focus_stack_;
 
   mojom::EnforcementMode enforcement_mode_;
 

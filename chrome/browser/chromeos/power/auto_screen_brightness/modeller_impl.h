@@ -16,9 +16,12 @@
 #include "base/sequenced_task_runner.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
+#include "base/timer/timer.h"
 #include "chrome/browser/chromeos/power/auto_screen_brightness/als_reader.h"
 #include "chrome/browser/chromeos/power/auto_screen_brightness/als_samples.h"
 #include "chrome/browser/chromeos/power/auto_screen_brightness/brightness_monitor.h"
+#include "chrome/browser/chromeos/power/auto_screen_brightness/model_config.h"
+#include "chrome/browser/chromeos/power/auto_screen_brightness/model_config_loader.h"
 #include "chrome/browser/chromeos/power/auto_screen_brightness/modeller.h"
 #include "chrome/browser/chromeos/power/auto_screen_brightness/trainer.h"
 #include "chrome/browser/chromeos/power/auto_screen_brightness/utils.h"
@@ -30,6 +33,18 @@ namespace chromeos {
 namespace power {
 namespace auto_screen_brightness {
 
+struct Model {
+  Model();
+  Model(const base::Optional<MonotoneCubicSpline>& global_curve,
+        const base::Optional<MonotoneCubicSpline>& personal_curve,
+        int iteration_count);
+  Model(const Model& model);
+  ~Model();
+  base::Optional<MonotoneCubicSpline> global_curve;
+  base::Optional<MonotoneCubicSpline> personal_curve;
+  int iteration_count = 0;
+};
+
 // Real implementation of Modeller.
 // It monitors user-requested brightness changes, ambient light values and
 // trains personal brightness curves when user remains idle for a period of
@@ -39,15 +54,27 @@ namespace auto_screen_brightness {
 class ModellerImpl : public Modeller,
                      public AlsReader::Observer,
                      public BrightnessMonitor::Observer,
+                     public ModelConfigLoader::Observer,
                      public ui::UserActivityObserver {
  public:
   static constexpr char kModelDir[] = "autobrightness";
-  static constexpr char kCurveFileName[] = "curve";
+  static constexpr char kGlobalCurveFileName[] = "global_curve";
+  static constexpr char kPersonalCurveFileName[] = "personal_curve";
+  static constexpr char kModelIterationCountFileName[] = "iteration_count";
+
+  // Global curve, personal curve and training iteration count will be saved to
+  // the file paths below.
+  struct ModelSavingSpec {
+    base::FilePath global_curve;
+    base::FilePath personal_curve;
+    base::FilePath iteration_count;
+  };
 
   // ModellerImpl has weak dependencies on all parameters except |trainer|.
   ModellerImpl(const Profile* profile,
                AlsReader* als_reader,
                BrightnessMonitor* brightness_monitor,
+               ModelConfigLoader* model_config_loader,
                ui::UserActivityDetector* user_activity_detector,
                std::unique_ptr<Trainer> trainer);
   ~ModellerImpl() override;
@@ -66,6 +93,9 @@ class ModellerImpl : public Modeller,
                                double new_brightness_percent) override;
   void OnUserBrightnessChangeRequested() override;
 
+  // ModelConfigLoader::Observer overrides:
+  void OnModelConfigLoaded(base::Optional<ModelConfig> model_config) override;
+
   // ui::UserActivityObserver overrides:
   void OnUserActivity(const ui::Event* event) override;
 
@@ -74,78 +104,74 @@ class ModellerImpl : public Modeller,
       const Profile* profile,
       AlsReader* als_reader,
       BrightnessMonitor* brightness_monitor,
+      ModelConfigLoader* model_config_loader,
       ui::UserActivityDetector* user_activity_detector,
       std::unique_ptr<Trainer> trainer,
       scoped_refptr<base::SequencedTaskRunner> blocking_task_runner,
       const base::TickClock* tick_clock);
 
-  // Current average ambient light.
+  // Current average log ambient light.
   base::Optional<double> AverageAmbientForTesting(base::TimeTicks now);
 
   // Current number of training data points stored, which will be used for next
   // training.
   size_t NumberTrainingDataPointsForTesting() const;
 
-  // Returns |global_curve_| for unit tests.
-  MonotoneCubicSpline GetGlobalCurveForTesting() const;
-
   // Returns |max_training_data_points_| for unit tests.
   size_t GetMaxTrainingDataPointsForTesting() const;
 
   base::TimeDelta GetTrainingDelayForTesting() const;
 
-  // Returns the path that will be used to store curves. It also creates
-  // intermediate directories if they do not exist. Returns an empty path on
+  ModelConfig GetModelConfigForTesting() const;
+
+  // Returns ModelSavingSpec used to store models. It also creates intermediate
+  // directories if they do not exist. The returned paths will be empty on
   // failures.
-  static base::FilePath GetCurvePathFromProfile(const Profile* profile);
+  static ModelSavingSpec GetModelSavingSpecFromProfile(const Profile* profile);
 
  private:
   // ModellerImpl has weak dependencies on all parameters except |trainer|.
   ModellerImpl(const Profile* profile,
                AlsReader* als_reader,
                BrightnessMonitor* brightness_monitor,
+               ModelConfigLoader* model_config_loader,
                ui::UserActivityDetector* user_activity_detector,
                std::unique_ptr<Trainer> trainer,
                scoped_refptr<base::SequencedTaskRunner> task_runner,
                const base::TickClock* tick_clock,
                bool is_testing = false);
 
-  // Updates |model_status_| by checking |als_init_status_| and
-  // |brightness_monitor_status_| and optionally loads a curve.
-  // 1. |model_status_| is |kDisabled| if either |als_init_status_| is not
-  // |kSuccess|, or |brightness_monitor_success_| is false. The modeller will
-  // notify its observers as soon as |model_status_| is |kDisabled|.
-  // 2. If |als_init_status_| is |kSuccess| and |brightness_monitor_success_| is
-  // true, then this method loads a curve from the disk and sets |model_status_|
-  // to |kPersonal|. If no curve is found from the disk a default curve will be
-  // created and |model_status_| is set to |kGlobal|. All observers will be
-  // notified about the status and the curve.
+  // Called to handle a status change in one of the dependencies (ALS,
+  // brightness monitor, model config loader) of the modeller. If all
+  // dependencies are successfully initialized, attempts initialization of
+  // the modeller (curve loading, parameter customization) and notifies
+  // observers about the result.
   void HandleStatusUpdate();
 
-  // Notifies its observers on the status of the model. It will be called either
-  // when HandleStatusUpdate is called and |model_status_| is no longer
-  // |kInitializing|, or when an observer is added to the modeller, and
-  // |model_status_| is not |kInitializing|.
+  // Applies customizations from model configs. Returns whether it is
+  // successful.
+  bool ApplyCustomization();
+
+  // Called as soon as |is_modeller_enabled_| has its value set. It will notify
+  // all observers.
   void OnInitializationComplete();
 
-  // Called when the modeller is initialized. It notifies its observers about
-  // constructed global curve and personal curve (loaded from the disk). Both
-  // curves will be nullopt if model is disabled, and personal curve will be
-  // nullopt if no curve is loaded from the disk.
+  // Notifies a given observer about the state of the modeller. Will provide
+  // either
+  // - no curves (if modeller is disabled),
+  // - just a global curve (if no personal curve is available), or
+  // - both a global and personal curve.
   void NotifyObserverInitStatus(Modeller::Observer& observer);
 
-  // Called after we've attempted to construct a |curve| from data saved on
-  // disk. |curve| will be assigned to |current_curve_| if |curve| is not
-  // nullopt. Otherwise, |current_curve_| will have the same value as
-  // |global_curve_|.
-  void OnCurveLoadedFromDisk(const base::Optional<MonotoneCubicSpline>& curve);
+  // Sets the global and personal curves based on the model read from disk. If
+  // the model is invalid or not based on the current model config, instead
+  // resets the global and personal curves.
+  void OnModelLoadedFromDisk(const Model& model);
 
-  void OnCurveSavedToDisk(bool is_successful);
+  void OnModelSavedToDisk(bool is_successful);
 
   // Called after we've set trainer's initial curves.
-  void OnSetInitialCurves(
-      const base::Optional<MonotoneCubicSpline>& loaded_curve,
-      bool is_personal_curve_valid);
+  void OnSetInitialCurves(bool is_personal_curve_valid);
 
   // Either starts training immediately or delays it for |training_delay_|.
   // Training starts immediately if |training_delay_| is 0 or number of training
@@ -176,12 +202,15 @@ class ModellerImpl : public Modeller,
   // Once user remains idle for |training_delay_|, we start training the model.
   // If this value is 0, we will not need to wait for user to remain inactive.
   // This can be overridden by experiment flag "training_delay_in_seconds".
-  base::TimeDelta training_delay_ = base::TimeDelta::FromSeconds(60);
+  base::TimeDelta training_delay_ = base::TimeDelta::FromSeconds(0);
 
   ScopedObserver<AlsReader, AlsReader::Observer> als_reader_observer_;
 
   ScopedObserver<BrightnessMonitor, BrightnessMonitor::Observer>
       brightness_monitor_observer_;
+
+  ScopedObserver<ModelConfigLoader, ModelConfigLoader::Observer>
+      model_config_loader_observer_;
 
   ScopedObserver<ui::UserActivityDetector, ui::UserActivityObserver>
       user_activity_observer_;
@@ -199,32 +228,37 @@ class ModellerImpl : public Modeller,
   base::Optional<AlsReader::AlsInitStatus> als_init_status_;
   base::Optional<bool> brightness_monitor_success_;
 
+  // |model_config_exists_| will remain nullopt until |OnModelConfigLoaded| is
+  // called. Its value will then be set to true if the input model config exists
+  // (not nullopt), else its value will be false.
+  base::Optional<bool> model_config_exists_;
+  ModelConfig model_config_;
+
   // Whether this modeller has initialized successfully, including connecting
   // to AlsReader, BrightnessMonitor and loading a Trainer.
   // Initially has no value. Guaranteed to have a value after the completion of
-  // |OnCurveLoadedFromDisk|.
+  // |OnModelLoadedFromDisk|.
   base::Optional<bool> is_modeller_enabled_;
 
-  base::FilePath curve_path_;
+  ModelSavingSpec model_saving_spec_;
 
-  // True if a personal curve was successfully loaded from disk and passed to
-  // Trainer and Trainer reported it was valid.
-  bool has_initial_personal_curve_ = false;
+  // Whether the initial global curve is reset to the one constructed from
+  // model config. It is true if there is no saved model loaded from the disk
+  // or if the saved global curve is different from the curve from model config.
+  // If this flag is true, then the global curve is saved to the disk the first
+  // time a personal curve is trained and saved to disk; it will be set to false
+  // after the first saving is done.
+  bool global_curve_reset_ = false;
 
-  // Global curve constructed from predefined params.
-  const MonotoneCubicSpline global_curve_;
+  // |model_| will be set after initialization is complete and updated each time
+  // training is done with a new curve.
+  Model model_;
 
-  // Current personal curve. Initially it could be either the global curve or
-  // loaded curve. After training, it will be updated each time trainer
-  // generates a new curve.
-  base::Optional<MonotoneCubicSpline> current_curve_;
+  // |initial_global_curve_| is constructed from model config.
+  base::Optional<MonotoneCubicSpline> initial_global_curve_;
 
-  // Recent ambient values.
-  std::unique_ptr<AmbientLightSampleBuffer> ambient_light_values_;
-
-  // Whether we calculate average log ALS values. This should be the same as
-  // that used by the adapter.
-  bool average_log_als_ = false;
+  // Recent log ambient values.
+  std::unique_ptr<AmbientLightSampleBuffer> log_als_values_;
 
   std::vector<TrainingDataPoint> data_cache_;
 
@@ -239,6 +273,19 @@ class ModellerImpl : public Modeller,
 
   DISALLOW_COPY_AND_ASSIGN(ModellerImpl);
 };
+
+// Saves |model| to disk at location specified by |model_saving_spec| and
+// returns whether it was successful. This should run in another thread to be
+// non-blocking to the main thread (if |is_testing| is false).
+// Not every components of |model| will be saved:
+// 1. |global_curve| is saved only if |save_global_curve| is true.
+// 2. |personal_curve| is saved only if |save_personal_curve| is true.
+// 3. |iteration_count| is always saved.
+bool SaveModelToDisk(const ModellerImpl::ModelSavingSpec& model_saving_spec,
+                     const Model& model,
+                     bool save_global_curve,
+                     bool save_personal_curve,
+                     bool is_testing);
 
 }  // namespace auto_screen_brightness
 }  // namespace power

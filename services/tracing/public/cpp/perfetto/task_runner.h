@@ -5,9 +5,13 @@
 #ifndef SERVICES_TRACING_PUBLIC_CPP_PERFETTO_TASK_RUNNER_H_
 #define SERVICES_TRACING_PUBLIC_CPP_PERFETTO_TASK_RUNNER_H_
 
+#include <list>
+
 #include "base/component_export.h"
 #include "base/macros.h"
 #include "base/sequenced_task_runner.h"
+#include "base/synchronization/lock.h"
+#include "base/timer/timer.h"
 #include "services/tracing/public/mojom/perfetto_service.mojom.h"
 #include "third_party/perfetto/include/perfetto/base/task_runner.h"
 
@@ -26,12 +30,20 @@ class COMPONENT_EXPORT(TRACING_CPP) PerfettoTaskRunner
   // the Perfetto implementation itself.
   void PostTask(std::function<void()> task) override;
   void PostDelayedTask(std::function<void()> task, uint32_t delay_ms) override;
+  // This in Chrome would more correctly be called "RunsTasksInCurrentSequence".
+  // Perfetto calls this to determine wheather CommitData requests should be
+  // flushed synchronously. RunsTasksInCurrentSequence is sufficient for that
+  // use case.
+  bool RunsTasksOnCurrentThread() const override;
+
+  void SetTaskRunner(scoped_refptr<base::SequencedTaskRunner> task_runner);
+  scoped_refptr<base::SequencedTaskRunner> GetOrCreateTaskRunner();
+  bool HasTaskRunner() const { return !!task_runner_; }
 
   // Not used in Chrome.
   void AddFileDescriptorWatch(int fd, std::function<void()>) override;
   void RemoveFileDescriptorWatch(int fd) override;
 
-  base::SequencedTaskRunner* task_runner() { return task_runner_.get(); }
 
   // Tests will shut down all task runners in between runs, so we need
   // to re-create any static instances on each SetUp();
@@ -39,6 +51,8 @@ class COMPONENT_EXPORT(TRACING_CPP) PerfettoTaskRunner
       scoped_refptr<base::SequencedTaskRunner> task_runner);
 
  private:
+  void OnDeferredTasksDrainTimer();
+
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(PerfettoTaskRunner);

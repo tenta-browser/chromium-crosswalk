@@ -44,7 +44,7 @@
 #include "third_party/blink/renderer/platform/heap/marking_visitor.h"
 #include "third_party/blink/renderer/platform/heap/page_memory.h"
 #include "third_party/blink/renderer/platform/heap/page_pool.h"
-#include "third_party/blink/renderer/platform/heap/thread_state.h"
+#include "third_party/blink/renderer/platform/heap/thread_state_scopes.h"
 #include "third_party/blink/renderer/platform/histogram.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/web_memory_allocator_dump.h"
@@ -97,11 +97,6 @@ void ThreadHeap::IncreaseAllocatedObjectSize(size_t bytes) {
 void ThreadHeap::DecreaseAllocatedObjectSize(size_t bytes) {
   stats_collector()->DecreaseAllocatedObjectSize(bytes);
   ProcessHeap::DecreaseTotalAllocatedObjectSize(bytes);
-}
-
-void ThreadHeap::IncreaseMarkedObjectSize(size_t bytes) {
-  stats_collector()->IncreaseMarkedObjectSize(bytes);
-  ProcessHeap::IncreaseTotalMarkedObjectSize(bytes);
 }
 
 void ThreadHeap::IncreaseAllocatedSpace(size_t bytes) {
@@ -177,12 +172,8 @@ void ThreadHeap::DecommitCallbackStacks() {
     NotFullyConstructedItem item;
     while (not_fully_constructed_worklist_->Pop(WorklistTaskId::MainThread,
                                                 &item)) {
-      BasePage* const page = PageFromObject(item);
-      HeapObjectHeader* const header =
-          page->IsLargeObjectPage()
-              ? static_cast<LargeObjectPage*>(page)->ObjectHeader()
-              : static_cast<NormalPage*>(page)->FindHeaderFromAddress(
-                    reinterpret_cast<Address>(const_cast<void*>(item)));
+      HeapObjectHeader* const header = HeapObjectHeader::FromInnerAddress(
+          reinterpret_cast<Address>(const_cast<void*>(item)));
       DCHECK(header->IsMarked());
     }
 #else
@@ -194,7 +185,7 @@ void ThreadHeap::DecommitCallbackStacks() {
 
 HeapCompact* ThreadHeap::Compaction() {
   if (!compaction_)
-    compaction_ = HeapCompact::Create(this);
+    compaction_ = std::make_unique<HeapCompact>(this);
   return compaction_.get();
 }
 
@@ -357,6 +348,11 @@ size_t ThreadHeap::ObjectPayloadSizeForTesting() {
   return object_payload_size;
 }
 
+void ThreadHeap::ResetAllocationPointForTesting() {
+  for (int i = 0; i < BlinkGC::kNumberOfArenas; ++i)
+    arenas_[i]->ResetAllocationPointForTesting();
+}
+
 BasePage* ThreadHeap::LookupPageForAddress(Address address) {
   if (PageMemoryRegion* region = region_tree_->Lookup(address)) {
     return region->PageFromAddress(address);
@@ -392,14 +388,10 @@ void ThreadHeap::Compact() {
 
   // Compact the hash table backing store arena first, it usually has
   // higher fragmentation and is larger.
-  //
-  // TODO: implement bail out wrt any overall deadline, not compacting
-  // the remaining arenas if the time budget has been exceeded.
-  Compaction()->StartThreadCompaction();
   for (int i = BlinkGC::kHashTableArenaIndex; i >= BlinkGC::kVector1ArenaIndex;
        --i)
     static_cast<NormalPageArena*>(arenas_[i])->SweepAndCompact();
-  Compaction()->FinishThreadCompaction();
+  Compaction()->Finish();
 }
 
 void ThreadHeap::PrepareForSweep() {
@@ -517,8 +509,7 @@ void ThreadHeap::TakeSnapshot(SnapshotType type) {
   // gcInfoIndex.
   ThreadState::GCSnapshotInfo info(GCInfoTable::Get().GcInfoIndex() + 1);
   String thread_dump_name =
-      String::Format("blink_gc/thread_%lu",
-                     static_cast<unsigned long>(thread_state_->ThreadId()));
+      String("blink_gc/thread_") + String::Number(thread_state_->ThreadId());
   const String heaps_dump_name = thread_dump_name + "/heaps";
   const String classes_dump_name = thread_dump_name + "/classes";
 
@@ -604,35 +595,6 @@ bool ThreadHeap::AdvanceLazySweep(TimeTicks deadline) {
     }
   }
   return true;
-}
-
-void ThreadHeap::WriteBarrier(void* value) {
-  DCHECK(thread_state_->IsIncrementalMarking());
-  DCHECK(value);
-  // '-1' is used to indicate deleted values.
-  DCHECK_NE(value, reinterpret_cast<void*>(-1));
-
-  BasePage* const page = PageFromObject(value);
-  HeapObjectHeader* const header =
-      page->IsLargeObjectPage()
-          ? static_cast<LargeObjectPage*>(page)->ObjectHeader()
-          : static_cast<NormalPage*>(page)->FindHeaderFromAddress(
-                reinterpret_cast<Address>(const_cast<void*>(value)));
-  if (header->IsMarked())
-    return;
-
-  if (header->IsInConstruction()) {
-    not_fully_constructed_worklist_->Push(WorklistTaskId::MainThread,
-                                          header->Payload());
-    return;
-  }
-
-  // Mark and push trace callback.
-  header->Mark();
-  marking_worklist_->Push(
-      WorklistTaskId::MainThread,
-      {header->Payload(),
-       GCInfoTable::Get().GCInfoFromIndex(header->GcInfoIndex())->trace_});
 }
 
 ThreadHeap* ThreadHeap::main_thread_heap_ = nullptr;

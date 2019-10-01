@@ -7,9 +7,9 @@
 #include <algorithm>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/task/post_task.h"
-#include "base/task/task_scheduler/task_scheduler.h"
 #include "base/task/task_traits.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -38,12 +38,12 @@ FileStreamForwarder::FileStreamForwarder(
       remaining_size_(size),
       fd_dest_(std::move(fd_dest)),
       callback_(std::move(callback)),
-      task_runner_(base::TaskScheduler::GetInstance()
-                       ->CreateSequencedTaskRunnerWithTraits(
-                           // It's safe to shutdown without waiting for the
-                           // completion of tasks running with this task runner.
-                           {base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN,
-                            base::MayBlock()})),
+      task_runner_(
+          base::CreateSequencedTaskRunnerWithTraits(
+              // It's safe to shutdown without waiting for the
+              // completion of tasks running with this task runner.
+              {base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN,
+               base::MayBlock()})),
       buf_(base::MakeRefCounted<net::IOBufferWithSize>(kBufSize)),
       weak_ptr_factory_(this) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);

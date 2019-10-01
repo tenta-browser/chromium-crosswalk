@@ -3,7 +3,9 @@
 function registerPassthroughAnimator() {
   return runInAnimationWorklet(`
     registerAnimator('passthrough', class {
-      animate(currentTime, effect) { effect.localTime = currentTime; }
+      animate(currentTime, effect) {
+        effect.localTime = currentTime;
+      }
     });
   `);
 }
@@ -29,4 +31,24 @@ function waitForAsyncAnimationFrames(count) {
   // TODO(majidvp): re-evaluate this choice once other browsers have implemented
   // AnimationWorklet.
   return waitForAnimationFrames(count + 1);
+}
+
+async function waitForAnimationFrameWithCondition(condition) {
+  do {
+    await new Promise(window.requestAnimationFrame);
+  } while (!condition())
+}
+
+async function waitForDocumentTimelineAdvance() {
+  const timeAtStart = document.timeline.currentTime;
+  do {
+    await new Promise(window.requestAnimationFrame);
+  } while (timeAtStart === document.timeline.currentTime)
+}
+
+// Wait until animation's effect has a non-null localTime.
+async function waitForNotNullLocalTime(animation) {
+  await waitForAnimationFrameWithCondition(_ => {
+    return animation.effect.getComputedTiming().localTime !== null;
+  });
 }

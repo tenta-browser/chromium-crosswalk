@@ -57,7 +57,7 @@ Per informazioni sulla privacy, leggi le Norme sulla privacy di Google (http://g
 <translation id="2220529011494928058">Segnala un problema</translation>
 <translation id="2221097377466213233">Utilizza il tasto Ctrl di destra e il tasto Windows (⌘ su Mac)</translation>
 <translation id="2235518894410572517">Condividi questo computer per consentire la visione e il controllo a un altro utente.</translation>
-<translation id="2246783206985865117">Questa impostazione è gestita dalle norme sui domini.</translation>
+<translation id="2246783206985865117">Questa impostazione è gestita dai criteri del dominio.</translation>
 <translation id="2256115617011615191">Riavvia adesso</translation>
 <translation id="225614027745146050">Benvenuto</translation>
 <translation id="228809120910082333">Conferma il tuo account e il PIN per consentire l'accesso tramite Chromoting.</translation>
@@ -127,8 +127,6 @@ Per informazioni sulla privacy, leggi le Norme sulla privacy di Google (http://g
 <translation id="3695446226812920698">Scopri come</translation>
 <translation id="3718805989288361841">Si è verificato un errore con le impostazioni delle norme per Chrome Remote Desktop. Contatta l'amministratore di sistema per ricevere assistenza.</translation>
 <translation id="3776024066357219166">La sessione Chrome Remote Desktop è terminata.</translation>
-<translation id="3846148461359626420">• Panoramica e zoom migliorati su iPhone X.
-• Stabilità migliorata e correzioni di bug.</translation>
 <translation id="3870154837782082782">Google Inc.</translation>
 <translation id="3884839335308961732">Conferma il tuo account e il PIN per consentire l'accesso tramite Chrome Remote Desktop.</translation>
 <translation id="3897092660631435901">Menu</translation>
@@ -140,6 +138,7 @@ Per informazioni sulla privacy, leggi le Norme sulla privacy di Google (http://g
 <translation id="3989511127559254552">Per continuare devi concedere autorizzazioni di accesso esteso per il tuo computer. È necessario eseguire questa operazione solo una volta.</translation>
 <translation id="4006787130661126000">Per accedere a questo computer utilizzando Chrome Remote Desktop devi attivare le connessioni remote.</translation>
 <translation id="405887016757208221">Impossibile inizializzare la sessione sul computer remoto. Se il problema persiste, riprova a configurare l'host.</translation>
+<translation id="4060747889721220580">Scarica file</translation>
 <translation id="4068946408131579958">Tutte le connessioni</translation>
 <translation id="409800995205263688">NOTA. Le impostazioni dei criteri consentono connessioni solo tra computer all'interno della tua rete.</translation>
 <translation id="4126409073460786861">Una volta completata la configurazione, per accedere al computer dovrai scegliere il dispositivo e inserire il codice PIN.</translation>
@@ -154,6 +153,7 @@ Per informazioni sulla privacy, leggi le Norme sulla privacy di Google (http://g
 <translation id="4249741460382919890">Correzioni generali e miglioramenti di stabilità.</translation>
 <translation id="4277463233460010382">Questo computer è configurato per consentire la connessione di uno o più client senza l'inserimento di un codice PIN.</translation>
 <translation id="4277736576214464567">Il codice di accesso non è valido. Riprova.</translation>
+<translation id="4281844954008187215">Termini di servizio</translation>
 <translation id="4361728918881830843">Per attivare le connessioni remote su un altro computer, installa Chrome Remote Desktop sul computer e fai clic su "<ph name="BUTTON_NAME" />".</translation>
 <translation id="4394049700291259645">Disabilita</translation>
 <translation id="4405930547258349619">Core Library</translation>
@@ -286,6 +286,7 @@ Per attivare questa funzionalità, seleziona "<ph name="BUTTON_NAME" />" per vis
 <translation id="7116737094673640201">Benvenuto in Chrome Remote Desktop</translation>
 <translation id="7144878232160441200">Riprova</translation>
 <translation id="7149517134817561223">Applicazione per fornire comandi all'host Chrome Remote Desktop.</translation>
+<translation id="7213491505512310433">Stabilità migliorata e correzioni di bug.</translation>
 <translation id="7215059001581613786">Inserisci un PIN formato da almeno sei cifre.</translation>
 <translation id="7312846573060934304">L'host è offline.</translation>
 <translation id="7319983568955948908">Interrompi condivisione</translation>
@@ -316,7 +317,7 @@ Per attivare questa funzionalità, seleziona "<ph name="BUTTON_NAME" />" per vis
 <translation id="8041721485428375115">Se scarichi il programma di installazione di Chrome Remote Desktop Host, accetti i <ph name="LINK_BEGIN" />Termini di servizio<ph name="LINK_END" /> di Google.</translation>
 <translation id="8060029310790625334">Centro assistenza</translation>
 <translation id="806699900641041263">Connessione a <ph name="HOSTNAME" /> in corso</translation>
-<translation id="8073845705237259513">Per poter utilizzare Chrome Remote Desktop devi aggiungere un account Google sul dispositivo.</translation>
+<translation id="8073845705237259513">Per poter utilizzare Chrome Remote Desktop devi aggiungere un Account Google sul dispositivo.</translation>
 <translation id="80739703311984697">L'host remoto richiede l'autenticazione su un sito web di terze parti. Per continuare, devi concedere a Chromoting ulteriori autorizzazioni per accedere a questo indirizzo:</translation>
 <translation id="809687642899217504">I miei computer</translation>
 <translation id="811307782653349804">Accedi al tuo computer ovunque tu sia.</translation>
@@ -330,7 +331,7 @@ Per attivare questa funzionalità, seleziona "<ph name="BUTTON_NAME" />" per vis
 <translation id="8355326866731426344">Questo codice di accesso scadrà tra <ph name="TIMEOUT" /></translation>
 <translation id="8355485110405946777">Includi log dell'applicazione per aiutarci a risolvere il tuo problema (i log potrebbero includere informazioni private).</translation>
 <translation id="837021510621780684">Da questo computer</translation>
-<translation id="8383794970363966105">Per poter utilizzare Chromoting devi aggiungere un account Google sul dispositivo.</translation>
+<translation id="8383794970363966105">Per poter utilizzare Chromoting devi aggiungere un Account Google sul dispositivo.</translation>
 <translation id="8386846956409881180">L'host è stato configurato con credenziali OAuth non valide.</translation>
 <translation id="8428213095426709021">Impostazioni</translation>
 <translation id="8445362773033888690">Visualizza nel Google Play Store</translation>
@@ -339,13 +340,12 @@ Per attivare questa funzionalità, seleziona "<ph name="BUTTON_NAME" />" per vis
 <translation id="8525306231823319788">Schermo intero</translation>
 <translation id="8548209692293300397">Hai già eseguito l'accesso come <ph name="USER_NAME" /> (<ph name="USER_EMAIL" />). Per accedere ai tuoi computer nell'account in questione, <ph name="LINK_BEGIN" />accedi a Google Chrome<ph name="LINK_END" /> con tale account e installa di nuovo Chrome Remote Desktop.</translation>
 <translation id="8642984861538780905">Media</translation>
-<translation id="8705151241155781642">• È stato aggiunto il supporto di Android 9.0 Pie.
-• Supporto della regolazione della risoluzione del desktop remoto in base allo schermo del dispositivo Android.</translation>
 <translation id="8712909229180978490">Non riesco a trovare i miei file salvati online su Google Drive.</translation>
 <translation id="8743328882720071828">Vuoi consentire a <ph name="CLIENT_USERNAME" /> di visualizzare e controllare il tuo computer?</translation>
 <translation id="8747048596626351634">La sessione si è arrestata in modo anomalo o non si è avviata. Se sul computer remoto esiste la sessione ~/.chrome-remote-desktop-session, assicurati che avvii un processo in primo piano con esecuzione prolungata come un ambiente desktop o gestione finestre.</translation>
 <translation id="8759753423332885148">Ulteriori informazioni.</translation>
 <translation id="8791202241915690908">Scarica il programma di installazione di Chromoting Host</translation>
+<translation id="8804164990146287819">Norme sulla privacy</translation>
 <translation id="894763922177556086">Buona</translation>
 <translation id="895780780740011433">Per Windows 7 e versioni successive</translation>
 <translation id="897805526397249209">Per attivare connessioni remote su un altro computer, installa Chromoting sul computer e fai clic su "<ph name="BUTTON_NAME" />".</translation>

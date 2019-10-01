@@ -13,8 +13,8 @@
 #include "chrome/browser/sync/test/integration/await_match_status_change_checker.h"
 #include "chrome/browser/sync/test/integration/multi_client_status_change_checker.h"
 #include "chrome/browser/sync/test/integration/single_client_status_change_checker.h"
-#include "components/sync/base/cryptographer.h"
 #include "components/sync/engine_impl/loopback_server/loopback_server_entity.h"
+#include "components/sync/nigori/cryptographer.h"
 #include "components/sync/test/fake_server/fake_server.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "url/gurl.h"
@@ -290,7 +290,7 @@ class ServerBookmarksEqualityChecker : public SingleClientStatusChangeChecker {
   // the server-side data should be encrypted, and the provided cryptographer
   // will be used to decrypt the data prior to checking for equality.
   ServerBookmarksEqualityChecker(
-      browser_sync::ProfileSyncService* service,
+      syncer::ProfileSyncService* service,
       fake_server::FakeServer* fake_server,
       const std::vector<ExpectedBookmark>& expected_bookmarks,
       syncer::Cryptographer* cryptographer);

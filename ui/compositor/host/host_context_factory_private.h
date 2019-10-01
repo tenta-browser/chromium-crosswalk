@@ -84,6 +84,9 @@ class HostContextFactoryPrivate : public ContextFactoryPrivate {
                                const viz::BeginFrameArgs& args) override;
   void SetOutputIsSecure(Compositor* compositor, bool secure) override;
   viz::FrameSinkManagerImpl* GetFrameSinkManager() override;
+  void AddVSyncParameterObserver(
+      Compositor* compositor,
+      viz::mojom::VSyncParameterObserverPtr observer) override;
 
  private:
   struct CompositorData {
@@ -114,7 +117,6 @@ class HostContextFactoryPrivate : public ContextFactoryPrivate {
 
   viz::FrameSinkIdAllocator frame_sink_id_allocator_;
   viz::HostFrameSinkManager* host_frame_sink_manager_;
-  const viz::RendererSettings renderer_settings_;
 
   bool is_gpu_compositing_disabled_ = false;
 

@@ -8,6 +8,7 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_path_watcher.h"
@@ -23,7 +24,7 @@
 #include "base/sequenced_task_runner.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task/post_task.h"
-#include "base/task/task_scheduler/task_scheduler.h"
+#include "base/task/thread_pool/thread_pool.h"
 #include "base/test/bind_test_util.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/threading/thread_restrictions.h"
@@ -217,7 +218,7 @@ void SpinThreads() {
 
   // This prevents HistoryBackend from accessing its databases after the
   // directory that contains them has been deleted.
-  base::TaskScheduler::GetInstance()->FlushForTesting();
+  base::ThreadPoolInstance::Get()->FlushForTesting();
 }
 
 }  // namespace
@@ -248,8 +249,8 @@ class ProfileBrowserTest : public InProcessBrowserTest {
   std::unique_ptr<Profile> CreateProfile(const base::FilePath& path,
                                          Profile::Delegate* delegate,
                                          Profile::CreateMode create_mode) {
-    std::unique_ptr<Profile> profile(
-        Profile::CreateProfile(path, delegate, create_mode));
+    std::unique_ptr<Profile> profile =
+        Profile::CreateProfile(path, delegate, create_mode);
     EXPECT_TRUE(profile.get());
 
     // Store the Profile's IO task runner so we can wind it down.
@@ -345,13 +346,6 @@ IN_PROC_BROWSER_TEST_F(ProfileBrowserTest, CreateNewProfileSynchronous) {
         temp_dir.GetPath(), &delegate, Profile::CREATE_MODE_SYNCHRONOUS));
     CheckChromeVersion(profile.get(), true);
 
-#if defined(OS_CHROMEOS)
-    // Make sure session is marked as initialized.
-    user_manager::User* user =
-        chromeos::ProfileHelper::Get()->GetUserByProfile(profile.get());
-    EXPECT_TRUE(user->profile_ever_initialized());
-#endif
-
     // Creating a profile causes an implicit connection attempt to a Mojo
     // service, which occurs as part of a new task. Before deleting |profile|,
     // ensure this task runs to prevent a crash.
@@ -409,12 +403,6 @@ IN_PROC_BROWSER_TEST_F(ProfileBrowserTest,
     // Wait for the profile to be created.
     observer.Wait();
     CheckChromeVersion(profile.get(), true);
-#if defined(OS_CHROMEOS)
-    // Make sure session is marked as initialized.
-    user_manager::User* user =
-        chromeos::ProfileHelper::Get()->GetUserByProfile(profile.get());
-    EXPECT_TRUE(user->profile_ever_initialized());
-#endif
   }
 
   FlushIoTaskRunnerAndSpinThreads();
@@ -561,7 +549,7 @@ std::string GetExitTypePreferenceFromDisk(Profile* profile) {
   if (!base::ReadFileToString(prefs_path, &prefs))
     return std::string();
 
-  std::unique_ptr<base::Value> value = base::JSONReader::Read(prefs);
+  std::unique_ptr<base::Value> value = base::JSONReader::ReadDeprecated(prefs);
   if (!value)
     return std::string();
 

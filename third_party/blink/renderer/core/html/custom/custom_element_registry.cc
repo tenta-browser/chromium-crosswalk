@@ -75,23 +75,17 @@ bool ThrowIfValidName(const AtomicString& name,
 
 }  // namespace
 
-CustomElementRegistry* CustomElementRegistry::Create(
-    const LocalDOMWindow* owner) {
-  CustomElementRegistry* registry =
-      MakeGarbageCollected<CustomElementRegistry>(owner);
-  Document* document = owner->document();
-  if (V0CustomElementRegistrationContext* v0 =
-          document ? document->RegistrationContext() : nullptr)
-    registry->Entangle(v0);
-  return registry;
-}
-
 CustomElementRegistry::CustomElementRegistry(const LocalDOMWindow* owner)
     : element_definition_is_running_(false),
       owner_(owner),
       v0_(MakeGarbageCollected<V0RegistrySet>()),
       upgrade_candidates_(MakeGarbageCollected<UpgradeCandidateMap>()),
-      reaction_stack_(&CustomElementReactionStack::Current()) {}
+      reaction_stack_(&CustomElementReactionStack::Current()) {
+  Document* document = owner->document();
+  if (V0CustomElementRegistrationContext* v0 =
+          document ? document->RegistrationContext() : nullptr)
+    Entangle(v0);
+}
 
 void CustomElementRegistry::Trace(Visitor* visitor) {
   visitor->Trace(definitions_);
@@ -133,7 +127,7 @@ CustomElementDefinition* CustomElementRegistry::DefineInternal(
   if (NameIsDefined(name) || V0NameIsDefined(name)) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNotSupportedError,
-        "this name has already been used with this registry");
+        "the name \"" + name + "\" has already been used with this registry");
     return nullptr;
   }
 
@@ -233,7 +227,7 @@ CustomElementDefinition* CustomElementRegistry::DefineInternal(
   return definition;
 }
 
-// https://html.spec.whatwg.org/multipage/scripting.html#dom-customelementsregistry-get
+// https://html.spec.whatwg.org/C/#dom-customelementsregistry-get
 ScriptValue CustomElementRegistry::get(const AtomicString& name) {
   CustomElementDefinition* definition = DefinitionForName(name);
   if (!definition) {
@@ -244,7 +238,7 @@ ScriptValue CustomElementRegistry::get(const AtomicString& name) {
   return definition->GetConstructorForScript();
 }
 
-// https://html.spec.whatwg.org/multipage/scripting.html#look-up-a-custom-element-definition
+// https://html.spec.whatwg.org/C/#look-up-a-custom-element-definition
 // At this point, what the spec calls 'is' is 'name' from desc
 CustomElementDefinition* CustomElementRegistry::DefinitionFor(
     const CustomElementDescriptor& desc) const {
@@ -310,7 +304,7 @@ void CustomElementRegistry::AddCandidate(Element& candidate) {
   set->insert(&candidate);
 }
 
-// https://html.spec.whatwg.org/multipage/scripting.html#dom-customelementsregistry-whendefined
+// https://html.spec.whatwg.org/C/#dom-customelementsregistry-whendefined
 ScriptPromise CustomElementRegistry::whenDefined(
     ScriptState* script_state,
     const AtomicString& name,
@@ -323,8 +317,8 @@ ScriptPromise CustomElementRegistry::whenDefined(
   ScriptPromiseResolver* resolver = when_defined_promise_map_.at(name);
   if (resolver)
     return resolver->Promise();
-  ScriptPromiseResolver* new_resolver =
-      ScriptPromiseResolver::Create(script_state);
+  auto* new_resolver =
+      MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   when_defined_promise_map_.insert(name, new_resolver);
   return new_resolver->Promise();
 }
@@ -351,7 +345,7 @@ void CustomElementRegistry::CollectCandidates(
   sorter.Sorted(elements, document);
 }
 
-// https://html.spec.whatwg.org/multipage/custom-elements.html#dom-customelementregistry-upgrade
+// https://html.spec.whatwg.org/C/#dom-customelementregistry-upgrade
 void CustomElementRegistry::upgrade(Node* root) {
   DCHECK(root);
 

@@ -4,13 +4,11 @@
 package org.chromium.chrome.browser.preferences;
 
 import android.content.Context;
-import android.graphics.PorterDuff;
-import android.graphics.drawable.Drawable;
 import android.preference.Preference;
 import android.util.AttributeSet;
 
-import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.chrome.R;
+import org.chromium.ui.UiUtils;
 
 /**
  * A preference that displays the current sync account and status (enabled, error, needs passphrase,
@@ -29,16 +27,11 @@ public class SyncPreference extends Preference {
         setSummary(SyncPreferenceUtils.getSyncStatusSummary(getContext()));
 
         if (SyncPreferenceUtils.showSyncErrorIcon(getContext())) {
-            setIcon(ApiCompatibilityUtils.getDrawable(
-                    getContext().getResources(), R.drawable.sync_error));
+            setIcon(UiUtils.getTintedDrawable(
+                    getContext(), R.drawable.sync_error, R.color.default_red));
         } else {
-            // Sets preference icon and tints it to blue.
-            Drawable icon = ApiCompatibilityUtils.getDrawable(
-                    getContext().getResources(), R.drawable.permission_background_sync);
-            icon.setColorFilter(ApiCompatibilityUtils.getColor(getContext().getResources(),
-                                        R.color.default_icon_color_blue),
-                    PorterDuff.Mode.SRC_IN);
-            setIcon(icon);
+            setIcon(UiUtils.getTintedDrawable(getContext(), R.drawable.permission_background_sync,
+                    R.color.default_icon_color_blue));
         }
     }
 }

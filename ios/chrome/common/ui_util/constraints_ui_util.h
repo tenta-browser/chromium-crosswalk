@@ -21,13 +21,13 @@ constexpr LayoutSides operator|(LayoutSides lhs, LayoutSides rhs) {
   return static_cast<LayoutSides>(
       static_cast<std::underlying_type<LayoutSides>::type>(lhs) |
       static_cast<std::underlying_type<LayoutSides>::type>(rhs));
-};
+}
 
 constexpr LayoutSides operator&(LayoutSides lhs, LayoutSides rhs) {
   return static_cast<LayoutSides>(
       static_cast<std::underlying_type<LayoutSides>::type>(lhs) &
       static_cast<std::underlying_type<LayoutSides>::type>(rhs));
-};
+}
 
 // Returns whether the |flag| is set in |mask|.
 constexpr bool IsLayoutSidesMaskSet(LayoutSides mask, LayoutSides flag) {
@@ -135,6 +135,12 @@ void AddSameCenterYConstraint(UIView* unused_parentView,
 // trailing, top and bottom anchors.
 void AddSameConstraints(id<LayoutGuideProvider> view1,
                         id<LayoutGuideProvider> view2);
+
+// Constraints all sides of |innerView| and |outerView| together, with
+// |innerView| inset by |insets|.
+void AddSameConstraintsWithInsets(id<LayoutGuideProvider> innerView,
+                                  id<LayoutGuideProvider> outerView,
+                                  ChromeDirectionalEdgeInsets insets);
 
 // Adds constraints to make |innerView| leading, trailing, top and bottom
 // anchors equals to |outerView| safe area (or view bounds) anchors.

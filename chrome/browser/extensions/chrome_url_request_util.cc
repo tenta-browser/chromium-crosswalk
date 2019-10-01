@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/memory/weak_ptr.h"
 #include "base/path_service.h"
@@ -32,6 +33,7 @@
 #include "net/http/http_response_info.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_simple_job.h"
+#include "third_party/zlib/google/compression_utils.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/template_expressions.h"
 
@@ -65,14 +67,29 @@ scoped_refptr<base::RefCountedMemory> GetResource(
                 ->GetTemplateReplacementsForExtension(extension_id)
           : nullptr;
 
-  if (!bytes->size() || !replacements) {
+  bool is_gzipped = rb.IsGzipped(resource_id);
+  if (!bytes->size() || (!replacements && !is_gzipped)) {
     return bytes;
   }
 
   base::StringPiece input(reinterpret_cast<const char*>(bytes->front()),
                           bytes->size());
 
-  std::string temp_str = ui::ReplaceTemplateExpressions(input, *replacements);
+  std::string temp_str;
+
+  base::StringPiece source = input;
+  if (is_gzipped) {
+    temp_str.resize(compression::GetUncompressedSize(input));
+    source = temp_str;
+    CHECK(compression::GzipUncompress(input, source));
+  }
+
+  if (replacements) {
+    temp_str = ui::ReplaceTemplateExpressions(source, *replacements);
+  }
+
+  DCHECK(!temp_str.empty());
+
   return base::RefCountedString::TakeString(&temp_str);
 }
 
@@ -132,13 +149,14 @@ class URLRequestResourceBundleJob : public net::URLRequestSimpleJob {
                       std::string* read_mime_type,
                       net::CompletionOnceCallback callback,
                       bool read_result) {
-    response_info_.headers->AddHeader(
-        base::StringPrintf("%s: %s", net::HttpRequestHeaders::kContentType,
-                           read_mime_type->c_str()));
+    if (read_result) {
+      response_info_.headers->AddHeader(
+          base::StringPrintf("%s: %s", net::HttpRequestHeaders::kContentType,
+                             read_mime_type->c_str()));
+    }
     *out_mime_type = *read_mime_type;
     DetermineCharset(*read_mime_type, data.get(), charset);
-    int result = read_result ? net::OK : net::ERR_INVALID_URL;
-    std::move(callback).Run(result);
+    std::move(callback).Run(net::OK);
   }
 
   // We need the filename of the resource to determine the mime type.
@@ -221,10 +239,6 @@ class ResourceBundleFileLoader : public network::mojom::URLLoader {
   void OnMimeTypeRead(scoped_refptr<base::RefCountedMemory> data,
                       std::string* read_mime_type,
                       bool read_result) {
-    if (!read_result) {
-      client_->OnComplete(network::URLLoaderCompletionStatus(net::ERR_FAILED));
-      return;
-    }
     network::ResourceResponseHead head;
     head.request_start = base::TimeTicks::Now();
     head.response_start = base::TimeTicks::Now();
@@ -344,16 +358,13 @@ net::URLRequestJob* MaybeCreateURLRequestResourceBundleJob(
     int resource_id = 0;
     if (ExtensionsBrowserClient::Get()
             ->GetComponentExtensionResourceManager()
-            ->IsComponentExtensionResource(
-                directory_path, request_path, &resource_id)) {
+            ->IsComponentExtensionResource(directory_path, request_path,
+                                           &resource_id)) {
       relative_path = relative_path.Append(request_path);
       relative_path = relative_path.NormalizePathSeparators();
-      return new URLRequestResourceBundleJob(request,
-                                             network_delegate,
-                                             relative_path,
-                                             resource_id,
-                                             content_security_policy,
-                                             send_cors_header);
+      return new URLRequestResourceBundleJob(
+          request, network_delegate, relative_path, resource_id,
+          content_security_policy, send_cors_header);
     }
   }
   return NULL;

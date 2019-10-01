@@ -22,10 +22,10 @@
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/test_browser_window_aura.h"
 #include "chrome/test/base/testing_profile.h"
-#include "chromeos/dbus/fake_power_manager_client.h"
+#include "chromeos/dbus/power/fake_power_manager_client.h"
+#include "chromeos/dbus/power/power_manager_client.h"
 #include "chromeos/dbus/power_manager/backlight.pb.h"
 #include "chromeos/dbus/power_manager/power_supply_properties.pb.h"
-#include "chromeos/dbus/power_manager_client.h"
 #include "components/ukm/content/source_url_recorder.h"
 #include "content/public/test/web_contents_tester.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
@@ -84,25 +84,35 @@ class AdaptiveScreenBrightnessManagerTest
   AdaptiveScreenBrightnessManagerTest()
       : ChromeRenderViewHostTestHarness(
             base::test::ScopedTaskEnvironment::MainThreadType::UI_MOCK_TIME,
-            base::test::ScopedTaskEnvironment::ExecutionMode::QUEUED) {
+            base::test::ScopedTaskEnvironment::ThreadPoolExecutionMode::
+                QUEUED) {}
+
+  ~AdaptiveScreenBrightnessManagerTest() override = default;
+
+  void SetUp() override {
+    ChromeRenderViewHostTestHarness::SetUp();
+    PowerManagerClient::InitializeFake();
     auto logger = std::make_unique<TestingAdaptiveScreenBrightnessUkmLogger>();
     ukm_logger_ = logger.get();
 
-    fake_power_manager_client_.Init(nullptr);
     viz::mojom::VideoDetectorObserverPtr observer;
     auto periodic_timer = std::make_unique<base::RepeatingTimer>();
     periodic_timer->SetTaskRunner(thread_bundle()->GetMainThreadTaskRunner());
     screen_brightness_manager_ =
         std::make_unique<AdaptiveScreenBrightnessManager>(
             std::move(logger), &user_activity_detector_,
-            &fake_power_manager_client_, nullptr, nullptr,
+            FakePowerManagerClient::Get(), nullptr, nullptr,
             mojo::MakeRequest(&observer), std::move(periodic_timer),
             const_cast<base::Clock*>(thread_bundle()->GetMockClock()),
             std::make_unique<FakeBootClock>(thread_bundle(),
                                             base::TimeDelta::FromSeconds(10)));
   }
 
-  ~AdaptiveScreenBrightnessManagerTest() override = default;
+  void TearDown() override {
+    screen_brightness_manager_.reset();
+    PowerManagerClient::Shutdown();
+    ChromeRenderViewHostTestHarness::TearDown();
+  }
 
  protected:
   TestingAdaptiveScreenBrightnessUkmLogger* ukm_logger() { return ukm_logger_; }
@@ -117,17 +127,17 @@ class AdaptiveScreenBrightnessManagerTest
     power_manager::PowerSupplyProperties proto;
     proto.set_external_power(power);
     proto.set_battery_percent(battery_percent);
-    fake_power_manager_client_.UpdatePowerProperties(proto);
+    FakePowerManagerClient::Get()->UpdatePowerProperties(proto);
   }
 
-  void ReportLidEvent(const chromeos::PowerManagerClient::LidState state) {
-    fake_power_manager_client_.SetLidState(state, base::TimeTicks::UnixEpoch());
+  void ReportLidEvent(const PowerManagerClient::LidState state) {
+    FakePowerManagerClient::Get()->SetLidState(state,
+                                               base::TimeTicks::UnixEpoch());
   }
 
-  void ReportTabletModeEvent(
-      const chromeos::PowerManagerClient::TabletMode mode) {
-    fake_power_manager_client_.SetTabletMode(mode,
-                                             base::TimeTicks::UnixEpoch());
+  void ReportTabletModeEvent(const PowerManagerClient::TabletMode mode) {
+    FakePowerManagerClient::Get()->SetTabletMode(mode,
+                                                 base::TimeTicks::UnixEpoch());
   }
 
   void ReportBrightnessChangeEvent(
@@ -199,7 +209,7 @@ class AdaptiveScreenBrightnessManagerTest
     content::WebContents* contents =
         tab_activity_simulator_.AddWebContentsAndNavigate(tab_strip_model, url);
     if (is_active) {
-      tab_strip_model->ActivateTabAt(tab_strip_model->count() - 1, false);
+      tab_strip_model->ActivateTabAt(tab_strip_model->count() - 1);
     }
     content::WebContentsTester::For(contents)->TestSetIsLoading(false);
     return ukm::GetSourceIdForWebContentsDocument(contents);
@@ -219,10 +229,9 @@ class AdaptiveScreenBrightnessManagerTest
   const GURL kUrl3 = GURL("https://example3.com/");
 
  private:
-  chromeos::FakeChromeUserManager fake_user_manager_;
+  FakeChromeUserManager fake_user_manager_;
 
   ui::UserActivityDetector user_activity_detector_;
-  chromeos::FakePowerManagerClient fake_power_manager_client_;
   std::unique_ptr<AdaptiveScreenBrightnessManager> screen_brightness_manager_;
   TestingAdaptiveScreenBrightnessUkmLogger* ukm_logger_;
 
@@ -233,8 +242,8 @@ TEST_F(AdaptiveScreenBrightnessManagerTest, PeriodicLogging) {
   InitializeBrightness(75.0f);
   ReportPowerChangeEvent(power_manager::PowerSupplyProperties::AC, 23.0f);
   ReportVideoStart();
-  ReportLidEvent(chromeos::PowerManagerClient::LidState::OPEN);
-  ReportTabletModeEvent(chromeos::PowerManagerClient::TabletMode::UNSUPPORTED);
+  ReportLidEvent(PowerManagerClient::LidState::OPEN);
+  ReportTabletModeEvent(PowerManagerClient::TabletMode::UNSUPPORTED);
 
   FastForwardTimeBySecs(kLoggingIntervalSecs);
 
@@ -260,8 +269,8 @@ TEST_F(AdaptiveScreenBrightnessManagerTest,
        PeriodicLoggingBrightnessUninitialized) {
   ReportPowerChangeEvent(power_manager::PowerSupplyProperties::AC, 23.0f);
   ReportVideoStart();
-  ReportLidEvent(chromeos::PowerManagerClient::LidState::OPEN);
-  ReportTabletModeEvent(chromeos::PowerManagerClient::TabletMode::UNSUPPORTED);
+  ReportLidEvent(PowerManagerClient::LidState::OPEN);
+  ReportTabletModeEvent(PowerManagerClient::TabletMode::UNSUPPORTED);
 
   FastForwardTimeBySecs(kLoggingIntervalSecs);
 
@@ -272,8 +281,8 @@ TEST_F(AdaptiveScreenBrightnessManagerTest,
 TEST_F(AdaptiveScreenBrightnessManagerTest, PeriodicTimerTest) {
   ReportPowerChangeEvent(power_manager::PowerSupplyProperties::AC, 23.0f);
   ReportVideoStart();
-  ReportLidEvent(chromeos::PowerManagerClient::LidState::OPEN);
-  ReportTabletModeEvent(chromeos::PowerManagerClient::TabletMode::UNSUPPORTED);
+  ReportLidEvent(PowerManagerClient::LidState::OPEN);
+  ReportTabletModeEvent(PowerManagerClient::TabletMode::UNSUPPORTED);
 
   FastForwardTimeBySecs(kLoggingIntervalSecs - 10);
 
@@ -610,7 +619,8 @@ TEST_F(AdaptiveScreenBrightnessManagerTest, UserEventCounts) {
   EXPECT_EQ(4, features.activity_data().num_recent_stylus_events());
 }
 
-TEST_F(AdaptiveScreenBrightnessManagerTest, SingleBrowser) {
+// Test is flaky. See https://crbug.com/938055.
+TEST_F(AdaptiveScreenBrightnessManagerTest, DISABLED_SingleBrowser) {
   std::unique_ptr<Browser> browser =
       CreateTestBrowser(true /* is_visible */, true /* is_focused */);
   BrowserList::GetInstance()->SetLastActive(browser.get());
@@ -631,7 +641,9 @@ TEST_F(AdaptiveScreenBrightnessManagerTest, SingleBrowser) {
   tab_strip_model->CloseAllTabs();
 }
 
-TEST_F(AdaptiveScreenBrightnessManagerTest, MultipleBrowsersWithActive) {
+// Test is flaky. See https://crbug.com/944325.
+TEST_F(AdaptiveScreenBrightnessManagerTest,
+       DISABLED_MultipleBrowsersWithActive) {
   // Simulates three browsers:
   //  - browser1 is the last active but minimized, so not visible.
   //  - browser2 and browser3 are both visible but browser2 is the topmost.
@@ -671,7 +683,8 @@ TEST_F(AdaptiveScreenBrightnessManagerTest, MultipleBrowsersWithActive) {
   tab_strip_model3->CloseAllTabs();
 }
 
-TEST_F(AdaptiveScreenBrightnessManagerTest, MultipleBrowsersNoneActive) {
+TEST_F(AdaptiveScreenBrightnessManagerTest,
+       DISABLED_MultipleBrowsersNoneActive) {
   // Simulates three browsers, none of which are active.
   //  - browser1 is the last active but minimized and so not visible.
   //  - browser2 and browser3 are both visible but not focused so not active.

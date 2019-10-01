@@ -70,10 +70,10 @@ void AssistantQueryView::InitLayout() {
           views::BoxLayout::Orientation::kVertical));
 
   layout_manager->set_main_axis_alignment(
-      views::BoxLayout::MainAxisAlignment::MAIN_AXIS_ALIGNMENT_CENTER);
+      views::BoxLayout::MainAxisAlignment::kCenter);
 
   layout_manager->set_cross_axis_alignment(
-      views::BoxLayout::CrossAxisAlignment::CROSS_AXIS_ALIGNMENT_CENTER);
+      views::BoxLayout::CrossAxisAlignment::kCenter);
 
   // Label.
   label_ = new views::StyledLabel(base::string16(), /*listener=*/nullptr);
@@ -128,7 +128,7 @@ void AssistantQueryView::SetText(const std::string& high_confidence_text,
       label_->AddStyleRange(gfx::Range(high_confidence_text_16.length(),
                                        high_confidence_text_16.length() +
                                            low_confidence_text_16.length()),
-                            CreateStyleInfo(kTextColorHint));
+                            CreateStyleInfo(kTextColorSecondary));
     }
   }
   label_->SizeToFit(width());

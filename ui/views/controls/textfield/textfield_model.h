@@ -26,13 +26,13 @@ namespace internal {
 class Edit;
 
 // The types of merge behavior implemented by Edit operations.
-enum MergeType {
+enum class MergeType {
   // The edit should not usually be merged with next edit.
-  DO_NOT_MERGE,
+  kDoNotMerge,
   // The edit should be merged with next edit when possible.
-  MERGEABLE,
-  // The edit should be merged with the prior edit, even if marked DO_NOT_MERGE.
-  FORCE_MERGE,
+  kMergeable,
+  // The edit should be merged with the prior edit, even if marked kDoNotMerge.
+  kForceMerge,
 };
 
 }  // namespace internal
@@ -218,6 +218,10 @@ class VIEWS_EXPORT TextfieldModel {
   // Any changes to the model except text insertion will confirm the current
   // composition text.
   void SetCompositionText(const ui::CompositionText& composition);
+
+  // Puts the text in the specified range into composition mode.
+  // This method should not be called with composition text or an invalid range.
+  void SetCompositionFromExistingText(const gfx::Range& range);
 
   // Converts current composition text into final content.
   void ConfirmCompositionText();

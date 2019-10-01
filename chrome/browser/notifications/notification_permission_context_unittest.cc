@@ -28,7 +28,7 @@
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "extensions/buildflags/buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/platform/modules/permissions/permission_status.mojom.h"
+#include "third_party/blink/public/mojom/permissions/permission_status.mojom.h"
 #include "url/gurl.h"
 
 #if defined(OS_ANDROID)
@@ -83,14 +83,14 @@ class TestNotificationPermissionContext : public NotificationPermissionContext {
   void NotifyPermissionSet(const PermissionRequestID& id,
                            const GURL& requesting_origin,
                            const GURL& embedder_origin,
-                           const BrowserPermissionCallback& callback,
+                           BrowserPermissionCallback callback,
                            bool persist,
                            ContentSetting content_setting) override {
     permission_set_count_++;
     last_permission_set_persisted_ = persist;
     last_permission_set_setting_ = content_setting;
     NotificationPermissionContext::NotifyPermissionSet(
-        id, requesting_origin, embedder_origin, callback, persist,
+        id, requesting_origin, embedder_origin, std::move(callback), persist,
         content_setting);
   }
 
@@ -470,6 +470,15 @@ TEST_F(NotificationPermissionContextTest, GetNotificationsSettings) {
 
   // |settings| contains the default setting and 4 exceptions.
   ASSERT_EQ(5u, settings.size());
+
+  // The platform isn't guaranteed to return the settings in any particular
+  // order, so sort them first.
+  std::sort(settings.begin(), settings.begin() + 4,
+            [](const ContentSettingPatternSource& s1,
+               const ContentSettingPatternSource& s2) {
+              return s1.primary_pattern.GetHost() <
+                     s2.primary_pattern.GetHost();
+            });
 
   EXPECT_EQ(
       ContentSettingsPattern::FromURLNoWildcard(GURL("https://allowed.com")),

@@ -21,8 +21,11 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "components/tracing/common/trace_startup_config.h"
+#include "components/tracing/common/trace_to_console.h"
+#include "components/tracing/common/tracing_switches.h"
 #include "content/browser/gpu/gpu_data_manager_impl.h"
 #include "content/browser/tracing/file_tracing_provider_impl.h"
+#include "content/browser/tracing/perfetto_file_tracer.h"
 #include "content/browser/tracing/tracing_ui.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
@@ -36,6 +39,7 @@
 #include "services/service_manager/public/cpp/connector.h"
 #include "services/tracing/public/cpp/trace_event_agent.h"
 #include "services/tracing/public/cpp/traced_process_impl.h"
+#include "services/tracing/public/cpp/tracing_features.h"
 #include "services/tracing/public/mojom/constants.mojom.h"
 #include "v8/include/v8-version-string.h"
 
@@ -50,11 +54,13 @@
 #endif
 
 #if defined(OS_WIN)
+#include "base/win/registry.h"
 #include "base/win/windows_version.h"
 #endif
 
 #if defined(OS_ANDROID)
-#include "base/debug/elf_reader_linux.h"
+#include "base/debug/elf_reader.h"
+#include "content/browser/android/tracing_controller_android.h"
 
 // Symbol with virtual address of the start of ELF header of the current binary.
 extern char __ehdr_start;
@@ -109,6 +115,37 @@ std::string GetClockString() {
   return std::string();
 }
 
+#if defined(OS_WIN)
+// The following code detect whether the current session is a remote session.
+// See:
+// https://docs.microsoft.com/en-us/windows/desktop/TermServ/detecting-the-terminal-services-environment
+bool IsCurrentSessionRemote() {
+  static const wchar_t kRdpSettingsKeyName[] =
+      L"SYSTEM\\CurrentControlSet\\Control\\Terminal Server";
+  static const wchar_t kGlassSessionIdValueName[] = L"GlassSessionId";
+
+  if (::GetSystemMetrics(SM_REMOTESESSION))
+    return true;
+
+  DWORD glass_session_id = 0;
+  DWORD current_session_id = 0;
+  base::win::RegKey key(HKEY_LOCAL_MACHINE, kRdpSettingsKeyName, KEY_READ);
+  if (!::ProcessIdToSessionId(::GetCurrentProcessId(), &current_session_id) ||
+      !key.Valid() ||
+      key.ReadValueDW(kGlassSessionIdValueName, &glass_session_id) !=
+          ERROR_SUCCESS) {
+    return false;
+  }
+
+  return current_session_id != glass_session_id;
+}
+#endif
+
+void OnStoppedStartupTracing(const base::FilePath& trace_file) {
+  VLOG(0) << "Completed startup tracing to " << trace_file.value();
+  tracing::TraceStartupConfig::GetInstance()->OnTraceToResultFileFinished();
+}
+
 }  // namespace
 
 TracingController* TracingController::GetInstance() {
@@ -126,6 +163,13 @@ TracingControllerImpl::TracingControllerImpl()
   base::trace_event::TraceLog::GetInstance()->AddAsyncEnabledStateObserver(
       weak_ptr_factory_.GetWeakPtr());
   g_tracing_controller = this;
+
+  // TODO(oysteine): Startup tracing using Perfetto
+  // is enabled by the Mojo consumer in content/browser
+  // for now; this is too late in the browser startup
+  // process however.
+  if (PerfettoFileTracer::ShouldEnable())
+    perfetto_file_tracer_ = std::make_unique<PerfettoFileTracer>();
 }
 
 TracingControllerImpl::~TracingControllerImpl() {
@@ -159,6 +203,11 @@ void TracingControllerImpl::ConnectToServiceIfNeeded() {
   if (!coordinator_) {
     ServiceManagerConnection::GetForProcess()->GetConnector()->BindInterface(
         tracing::mojom::kServiceName, &coordinator_);
+    coordinator_.set_connection_error_handler(base::BindOnce(
+        [](TracingControllerImpl* controller) {
+          controller->coordinator_.reset();
+        },
+        base::Unretained(this)));
   }
 }
 
@@ -168,7 +217,7 @@ void TracingControllerImpl::DisconnectFromService() {
 
 // Can be called on any thread.
 std::unique_ptr<base::DictionaryValue>
-TracingControllerImpl::GenerateMetadataDict() const {
+TracingControllerImpl::GenerateMetadataDict() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   auto metadata_dict = std::make_unique<base::DictionaryValue>();
 
@@ -177,7 +226,7 @@ TracingControllerImpl::GenerateMetadataDict() const {
   // this does not happen; however, if the service manager is teared down during
   // tracing, e.g. at Chrome shutdown, tracing controller may finish flushing
   // traces without waiting for tracing agents.
-  if (trace_config_) {
+  if (trace_config_ && !tracing::TracingUsesPerfettoBackend()) {
     DCHECK(IsTracing());
     metadata_dict->SetString("trace-config", trace_config_->ToString());
   }
@@ -194,10 +243,10 @@ TracingControllerImpl::GenerateMetadataDict() const {
   // obtained from process maps since library can be mapped from apk directly.
   // This is not added as part of memory-infra os dumps since it is special case
   // only for chrome library.
-  base::Optional<std::string> soname =
+  base::Optional<base::StringPiece> soname =
       base::debug::ReadElfLibraryName(&__ehdr_start);
   if (soname)
-    metadata_dict->SetString("chrome-library-name", soname.value());
+    metadata_dict->SetString("chrome-library-name", *soname);
 #endif  // defined(OS_ANDROID)
   metadata_dict->SetInteger("chrome-bitness", 8 * sizeof(uintptr_t));
 
@@ -210,7 +259,7 @@ TracingControllerImpl::GenerateMetadataDict() const {
   metadata_dict->SetString("os-version",
                            base::SysInfo::OperatingSystemVersion());
 #if defined(OS_WIN)
-  if (base::win::OSInfo::GetInstance()->architecture() ==
+  if (base::win::OSInfo::GetArchitecture() ==
       base::win::OSInfo::X64_ARCHITECTURE) {
     if (base::win::OSInfo::GetInstance()->wow64_status() ==
         base::win::OSInfo::WOW64_ENABLED) {
@@ -219,7 +268,11 @@ TracingControllerImpl::GenerateMetadataDict() const {
       metadata_dict->SetString("os-wow64", "disabled");
     }
   }
+
+  metadata_dict->SetString("os-session",
+                           IsCurrentSessionRemote() ? "remote" : "local");
 #endif
+
   metadata_dict->SetString("os-arch",
                            base::SysInfo::OperatingSystemArchitecture());
 
@@ -273,10 +326,10 @@ TracingControllerImpl::GenerateMetadataDict() const {
   // TODO(crbug.com/737049): The central controller doesn't know about
   // metadata filters, so we temporarily filter here as the controller is
   // what assembles the full trace data.
-  MetadataFilterPredicate metadata_filter;
+  base::trace_event::MetadataFilterPredicate metadata_filter;
   if (trace_config_ && trace_config_->IsArgumentFilterEnabled()) {
-    if (delegate_)
-      metadata_filter = delegate_->GetMetadataFilterPredicate();
+    metadata_filter = base::trace_event::TraceLog::GetInstance()
+                          ->GetMetadataFilterPredicate();
   }
 
   if (!metadata_filter.is_null()) {
@@ -349,12 +402,97 @@ bool TracingControllerImpl::StartTracing(
   return true;
 }
 
-void TracingControllerImpl::OnTraceLogEnabled() {
-  if (start_tracing_done_)
-    std::move(start_tracing_done_).Run();
+void TracingControllerImpl::StartStartupTracingIfNeeded() {
+  auto* trace_startup_config = tracing::TraceStartupConfig::GetInstance();
+  if (trace_startup_config->AttemptAdoptBySessionOwner(
+          tracing::TraceStartupConfig::SessionOwner::kTracingController)) {
+    StartTracing(trace_startup_config->GetTraceConfig(),
+                 StartTracingDoneCallback());
+  } else if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+                 switches::kTraceToConsole)) {
+    StartTracing(tracing::GetConfigForTraceToConsole(),
+                 StartTracingDoneCallback());
+  }
+
+  if (trace_startup_config->IsTracingStartupForDuration()) {
+    TRACE_EVENT0("startup",
+                 "TracingControllerImpl::InitStartupTracingForDuration");
+    InitStartupTracingForDuration();
+  }
 }
 
-void TracingControllerImpl::OnTraceLogDisabled() {}
+base::FilePath TracingControllerImpl::GetStartupTraceFileName() const {
+  base::FilePath trace_file;
+
+  trace_file = tracing::TraceStartupConfig::GetInstance()->GetResultFile();
+  if (trace_file.empty()) {
+#if defined(OS_ANDROID)
+    TracingControllerAndroid::GenerateTracingFilePath(&trace_file);
+#else
+    // Default to saving the startup trace into the current dir.
+    trace_file = base::FilePath().AppendASCII("chrometrace.log");
+#endif
+  }
+
+  return trace_file;
+}
+
+void TracingControllerImpl::InitStartupTracingForDuration() {
+  DCHECK(tracing::TraceStartupConfig::GetInstance()
+             ->IsTracingStartupForDuration());
+
+  startup_trace_file_ = GetStartupTraceFileName();
+
+  startup_trace_timer_.Start(
+      FROM_HERE,
+      base::TimeDelta::FromSeconds(
+          tracing::TraceStartupConfig::GetInstance()->GetStartupDuration()),
+      this, &TracingControllerImpl::EndStartupTracing);
+}
+
+void TracingControllerImpl::EndStartupTracing() {
+  // Do nothing if startup tracing is already stopped.
+  if (!tracing::TraceStartupConfig::GetInstance()->IsEnabled())
+    return;
+
+  StopTracing(CreateFileEndpoint(
+      startup_trace_file_,
+      base::BindRepeating(OnStoppedStartupTracing, startup_trace_file_)));
+}
+
+void TracingControllerImpl::FinalizeStartupTracingIfNeeded() {
+  // There are two cases:
+  // 1. Startup duration is not reached.
+  // 2. Or if the trace should be saved to file for --trace-config-file flag.
+  base::Optional<base::FilePath> startup_trace_file;
+  if (startup_trace_timer_.IsRunning()) {
+    startup_trace_timer_.Stop();
+    if (startup_trace_file_ != base::FilePath().AppendASCII("none")) {
+      startup_trace_file = startup_trace_file_;
+    }
+  } else if (tracing::TraceStartupConfig::GetInstance()
+                 ->ShouldTraceToResultFile()) {
+    startup_trace_file = GetStartupTraceFileName();
+  }
+  if (!startup_trace_file)
+    return;
+  // Perfetto currently doesn't support tracing during shutdown as the trace
+  // buffer is lost when the service is shut down, so we wait until the trace is
+  // complete. See also crbug.com/944107.
+  // TODO(eseckler): Avoid the nestedRunLoop here somehow.
+  base::RunLoop run_loop;
+  bool success = StopTracing(CreateFileEndpoint(
+      startup_trace_file.value(),
+      base::BindRepeating(
+          [](base::FilePath trace_file, base::OnceClosure quit_closure) {
+            OnStoppedStartupTracing(trace_file);
+            std::move(quit_closure).Run();
+          },
+          startup_trace_file.value(), run_loop.QuitClosure())));
+  if (!success)
+    return;
+  run_loop.Run();
+}
 
 bool TracingControllerImpl::StopTracing(
     const scoped_refptr<TraceDataEndpoint>& trace_data_endpoint) {
@@ -364,7 +502,7 @@ bool TracingControllerImpl::StopTracing(
 bool TracingControllerImpl::StopTracing(
     const scoped_refptr<TraceDataEndpoint>& trace_data_endpoint,
     const std::string& agent_label) {
-  if (!IsTracing() || drainer_)
+  if (!IsTracing() || drainer_ || !coordinator_)
     return false;
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
@@ -412,7 +550,7 @@ bool TracingControllerImpl::GetTraceBufferUsage(
   return true;
 }
 
-bool TracingControllerImpl::IsTracing() const {
+bool TracingControllerImpl::IsTracing() {
   return trace_config_ != nullptr;
 }
 
@@ -456,10 +594,10 @@ void TracingControllerImpl::OnDataComplete() {
 void TracingControllerImpl::OnMetadataAvailable(base::Value metadata) {
   DCHECK(!filtered_metadata_);
   is_metadata_available_ = true;
-  MetadataFilterPredicate metadata_filter;
+  base::trace_event::MetadataFilterPredicate metadata_filter;
   if (trace_config_->IsArgumentFilterEnabled()) {
-    if (delegate_)
-      metadata_filter = delegate_->GetMetadataFilterPredicate();
+    metadata_filter = base::trace_event::TraceLog::GetInstance()
+                          ->GetMetadataFilterPredicate();
   }
   if (metadata_filter.is_null()) {
     filtered_metadata_ = base::DictionaryValue::From(

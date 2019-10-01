@@ -5,7 +5,6 @@
 package org.chromium.chrome.browser;
 
 import android.content.Context;
-import android.support.annotation.IntDef;
 import android.support.annotation.Nullable;
 import android.view.ViewGroup;
 import android.view.ViewGroup.LayoutParams;
@@ -13,20 +12,23 @@ import android.view.ViewGroup.LayoutParams;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.TraceEvent;
 import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.base.task.PostTask;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
-import org.chromium.chrome.browser.gesturenav.SideSlideLayout;
+import org.chromium.chrome.browser.gesturenav.NavigationGlowFactory;
+import org.chromium.chrome.browser.gesturenav.NavigationHandler;
+import org.chromium.chrome.browser.gesturenav.TabbedActionDelegate;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabWebContentsUserData;
 import org.chromium.components.feature_engagement.EventConstants;
 import org.chromium.components.feature_engagement.Tracker;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.third_party.android.swiperefresh.SwipeRefreshLayout;
+import org.chromium.ui.OverscrollAction;
 import org.chromium.ui.OverscrollRefreshHandler;
-
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
 
 /**
  * An overscroll handler implemented in terms a modified version of the Android
@@ -34,18 +36,6 @@ import java.lang.annotation.RetentionPolicy;
  */
 public class SwipeRefreshHandler
         extends TabWebContentsUserData implements OverscrollRefreshHandler {
-    /**
-     * The targets that can handle MotionEvents.
-     */
-    @IntDef({SwipeType.NONE, SwipeType.PULL_TO_REFRESH, SwipeType.HISTORY_NAV})
-    @Retention(RetentionPolicy.SOURCE)
-    private @interface SwipeType {
-        int NONE = 0;
-        int PULL_TO_REFRESH = 1;
-        int HISTORY_NAV = 2;
-    }
-
-    private @SwipeType int mSwipeType;
 
     private static final Class<SwipeRefreshHandler> USER_DATA_KEY = SwipeRefreshHandler.class;
 
@@ -57,6 +47,8 @@ public class SwipeRefreshHandler
     // guarding against cases where the page reload fails or takes too long.
     private static final int MAX_REFRESH_ANIMATION_DURATION_MS = 7500;
 
+    private @OverscrollAction int mSwipeType;
+
     private final boolean mNavigationEnabled;
 
     // The modified AppCompat version of the refresh effect, handling all core
@@ -65,6 +57,8 @@ public class SwipeRefreshHandler
 
     // The Tab where the swipe occurs.
     private Tab mTab;
+
+    private EmptyTabObserver mTabObserver;
 
     // The container view the SwipeRefreshHandler instance is currently
     // associated with.
@@ -81,16 +75,8 @@ public class SwipeRefreshHandler
     // Accessibility utterance used to indicate refresh activation.
     private String mAccessibilityRefreshString;
 
-    // History navigation layout and the main logic turning the gesture into corresponding UI.
-    private SideSlideLayout mSideSlideLayout;
-
-    // Async runnable for ending the refresh animation after the page first
-    // loads a frame. This is used to provide a reasonable minimum animation time.
-    private Runnable mStopNavigatingRunnable;
-
-    // Handles removing the layout from the view hierarchy.  This is posted to ensure it does not
-    // conflict with pending Android draws.
-    private Runnable mDetachSideSlideLayoutRunnable;
+    // Handles overscroll history navigation.
+    private NavigationHandler mNavigationHandler;
 
     public static SwipeRefreshHandler from(Tab tab) {
         SwipeRefreshHandler handler = get(tab);
@@ -114,21 +100,37 @@ public class SwipeRefreshHandler
     private SwipeRefreshHandler(Tab tab) {
         super(tab);
         mTab = tab;
-        mNavigationEnabled = ChromeFeatureList.isEnabled(ChromeFeatureList.GESTURE_NAVIGATION);
+        mTabObserver = new EmptyTabObserver() {
+            @Override
+            public void onActivityAttachmentChanged(Tab tab, boolean isAttached) {
+                if (!isAttached && mSwipeRefreshLayout != null) {
+                    cancelStopRefreshingRunnable();
+                    detachSwipeRefreshLayoutIfNecessary();
+                    mSwipeRefreshLayout.setOnRefreshListener(null);
+                    mSwipeRefreshLayout.setOnResetListener(null);
+                    mSwipeRefreshLayout = null;
+                }
+            }
+        };
+        mTab.addObserver(mTabObserver);
+        mNavigationEnabled =
+                ChromeFeatureList.isEnabled(ChromeFeatureList.OVERSCROLL_HISTORY_NAVIGATION)
+                && ChromeFeatureList.isEnabled(ChromeFeatureList.DELEGATE_OVERSCROLL_SWIPES);
     }
 
-    private void initSwipeRefreshLayout() {
-        final Context context = mTab.getThemedApplicationContext();
+    private void initSwipeRefreshLayout(final Context context) {
         mSwipeRefreshLayout = new SwipeRefreshLayout(context);
         mSwipeRefreshLayout.setLayoutParams(
                 new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
+        mSwipeRefreshLayout.setProgressBackgroundColorSchemeResource(
+                R.color.default_bg_color_elev_2);
         mSwipeRefreshLayout.setColorSchemeResources(R.color.light_active_color);
         if (mContainerView != null) mSwipeRefreshLayout.setEnabled(true);
 
         mSwipeRefreshLayout.setOnRefreshListener(() -> {
             cancelStopRefreshingRunnable();
-            ThreadUtils.postOnUiThreadDelayed(
-                    getStopRefreshingRunnable(), MAX_REFRESH_ANIMATION_DURATION_MS);
+            PostTask.postDelayedTask(UiThreadTaskTraits.DEFAULT, getStopRefreshingRunnable(),
+                    MAX_REFRESH_ANIMATION_DURATION_MS);
             if (mAccessibilityRefreshString == null) {
                 int resId = R.string.accessibility_swipe_refresh;
                 mAccessibilityRefreshString = context.getResources().getString(resId);
@@ -143,33 +145,7 @@ public class SwipeRefreshHandler
                 mDetachRefreshLayoutRunnable = null;
                 detachSwipeRefreshLayoutIfNecessary();
             };
-            ThreadUtils.postOnUiThread(mDetachRefreshLayoutRunnable);
-        });
-    }
-
-    private void initSideSlideLayout() {
-        mSideSlideLayout = new SideSlideLayout(mTab.getThemedApplicationContext());
-        mSideSlideLayout.setLayoutParams(
-                new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
-        if (mContainerView != null) mSideSlideLayout.setEnabled(true);
-
-        mSideSlideLayout.setOnNavigationListener((isForward) -> {
-            if (isForward) {
-                mTab.goForward();
-            } else {
-                mTab.goBack();
-            }
-            cancelStopNavigatingRunnable();
-            mSideSlideLayout.post(getStopNavigatingRunnable());
-        });
-
-        mSideSlideLayout.setOnResetListener(() -> {
-            if (mDetachSideSlideLayoutRunnable != null) return;
-            mDetachSideSlideLayoutRunnable = () -> {
-                mDetachSideSlideLayoutRunnable = null;
-                detachSideSlideLayoutIfNecessary();
-            };
-            mSideSlideLayout.post(mDetachSideSlideLayoutRunnable);
+            PostTask.postTask(UiThreadTaskTraits.DEFAULT, mDetachRefreshLayoutRunnable);
         });
     }
 
@@ -183,8 +159,11 @@ public class SwipeRefreshHandler
     @Override
     public void cleanupWebContents(WebContents webContents) {
         if (mSwipeRefreshLayout != null) detachSwipeRefreshLayoutIfNecessary();
-        if (mSideSlideLayout != null) detachSideSlideLayoutIfNecessary();
         mContainerView = null;
+        if (mNavigationHandler != null) {
+            mNavigationHandler.destroy();
+            mNavigationHandler = null;
+        }
         setEnabled(false);
     }
 
@@ -193,10 +172,6 @@ public class SwipeRefreshHandler
         if (mSwipeRefreshLayout != null) {
             mSwipeRefreshLayout.setOnRefreshListener(null);
             mSwipeRefreshLayout.setOnResetListener(null);
-        }
-        if (mSideSlideLayout != null) {
-            mSideSlideLayout.setOnNavigationListener(null);
-            mSideSlideLayout.setOnResetListener(null);
         }
     }
 
@@ -213,40 +188,46 @@ public class SwipeRefreshHandler
     }
 
     @Override
-    public boolean start(float xDelta, float yDelta) {
+    public boolean start(
+            @OverscrollAction int type, float startX, float startY, boolean navigateForward) {
         if (mTab.getActivity() != null && mTab.getActivity().getBottomSheet() != null) {
             Tracker tracker = TrackerFactory.getTrackerForProfile(Profile.getLastUsedProfile());
             tracker.notifyEvent(EventConstants.PULL_TO_REFRESH);
         }
 
-        if (yDelta > 0 && yDelta > Math.abs(xDelta)) {
-            if (mSwipeRefreshLayout == null) initSwipeRefreshLayout();
-            mSwipeType = SwipeType.PULL_TO_REFRESH;
+        mSwipeType = type;
+        if (type == OverscrollAction.PULL_TO_REFRESH) {
+            if (mSwipeRefreshLayout == null) initSwipeRefreshLayout(mTab.getContext());
             attachSwipeRefreshLayoutIfNecessary();
             return mSwipeRefreshLayout.start();
-        } else if (Math.abs(xDelta) > Math.abs(yDelta) && mNavigationEnabled) {
-            if (mSideSlideLayout == null) initSideSlideLayout();
-            mSwipeType = SwipeType.HISTORY_NAV;
-            boolean isForward = xDelta <= 0;
-            boolean shouldStart = isForward ? mTab.canGoForward() : mTab.canGoBack();
-            if (shouldStart) {
-                mSideSlideLayout.setDirection(isForward);
-                attachSideSlideLayoutIfNecessary();
-                mSideSlideLayout.start();
+        } else if (type == OverscrollAction.HISTORY_NAVIGATION && mNavigationEnabled) {
+            if (mNavigationHandler == null) {
+                mNavigationHandler =
+                        new NavigationHandler(mContainerView, new TabbedActionDelegate(mTab),
+                                NavigationGlowFactory.forRenderedPage(
+                                        mContainerView, mTab.getWebContents()));
             }
-            return shouldStart;
+            boolean navigable = navigateForward ? mTab.canGoForward() : mTab.canGoBack();
+            boolean showGlow = navigateForward && !mTab.canGoForward();
+            mNavigationHandler.onDown(); // Simulates the initial onDown event.
+            if (navigable) {
+                mNavigationHandler.showArrowWidget(navigateForward);
+            } else if (showGlow) {
+                mNavigationHandler.showGlow(startX, startY);
+            }
+            return navigable || showGlow;
         }
-        mSwipeType = SwipeType.NONE;
+        mSwipeType = OverscrollAction.NONE;
         return false;
     }
 
     @Override
     public void pull(float xDelta, float yDelta) {
         TraceEvent.begin("SwipeRefreshHandler.pull");
-        if (mSwipeType == SwipeType.PULL_TO_REFRESH) {
+        if (mSwipeType == OverscrollAction.PULL_TO_REFRESH) {
             mSwipeRefreshLayout.pull(yDelta);
-        } else if (mSwipeType == SwipeType.HISTORY_NAV) {
-            mSideSlideLayout.pull(xDelta);
+        } else if (mSwipeType == OverscrollAction.HISTORY_NAVIGATION) {
+            mNavigationHandler.pull(xDelta);
         }
         TraceEvent.end("SwipeRefreshHandler.pull");
     }
@@ -254,10 +235,10 @@ public class SwipeRefreshHandler
     @Override
     public void release(boolean allowRefresh) {
         TraceEvent.begin("SwipeRefreshHandler.release");
-        if (mSwipeType == SwipeType.PULL_TO_REFRESH) {
+        if (mSwipeType == OverscrollAction.PULL_TO_REFRESH) {
             mSwipeRefreshLayout.release(allowRefresh);
-        } else if (mSwipeType == SwipeType.HISTORY_NAV) {
-            mSideSlideLayout.release(allowRefresh);
+        } else if (mSwipeType == OverscrollAction.HISTORY_NAVIGATION) {
+            mNavigationHandler.release(allowRefresh);
         }
         TraceEvent.end("SwipeRefreshHandler.release");
     }
@@ -266,8 +247,7 @@ public class SwipeRefreshHandler
     public void reset() {
         cancelStopRefreshingRunnable();
         if (mSwipeRefreshLayout != null) mSwipeRefreshLayout.reset();
-        cancelStopNavigatingRunnable();
-        if (mSideSlideLayout != null) mSideSlideLayout.reset();
+        if (mNavigationHandler != null) mNavigationHandler.reset();
     }
 
     @Override
@@ -290,7 +270,11 @@ public class SwipeRefreshHandler
 
     private Runnable getStopRefreshingRunnable() {
         if (mStopRefreshingRunnable == null) {
-            mStopRefreshingRunnable = () -> mSwipeRefreshLayout.setRefreshing(false);
+            mStopRefreshingRunnable = () -> {
+                if (mSwipeRefreshLayout != null) {
+                    mSwipeRefreshLayout.setRefreshing(false);
+                }
+            };
         }
         return mStopRefreshingRunnable;
     }
@@ -308,41 +292,6 @@ public class SwipeRefreshHandler
         cancelDetachLayoutRunnable();
         if (mSwipeRefreshLayout.getParent() != null) {
             mContainerView.removeView(mSwipeRefreshLayout);
-        }
-    }
-
-    private void cancelStopNavigatingRunnable() {
-        if (mStopNavigatingRunnable != null) {
-            mSideSlideLayout.removeCallbacks(mStopNavigatingRunnable);
-            mStopNavigatingRunnable = null;
-        }
-    }
-
-    private void cancelDetachSideSlideLayoutRunnable() {
-        if (mDetachSideSlideLayoutRunnable != null) {
-            mSideSlideLayout.removeCallbacks(mDetachSideSlideLayoutRunnable);
-            mDetachSideSlideLayoutRunnable = null;
-        }
-    }
-
-    private Runnable getStopNavigatingRunnable() {
-        if (mStopNavigatingRunnable == null) {
-            mStopNavigatingRunnable = () -> mSideSlideLayout.stopNavigating();
-        }
-        return mStopNavigatingRunnable;
-    }
-
-    private void attachSideSlideLayoutIfNecessary() {
-        cancelDetachSideSlideLayoutRunnable();
-        if (mSideSlideLayout.getParent() == null) {
-            mContainerView.addView(mSideSlideLayout);
-        }
-    }
-
-    private void detachSideSlideLayoutIfNecessary() {
-        cancelDetachSideSlideLayoutRunnable();
-        if (mSideSlideLayout.getParent() != null) {
-            mContainerView.removeView(mSideSlideLayout);
         }
     }
 }

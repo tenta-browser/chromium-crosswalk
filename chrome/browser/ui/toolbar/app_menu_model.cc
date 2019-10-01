@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/debug/debugging_buildflags.h"
 #include "base/debug/profiler.h"
@@ -41,6 +42,7 @@
 #include "chrome/browser/ui/toolbar/bookmark_sub_menu_model.h"
 #include "chrome/browser/ui/toolbar/recent_tabs_sub_menu_model.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_bar.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/upgrade_detector/upgrade_detector.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_paths.h"
@@ -54,7 +56,6 @@
 #include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/signin_metrics.h"
 #include "components/strings/grit/components_strings.h"
-#include "components/sync/driver/sync_driver_switches.h"
 #include "components/vector_icons/vector_icons.h"
 #include "components/zoom/zoom_controller.h"
 #include "components/zoom/zoom_event_manager.h"
@@ -81,6 +82,7 @@
 #endif
 
 #if defined(OS_CHROMEOS)
+#include "chrome/browser/ui/ash/tablet_mode_client.h"
 #include "chromeos/constants/chromeos_switches.h"
 #endif
 
@@ -117,14 +119,12 @@ base::string16 GetUpgradeDialogMenuItemName() {
 // Returns the appropriate menu label for the IDC_INSTALL_PWA command if
 // available.
 base::Optional<base::string16> GetInstallPWAAppMenuItemName(Browser* browser) {
-  if (!browser->tab_strip_model())
-    return base::nullopt;
   WebContents* web_contents =
       browser->tab_strip_model()->GetActiveWebContents();
   if (!web_contents)
     return base::nullopt;
   base::string16 app_name =
-      banners::AppBannerManager::GetInstallableAppName(web_contents);
+      banners::AppBannerManager::GetInstallableWebAppName(web_contents);
   if (app_name.empty())
     return base::nullopt;
   return l10n_util::GetStringFUTF16(IDS_INSTALL_TO_OS_LAUNCH_SURFACE, app_name);
@@ -207,9 +207,7 @@ ToolsMenuModel::~ToolsMenuModel() {}
 // - Option to enable profiling.
 void ToolsMenuModel::Build(Browser* browser) {
   AddItemWithStringId(IDC_SAVE_PAGE, IDS_SAVE_PAGE);
-
-  if (extensions::util::IsNewBookmarkAppsEnabled())
-    AddItemWithStringId(IDC_CREATE_SHORTCUT, IDS_ADD_TO_OS_LAUNCH_SURFACE);
+  AddItemWithStringId(IDC_CREATE_SHORTCUT, IDS_ADD_TO_OS_LAUNCH_SURFACE);
 
   AddSeparator(ui::NORMAL_SEPARATOR);
   AddItemWithStringId(IDC_CLEAR_BROWSING_DATA, IDS_CLEAR_BROWSING_DATA);
@@ -243,11 +241,12 @@ AppMenuModel::AppMenuModel(ui::AcceleratorProvider* provider,
       uma_action_recorded_(false),
       provider_(provider),
       browser_(browser),
-      app_menu_icon_controller_(app_menu_icon_controller) {}
+      app_menu_icon_controller_(app_menu_icon_controller) {
+  DCHECK(browser_);
+}
 
 AppMenuModel::~AppMenuModel() {
-  if (browser_)  // Null in Cocoa tests.
-    browser_->tab_strip_model()->RemoveObserver(this);
+  browser_->tab_strip_model()->RemoveObserver(this);
 }
 
 void AppMenuModel::Init() {
@@ -312,7 +311,8 @@ base::string16 AppMenuModel::GetLabelForCommandId(int command_id) const {
 bool AppMenuModel::GetIconForCommandId(int command_id, gfx::Image* icon) const {
   if (command_id == IDC_UPGRADE_DIALOG) {
     DCHECK(browser_defaults::kShowUpgradeMenuItem);
-    *icon = UpgradeDetector::GetInstance()->GetIcon();
+    DCHECK(app_menu_icon_controller_);
+    *icon = gfx::Image(app_menu_icon_controller_->GetIconImage(false));
     return true;
   }
   return false;
@@ -765,34 +765,37 @@ void AppMenuModel::Build() {
 
   AddItemWithStringId(IDC_FIND, IDS_FIND);
 
-  if (base::FeatureList::IsEnabled(switches::kSyncSendTabToSelf)) {
-    AddItemWithStringId(IDC_SEND_TO_MY_DEVICES, IDS_SEND_TO_MY_DEVICES);
-  }
-
-  if (extensions::util::IsNewBookmarkAppsEnabled() &&
-      banners::AppBannerManager::IsExperimentalAppBannersEnabled()) {
-    const extensions::Extension* pwa =
-        base::FeatureList::IsEnabled(features::kDesktopPWAWindowing)
-            ? extensions::util::GetPwaForSecureActiveTab(browser_)
-            : nullptr;
-    if (pwa) {
-      AddItem(
-          IDC_OPEN_IN_PWA_WINDOW,
-          l10n_util::GetStringFUTF16(
-              IDS_OPEN_IN_APP_WINDOW,
-              gfx::TruncateString(base::UTF8ToUTF16(pwa->name()),
-                                  kMaxAppNameLength, gfx::CHARACTER_BREAK)));
-    } else {
-      base::Optional<base::string16> install_pwa_item_name =
-          GetInstallPWAAppMenuItemName(browser_);
-      if (install_pwa_item_name)
-        AddItem(IDC_INSTALL_PWA, *install_pwa_item_name);
-    }
+  const extensions::Extension* pwa =
+      extensions::util::GetPwaForSecureActiveTab(browser_);
+  if (pwa) {
+    AddItem(IDC_OPEN_IN_PWA_WINDOW,
+            l10n_util::GetStringFUTF16(
+                IDS_OPEN_IN_APP_WINDOW,
+                gfx::TruncateString(base::UTF8ToUTF16(pwa->name()),
+                                    kMaxAppNameLength, gfx::CHARACTER_BREAK)));
+  } else {
+    base::Optional<base::string16> install_pwa_item_name =
+        GetInstallPWAAppMenuItemName(browser_);
+    if (install_pwa_item_name)
+      AddItem(IDC_INSTALL_PWA, *install_pwa_item_name);
   }
 
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableDomDistiller))
+          switches::kEnableDomDistiller)) {
     AddItemWithStringId(IDC_DISTILL_PAGE, IDS_DISTILL_PAGE);
+  }
+
+#if defined(OS_CHROMEOS)
+  // Always show this option if we're in tablet mode on Chrome OS.
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          chromeos::switches::kEnableRequestTabletSite) ||
+      (TabletModeClient::Get() &&
+       TabletModeClient::Get()->tablet_mode_enabled())) {
+    AddCheckItemWithStringId(IDC_TOGGLE_REQUEST_TABLET_SITE,
+                             IDS_TOGGLE_REQUEST_TABLET_SITE);
+  }
+#endif
+
   tools_menu_model_.reset(new ToolsMenuModel(this, browser_));
   AddSubMenuWithStringId(
       IDC_MORE_TOOLS_MENU, IDS_MORE_TOOLS_MENU, tools_menu_model_.get());
@@ -811,12 +814,6 @@ void AppMenuModel::Build() {
 #else
   AddItem(IDC_ABOUT, l10n_util::GetStringUTF16(IDS_ABOUT));
 #endif
-#if defined(OS_CHROMEOS)
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          chromeos::switches::kEnableRequestTabletSite))
-    AddCheckItemWithStringId(IDC_TOGGLE_REQUEST_TABLET_SITE,
-                             IDS_TOGGLE_REQUEST_TABLET_SITE);
-#endif
 
   if (browser_defaults::kShowExitMenuItem) {
     AddSeparator(ui::NORMAL_SEPARATOR);
@@ -833,8 +830,9 @@ void AppMenuModel::Build() {
         ui::NativeTheme::kColorId_HighlightedMenuItemForegroundColor);
     const auto icon =
         gfx::CreateVectorIcon(vector_icons::kBusinessIcon, kIconSize, color);
-    AddHighlightedItemWithStringIdAndIcon(IDC_MANAGED_UI_HELP,
-                                          IDS_MANAGED_BY_ORG, icon);
+    AddHighlightedItemWithIcon(
+        IDC_SHOW_MANAGEMENT_PAGE,
+        chrome::GetManagedUiMenuItemLabel(browser_->profile()), icon);
   }
 #endif  // !defined(OS_CHROMEOS)
 
@@ -842,6 +840,10 @@ void AppMenuModel::Build() {
 }
 
 bool AppMenuModel::CreateActionToolbarOverflowMenu() {
+  // The extensions menu replaces the 3-dot menu entry.
+  if (base::FeatureList::IsEnabled(features::kExtensionsToolbarMenu))
+    return false;
+
   // We only add the extensions overflow container if there are any icons that
   // aren't shown in the main container.
   // browser_->window() can return null during startup, and
@@ -889,14 +891,11 @@ void AppMenuModel::CreateZoomMenu() {
 }
 
 void AppMenuModel::UpdateZoomControls() {
-  int zoom_percent = 100;
-  if (browser_->tab_strip_model() &&
-      browser_->tab_strip_model()->GetActiveWebContents()) {
-    zoom_percent = zoom::ZoomController::FromWebContents(
-                       browser_->tab_strip_model()->GetActiveWebContents())
-                       ->GetZoomPercent();
-  }
-  zoom_label_ = base::FormatPercent(zoom_percent);
+  WebContents* contents = browser_->tab_strip_model()->GetActiveWebContents();
+  zoom_label_ = base::FormatPercent(
+      contents
+          ? zoom::ZoomController::FromWebContents(contents)->GetZoomPercent()
+          : 100);
 }
 
 bool AppMenuModel::ShouldShowNewIncognitoWindowMenuItem() {

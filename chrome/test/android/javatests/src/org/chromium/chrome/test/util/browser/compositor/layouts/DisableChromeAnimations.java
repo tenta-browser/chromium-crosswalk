@@ -6,22 +6,22 @@ package org.chromium.chrome.test.util.browser.compositor.layouts;
 
 import org.junit.rules.ExternalResource;
 
-import org.chromium.chrome.browser.compositor.layouts.ChromeAnimation;
+import org.chromium.chrome.browser.compositor.animation.CompositorAnimationHandler;
 
 /**
- * JUnit 4 rule that disables animations in ChromeAnimation for tests.
+ * JUnit 4 rule that disables animations in CompositorAnimationHandler for tests.
  */
 public class DisableChromeAnimations extends ExternalResource {
-    private float mOldAnimationMultiplier;
+    private boolean mOldTestingMode;
 
     @Override
     protected void before() {
-        mOldAnimationMultiplier = ChromeAnimation.Animation.getAnimationMultiplier();
-        ChromeAnimation.Animation.setAnimationMultiplierForTesting(0f);
+        mOldTestingMode = CompositorAnimationHandler.isInTestingMode();
+        CompositorAnimationHandler.setTestingMode(true);
     }
 
     @Override
     protected void after() {
-        ChromeAnimation.Animation.setAnimationMultiplierForTesting(mOldAnimationMultiplier);
+        CompositorAnimationHandler.setTestingMode(mOldTestingMode);
     }
 }

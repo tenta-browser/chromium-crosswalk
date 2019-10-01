@@ -18,6 +18,7 @@
 #include "base/metrics/histogram.h"
 #include "base/stl_util.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/scoped_task_environment.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_config_test_utils.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_configurator.h"
@@ -26,6 +27,7 @@
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_prefs.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_test_utils.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_bypass_protocol.h"
+#include "components/data_reduction_proxy/core/common/data_reduction_proxy_features.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_headers_test_utils.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params_test_utils.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_pref_names.h"
@@ -146,6 +148,10 @@ class DataReductionProxyBypassStatsEndToEndTest : public testing::Test {
   }
 
   void SetUp() override {
+    // TODO(crbug.com/968214): Modify these tests to work correctly with the
+    // network service (and DRP) enabled by default.
+    scoped_feature_list_.InitWithFeatures(
+        {}, {features::kDataReductionProxyEnabledWithNetworkService});
     drp_test_context_ = DataReductionProxyTestContext::Builder()
                             .WithURLRequestContext(&context_)
                             .WithMockClientSocketFactory(&mock_socket_factory_)
@@ -161,8 +167,7 @@ class DataReductionProxyBypassStatsEndToEndTest : public testing::Test {
     // fully bypassed.
     std::vector<DataReductionProxyServer> data_reduction_proxy_servers;
     data_reduction_proxy_servers.push_back(DataReductionProxyServer(
-        config()->test_params()->proxies_for_http().front().proxy_server(),
-        ProxyServer::CORE));
+        config()->test_params()->proxies_for_http().front().proxy_server()));
     config()->test_params()->UseNonSecureProxiesForHttp();
     config()->test_params()->SetProxiesForHttp(data_reduction_proxy_servers);
   }
@@ -383,6 +388,7 @@ class DataReductionProxyBypassStatsEndToEndTest : public testing::Test {
   net::TestDelegate* delegate() { return &delegate_; }
 
  private:
+  base::test::ScopedFeatureList scoped_feature_list_;
   base::test::ScopedTaskEnvironment task_environment_{
       base::test::ScopedTaskEnvironment::MainThreadType::IO};
   net::TestDelegate delegate_;
@@ -841,14 +847,10 @@ TEST_F(DataReductionProxyBypassStatsEndToEndTest,
   // Explicitly set primary and fallback Data Reduction Proxies to use.
   config()->test_params()->SetProxiesForHttp(
       std::vector<DataReductionProxyServer>(
-          {DataReductionProxyServer(
-               net::ProxyServer::FromURI("http://origin.net",
-                                         net::ProxyServer::SCHEME_HTTP),
-               ProxyServer::CORE),
-           DataReductionProxyServer(
-               net::ProxyServer::FromURI("http://fallback.net",
-                                         net::ProxyServer::SCHEME_HTTP),
-               ProxyServer::CORE)}));
+          {DataReductionProxyServer(net::ProxyServer::FromURI(
+               "http://origin.net", net::ProxyServer::SCHEME_HTTP)),
+           DataReductionProxyServer(net::ProxyServer::FromURI(
+               "http://fallback.net", net::ProxyServer::SCHEME_HTTP))}));
 
   // Make the first Data Reduction Proxy host in the list of Data Reduction
   // Proxies to use fail to resolve, so that the tests below will use the

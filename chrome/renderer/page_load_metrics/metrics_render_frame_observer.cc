@@ -38,15 +38,19 @@ class MojoPageTimingSender : public PageTimingSender {
         &page_load_metrics_);
   }
   ~MojoPageTimingSender() override {}
-  void SendTiming(const mojom::PageLoadTimingPtr& timing,
-                  const mojom::PageLoadMetadataPtr& metadata,
-                  mojom::PageLoadFeaturesPtr new_features,
-                  std::vector<mojom::ResourceDataUpdatePtr> resources,
-                  const mojom::PageRenderData& render_data) override {
+  void SendTiming(
+      const mojom::PageLoadTimingPtr& timing,
+      const mojom::PageLoadMetadataPtr& metadata,
+      mojom::PageLoadFeaturesPtr new_features,
+      std::vector<mojom::ResourceDataUpdatePtr> resources,
+      const mojom::FrameRenderDataUpdate& render_data,
+      const mojom::CpuTimingPtr& cpu_timing,
+      mojom::DeferredResourceCountsPtr new_deferred_resource_data) override {
     DCHECK(page_load_metrics_);
-    page_load_metrics_->UpdateTiming(timing->Clone(), metadata->Clone(),
-                                     std::move(new_features),
-                                     std::move(resources), render_data.Clone());
+    page_load_metrics_->UpdateTiming(
+        timing->Clone(), metadata->Clone(), std::move(new_features),
+        std::move(resources), render_data.Clone(), cpu_timing->Clone(),
+        std::move(new_deferred_resource_data));
   }
 
  private:
@@ -66,6 +70,14 @@ MetricsRenderFrameObserver::~MetricsRenderFrameObserver() {}
 
 void MetricsRenderFrameObserver::DidChangePerformanceTiming() {
   SendMetrics();
+}
+
+void MetricsRenderFrameObserver::DidChangeCpuTiming(base::TimeDelta time) {
+  if (!page_timing_metrics_sender_)
+    return;
+  if (HasNoRenderFrame())
+    return;
+  page_timing_metrics_sender_->UpdateCpuTiming(time);
 }
 
 void MetricsRenderFrameObserver::DidObserveLoadingBehavior(
@@ -89,16 +101,26 @@ void MetricsRenderFrameObserver::DidObserveNewCssPropertyUsage(
   }
 }
 
-void MetricsRenderFrameObserver::DidObserveLayoutJank(double jank_fraction) {
+void MetricsRenderFrameObserver::DidObserveLayoutJank(
+    double jank_fraction,
+    bool after_input_or_scroll) {
   if (page_timing_metrics_sender_)
-    page_timing_metrics_sender_->DidObserveLayoutJank(jank_fraction);
+    page_timing_metrics_sender_->DidObserveLayoutJank(jank_fraction,
+                                                      after_input_or_scroll);
+}
+
+void MetricsRenderFrameObserver::DidObserveLazyLoadBehavior(
+    blink::WebLocalFrameClient::LazyLoadBehavior lazy_load_behavior) {
+  if (page_timing_metrics_sender_)
+    page_timing_metrics_sender_->DidObserveLazyLoadBehavior(lazy_load_behavior);
 }
 
 void MetricsRenderFrameObserver::DidStartResponse(
     const GURL& response_url,
     int request_id,
     const network::ResourceResponseHead& response_head,
-    content::ResourceType resource_type) {
+    content::ResourceType resource_type,
+    content::PreviewsState previews_state) {
   if (provisional_frame_resource_data_use_ &&
       content::IsResourceTypeFrame(resource_type)) {
     // TODO(rajendrant): This frame request might start before the provisional
@@ -106,10 +128,10 @@ void MetricsRenderFrameObserver::DidStartResponse(
     // case. There should be a guarantee that DidStartProvisionalLoad be called
     // before DidStartResponse for the frame request.
     provisional_frame_resource_data_use_->DidStartResponse(
-        response_url, request_id, response_head, resource_type);
+        response_url, request_id, response_head, resource_type, previews_state);
   } else if (page_timing_metrics_sender_) {
-    page_timing_metrics_sender_->DidStartResponse(response_url, request_id,
-                                                  response_head, resource_type);
+    page_timing_metrics_sender_->DidStartResponse(
+        response_url, request_id, response_head, resource_type, previews_state);
     UpdateResourceMetadata(request_id);
   }
 }
@@ -160,10 +182,9 @@ void MetricsRenderFrameObserver::FrameDetached() {
   page_timing_metrics_sender_.reset();
 }
 
-void MetricsRenderFrameObserver::DidStartProvisionalLoad(
-    blink::WebDocumentLoader* document_loader,
-    bool is_content_initiated) {
-  // Create a new data use tracker for the new provisional load.
+void MetricsRenderFrameObserver::ReadyToCommitNavigation(
+    blink::WebDocumentLoader* document_loader) {
+  // Create a new data use tracker for the new document load.
   provisional_frame_resource_data_use_ =
       std::make_unique<PageResourceDataUse>();
   provisional_frame_resource_id = 0;
@@ -319,30 +340,20 @@ mojom::PageLoadTimingPtr MetricsRenderFrameObserver::GetTiming() const {
     timing->paint_timing->first_meaningful_paint =
         ClampDelta(perf.FirstMeaningfulPaint(), start);
   }
-  if (perf.LargestImagePaint() > 0.0) {
+  if (perf.LargestImagePaintSize() > 0) {
     timing->paint_timing->largest_image_paint =
-        ClampDelta(perf.LargestImagePaint(), start);
-    DCHECK(perf.LargestImagePaintSize() > 0);
+        perf.LargestImagePaint() == 0.0
+            ? base::TimeDelta()
+            : ClampDelta(perf.LargestImagePaint(), start);
     timing->paint_timing->largest_image_paint_size =
         perf.LargestImagePaintSize();
   }
-  if (perf.LastImagePaint() > 0.0) {
-    timing->paint_timing->last_image_paint =
-        ClampDelta(perf.LastImagePaint(), start);
-    DCHECK(perf.LastImagePaintSize() > 0);
-    timing->paint_timing->last_image_paint_size = perf.LastImagePaintSize();
-  }
-  if (perf.LargestTextPaint() > 0.0) {
+  if (perf.LargestTextPaintSize() > 0) {
     timing->paint_timing->largest_text_paint =
-        ClampDelta(perf.LargestTextPaint(), start);
-    DCHECK(perf.LargestTextPaintSize() > 0);
+        perf.LargestTextPaint() == 0.0
+            ? base::TimeDelta()
+            : ClampDelta(perf.LargestTextPaint(), start);
     timing->paint_timing->largest_text_paint_size = perf.LargestTextPaintSize();
-  }
-  if (perf.LastTextPaint() > 0.0) {
-    timing->paint_timing->last_text_paint =
-        ClampDelta(perf.LastTextPaint(), start);
-    DCHECK(perf.LastTextPaintSize() > 0);
-    timing->paint_timing->last_text_paint_size = perf.LastTextPaintSize();
   }
   if (perf.ParseStart() > 0.0)
     timing->parse_timing->parse_start = ClampDelta(perf.ParseStart(), start);

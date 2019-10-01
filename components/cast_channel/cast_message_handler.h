@@ -11,8 +11,10 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "base/sequence_checker.h"
 #include "base/time/tick_clock.h"
+#include "base/timer/timer.h"
 #include "base/token.h"
 #include "base/values.h"
 #include "components/cast_channel/cast_message_util.h"
@@ -175,6 +177,7 @@ class CastMessageHandler : public CastSocket::Observer {
   // request.
   virtual void StopSession(int channel_id,
                            const std::string& session_id,
+                           const base::Optional<std::string>& client_id,
                            ResultCallback callback);
 
   // Sends |message| to the device given by |channel_id|. The caller may use
@@ -203,10 +206,10 @@ class CastMessageHandler : public CastSocket::Observer {
   // Sends a set system volume command |body|. |callback| will be invoked
   // with the result of the operation. It is invalid to call this with
   // a message body that is not a volume request.
-  virtual Result SendSetVolumeRequest(int channel_id,
-                                      const base::Value& body,
-                                      const std::string& source_id,
-                                      ResultCallback callback);
+  virtual void SendSetVolumeRequest(int channel_id,
+                                    const base::Value& body,
+                                    const std::string& source_id,
+                                    ResultCallback callback);
 
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
@@ -277,7 +280,7 @@ class CastMessageHandler : public CastSocket::Observer {
   void HandleCastInternalMessage(int channel_id,
                                  const std::string& source_id,
                                  const std::string& destination_id,
-                                 std::unique_ptr<base::Value> payload);
+                                 base::Value payload);
 
   // Set of pending requests keyed by socket ID.
   base::flat_map<int, std::unique_ptr<PendingRequests>> pending_requests_;

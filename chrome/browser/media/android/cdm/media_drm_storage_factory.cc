@@ -6,8 +6,14 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/logging.h"
+#include "base/metrics/histogram_functions.h"
+#include "base/optional.h"
+#include "chrome/browser/media/android/cdm/media_drm_origin_id_manager.h"
+#include "chrome/browser/media/android/cdm/media_drm_origin_id_manager_factory.h"
+#include "chrome/browser/media/android/cdm/per_device_provisioning_permission.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/cdm/browser/media_drm_storage_impl.h"
 #include "components/prefs/pref_service.h"
@@ -15,15 +21,99 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
+#include "media/base/android/media_drm_bridge.h"
+#include "media/base/media_switches.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 
 namespace {
 
-void CreateOriginId(
-    base::OnceCallback<void(const base::UnguessableToken&)> callback) {
-  // TODO(crbug.com/917527): Update this to actually get a pre-provisioned
-  // origin ID.
-  std::move(callback).Run(base::UnguessableToken::Create());
+using MediaDrmOriginId = media::MediaDrmStorage::MediaDrmOriginId;
+using GetOriginIdStatus = MediaDrmOriginIdManager::GetOriginIdStatus;
+using OriginIdReadyCB =
+    base::OnceCallback<void(bool success, const MediaDrmOriginId& origin_id)>;
+
+// These values are reported to UMA. Entries should not be renumbered and
+// numeric values should never be reused.
+enum class GetOriginIdResult {
+  kSuccessWithPreProvisionedOriginId = 0,
+  kSuccessWithNewlyProvisionedOriginId = 1,
+  kSuccessWithUnprovisionedOriginId = 2,
+  kFailureOnPerAppProvisioningDevice = 3,
+  kFailureOnNonPerAppProvisioningDevice = 4,
+  kFailureWithNoFactory = 5,
+  kMaxValue = kFailureWithNoFactory,
+};
+
+GetOriginIdResult ConvertGetOriginIdStatusToResult(GetOriginIdStatus status) {
+  switch (status) {
+    case GetOriginIdStatus::kSuccessWithPreProvisionedOriginId:
+      return GetOriginIdResult::kSuccessWithPreProvisionedOriginId;
+    case GetOriginIdStatus::kSuccessWithNewlyProvisionedOriginId:
+      return GetOriginIdResult::kSuccessWithNewlyProvisionedOriginId;
+    case GetOriginIdStatus::kFailure:
+      break;
+  }
+
+  return media::MediaDrmBridge::IsPerApplicationProvisioningSupported()
+             ? GetOriginIdResult::kFailureOnPerAppProvisioningDevice
+             : GetOriginIdResult::kFailureOnNonPerAppProvisioningDevice;
+}
+
+// Update UMA with |result|.
+void ReportResultToUma(GetOriginIdResult result) {
+  base::UmaHistogramEnumeration("Media.EME.MediaDrm.GetOriginIdResult", result);
+}
+
+// Update UMA with |status|, and then pass |origin_id| to |callback|.
+void ReportStatusToUmaAndNotifyCaller(OriginIdReadyCB callback,
+                                      GetOriginIdStatus status,
+                                      const MediaDrmOriginId& origin_id) {
+  ReportResultToUma(ConvertGetOriginIdStatusToResult(status));
+  std::move(callback).Run(status != GetOriginIdStatus::kFailure, origin_id);
+}
+
+void CreateOriginIdWithMediaDrmOriginIdManager(Profile* profile,
+                                               OriginIdReadyCB callback) {
+  // Only need to origin IDs if MediaDrm supports it.
+  DCHECK(media::MediaDrmBridge::IsPerOriginProvisioningSupported());
+
+  auto* origin_id_manager =
+      MediaDrmOriginIdManagerFactory::GetForProfile(profile);
+  if (!origin_id_manager) {
+    ReportResultToUma(GetOriginIdResult::kFailureWithNoFactory);
+    std::move(callback).Run(false, base::nullopt);
+    return;
+  }
+
+  origin_id_manager->GetOriginId(
+      base::BindOnce(&ReportStatusToUmaAndNotifyCaller, std::move(callback)));
+}
+
+void CreateOriginId(OriginIdReadyCB callback) {
+  // Only need to origin IDs if MediaDrm supports it.
+  DCHECK(media::MediaDrmBridge::IsPerOriginProvisioningSupported());
+
+  auto origin_id = base::UnguessableToken::Create();
+  DVLOG(2) << __func__ << ": origin_id = " << origin_id;
+
+  ReportResultToUma(GetOriginIdResult::kSuccessWithUnprovisionedOriginId);
+  std::move(callback).Run(true, origin_id);
+}
+
+void AllowEmptyOriginId(content::RenderFrameHost* render_frame_host,
+                        base::OnceCallback<void(bool)> callback) {
+  DCHECK(media::MediaDrmBridge::IsPerOriginProvisioningSupported());
+
+  if (media::MediaDrmBridge::IsPerApplicationProvisioningSupported()) {
+    // If per-application provisioning is supported by the device, use of the
+    // empty origin ID won't work so don't allow it.
+    std::move(callback).Run(false);
+    return;
+  }
+
+  // Check if the user will allow use of the per-device identifier.
+  RequestPerDeviceProvisioningPermission(render_frame_host,
+                                         std::move(callback));
 }
 
 }  // namespace
@@ -52,9 +142,18 @@ void CreateMediaDrmStorage(content::RenderFrameHost* render_frame_host,
     return;
   }
 
+  // Only use MediaDrmOriginIdManager's preprovisioned origin IDs when feature
+  // kMediaDrmPreprovisioning is enabled.
+  auto get_origin_id_cb =
+      base::FeatureList::IsEnabled(media::kMediaDrmPreprovisioning)
+          ? base::BindRepeating(&CreateOriginIdWithMediaDrmOriginIdManager,
+                                profile)
+          : base::BindRepeating(&CreateOriginId);
+
   // The object will be deleted on connection error, or when the frame navigates
   // away. See FrameServiceBase for details.
-  new cdm::MediaDrmStorageImpl(render_frame_host, pref_service,
-                               base::BindRepeating(&CreateOriginId),
-                               std::move(request));
+  new cdm::MediaDrmStorageImpl(
+      render_frame_host, pref_service, get_origin_id_cb,
+      base::BindRepeating(&AllowEmptyOriginId, render_frame_host),
+      std::move(request));
 }

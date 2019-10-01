@@ -15,7 +15,7 @@
 #include "chromecast/media/cma/backend/cma_backend_factory.h"
 #include "media/base/renderer.h"
 #include "media/base/waiting.h"
-#include "media/mojo/interfaces/application_session_id_manager.mojom.h"
+#include "media/mojo/interfaces/cast_application_media_info_manager.mojom.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace base {
@@ -45,7 +45,6 @@ class CastRenderer : public ::media::Renderer,
   // |host_interfaces| provides interfaces tied to RenderFrameHost.
   CastRenderer(CmaBackendFactory* backend_factory,
                const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
-               const std::string& audio_device_id,
                VideoModeSwitcher* video_mode_switcher,
                VideoResolutionPolicy* video_resolution_policy,
                MediaResourceTracker* media_resource_tracker,
@@ -70,16 +69,17 @@ class CastRenderer : public ::media::Renderer,
 
  private:
   enum Stream { STREAM_AUDIO, STREAM_VIDEO };
-  void OnApplicationSessionIdReceived(
+  void OnApplicationMediaInfoReceived(
       ::media::MediaResource* media_resource,
       ::media::RendererClient* client,
       const ::media::PipelineStatusCB& init_cb,
-      const std::string& application_session_id);
-  void OnGetMultiroomInfo(::media::MediaResource* media_resource,
-                          ::media::RendererClient* client,
-                          const ::media::PipelineStatusCB& init_cb,
-                          const std::string& session_id,
-                          chromecast::mojom::MultiroomInfoPtr multiroom_info);
+      ::media::mojom::CastApplicationMediaInfoPtr application_media_info);
+  void OnGetMultiroomInfo(
+      ::media::MediaResource* media_resource,
+      ::media::RendererClient* client,
+      const ::media::PipelineStatusCB& init_cb,
+      ::media::mojom::CastApplicationMediaInfoPtr application_media_info,
+      chromecast::mojom::MultiroomInfoPtr multiroom_info);
   void OnError(::media::PipelineStatus status);
   void OnEnded(Stream stream);
   void OnStatisticsUpdate(const ::media::PipelineStatistics& stats);
@@ -94,7 +94,6 @@ class CastRenderer : public ::media::Renderer,
 
   CmaBackendFactory* const backend_factory_;
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
-  const std::string audio_device_id_;
   VideoModeSwitcher* video_mode_switcher_;
   VideoResolutionPolicy* video_resolution_policy_;
   MediaResourceTracker* media_resource_tracker_;
@@ -111,8 +110,8 @@ class CastRenderer : public ::media::Renderer,
   bool eos_[2];
   gfx::Size video_res_;
 
-  ::media::mojom::ApplicationSessionIdManagerPtr
-      application_session_id_manager_ptr_;
+  ::media::mojom::CastApplicationMediaInfoManagerPtr
+      application_media_info_manager_ptr_;
   chromecast::mojom::MultiroomManagerPtr multiroom_manager_;
 
   base::WeakPtrFactory<CastRenderer> weak_factory_;

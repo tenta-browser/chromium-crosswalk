@@ -26,14 +26,6 @@ const char kEnableBLEAdvertising[] = "enable-ble-advertising-in-apps";
 const char kDisableDesktopCaptureAudio[] =
     "disable-audio-support-for-desktop-share";
 
-// FeatureSwitch and about_flags don't play nice. Feature switch expects either
-// --enable-<feature> or --<feature>=1, but about_flags expects the command
-// line argument to enable it (or a selection). Hack this in, so enabling it
-// in about_flags enables the feature. Appending this flag has the same effect
-// as --embedded-extension-options=1.
-const char kEnableEmbeddedExtensionOptions[] =
-    "enable-embedded-extension-options";
-
 // Enables extension APIs that are in development.
 const char kEnableExperimentalExtensionApis[] =
     "enable-experimental-extension-apis";
@@ -45,9 +37,6 @@ const char kEnableOverrideBookmarksUI[] = "enable-override-bookmarks-ui";
 // requests originating from extensions.
 const char kDisableExtensionsHttpThrottling[] =
     "disable-extensions-http-throttling";
-
-// Enables tab for desktop sharing.
-const char kDisableTabForDesktopShare[] = "disable-tab-for-desktop-share";
 
 // Allows the ErrorConsole to collect runtime and manifest errors, and display
 // them in the chrome:extensions page.

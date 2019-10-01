@@ -66,7 +66,7 @@ public final class FirstRunSignInProcessor {
             return;
         }
         final String accountName = getFirstRunFlowSignInAccountName();
-        if (!FeatureUtilities.canAllowSync(activity) || !signinManager.isSignInAllowed()
+        if (!FeatureUtilities.canAllowSync() || !signinManager.isSignInAllowed()
                 || TextUtils.isEmpty(accountName)) {
             setFirstRunFlowSignInComplete(true);
             return;
@@ -77,7 +77,7 @@ public final class FirstRunSignInProcessor {
             @Override
             public void onSignInComplete() {
                 if (ChromeFeatureList.isEnabled(ChromeFeatureList.UNIFIED_CONSENT)) {
-                    UnifiedConsentServiceBridge.enableGoogleServices();
+                    UnifiedConsentServiceBridge.setUrlKeyedAnonymizedDataCollectionEnabled(true);
                 }
                 // Show sync settings if user pressed the "Settings" button.
                 if (setUp) {

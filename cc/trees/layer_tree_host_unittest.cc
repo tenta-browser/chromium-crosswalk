@@ -10,6 +10,7 @@
 #include <algorithm>
 
 #include "base/auto_reset.h"
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
@@ -350,7 +351,8 @@ class LayerTreeHostTestReadyToActivateNonEmpty
 
 // No single thread test because the commit goes directly to the active tree in
 // single thread mode, so notify ready to activate is skipped.
-MULTI_THREAD_TEST_F(LayerTreeHostTestReadyToActivateNonEmpty);
+// Flaky: https://crbug.com/947673
+// MULTI_THREAD_TEST_F(LayerTreeHostTestReadyToActivateNonEmpty);
 
 // Test if the LTHI receives ReadyToDraw notifications from the TileManager when
 // no raster tasks get scheduled.
@@ -1173,6 +1175,9 @@ class LayerTreeHostTestLayerListSurfaceDamage : public LayerTreeHostTest {
     child_c_->SetForceRenderSurfaceForTesting(true);
     child_c_->SetIsDrawable(true);
 
+    // TODO(pdr): Do not use the property tree builder for testing in layer list
+    // mode. This will require rewriting this test to manually build property
+    // trees.
     layer_tree_host()->BuildPropertyTreesForTesting();
 
     LayerTreeHostTest::SetupTree();
@@ -1576,7 +1581,8 @@ class LayerTreeHostTestPrepareTilesWithoutDraw : public LayerTreeHostTest {
 
 // This behavior is specific to Android WebView, which only uses
 // multi-threaded compositor.
-MULTI_THREAD_TEST_F(LayerTreeHostTestPrepareTilesWithoutDraw);
+// Flaky: https://crbug.com/947673
+// MULTI_THREAD_TEST_F(LayerTreeHostTestPrepareTilesWithoutDraw);
 
 // Verify CanDraw() is false until first commit.
 class LayerTreeHostTestCantDrawBeforeCommit : public LayerTreeHostTest {
@@ -3300,7 +3306,7 @@ class ViewportDeltasAppliedDuringPinch : public LayerTreeHostTest {
     page_scale_layer->AddChild(pinch);
     root_clip->AddChild(page_scale_layer);
 
-    LayerTreeHost::ViewportLayers viewport_layers;
+    ViewportLayers viewport_layers;
     viewport_layers.page_scale = page_scale_layer;
     viewport_layers.inner_viewport_container = root_clip;
     viewport_layers.inner_viewport_scroll = pinch;
@@ -5562,7 +5568,7 @@ class LayerTreeHostTestElasticOverscroll : public LayerTreeHostTest {
     inner_viewport_scroll_layer->AddChild(content_layer);
 
     layer_tree_host()->SetRootLayer(root_layer_);
-    LayerTreeHost::ViewportLayers viewport_layers;
+    ViewportLayers viewport_layers;
     viewport_layers.overscroll_elasticity_element_id =
         overscroll_elasticity_layer->element_id();
     viewport_layers.page_scale = page_scale_layer;
@@ -5657,20 +5663,22 @@ class TestSwapPromise : public SwapPromise {
     base::AutoLock lock(result_->lock);
     EXPECT_FALSE(result_->did_activate_called);
     EXPECT_FALSE(result_->did_swap_called);
-    EXPECT_FALSE(result_->did_not_swap_called);
+    EXPECT_TRUE(!result_->did_not_swap_called ||
+                action_ == SwapPromise::DidNotSwapAction::KEEP_ACTIVE);
     result_->did_activate_called = true;
   }
 
   void WillSwap(viz::CompositorFrameMetadata* metadata) override {
     base::AutoLock lock(result_->lock);
     EXPECT_FALSE(result_->did_swap_called);
-    EXPECT_FALSE(result_->did_not_swap_called);
+    EXPECT_TRUE(!result_->did_not_swap_called ||
+                action_ == SwapPromise::DidNotSwapAction::KEEP_ACTIVE);
     result_->did_swap_called = true;
   }
 
   void DidSwap() override {}
 
-  void DidNotSwap(DidNotSwapReason reason) override {
+  DidNotSwapAction DidNotSwap(DidNotSwapReason reason) override {
     base::AutoLock lock(result_->lock);
     EXPECT_FALSE(result_->did_swap_called);
     EXPECT_FALSE(result_->did_not_swap_called);
@@ -5678,13 +5686,17 @@ class TestSwapPromise : public SwapPromise {
                  reason != DidNotSwapReason::SWAP_FAILS);
     result_->did_not_swap_called = true;
     result_->reason = reason;
+    return action_;
   }
+
+  void set_action(DidNotSwapAction action) { action_ = action; }
 
   int64_t TraceId() const override { return 0; }
 
  private:
   // Not owned.
   TestSwapPromiseResult* result_;
+  DidNotSwapAction action_ = DidNotSwapAction::BREAK_PROMISE;
 };
 
 class PinnedLayerTreeSwapPromise : public LayerTreeHostTest {
@@ -6037,7 +6049,7 @@ class LayerTreeHostTestKeepSwapPromiseMFBA : public LayerTreeHostTest {
 
 MULTI_THREAD_TEST_F(LayerTreeHostTestKeepSwapPromiseMFBA);
 
-class LayerTreeHostTestBreakSwapPromiseForVisibility
+class LayerTreeHostTestDeferSwapPromiseForVisibility
     : public LayerTreeHostTest {
  protected:
   void BeginTest() override { PostSetNeedsCommitToMainThread(); }
@@ -6046,6 +6058,7 @@ class LayerTreeHostTestBreakSwapPromiseForVisibility
     layer_tree_host()->SetVisible(false);
     auto swap_promise =
         std::make_unique<TestSwapPromise>(&swap_promise_result_);
+    swap_promise->set_action(SwapPromise::DidNotSwapAction::KEEP_ACTIVE);
     layer_tree_host()->GetSwapPromiseManager()->QueueSwapPromise(
         std::move(swap_promise));
   }
@@ -6056,7 +6069,7 @@ class LayerTreeHostTestBreakSwapPromiseForVisibility
       sent_queue_request_ = true;
       MainThreadTaskRunner()->PostTask(
           FROM_HERE,
-          base::BindOnce(&LayerTreeHostTestBreakSwapPromiseForVisibility::
+          base::BindOnce(&LayerTreeHostTestDeferSwapPromiseForVisibility::
                              SetVisibleFalseAndQueueSwapPromise,
                          base::Unretained(this)));
     }
@@ -6064,25 +6077,42 @@ class LayerTreeHostTestBreakSwapPromiseForVisibility
 
   void BeginMainFrameAbortedOnThread(LayerTreeHostImpl* host_impl,
                                      CommitEarlyOutReason reason) override {
-    EndTest();
+    MainThreadTaskRunner()->PostTask(
+        FROM_HERE,
+        base::BindOnce(&LayerTreeHostTestDeferSwapPromiseForVisibility::
+                           CheckSwapPromiseNotCalled,
+                       base::Unretained(this)));
   }
 
-  void AfterTest() override {
+  void CheckSwapPromiseNotCalled() {
     {
       base::AutoLock lock(swap_promise_result_.lock);
       EXPECT_FALSE(swap_promise_result_.did_activate_called);
       EXPECT_FALSE(swap_promise_result_.did_swap_called);
       EXPECT_TRUE(swap_promise_result_.did_not_swap_called);
       EXPECT_EQ(SwapPromise::COMMIT_FAILS, swap_promise_result_.reason);
+      EXPECT_FALSE(swap_promise_result_.dtor_called);
+    }
+    layer_tree_host()->SetVisible(true);
+  }
+
+  void DidCommitAndDrawFrame() override {
+    {
+      base::AutoLock lock(swap_promise_result_.lock);
+      EXPECT_TRUE(swap_promise_result_.did_activate_called);
+      EXPECT_TRUE(swap_promise_result_.did_swap_called);
       EXPECT_TRUE(swap_promise_result_.dtor_called);
     }
+    EndTest();
   }
+
+  void AfterTest() override {}
 
   TestSwapPromiseResult swap_promise_result_;
   bool sent_queue_request_ = false;
 };
 
-SINGLE_AND_MULTI_THREAD_TEST_F(LayerTreeHostTestBreakSwapPromiseForVisibility);
+SINGLE_AND_MULTI_THREAD_TEST_F(LayerTreeHostTestDeferSwapPromiseForVisibility);
 
 class SimpleSwapPromiseMonitor : public SwapPromiseMonitor {
  public:
@@ -7071,7 +7101,7 @@ class LayerTreeHostTestCrispUpAfterPinchEnds : public LayerTreeHostTest {
     // pinch.
     pinch->AddChild(layer);
 
-    LayerTreeHost::ViewportLayers viewport_layers;
+    ViewportLayers viewport_layers;
     viewport_layers.page_scale = page_scale_layer;
     viewport_layers.inner_viewport_container = root_clip;
     viewport_layers.inner_viewport_scroll = pinch;
@@ -7091,7 +7121,7 @@ class LayerTreeHostTestCrispUpAfterPinchEnds : public LayerTreeHostTest {
     viz::RenderPass* root_pass = frame_data->render_passes.back().get();
     for (auto* draw_quad : root_pass->quad_list) {
       // Checkerboards mean an incomplete frame.
-      if (draw_quad->material != viz::DrawQuad::TILED_CONTENT)
+      if (draw_quad->material != viz::DrawQuad::Material::kTiledContent)
         return 0.f;
       const viz::TileDrawQuad* quad =
           viz::TileDrawQuad::MaterialCast(draw_quad);
@@ -7381,7 +7411,7 @@ class LayerTreeHostTestContinuousDrawWhenCreatingVisibleTiles
     // pinch.
     pinch->AddChild(layer);
 
-    LayerTreeHost::ViewportLayers viewport_layers;
+    ViewportLayers viewport_layers;
     viewport_layers.page_scale = page_scale_layer;
     viewport_layers.inner_viewport_container = root_clip;
     viewport_layers.inner_viewport_scroll = pinch;
@@ -7753,7 +7783,7 @@ class LayerTreeTestPageScaleFlags : public LayerTreeTest {
     layer_tree_host()->SetRootLayer(root);
     LayerTreeTest::SetupTree();
 
-    LayerTreeHost::ViewportLayers viewport_layers;
+    ViewportLayers viewport_layers;
     viewport_layers.inner_viewport_container = root;
     viewport_layers.page_scale = page_scale;
     viewport_layers.inner_viewport_scroll = inner_viewport_scroll;
@@ -8311,7 +8341,8 @@ class LayerTreeHostTestQueueImageDecode : public LayerTreeHostTest {
 
     image_ = DrawImage(CreateDiscardablePaintImage(gfx::Size(400, 400)),
                        SkIRect::MakeWH(400, 400), kNone_SkFilterQuality,
-                       SkMatrix::I(), PaintImage::kDefaultFrameIndex);
+                       SkMatrix::I(), PaintImage::kDefaultFrameIndex,
+                       gfx::ColorSpace());
     auto callback = base::BindRepeating(
         &LayerTreeHostTestQueueImageDecode::ImageDecodeFinished,
         base::Unretained(this));
@@ -8400,6 +8431,9 @@ class LayerTreeHostTestHudLayerWithLayerLists : public LayerTreeHostTest {
     LayerTreeHostTest::SetupTree();
 
     // Build the property trees for the root layer.
+    // TODO(pdr): Do not use the property tree builder for testing in layer list
+    // mode. This will require rewriting this test to manually build property
+    // trees.
     layer_tree_host()->BuildPropertyTreesForTesting();
 
     // The HUD layer should not have been setup by the property tree building.
@@ -8595,9 +8629,8 @@ class LayerTreeHostTestImageAnimationDrawImageShader
     : public LayerTreeHostTestImageAnimation {
   void AddImageOp(const PaintImage& image) override {
     PaintFlags flags;
-    flags.setShader(
-        PaintShader::MakeImage(image, SkShader::TileMode::kRepeat_TileMode,
-                               SkShader::TileMode::kRepeat_TileMode, nullptr));
+    flags.setShader(PaintShader::MakeImage(image, SkTileMode::kRepeat,
+                                           SkTileMode::kRepeat, nullptr));
     content_layer_client_.add_draw_rect(gfx::Rect(500, 500), flags);
   }
 };
@@ -8611,8 +8644,8 @@ class LayerTreeHostTestImageAnimationDrawRecordShader
     record->push<DrawImageOp>(image, 0.f, 0.f, nullptr);
     PaintFlags flags;
     flags.setShader(PaintShader::MakePaintRecord(
-        record, SkRect::MakeWH(500, 500), SkShader::TileMode::kClamp_TileMode,
-        SkShader::TileMode::kClamp_TileMode, nullptr));
+        record, SkRect::MakeWH(500, 500), SkTileMode::kClamp,
+        SkTileMode::kClamp, nullptr));
     content_layer_client_.add_draw_rect(gfx::Rect(500, 500), flags);
   }
 };
@@ -8650,7 +8683,7 @@ class LayerTreeHostTestImageAnimationSynchronousSchedulingSoftwareDraw
   void InitializeSettings(LayerTreeSettings* settings) override {
     LayerTreeHostTestImageAnimationSynchronousScheduling::InitializeSettings(
         settings);
-    use_software_renderer_ = true;
+    renderer_type_ = RENDERER_SOFTWARE;
   }
 
   void AfterTest() override {
@@ -8663,9 +8696,8 @@ class LayerTreeHostTestImageAnimationSynchronousSchedulingSoftwareDraw
   }
 };
 
-// TODO(crbug.com/851231): Disabled this test due to flakiness.
-// MULTI_THREAD_TEST_F(
-//    LayerTreeHostTestImageAnimationSynchronousSchedulingSoftwareDraw);
+MULTI_THREAD_TEST_F(
+    LayerTreeHostTestImageAnimationSynchronousSchedulingSoftwareDraw);
 
 class LayerTreeHostTestImageDecodingHints : public LayerTreeHostTest {
  public:
@@ -8727,11 +8759,11 @@ MULTI_THREAD_TEST_F(LayerTreeHostTestImageDecodingHints);
 
 class LayerTreeHostTestCheckerboardUkm : public LayerTreeHostTest {
  public:
-  LayerTreeHostTestCheckerboardUkm() : url_(GURL("https://example.com")) {}
-
+  LayerTreeHostTestCheckerboardUkm() : url_(GURL("https://example.com")),
+                                       ukm_source_id_(123) {}
   void BeginTest() override {
     PostSetNeedsCommitToMainThread();
-    layer_tree_host()->SetURLForUkm(url_);
+    layer_tree_host()->SetSourceURL(ukm_source_id_, url_);
   }
 
   void SetupTree() override {
@@ -8767,6 +8799,9 @@ class LayerTreeHostTestCheckerboardUkm : public LayerTreeHostTest {
 
     auto* recorder = static_cast<ukm::TestUkmRecorder*>(
         impl->ukm_manager()->recorder_for_testing());
+    // Tie the source id to the URL. In production, this is already done in
+    // Document, and the source id is passed down to cc.
+    recorder->UpdateSourceURL(ukm_source_id_, url_);
 
     const auto& entries = recorder->GetEntriesByName(kUserInteraction);
     EXPECT_EQ(1u, entries.size());
@@ -8784,6 +8819,7 @@ class LayerTreeHostTestCheckerboardUkm : public LayerTreeHostTest {
 
  private:
   const GURL url_;
+  const ukm::SourceId ukm_source_id_;
   FakeContentLayerClient content_layer_client_;
 };
 
@@ -9032,6 +9068,66 @@ class LayerTreeHostTestRequestForceSendMetadata
 };
 
 SINGLE_AND_MULTI_THREAD_TEST_F(LayerTreeHostTestRequestForceSendMetadata);
+
+class LayerTreeHostTestPartialTileDamage : public LayerTreeHostTest {
+ public:
+  LayerTreeHostTestPartialTileDamage()
+      : partial_damage_(20, 20, 45, 60), layer_size_(512, 512) {}
+
+  void BeginTest() override { PostSetNeedsCommitToMainThread(); }
+  void AfterTest() override {}
+
+  void InitializeSettings(LayerTreeSettings* settings) override {
+    settings->default_tile_size = gfx::Size(256, 256);
+  }
+
+  void SetupTree() override {
+    content_layer_client_.set_bounds(layer_size_);
+    content_layer_client_.set_fill_with_nonsolid_color(true);
+    layer_tree_host()->SetRootLayer(
+        FakePictureLayer::Create(&content_layer_client_));
+    layer_tree_host()->root_layer()->SetBounds(layer_size_);
+    LayerTreeTest::SetupTree();
+  }
+
+  void DoPartialTileInvalidation() {
+    layer_tree_host()->root_layer()->SetNeedsDisplayRect(partial_damage_);
+  }
+
+  void DisplayReceivedCompositorFrameOnThread(
+      const viz::CompositorFrame& frame) override {
+    frame_count_on_impl_thread_++;
+    gfx::Rect frame_damage = frame.render_pass_list.back()->damage_rect;
+
+    switch (frame_count_on_impl_thread_) {
+      case 1:
+        // We have the first frame, which should damage everything. Schedule
+        // another which partially damages one of tiles.
+        MainThreadTaskRunner()->PostTask(
+            FROM_HERE,
+            base::BindOnce(
+                &LayerTreeHostTestPartialTileDamage::DoPartialTileInvalidation,
+                base::Unretained(this)));
+        EXPECT_EQ(frame_damage, gfx::Rect(layer_size_));
+        break;
+      case 2:
+        EXPECT_EQ(frame_damage, partial_damage_);
+        EndTest();
+    }
+  }
+
+ protected:
+  const gfx::Rect partial_damage_;
+  const gfx::Size layer_size_;
+
+  // Main thread.
+  FakeContentLayerClient content_layer_client_;
+
+  // Impl thread.
+  int frame_count_on_impl_thread_ = 0;
+};
+
+MULTI_THREAD_TEST_F(LayerTreeHostTestPartialTileDamage);
 
 }  // namespace
 }  // namespace cc

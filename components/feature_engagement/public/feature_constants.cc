@@ -16,13 +16,15 @@ const base::Feature kIPHDummyFeature{"IPH_Dummy",
 
 #if defined(OS_ANDROID)
 const base::Feature kIPHDataSaverDetailFeature{
-    "IPH_DataSaverDetail", base::FEATURE_DISABLED_BY_DEFAULT};
+    "IPH_DataSaverDetail", base::FEATURE_ENABLED_BY_DEFAULT};
+const base::Feature kIPHDataSaverMilestonePromoFeature{
+    "IPH_DataSaverMilestonePromo", base::FEATURE_DISABLED_BY_DEFAULT};
 const base::Feature kIPHDataSaverPreviewFeature{
     "IPH_DataSaverPreview", base::FEATURE_DISABLED_BY_DEFAULT};
 const base::Feature kIPHDownloadHomeFeature{"IPH_DownloadHome",
-                                            base::FEATURE_DISABLED_BY_DEFAULT};
+                                            base::FEATURE_ENABLED_BY_DEFAULT};
 const base::Feature kIPHDownloadPageFeature{"IPH_DownloadPage",
-                                            base::FEATURE_DISABLED_BY_DEFAULT};
+                                            base::FEATURE_ENABLED_BY_DEFAULT};
 const base::Feature kIPHDownloadPageScreenshotFeature{
     "IPH_DownloadPageScreenshot", base::FEATURE_DISABLED_BY_DEFAULT};
 const base::Feature kIPHChromeDuetFeature{"IPH_ChromeDuet",
@@ -31,8 +33,6 @@ const base::Feature kIPHChromeHomeExpandFeature{
     "IPH_ChromeHomeExpand", base::FEATURE_DISABLED_BY_DEFAULT};
 const base::Feature kIPHChromeHomePullToRefreshFeature{
     "IPH_ChromeHomePullToRefresh", base::FEATURE_DISABLED_BY_DEFAULT};
-const base::Feature kIPHMediaDownloadFeature{"IPH_MediaDownload",
-                                             base::FEATURE_DISABLED_BY_DEFAULT};
 const base::Feature kIPHContextualSearchWebSearchFeature{
     "IPH_ContextualSearchWebSearch", base::FEATURE_DISABLED_BY_DEFAULT};
 const base::Feature kIPHContextualSearchPromoteTapFeature{
@@ -53,12 +53,28 @@ const base::Feature kIPHHomePageButtonFeature{
     "IPH_HomePageButton", base::FEATURE_DISABLED_BY_DEFAULT};
 const base::Feature kIPHHomepageTileFeature{"IPH_HomepageTile",
                                             base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kIPHIdentityDiscFeature{"IPH_IdentityDisc",
+                                            base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kIPHKeyboardAccessoryAddressFillingFeature{
+    "IPH_KeyboardAccessoryAddressFilling", base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kIPHKeyboardAccessoryPasswordFillingFeature{
+    "IPH_KeyboardAccessoryPasswordFilling", base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kIPHKeyboardAccessoryPaymentFillingFeature{
+    "IPH_KeyboardAccessoryPaymentFilling", base::FEATURE_DISABLED_BY_DEFAULT};
 const base::Feature kIPHNewTabPageButtonFeature{
     "IPH_NewTabPageButton", base::FEATURE_DISABLED_BY_DEFAULT};
 const base::Feature kIPHPreviewsOmniboxUIFeature{
     "IPH_PreviewsOmniboxUI", base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kIPHTabGroupsQuicklyComparePagesFeature{
+    "IPH_TabGroupsQuicklyComparePages", base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kIPHTabGroupsTapToSeeAnotherTabFeature{
+    "IPH_TabGroupsTapToSeeAnotherTab", base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kIPHTabGroupsYourTabsAreTogetherFeature{
+    "IPH_TabGroupsYourTabsTogether", base::FEATURE_DISABLED_BY_DEFAULT};
 const base::Feature kIPHTranslateMenuButtonFeature{
     "IPH_TranslateMenuButton", base::FEATURE_ENABLED_BY_DEFAULT};
+const base::Feature kIPHExploreSitesTileFeature{
+    "IPH_ExploreSitesTile", base::FEATURE_DISABLED_BY_DEFAULT};
 #endif  // defined(OS_ANDROID)
 
 #if BUILDFLAG(ENABLE_DESKTOP_IN_PRODUCT_HELP)
@@ -69,6 +85,8 @@ const base::Feature kIPHIncognitoWindowFeature{
 const base::Feature kIPHNewTabFeature{"IPH_NewTab",
                                       base::FEATURE_DISABLED_BY_DEFAULT};
 const base::Feature kIPHReopenTabFeature{"IPH_ReopenTab",
+                                         base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kIPHFocusModeFeature{"IPH_FocusMode",
                                          base::FEATURE_DISABLED_BY_DEFAULT};
 #endif  // BUILDFLAG(ENABLE_DESKTOP_IPH)
 
@@ -83,6 +101,8 @@ const base::Feature kIPHNewIncognitoTabTipFeature{
     "IPH_NewIncognitoTabTip", base::FEATURE_DISABLED_BY_DEFAULT};
 const base::Feature kIPHBadgedReadingListFeature{
     "IPH_BadgedReadingList", base::FEATURE_ENABLED_BY_DEFAULT};
+const base::Feature kIPHBadgedTranslateManualTriggerFeature{
+    "IPH_BadgedTranslateManualTrigger", base::FEATURE_DISABLED_BY_DEFAULT};
 #endif  // defined(OS_IOS)
 
 }  // namespace feature_engagement

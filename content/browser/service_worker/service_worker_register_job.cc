@@ -6,8 +6,11 @@
 
 #include <stdint.h>
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "content/browser/service_worker/embedded_worker_instance.h"
@@ -18,10 +21,10 @@
 #include "content/browser/service_worker/service_worker_registration.h"
 #include "content/browser/service_worker/service_worker_storage.h"
 #include "content/browser/service_worker/service_worker_version.h"
-#include "content/browser/service_worker/service_worker_write_to_cache_job.h"
 #include "content/browser/url_loader_factory_getter.h"
 #include "content/common/service_worker/service_worker_types.h"
 #include "content/common/service_worker/service_worker_utils.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "mojo/public/cpp/bindings/associated_binding.h"
 #include "net/base/net_errors.h"
@@ -66,15 +69,9 @@ ServiceWorkerRegisterJob::ServiceWorkerRegisterJob(
       is_promise_resolved_(false),
       should_uninstall_on_failure_(false),
       force_bypass_cache_(force_bypass_cache),
+      skip_script_comparison_(skip_script_comparison),
       promise_resolved_status_(blink::ServiceWorkerStatusCode::kOk),
       weak_factory_(this) {
-  // |skip_script_comparison_| should be true when
-  // ServiceWorkerImportedScriptUpdateCheck is enabled, because then script
-  // comparison happens before starting a worker and it doesn't need to happen
-  // during the worker startup.
-  skip_script_comparison_ =
-      blink::ServiceWorkerUtils::IsImportedScriptUpdateCheckEnabled() ||
-      skip_script_comparison;
   internal_.registration = registration;
 }
 
@@ -97,10 +94,18 @@ void ServiceWorkerRegisterJob::AddCallback(RegistrationCallback callback) {
 }
 
 void ServiceWorkerRegisterJob::Start() {
-  BrowserThread::PostAfterStartupTask(
-      FROM_HERE, base::ThreadTaskRunnerHandle::Get(),
-      base::BindOnce(&ServiceWorkerRegisterJob::StartImpl,
-                     weak_factory_.GetWeakPtr()));
+  // Schedule the job based on job type. For registration, give it the
+  // current task priority as it's an explicit JavaScript API and sites
+  // may show a message like "offline enabled". For update, give it a lower
+  // priority as (soft) update doesn't affect user interactions directly.
+  // TODO(bashi): For explicit update() API, we may want to prioritize it too.
+  auto traits = (job_type_ == REGISTRATION_JOB)
+                    ? base::TaskTraits(BrowserThread::IO)
+                    : base::TaskTraits(BrowserThread::IO,
+                                       base::TaskPriority::BEST_EFFORT);
+  base::PostTaskWithTraits(FROM_HERE, std::move(traits),
+                           base::BindOnce(&ServiceWorkerRegisterJob::StartImpl,
+                                          weak_factory_.GetWeakPtr()));
 }
 
 void ServiceWorkerRegisterJob::StartImpl() {
@@ -167,7 +172,7 @@ void ServiceWorkerRegisterJob::set_registration(
   internal_.registration = std::move(registration);
 }
 
-ServiceWorkerRegistration* ServiceWorkerRegisterJob::registration() {
+ServiceWorkerRegistration* ServiceWorkerRegisterJob::registration() const {
   DCHECK(phase_ >= REGISTER || job_type_ == UPDATE_JOB) << phase_;
   return internal_.registration.get();
 }
@@ -294,37 +299,62 @@ void ServiceWorkerRegisterJob::ContinueWithUpdate(
   // ago, depending on the freshness of the cached worker script we
   // may be able to complete the update job right here.
 
-  if (blink::ServiceWorkerUtils::IsImportedScriptUpdateCheckEnabled()) {
-    ServiceWorkerVersion* version_to_update =
-        registration()->GetNewestVersion();
-    std::vector<ServiceWorkerDatabase::ResourceRecord> resources;
-    version_to_update->script_cache_map()->GetResources(&resources);
-    int64_t script_resource_id =
-        version_to_update->script_cache_map()->LookupResourceId(script_url_);
-    DCHECK_NE(kInvalidServiceWorkerResourceId, script_resource_id);
-    update_checker_ = std::make_unique<ServiceWorkerUpdateChecker>(
-        std::move(resources), script_url_, script_resource_id,
-        version_to_update,
-        context_->loader_factory_getter()->GetNetworkFactory());
-    update_checker_->Start(
-        base::BindOnce(&ServiceWorkerRegisterJob::OnUpdateCheckFinished,
-                       weak_factory_.GetWeakPtr()));
-    return;
-  }
-
   UpdateAndContinue();
 }
 
+bool ServiceWorkerRegisterJob::IsUpdateCheckNeeded() const {
+  ServiceWorkerVersion* newest_version = registration()->GetNewestVersion();
+
+  // Skip the update check if there is no newest service worker, which means
+  // that a new registration is created.
+  if (!newest_version)
+    return false;
+
+  // Skip the byte-to-byte comparison when either of the script type or the
+  // script url is updated.
+  if (newest_version->script_url() != script_url_ ||
+      newest_version->script_type() != worker_script_type_) {
+    DCHECK_EQ(job_type_, REGISTRATION_JOB);
+    return false;
+  }
+  // Need byte-to-byte comparison unless it should be forcefully skipped.
+  return !skip_script_comparison_;
+}
+
+void ServiceWorkerRegisterJob::TriggerUpdateCheckInBrowser(
+    ServiceWorkerUpdateChecker::UpdateStatusCallback callback) {
+  DCHECK_EQ(GetUpdateCheckType(),
+            UpdateCheckType::kAllScriptsBeforeStartWorker);
+  ServiceWorkerVersion* version_to_update = registration()->GetNewestVersion();
+  base::TimeDelta time_since_last_check =
+      base::Time::Now() - registration()->last_update_check();
+  std::vector<ServiceWorkerDatabase::ResourceRecord> resources;
+  version_to_update->script_cache_map()->GetResources(&resources);
+  int64_t script_resource_id =
+      version_to_update->script_cache_map()->LookupResourceId(script_url_);
+  DCHECK_NE(script_resource_id, kInvalidServiceWorkerResourceId);
+
+  update_checker_ = std::make_unique<ServiceWorkerUpdateChecker>(
+      std::move(resources), script_url_, script_resource_id, version_to_update,
+      context_->loader_factory_getter()->GetNetworkFactory(),
+      force_bypass_cache_, registration()->update_via_cache(),
+      time_since_last_check);
+  update_checker_->Start(std::move(callback));
+}
+
+ServiceWorkerRegisterJob::UpdateCheckType
+ServiceWorkerRegisterJob::GetUpdateCheckType() const {
+  return blink::ServiceWorkerUtils::IsImportedScriptUpdateCheckEnabled()
+             ? UpdateCheckType::kAllScriptsBeforeStartWorker
+             : UpdateCheckType::kMainScriptDuringStartWorker;
+}
+
 void ServiceWorkerRegisterJob::OnUpdateCheckFinished(bool script_changed) {
-  DCHECK(blink::ServiceWorkerUtils::IsImportedScriptUpdateCheckEnabled());
+  DCHECK_EQ(GetUpdateCheckType(),
+            UpdateCheckType::kAllScriptsBeforeStartWorker);
+  BumpLastUpdateCheckTimeIfNeeded();
   if (!script_changed) {
     // TODO(momohatt): Set phase correctly.
-    // TODO(momohatt): Update the last update check time correctly.
-    ServiceWorkerVersion* newest_version = registration()->GetNewestVersion();
-    if (newest_version->force_bypass_cache_for_scripts()) {
-      registration()->set_last_update_check(base::Time::Now());
-    }
-    context_->storage()->UpdateLastUpdateCheckTime(registration());
     ResolvePromise(blink::ServiceWorkerStatusCode::kOk, std::string(),
                    registration());
     // This terminates the current job (|this|).
@@ -335,7 +365,7 @@ void ServiceWorkerRegisterJob::OnUpdateCheckFinished(bool script_changed) {
 
   compared_script_info_map_ = update_checker_->TakeComparedResults();
   update_checker_.reset();
-  UpdateAndContinue();
+  StartWorkerForUpdate();
 }
 
 // Creates a new ServiceWorkerRegistration.
@@ -397,9 +427,7 @@ void ServiceWorkerRegisterJob::ContinueWithRegistrationForSameScriptUrl(
   UpdateAndContinue();
 }
 
-// This function corresponds to the spec's [[Update]] algorithm.
-void ServiceWorkerRegisterJob::UpdateAndContinue() {
-  SetPhase(UPDATE);
+void ServiceWorkerRegisterJob::StartWorkerForUpdate() {
   context_->storage()->NotifyInstallingRegistration(registration());
 
   int64_t version_id = context_->storage()->NewVersionId();
@@ -408,18 +436,16 @@ void ServiceWorkerRegisterJob::UpdateAndContinue() {
     return;
   }
 
+  // PauseAfterDownload is used for an update check during start worker.
+  bool need_to_pause_after_download =
+      GetUpdateCheckType() == UpdateCheckType::kMainScriptDuringStartWorker &&
+      IsUpdateCheckNeeded();
+
   // Module service workers don't support pause after download so we can't
   // perform script comparison.
   // TODO(asamidoi): Support pause after download in module workers.
   if (worker_script_type_ == blink::mojom::ScriptType::kModule) {
-    skip_script_comparison_ = true;
-  }
-
-  // Skip the byte-for-byte comparison when the script type is updated.
-  if (registration()->newest_installed_version() &&
-      registration()->newest_installed_version()->script_type() !=
-          worker_script_type_) {
-    skip_script_comparison_ = true;
+    need_to_pause_after_download = false;
   }
 
   // "Let worker be a new ServiceWorker object..." and start the worker.
@@ -427,7 +453,7 @@ void ServiceWorkerRegisterJob::UpdateAndContinue() {
       registration(), script_url_, worker_script_type_, version_id, context_));
   new_version()->set_force_bypass_cache_for_scripts(force_bypass_cache_);
 
-  if (registration()->newest_installed_version() && !skip_script_comparison_) {
+  if (need_to_pause_after_download) {
     new_version()->SetToPauseAfterDownload(
         base::BindOnce(&ServiceWorkerRegisterJob::OnPausedAfterDownload,
                        weak_factory_.GetWeakPtr()));
@@ -442,6 +468,25 @@ void ServiceWorkerRegisterJob::UpdateAndContinue() {
       ServiceWorkerMetrics::EventType::INSTALL,
       base::BindOnce(&ServiceWorkerRegisterJob::OnStartWorkerFinished,
                      weak_factory_.GetWeakPtr()));
+}
+
+// This function corresponds to the spec's [[Update]] algorithm.
+void ServiceWorkerRegisterJob::UpdateAndContinue() {
+  SetPhase(UPDATE);
+  switch (GetUpdateCheckType()) {
+    case UpdateCheckType::kAllScriptsBeforeStartWorker:
+      if (!IsUpdateCheckNeeded()) {
+        StartWorkerForUpdate();
+        return;
+      }
+      TriggerUpdateCheckInBrowser(
+          base::BindOnce(&ServiceWorkerRegisterJob::OnUpdateCheckFinished,
+                         weak_factory_.GetWeakPtr()));
+      return;
+    case UpdateCheckType::kMainScriptDuringStartWorker:
+      StartWorkerForUpdate();
+      return;
+  }
 }
 
 void ServiceWorkerRegisterJob::OnStartWorkerFinished(
@@ -629,12 +674,15 @@ void ServiceWorkerRegisterJob::CompleteInternal(
         registration()->UnsetVersion(new_version());
         new_version()->Doom();
       }
-      if (!registration()->waiting_version() &&
-          !registration()->active_version()) {
+      if (!registration()->newest_installed_version()) {
         registration()->NotifyRegistrationFailed();
-        context_->storage()->DeleteRegistration(
-            registration()->id(), registration()->scope().GetOrigin(),
-            base::DoNothing());
+        if (!registration()->is_deleted()) {
+          context_->storage()->DeleteRegistration(
+              registration(), registration()->scope().GetOrigin(),
+              base::DoNothing());
+          context_->storage()->NotifyDoneUninstallingRegistration(
+              registration(), ServiceWorkerRegistration::Status::kUninstalled);
+        }
       }
     }
     if (!is_promise_resolved_)
@@ -644,8 +692,26 @@ void ServiceWorkerRegisterJob::CompleteInternal(
   if (registration()) {
     context_->storage()->NotifyDoneInstallingRegistration(
         registration(), new_version(), status);
-    if (registration()->newest_installed_version())
-      registration()->set_is_uninstalled(false);
+#if DCHECK_IS_ON()
+    switch (registration()->status()) {
+      case ServiceWorkerRegistration::Status::kIntact:
+        // The registration must have a version installed, but this job may or
+        // may not have succeeded (i.e., may have failed to update).
+        DCHECK(registration()->newest_installed_version());
+        break;
+      case ServiceWorkerRegistration::Status::kUninstalling:
+        // This job must have failed. One case this happens is when the
+        // registration was already uninstalling when the job started, so it
+        // aborted.
+        DCHECK_NE(status, blink::ServiceWorkerStatusCode::kOk);
+        break;
+      case ServiceWorkerRegistration::Status::kUninstalled:
+        // This job must have failed.
+        DCHECK(!registration()->newest_installed_version());
+        DCHECK_NE(status, blink::ServiceWorkerStatusCode::kOk);
+        break;
+    }
+#endif  // DCHECK_IS_ON()
   }
 }
 
@@ -681,15 +747,15 @@ void ServiceWorkerRegisterJob::AddRegistrationToMatchingProviderHosts(
 }
 
 void ServiceWorkerRegisterJob::OnPausedAfterDownload() {
-  DCHECK(!blink::ServiceWorkerUtils::IsImportedScriptUpdateCheckEnabled());
+  DCHECK_EQ(GetUpdateCheckType(),
+            UpdateCheckType::kMainScriptDuringStartWorker);
   net::URLRequestStatus status =
       new_version()->script_cache_map()->main_script_status();
   if (!status.is_success()) {
     // OnPausedAfterDownload() signifies a successful network load, which
     // translates into a script cache error only in the byte-for-byte identical
     // case.
-    DCHECK_EQ(status.error(),
-              ServiceWorkerWriteToCacheJob::kIdenticalScriptError);
+    DCHECK_EQ(status.error(), net::ERR_FILE_EXISTS);
 
     BumpLastUpdateCheckTimeIfNeeded();
     ResolvePromise(blink::ServiceWorkerStatusCode::kOk, std::string(),
@@ -710,13 +776,33 @@ void ServiceWorkerRegisterJob::OnPausedAfterDownload() {
 }
 
 void ServiceWorkerRegisterJob::BumpLastUpdateCheckTimeIfNeeded() {
+  bool network_accessed = false;
+  bool force_bypass_cache = false;
+
+  // Get |network_accessed| from |update_checker_| and |force_bypass_cache|
+  // from the current job when the update checker tried to fetch the worker
+  // script.
+  // |update_checker_| is not available when installing a new
+  // service worker without update checking (e.g. a new registration), or
+  // non-ServiceWorkerImportedScriptUpdateCheck. In this case, get
+  // |network_accessed| and |force_bypass_cache| from the new version.
+  if (update_checker_) {
+    DCHECK_EQ(GetUpdateCheckType(),
+              UpdateCheckType::kAllScriptsBeforeStartWorker);
+    network_accessed = update_checker_->network_accessed();
+    force_bypass_cache = force_bypass_cache_;
+  } else {
+    network_accessed =
+        new_version()->embedded_worker()->network_accessed_for_script();
+    force_bypass_cache = new_version()->force_bypass_cache_for_scripts();
+  }
+
   // Bump the last update check time only when the register/update job fetched
   // the version having bypassed the network cache. We assume that the
   // BYPASS_CACHE flag evicts an existing cache entry, so even if the install
   // ultimately failed for whatever reason, we know the version in the HTTP
   // cache is not stale, so it's OK to bump the update check time.
-  if (new_version()->embedded_worker()->network_accessed_for_script() ||
-      new_version()->force_bypass_cache_for_scripts() ||
+  if (network_accessed || force_bypass_cache ||
       registration()->last_update_check().is_null()) {
     registration()->set_last_update_check(base::Time::Now());
 

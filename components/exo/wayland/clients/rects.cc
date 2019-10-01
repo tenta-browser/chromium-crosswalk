@@ -365,7 +365,7 @@ int RectsClient::Run(const ClientBase::InitParams& params,
           }
 
           // Set FPS counter text in case it's being shown.
-          fps_counter_text = base::UintToString(
+          fps_counter_text = base::NumberToString(
               std::round(benchmark_frames / benchmark_interval.InSecondsF()));
 
           benchmark_start_time = wall_time_start;
@@ -402,7 +402,7 @@ int RectsClient::Run(const ClientBase::InitParams& params,
           canvas->drawIRect(rect, paint);
           std::string text = base::NumberToString(event_time.InMicroseconds());
           canvas->drawSimpleText(text.c_str(), text.length(),
-                                 kUTF8_SkTextEncoding, 8, y + 32, font,
+                                 SkTextEncoding::kUTF8, 8, y + 32, font,
                                  text_paint);
           frame->event_times.push_back(event_times.motion_timestamps.back());
           event_times.motion_timestamps.pop_back();
@@ -433,7 +433,7 @@ int RectsClient::Run(const ClientBase::InitParams& params,
       // Draw FPS counter.
       if (show_fps_counter) {
         canvas->drawSimpleText(fps_counter_text.c_str(),
-                               fps_counter_text.length(), kUTF8_SkTextEncoding,
+                               fps_counter_text.length(), SkTextEncoding::kUTF8,
                                size_.width() - 48, 32, font, text_paint);
       }
       GrContext* gr_context = gr_context_.get();

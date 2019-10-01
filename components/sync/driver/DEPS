@@ -1,9 +1,9 @@
 include_rules = [
-  "+components/data_use_measurement/core",
   "+components/invalidation",
   "+components/keyed_service/core",
   "+components/os_crypt",
   "+components/policy",
+  "+components/pref_registry",
   "+components/prefs",
   "+components/signin/core/browser",
   # Use identity_manager.h instead of the below files;
@@ -14,12 +14,11 @@ include_rules = [
   "-components/signin/core/browser/signin_manager.h",
   "-components/signin/core/browser/signin_manager_base.h",
   "+components/sync/base",
-  "+components/sync/device_info",
   "+components/sync/engine",
   "+components/sync/js",
   "+components/sync/model",
-  # TODO(crbug.com/855010): Remove this dependency when tests get simplified.
   "+components/sync/model_impl",
+  "+components/sync/nigori",
   "+components/sync/protocol",
   "+components/sync/syncable",
   "+components/sync/test",
@@ -30,4 +29,5 @@ include_rules = [
   "+services/identity/public/cpp",
   "+services/network/public/cpp",
   "+services/network/test",
+  "+ui/base",
 ]

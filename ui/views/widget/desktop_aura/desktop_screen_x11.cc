@@ -4,6 +4,7 @@
 
 #include "ui/views/widget/desktop_aura/desktop_screen_x11.h"
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
@@ -175,9 +176,9 @@ display::Display DesktopScreenX11::GetDisplayNearestPoint(
     const gfx::Point& point) const {
   if (displays_.size() <= 1)
     return GetPrimaryDisplay();
-  for (auto it = displays_.begin(); it != displays_.end(); ++it) {
-    if (it->bounds().Contains(point))
-      return *it;
+  for (const auto& display : displays_) {
+    if (display.bounds().Contains(point))
+      return display;
   }
   return *FindDisplayNearestPoint(displays_, point);
 }
@@ -185,13 +186,13 @@ display::Display DesktopScreenX11::GetDisplayNearestPoint(
 display::Display DesktopScreenX11::GetDisplayMatching(
     const gfx::Rect& match_rect) const {
   int max_area = 0;
-  const display::Display* matching = NULL;
-  for (auto it = displays_.begin(); it != displays_.end(); ++it) {
-    gfx::Rect intersect = gfx::IntersectRects(it->bounds(), match_rect);
+  const display::Display* matching = nullptr;
+  for (const auto& display : displays_) {
+    gfx::Rect intersect = gfx::IntersectRects(display.bounds(), match_rect);
     int area = intersect.width() * intersect.height();
     if (area > max_area) {
       max_area = area;
-      matching = &*it;
+      matching = &display;
     }
   }
   // Fallback to the primary display if there is no matching display.
@@ -260,7 +261,7 @@ DesktopScreenX11::DesktopScreenX11(
 }
 
 void DesktopScreenX11::RestartDelayedConfigurationTask() {
-  delayed_configuration_task_.Reset(base::Bind(
+  delayed_configuration_task_.Reset(base::BindOnce(
       &DesktopScreenX11::UpdateDisplays, weak_factory_.GetWeakPtr()));
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, delayed_configuration_task_.callback());

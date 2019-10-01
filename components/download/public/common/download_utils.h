@@ -96,6 +96,20 @@ COMPONENTS_DOWNLOAD_EXPORT bool IsDownloadDone(
 
 COMPONENTS_DOWNLOAD_EXPORT bool DeleteDownloadedFile(
     const base::FilePath& path);
+
+// Rename downloaded file from |oldpath| to newname.
+COMPONENTS_DOWNLOAD_EXPORT download::DownloadItem::DownloadRenameResult
+RenameDownloadedFile(const base::FilePath& from_path,
+                     const base::FilePath& to_path);
+
+// Finch parameter key value for number of bytes used for content validation
+// during resumption.
+constexpr char kDownloadContentValidationLengthFinchKey[] =
+    "download_validation_length";
+
+// Get the number of bytes to validate from finch configuration.
+int64_t GetDownloadValidationLengthConfig();
+
 }  // namespace download
 
 #endif  // COMPONENTS_DOWNLOAD_PUBLIC_COMMON_DOWNLOAD_UTILS_H_

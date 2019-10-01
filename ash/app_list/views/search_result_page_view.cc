@@ -12,12 +12,14 @@
 #include "ash/app_list/app_list_util.h"
 #include "ash/app_list/app_list_view_delegate.h"
 #include "ash/app_list/views/app_list_main_view.h"
+#include "ash/app_list/views/assistant/privacy_info_view.h"
 #include "ash/app_list/views/contents_view.h"
 #include "ash/app_list/views/search_box_view.h"
 #include "ash/app_list/views/search_result_base_view.h"
 #include "ash/app_list/views/search_result_list_view.h"
 #include "ash/app_list/views/search_result_tile_item_list_view.h"
-#include "ash/public/cpp/app_list/app_list_constants.h"
+#include "ash/public/cpp/app_list/app_list_config.h"
+#include "base/memory/ptr_util.h"
 #include "ui/chromeos/search_box/search_box_constants.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_palette.h"
@@ -31,7 +33,6 @@
 #include "ui/views/focus/focus_manager.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/layout/fill_layout.h"
-#include "ui/views/shadow_border.h"
 
 namespace app_list {
 
@@ -149,11 +150,17 @@ class SearchResultPageView::HorizontalSeparator : public views::View {
   DISALLOW_COPY_AND_ASSIGN(HorizontalSeparator);
 };
 
-SearchResultPageView::SearchResultPageView() : contents_view_(new views::View) {
+SearchResultPageView::SearchResultPageView(AppListViewDelegate* view_delegate)
+    : view_delegate_(view_delegate), contents_view_(new views::View) {
   SetPaintToLayer();
   layer()->SetFillsBoundsOpaquely(false);
   contents_view_->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::kVertical, gfx::Insets(), 0));
+
+  if (view_delegate_->ShouldShowAssistantPrivacyInfo()) {
+    assistant_privacy_info_view_ = new PrivacyInfoView(view_delegate_, this);
+    contents_view_->AddChildView(assistant_privacy_info_view_);
+  }
 
   // Create and set a shadow to be displayed as a border for this view.
   auto shadow_border = std::make_unique<views::BubbleBorder>(
@@ -168,14 +175,14 @@ SearchResultPageView::SearchResultPageView() : contents_view_(new views::View) {
   // background border corner radius. All child views' background should be
   // set transparent so that the rounded corner is not overwritten.
   SetBackground(std::make_unique<SearchResultPageBackground>(
-      kCardBackgroundColor, search_box::kSearchBoxBorderCornerRadius,
-      border()->GetInsets().top()));
+      AppListConfig::instance().card_background_color(),
+      search_box::kSearchBoxBorderCornerRadius, border()->GetInsets().top()));
   views::ScrollView* const scroller = new views::ScrollView;
   // Leaves a placeholder area for the search box and the separator below it.
   scroller->SetBorder(views::CreateEmptyBorder(
       gfx::Insets(kSearchBoxHeight + kSeparatorThickness, 0, 0, 0)));
   scroller->set_draw_overflow_indicator(false);
-  scroller->SetContents(contents_view_);
+  scroller->SetContents(base::WrapUnique(contents_view_));
   // Setting clip height is necessary to make ScrollView take into account its
   // contents' size. Using zeroes doesn't prevent it from scrolling and sizing
   // correctly.
@@ -203,9 +210,26 @@ void SearchResultPageView::AddSearchResultContainerView(
   result_container->set_delegate(this);
 }
 
+bool SearchResultPageView::IsFirstResultTile() const {
+  // In the event that the result does not exist, it is not a tile.
+  if (!first_result_view_ || !first_result_view_->result())
+    return false;
+
+  // |kRecommendation| result type refers to tiles in Zero State.
+  return first_result_view_->result()->display_type() ==
+             ash::SearchResultDisplayType::kTile ||
+         first_result_view_->result()->display_type() ==
+             ash::SearchResultDisplayType::kRecommendation;
+}
+
+bool SearchResultPageView::IsFirstResultHighlighted() const {
+  DCHECK(first_result_view_);
+  return first_result_view_->background_highlighted();
+}
+
 bool SearchResultPageView::OnKeyPressed(const ui::KeyEvent& event) {
   // Let the FocusManager handle Left/Right keys.
-  if (!CanProcessUpDownKeyTraversal(event))
+  if (!IsUnhandledUpDownKeyEvent(event))
     return false;
 
   views::View* next_focusable_view = nullptr;
@@ -243,6 +267,14 @@ gfx::Size SearchResultPageView::CalculatePreferredSize() const {
 }
 
 void SearchResultPageView::ReorderSearchResultContainers() {
+  int view_offset = 0;
+  if (assistant_privacy_info_view_) {
+    const bool show_privacy_info =
+        view_delegate_->ShouldShowAssistantPrivacyInfo();
+    view_offset = show_privacy_info ? 1 : 0;
+    assistant_privacy_info_view_->SetVisible(show_privacy_info);
+  }
+
   // Sort the result container views by their score.
   std::sort(result_container_views_.begin(), result_container_views_.end(),
             [](const SearchResultContainerView* a,
@@ -262,12 +294,12 @@ void SearchResultPageView::ReorderSearchResultContainers() {
       else
         separator->SetVisible(true);
 
-      contents_view_->ReorderChildView(separator, i * 2 - 1);
-      contents_view_->ReorderChildView(view->parent(), i * 2);
+      contents_view_->ReorderChildView(separator, i * 2 - 1 + view_offset);
+      contents_view_->ReorderChildView(view->parent(), i * 2 + view_offset);
 
       result_y_index += kSeparatorThickness;
     } else {
-      contents_view_->ReorderChildView(view->parent(), i);
+      contents_view_->ReorderChildView(view->parent(), i + view_offset);
     }
 
     view->NotifyFirstResultYIndex(result_y_index);
@@ -317,10 +349,41 @@ void SearchResultPageView::OnSearchResultContainerResultsChanged() {
   first_result_view_->SetBackgroundHighlighted(true);
 }
 
+void SearchResultPageView::OnSearchResultContainerResultFocused(
+    SearchResultBaseView* focused_result_view) {
+  if (!focused_result_view->result())
+    return;
+
+  views::Textfield* search_box =
+      AppListPage::contents_view()->GetSearchBoxView()->search_box();
+  if (focused_result_view->result()->result_type() ==
+          ash::SearchResultType::kOmnibox &&
+      !focused_result_view->result()->is_omnibox_search()) {
+    search_box->SetText(focused_result_view->result()->details());
+  } else {
+    search_box->SetText(focused_result_view->result()->title());
+  }
+}
+
+void SearchResultPageView::OnAssistantPrivacyInfoViewCloseButtonPressed() {
+  ReorderSearchResultContainers();
+}
+
 void SearchResultPageView::OnHidden() {
   // Hide the search results page when it is behind search box to avoid focus
   // being moved onto suggested apps when zero state is enabled.
+  AppListPage::OnHidden();
   SetVisible(false);
+  for (auto* container_view : result_container_views_) {
+    container_view->SetShown(false);
+  }
+}
+
+void SearchResultPageView::OnShown() {
+  AppListPage::OnShown();
+  for (auto* container_view : result_container_views_) {
+    container_view->SetShown(true);
+  }
 }
 
 gfx::Rect SearchResultPageView::GetPageBoundsForState(

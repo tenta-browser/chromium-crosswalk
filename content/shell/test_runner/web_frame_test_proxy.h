@@ -20,35 +20,15 @@
 
 namespace content {
 class RenderViewImpl;
-}
+}  // namespace content
 
 namespace test_runner {
 class WebTestInterfaces;
 
-class TEST_RUNNER_EXPORT WebFrameTestProxyBase {
- public:
-  blink::WebLocalFrame* web_frame() const { return web_frame_; }
-  void set_web_frame(blink::WebLocalFrame* frame) {
-    DCHECK(frame);
-    DCHECK(!web_frame_);
-    web_frame_ = frame;
-  }
-
- protected:
-  WebFrameTestProxyBase() = default;
-  ~WebFrameTestProxyBase() = default;
-
- private:
-  blink::WebLocalFrame* web_frame_ = nullptr;
-
-  DISALLOW_COPY_AND_ASSIGN(WebFrameTestProxyBase);
-};
-
 // WebFrameTestProxy is used during running web tests instead of a
 // RenderFrameImpl to inject test-only behaviour by overriding methods in the
 // base class.
-class TEST_RUNNER_EXPORT WebFrameTestProxy : public content::RenderFrameImpl,
-                                             public WebFrameTestProxyBase {
+class TEST_RUNNER_EXPORT WebFrameTestProxy : public content::RenderFrameImpl {
  public:
   template <typename... Args>
   explicit WebFrameTestProxy(Args&&... args)
@@ -57,6 +37,9 @@ class TEST_RUNNER_EXPORT WebFrameTestProxy : public content::RenderFrameImpl,
 
   void Initialize(WebTestInterfaces* interfaces,
                   content::RenderViewImpl* render_view_for_frame);
+
+  // RenderFrameImpl overrides.
+  void UpdateAllLifecyclePhasesAndCompositeForTesting() override;
 
   // WebLocalFrameClient implementation.
   blink::WebPlugin* CreatePlugin(const blink::WebPluginParams& params) override;
@@ -88,15 +71,15 @@ class TEST_RUNNER_EXPORT WebFrameTestProxy : public content::RenderFrameImpl,
       const blink::WebContextMenuData& context_menu_data) override;
   void DidDispatchPingLoader(const blink::WebURL& url) override;
   void WillSendRequest(blink::WebURLRequest& request) override;
-  void DidReceiveResponse(const blink::WebURLResponse& response) override;
   void BeginNavigation(std::unique_ptr<blink::WebNavigationInfo> info) override;
   void PostAccessibilityEvent(const blink::WebAXObject& object,
-                              ax::mojom::Event event) override;
+                              ax::mojom::Event event,
+                              ax::mojom::EventFrom event_from) override;
   void MarkWebAXObjectDirty(const blink::WebAXObject& object,
                             bool subtree) override;
   void CheckIfAudioSinkExistsAndIsAuthorized(
       const blink::WebString& sink_id,
-      std::unique_ptr<blink::WebSetSinkIdCallbacks> web_callbacks) override;
+      blink::WebSetSinkIdCompleteCallback completion_callback) override;
   void DidClearWindowObject() override;
 
  private:

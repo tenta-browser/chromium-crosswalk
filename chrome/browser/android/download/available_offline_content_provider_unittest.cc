@@ -20,6 +20,7 @@
 #include "components/offline_items_collection/core/offline_item.h"
 #include "components/offline_items_collection/core/offline_item_state.h"
 #include "components/offline_items_collection/core/test_support/mock_offline_content_provider.h"
+#include "components/offline_pages/core/offline_page_feature.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -35,11 +36,6 @@ using offline_items_collection::OfflineItemState;
 using offline_items_collection::OfflineItemVisuals;
 using testing::_;
 const char kProviderNamespace[] = "offline_pages";
-
-std::unique_ptr<KeyedService> BuildOfflineContentAggregator(
-    content::BrowserContext* context) {
-  return std::make_unique<OfflineContentAggregator>();
-}
 
 OfflineItem UninterestingImageItem() {
   OfflineItem item;
@@ -74,6 +70,7 @@ OfflineItem SuggestedOfflinePageItem() {
   item.creation_time =
       base::Time::Now() - base::TimeDelta::FromMinutes(60 * 3.5);
   item.last_accessed_time = base::Time::Now();
+  item.attribution = "attribution";
   return item;
 }
 
@@ -122,6 +119,7 @@ OfflineItem DangerousItem() {
 OfflineItemVisuals TestThumbnail() {
   OfflineItemVisuals visuals;
   visuals.icon = gfx::test::CreateImage(2, 4);
+  visuals.custom_favicon = gfx::test::CreateImage(4, 4);
   return visuals;
 }
 
@@ -129,11 +127,8 @@ class AvailableOfflineContentTest : public testing::Test {
  protected:
   void SetUp() override {
     scoped_feature_list_->InitAndEnableFeature(features::kNewNetErrorPageUI);
-    // To control the items in the aggregator, we create it and register a
-    // single MockOfflineContentProvider.
-    aggregator_ = static_cast<OfflineContentAggregator*>(
-        OfflineContentAggregatorFactory::GetInstance()->SetTestingFactoryAndUse(
-            &profile_, base::BindRepeating(&BuildOfflineContentAggregator)));
+    aggregator_ =
+        OfflineContentAggregatorFactory::GetForBrowserContext(nullptr);
     aggregator_->RegisterProvider(kProviderNamespace, &content_provider_);
     content_provider_.SetVisuals({});
   }
@@ -146,14 +141,6 @@ class AvailableOfflineContentTest : public testing::Test {
         &provider_);
     waiter.List(&list_visible_by_prefs, &suggestions);
     return std::make_tuple(list_visible_by_prefs, std::move(suggestions));
-  }
-
-  chrome::mojom::AvailableOfflineContentSummaryPtr SummarizeAndWait() {
-    chrome::mojom::AvailableOfflineContentSummaryPtr summary;
-    chrome::mojom::AvailableOfflineContentProviderAsyncWaiter waiter(
-        &provider_);
-    waiter.Summarize(&summary);
-    return summary;
   }
 
   content::TestBrowserThreadBundle thread_bundle_;
@@ -169,13 +156,7 @@ TEST_F(AvailableOfflineContentTest, NoContent) {
   bool list_visible_by_prefs;
   std::vector<chrome::mojom::AvailableOfflineContentPtr> suggestions;
   std::tie(list_visible_by_prefs, suggestions) = ListAndWait();
-  chrome::mojom::AvailableOfflineContentSummaryPtr summary = SummarizeAndWait();
 
-  EXPECT_EQ(0u, summary->total_items);
-  EXPECT_FALSE(summary->has_prefetched_page);
-  EXPECT_FALSE(summary->has_offline_page);
-  EXPECT_FALSE(summary->has_video);
-  EXPECT_FALSE(summary->has_audio);
   EXPECT_TRUE(suggestions.empty());
   EXPECT_TRUE(list_visible_by_prefs);
 }
@@ -188,25 +169,23 @@ TEST_F(AvailableOfflineContentTest, TooFewInterestingItems) {
                               TransientItem(), OffTheRecordItem(),
                               IncompleteItem(), DangerousItem()});
 
-  // Call List() and Summary().
+  // Call List().
   bool list_visible_by_prefs;
   std::vector<chrome::mojom::AvailableOfflineContentPtr> suggestions;
   std::tie(list_visible_by_prefs, suggestions) = ListAndWait();
-  chrome::mojom::AvailableOfflineContentSummaryPtr summary = SummarizeAndWait();
 
   // As interesting items are below the minimum to show, nothing should be
   // reported.
-  EXPECT_EQ(0u, summary->total_items);
-  EXPECT_FALSE(summary->has_prefetched_page);
-  EXPECT_FALSE(summary->has_offline_page);
-  EXPECT_FALSE(summary->has_video);
-  EXPECT_FALSE(summary->has_audio);
-
   EXPECT_TRUE(suggestions.empty());
   EXPECT_TRUE(list_visible_by_prefs);
 }
 
-TEST_F(AvailableOfflineContentTest, FourInterestingItems) {
+#if defined(DISABLE_OFFLINE_PAGES_TOUCHLESS)
+#define MAYBE_FourInterestingItems DISABLED_FourInterestingItems
+#else
+#define MAYBE_FourInterestingItems FourInterestingItems
+#endif
+TEST_F(AvailableOfflineContentTest, MAYBE_FourInterestingItems) {
   // We need at least 4 interesting items for anything to show up at all.
   content_provider_.SetItems({UninterestingImageItem(), VideoItem(),
                               SuggestedOfflinePageItem(), AudioItem(),
@@ -215,18 +194,10 @@ TEST_F(AvailableOfflineContentTest, FourInterestingItems) {
   content_provider_.SetVisuals(
       {{SuggestedOfflinePageItem().id, TestThumbnail()}});
 
-  // Call List() and Summary().
+  // Call List().
   bool list_visible_by_prefs;
   std::vector<chrome::mojom::AvailableOfflineContentPtr> suggestions;
   std::tie(list_visible_by_prefs, suggestions) = ListAndWait();
-  chrome::mojom::AvailableOfflineContentSummaryPtr summary = SummarizeAndWait();
-
-  // Check summary.
-  EXPECT_EQ(5u, summary->total_items);
-  EXPECT_TRUE(summary->has_prefetched_page);
-  EXPECT_TRUE(summary->has_offline_page);
-  EXPECT_TRUE(summary->has_video);
-  EXPECT_TRUE(summary->has_audio);
 
   // Check that the right suggestions have been received in order.
   EXPECT_EQ(3ul, suggestions.size());
@@ -252,8 +223,10 @@ TEST_F(AvailableOfflineContentTest, FourInterestingItems) {
   EXPECT_TRUE(base::StartsWith(first->thumbnail_data_uri.spec(),
                                "data:image/png;base64,iVBORw0K",
                                base::CompareCase::SENSITIVE));
-  // TODO(crbug.com/852872): Add attribution.
-  EXPECT_EQ("", first->attribution);
+  EXPECT_TRUE(base::StartsWith(first->favicon_data_uri.spec(),
+                               "data:image/png;base64,iVBORw0K",
+                               base::CompareCase::SENSITIVE));
+  EXPECT_EQ(page_item.attribution, first->attribution);
 }
 
 TEST_F(AvailableOfflineContentTest, NotEnabled) {
@@ -269,7 +242,12 @@ TEST_F(AvailableOfflineContentTest, NotEnabled) {
   EXPECT_TRUE(list_visible_by_prefs);
 }
 
-TEST_F(AvailableOfflineContentTest, ListVisibilityChanges) {
+#if defined(DISABLE_OFFLINE_PAGES_TOUCHLESS)
+#define MAYBE_ListVisibilityChanges DISABLED_ListVisibilityChanges
+#else
+#define MAYBE_ListVisibilityChanges ListVisibilityChanges
+#endif
+TEST_F(AvailableOfflineContentTest, MAYBE_ListVisibilityChanges) {
   // We need at least 4 interesting items for anything to show up at all.
   content_provider_.SetItems({UninterestingImageItem(), VideoItem(),
                               SuggestedOfflinePageItem(), AudioItem(),

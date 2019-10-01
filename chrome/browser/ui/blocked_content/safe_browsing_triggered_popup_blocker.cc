@@ -18,7 +18,7 @@
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/console_message_level.h"
+#include "third_party/blink/public/mojom/devtools/console_message.mojom.h"
 #include "third_party/blink/public/web/web_triggering_event_info.h"
 
 namespace {
@@ -27,19 +27,6 @@ void LogAction(SafeBrowsingTriggeredPopupBlocker::Action action) {
   UMA_HISTOGRAM_ENUMERATION("ContentSettings.Popups.StrongBlockerActions",
                             action,
                             SafeBrowsingTriggeredPopupBlocker::Action::kCount);
-}
-
-subresource_filter::ActivationPosition GetActivationPosition(
-    size_t match_index,
-    size_t num_checks) {
-  DCHECK_GT(num_checks, 0u);
-  if (num_checks == 1)
-    return subresource_filter::ActivationPosition::kOnly;
-  if (match_index == 0)
-    return subresource_filter::ActivationPosition::kFirst;
-  if (match_index == num_checks - 1)
-    return subresource_filter::ActivationPosition::kLast;
-  return subresource_filter::ActivationPosition::kMiddle;
 }
 
 }  // namespace
@@ -99,7 +86,7 @@ bool SafeBrowsingTriggeredPopupBlocker::ShouldApplyAbusivePopupBlocker() {
   LogAction(Action::kBlocked);
   current_page_data_->inc_num_popups_blocked();
   web_contents()->GetMainFrame()->AddMessageToConsole(
-      content::CONSOLE_MESSAGE_LEVEL_ERROR, kAbusiveEnforceMessage);
+      blink::mojom::ConsoleMessageLevel::kError, kAbusiveEnforceMessage);
   return true;
 }
 
@@ -138,7 +125,7 @@ void SafeBrowsingTriggeredPopupBlocker::DidFinishNavigation(
     LogAction(Action::kEnforcedSite);
   } else if (level == SubresourceFilterLevel::WARN) {
     web_contents()->GetMainFrame()->AddMessageToConsole(
-        content::CONSOLE_MESSAGE_LEVEL_WARNING, kAbusiveWarnMessage);
+        blink::mojom::ConsoleMessageLevel::kWarning, kAbusiveWarnMessage);
     LogAction(Action::kWarningSite);
   }
   LogAction(Action::kNavigation);
@@ -169,9 +156,6 @@ void SafeBrowsingTriggeredPopupBlocker::OnSafeBrowsingChecksComplete(
 
   if (match_level.has_value()) {
     level_for_next_committed_navigation_ = match_level;
-    UMA_HISTOGRAM_ENUMERATION(
-        "ContentSettings.Popups.StrongBlockerActivationPosition",
-        GetActivationPosition(match_index.value(), results.size()));
   }
 }
 

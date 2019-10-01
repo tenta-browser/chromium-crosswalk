@@ -8,16 +8,17 @@
 #include <utility>
 
 #include "ash/focus_cycler.h"
+#include "ash/metrics/pip_uma.h"
+#include "ash/public/cpp/app_types.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/public/cpp/window_animation_types.h"
 #include "ash/public/cpp/window_properties.h"
 #include "ash/public/cpp/window_state_type.h"
 #include "ash/public/interfaces/window_pin_type.mojom.h"
-#include "ash/public/interfaces/window_state_type.mojom.h"
 #include "ash/screen_util.h"
 #include "ash/shell.h"
+#include "ash/wm/collision_detection/collision_detection_utils.h"
 #include "ash/wm/default_state.h"
-#include "ash/wm/immersive_gesture_drag_handler.h"
 #include "ash/wm/pip/pip_positioner.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "ash/wm/window_animations.h"
@@ -28,7 +29,7 @@
 #include "ash/wm/window_util.h"
 #include "ash/wm/wm_event.h"
 #include "base/auto_reset.h"
-#include "services/ws/public/mojom/window_tree_constants.mojom.h"
+#include "base/metrics/histogram_macros.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/layout_manager.h"
 #include "ui/aura/window.h"
@@ -158,6 +159,24 @@ void MoveAllTransientChildrenToNewRoot(aura::Window* window) {
     MoveAllTransientChildrenToNewRoot(child);
 }
 
+void CollectPipEnterExitMetrics(aura::Window* window, bool enter) {
+  const bool is_android = window->GetProperty(aura::client::kAppType) ==
+                          static_cast<int>(ash::AppType::ARC_APP);
+  if (enter) {
+    UMA_HISTOGRAM_ENUMERATION(kAshPipEventsHistogramName,
+                              AshPipEvents::PIP_START);
+    UMA_HISTOGRAM_ENUMERATION(kAshPipEventsHistogramName,
+                              is_android ? AshPipEvents::ANDROID_PIP_START
+                                         : AshPipEvents::CHROME_PIP_START);
+  } else {
+    UMA_HISTOGRAM_ENUMERATION(kAshPipEventsHistogramName,
+                              AshPipEvents::PIP_END);
+    UMA_HISTOGRAM_ENUMERATION(kAshPipEventsHistogramName,
+                              is_android ? AshPipEvents::ANDROID_PIP_END
+                                         : AshPipEvents::CHROME_PIP_END);
+  }
+}
+
 }  // namespace
 
 constexpr base::TimeDelta WindowState::kBoundsChangeSlideDuration;
@@ -174,52 +193,53 @@ bool WindowState::HasDelegate() const {
 }
 
 void WindowState::SetDelegate(std::unique_ptr<WindowStateDelegate> delegate) {
-  DCHECK(!delegate_.get());
+  DCHECK((!delegate_.get() && !!delegate.get()) ||
+         (!!delegate_.get() && !delegate.get()));
   delegate_ = std::move(delegate);
 }
 
-mojom::WindowStateType WindowState::GetStateType() const {
+WindowStateType WindowState::GetStateType() const {
   return current_state_->GetType();
 }
 
 bool WindowState::IsMinimized() const {
-  return GetStateType() == mojom::WindowStateType::MINIMIZED;
+  return GetStateType() == WindowStateType::kMinimized;
 }
 
 bool WindowState::IsMaximized() const {
-  return GetStateType() == mojom::WindowStateType::MAXIMIZED;
+  return GetStateType() == WindowStateType::kMaximized;
 }
 
 bool WindowState::IsFullscreen() const {
-  return GetStateType() == mojom::WindowStateType::FULLSCREEN;
+  return GetStateType() == WindowStateType::kFullscreen;
 }
 
 bool WindowState::IsMaximizedOrFullscreenOrPinned() const {
-  return GetStateType() == mojom::WindowStateType::MAXIMIZED ||
-         GetStateType() == mojom::WindowStateType::FULLSCREEN || IsPinned();
+  return GetStateType() == WindowStateType::kMaximized ||
+         GetStateType() == WindowStateType::kFullscreen || IsPinned();
 }
 
 bool WindowState::IsSnapped() const {
-  return GetStateType() == mojom::WindowStateType::LEFT_SNAPPED ||
-         GetStateType() == mojom::WindowStateType::RIGHT_SNAPPED;
+  return GetStateType() == WindowStateType::kLeftSnapped ||
+         GetStateType() == WindowStateType::kRightSnapped;
 }
 
 bool WindowState::IsPinned() const {
-  return GetStateType() == mojom::WindowStateType::PINNED ||
-         GetStateType() == mojom::WindowStateType::TRUSTED_PINNED;
+  return GetStateType() == WindowStateType::kPinned ||
+         GetStateType() == WindowStateType::kTrustedPinned;
 }
 
 bool WindowState::IsTrustedPinned() const {
-  return GetStateType() == mojom::WindowStateType::TRUSTED_PINNED;
+  return GetStateType() == WindowStateType::kTrustedPinned;
 }
 
 bool WindowState::IsPip() const {
-  return GetStateType() == mojom::WindowStateType::PIP;
+  return GetStateType() == WindowStateType::kPip;
 }
 
 bool WindowState::IsNormalStateType() const {
-  return GetStateType() == mojom::WindowStateType::NORMAL ||
-         GetStateType() == mojom::WindowStateType::DEFAULT;
+  return GetStateType() == WindowStateType::kNormal ||
+         GetStateType() == WindowStateType::kDefault;
 }
 
 bool WindowState::IsNormalOrSnapped() const {
@@ -245,7 +265,7 @@ bool WindowState::HasMaximumWidthOrHeight() const {
 bool WindowState::CanMaximize() const {
   // Window must allow maximization and have no maximum width or height.
   if ((window_->GetProperty(aura::client::kResizeBehaviorKey) &
-       ws::mojom::kResizeBehaviorCanMaximize) == 0) {
+       aura::client::kResizeBehaviorCanMaximize) == 0) {
     return false;
   }
 
@@ -254,12 +274,12 @@ bool WindowState::CanMaximize() const {
 
 bool WindowState::CanMinimize() const {
   return (window_->GetProperty(aura::client::kResizeBehaviorKey) &
-          ws::mojom::kResizeBehaviorCanMinimize) != 0;
+          aura::client::kResizeBehaviorCanMinimize) != 0;
 }
 
 bool WindowState::CanResize() const {
   return (window_->GetProperty(aura::client::kResizeBehaviorKey) &
-          ws::mojom::kResizeBehaviorCanResize) != 0;
+          aura::client::kResizeBehaviorCanResize) != 0;
 }
 
 bool WindowState::CanActivate() const {
@@ -277,7 +297,8 @@ bool WindowState::CanSnap() const {
 }
 
 bool WindowState::HasRestoreBounds() const {
-  return window_->GetProperty(aura::client::kRestoreBoundsKey) != nullptr;
+  gfx::Rect* bounds = window_->GetProperty(aura::client::kRestoreBoundsKey);
+  return bounds != nullptr && !bounds->IsEmpty();
 }
 
 void WindowState::Maximize() {
@@ -308,7 +329,7 @@ void WindowState::Restore() {
 }
 
 void WindowState::DisableAlwaysOnTop(aura::Window* window_on_top) {
-  if (GetAlwaysOnTop()) {
+  if (GetAlwaysOnTop() && !IsPip()) {
     // |window_| is hidden first to avoid canceling fullscreen mode when it is
     // no longer always on top and gets added to default container. This avoids
     // sending redundant OnFullscreenStateChanged to the layout manager. The
@@ -343,7 +364,7 @@ void WindowState::OnWMEvent(const WMEvent* event) {
 }
 
 void WindowState::SaveCurrentBoundsForRestore() {
-  gfx::Rect bounds_in_screen = window_->bounds();
+  gfx::Rect bounds_in_screen = window_->GetTargetBounds();
   ::wm::ConvertRectToScreen(window_->parent(), &bounds_in_screen);
   SetRestoreBoundsInScreen(bounds_in_screen);
 }
@@ -493,7 +514,7 @@ void WindowState::OnActivationLost() {
   if (IsPip()) {
     views::Widget::GetWidgetForNativeWindow(window())
         ->widget_delegate()
-        ->set_can_activate(false);
+        ->SetCanActivate(false);
   }
 }
 
@@ -529,7 +550,7 @@ WindowState::WindowState(aura::Window* window)
       ignore_property_change_(false),
       current_state_(new DefaultState(ToWindowStateType(GetShowState()))) {
   window_->AddObserver(this);
-  UpdatePipState(/*was_pip=*/false);
+  OnPrePipStateChange(WindowStateType::kDefault);
 }
 
 bool WindowState::GetAlwaysOnTop() const {
@@ -559,9 +580,9 @@ void WindowState::AdjustSnappedBounds(gfx::Rect* bounds) {
     bounds->set_width(
         static_cast<int>(*snapped_width_ratio_ * maximized_bounds.width()));
   }
-  if (GetStateType() == mojom::WindowStateType::LEFT_SNAPPED)
+  if (GetStateType() == WindowStateType::kLeftSnapped)
     bounds->set_x(maximized_bounds.x());
-  else if (GetStateType() == mojom::WindowStateType::RIGHT_SNAPPED)
+  else if (GetStateType() == WindowStateType::kRightSnapped)
     bounds->set_x(maximized_bounds.right() - bounds->width());
   bounds->set_y(maximized_bounds.y());
   bounds->set_height(maximized_bounds.height());
@@ -588,9 +609,9 @@ void WindowState::UpdateWindowPropertiesFromStateType() {
 
   // sync up current window show state with PinType property.
   ash::mojom::WindowPinType pin_type = ash::mojom::WindowPinType::NONE;
-  if (GetStateType() == mojom::WindowStateType::PINNED)
+  if (GetStateType() == WindowStateType::kPinned)
     pin_type = ash::mojom::WindowPinType::PINNED;
-  else if (GetStateType() == mojom::WindowStateType::TRUSTED_PINNED)
+  else if (GetStateType() == WindowStateType::kTrustedPinned)
     pin_type = ash::mojom::WindowPinType::TRUSTED_PINNED;
   if (pin_type != GetPinType()) {
     base::AutoReset<bool> resetter(&ignore_property_change_, true);
@@ -599,16 +620,26 @@ void WindowState::UpdateWindowPropertiesFromStateType() {
 }
 
 void WindowState::NotifyPreStateTypeChange(
-    mojom::WindowStateType old_window_state_type) {
+    WindowStateType old_window_state_type) {
   for (auto& observer : observer_list_)
     observer.OnPreWindowStateTypeChange(this, old_window_state_type);
-  UpdatePipState(old_window_state_type == mojom::WindowStateType::PIP);
+  OnPrePipStateChange(old_window_state_type);
 }
 
 void WindowState::NotifyPostStateTypeChange(
-    mojom::WindowStateType old_window_state_type) {
+    WindowStateType old_window_state_type) {
   for (auto& observer : observer_list_)
     observer.OnPostWindowStateTypeChange(this, old_window_state_type);
+  OnPostPipStateChange(old_window_state_type);
+}
+
+void WindowState::OnPostPipStateChange(WindowStateType old_window_state_type) {
+  if (old_window_state_type == WindowStateType::kPip) {
+    // The animation type may be FADE_OUT_SLIDE_IN at this point, which we don't
+    // want it to be anymore if the window is not PIP anymore.
+    ::wm::SetWindowVisibilityAnimationType(
+        window_, ::wm::WINDOW_VISIBILITY_ANIMATION_TYPE_DEFAULT);
+  }
 }
 
 void WindowState::SetBoundsDirect(const gfx::Rect& bounds) {
@@ -643,6 +674,10 @@ void WindowState::SetBoundsConstrained(const gfx::Rect& bounds) {
 
 void WindowState::SetBoundsDirectAnimated(const gfx::Rect& bounds,
                                           base::TimeDelta duration) {
+  if (::wm::WindowAnimationsDisabled(window_)) {
+    SetBoundsDirect(bounds);
+    return;
+  }
   ui::Layer* layer = window_->layer();
   ui::ScopedLayerAnimationSettings slide_settings(layer->GetAnimator());
   slide_settings.SetPreemptionStrategy(
@@ -662,8 +697,9 @@ void WindowState::SetBoundsDirectCrossFade(const gfx::Rect& new_bounds,
   }
 
   // If the window already has a transform in place, do not use the cross fade
-  // animation, set the bounds directly instead.
-  if (!window_->layer()->GetTargetTransform().IsIdentity()) {
+  // animation, set the bounds directly instead, or animation is disabled.
+  if (!window_->layer()->GetTargetTransform().IsIdentity() ||
+      ::wm::WindowAnimationsDisabled(window_)) {
     SetBoundsDirect(new_bounds);
     return;
   }
@@ -682,35 +718,47 @@ void WindowState::SetBoundsDirectCrossFade(const gfx::Rect& new_bounds,
   CrossFadeAnimation(window_, std::move(old_layer_owner), animation_type);
 }
 
-void WindowState::UpdatePipState(bool was_pip) {
+void WindowState::OnPrePipStateChange(WindowStateType old_window_state_type) {
   auto* widget = views::Widget::GetWidgetForNativeWindow(window());
   if (IsPip()) {
+    CollisionDetectionUtils::MarkWindowPriorityForCollisionDetection(
+        window(), CollisionDetectionUtils::RelativePriority::kPictureInPicture);
     // widget may not exit in some unit tests.
     // TODO(oshima): Fix unit tests and add DCHECK.
     if (widget) {
-      widget->widget_delegate()->set_can_activate(false);
+      widget->widget_delegate()->SetCanActivate(false);
       if (widget->IsActive())
         widget->Deactivate();
       Shell::Get()->focus_cycler()->AddWidget(widget);
     }
     ::wm::SetWindowVisibilityAnimationType(
         window(), WINDOW_VISIBILITY_ANIMATION_TYPE_FADE_IN_SLIDE_OUT);
-  } else if (was_pip) {
+    // There may already be a system ui window on the initial position.
+    UpdatePipBounds();
+    if (old_window_state_type != WindowStateType::kPip) {
+      window()->SetProperty(ash::kPrePipWindowStateTypeKey,
+                            old_window_state_type);
+    }
+
+    CollectPipEnterExitMetrics(window(), /*enter=*/true);
+  } else if (old_window_state_type == WindowStateType::kPip) {
     if (widget) {
-      widget->widget_delegate()->set_can_activate(true);
+      widget->widget_delegate()->SetCanActivate(true);
       Shell::Get()->focus_cycler()->RemoveWidget(widget);
     }
     ::wm::SetWindowVisibilityAnimationType(
         window(), ::wm::WINDOW_VISIBILITY_ANIMATION_TYPE_DEFAULT);
+
+    CollectPipEnterExitMetrics(window(), /*enter=*/false);
   }
 }
 
 void WindowState::UpdatePipBounds() {
   gfx::Rect new_bounds =
       PipPositioner::GetPositionAfterMovementAreaChange(this);
-  if (window()->GetBoundsInScreen() != new_bounds) {
-    wm::SetBoundsEvent event(wm::WM_EVENT_SET_BOUNDS, new_bounds,
-                             /*animate=*/true);
+  ::wm::ConvertRectFromScreen(window()->GetRootWindow(), &new_bounds);
+  if (window()->bounds() != new_bounds) {
+    wm::SetBoundsEvent event(new_bounds, /*animate=*/true);
     OnWMEvent(&event);
   }
 }
@@ -786,16 +834,6 @@ void WindowState::OnWindowPropertyChanged(aura::Window* window,
       // on our changed state.
       ash::Shell::Get()->UpdateShelfVisibility();
     }
-    if (key == kImmersiveIsActive) {
-      if (IsInImmersiveFullscreen()) {
-        if (!immersive_gesture_drag_handler_) {
-          immersive_gesture_drag_handler_ =
-              std::make_unique<ImmersiveGestureDragHandler>(window);
-        }
-      } else {
-        immersive_gesture_drag_handler_.reset();
-      }
-    }
     return;
   }
 }
@@ -809,11 +847,15 @@ void WindowState::OnWindowAddedToRootWindow(aura::Window* window) {
 
 void WindowState::OnWindowDestroying(aura::Window* window) {
   DCHECK_EQ(window_, window);
+
+  // If the window is destroyed during PIP, count that as exiting.
+  if (IsPip())
+    CollectPipEnterExitMetrics(window, /*enter=*/false);
+
   auto* widget = views::Widget::GetWidgetForNativeWindow(window);
   if (widget)
     Shell::Get()->focus_cycler()->RemoveWidget(widget);
 
-  immersive_gesture_drag_handler_.reset();
   current_state_->OnWindowDestroying(this);
   delegate_.reset();
 }

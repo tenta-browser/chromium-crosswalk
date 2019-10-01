@@ -25,12 +25,16 @@ SpeechMonitor::~SpeechMonitor() {
 }
 
 std::string SpeechMonitor::GetNextUtterance() {
+  return GetNextUtteranceWithLanguage().text;
+}
+
+SpeechMonitorUtterance SpeechMonitor::GetNextUtteranceWithLanguage() {
   if (utterance_queue_.empty()) {
     loop_runner_ = new content::MessageLoopRunner();
     loop_runner_->Run();
     loop_runner_ = NULL;
   }
-  std::string result = utterance_queue_.front();
+  SpeechMonitorUtterance result = utterance_queue_.front();
   utterance_queue_.pop_front();
   return result;
 }
@@ -58,9 +62,9 @@ bool SpeechMonitor::SkipChromeVoxMessage(const std::string& message) {
       loop_runner_->Run();
       loop_runner_ = NULL;
     }
-    std::string result = utterance_queue_.front();
+    SpeechMonitorUtterance result = utterance_queue_.front();
     utterance_queue_.pop_front();
-    if (result == message)
+    if (result.text == message)
       return true;
   }
   return false;
@@ -70,16 +74,16 @@ bool SpeechMonitor::PlatformImplAvailable() {
   return true;
 }
 
-bool SpeechMonitor::Speak(
-    int utterance_id,
-    const std::string& utterance,
-    const std::string& lang,
-    const content::VoiceData& voice,
-    const content::UtteranceContinuousParameters& params) {
+void SpeechMonitor::Speak(int utterance_id,
+                          const std::string& utterance,
+                          const std::string& lang,
+                          const content::VoiceData& voice,
+                          const content::UtteranceContinuousParameters& params,
+                          base::OnceCallback<void(bool)> on_speak_finished) {
   content::TtsController::GetInstance()->OnTtsEvent(
       utterance_id, content::TTS_EVENT_END, static_cast<int>(utterance.size()),
-      std::string());
-  return true;
+      0, std::string());
+  std::move(on_speak_finished).Run(true);
 }
 
 bool SpeechMonitor::StopSpeaking() {
@@ -100,7 +104,7 @@ void SpeechMonitor::GetVoices(std::vector<content::VoiceData>* out_voices) {
 }
 
 void SpeechMonitor::WillSpeakUtteranceWithVoice(
-    const content::TtsUtterance* utterance,
+    content::TtsUtterance* utterance,
     const content::VoiceData& voice_data) {
   // Blacklist some phrases.
   // Filter out empty utterances which can be used to trigger a start event from
@@ -112,7 +116,7 @@ void SpeechMonitor::WillSpeakUtteranceWithVoice(
     return;
 
   VLOG(0) << "Speaking " << utterance->GetText();
-  utterance_queue_.push_back(utterance->GetText());
+  utterance_queue_.emplace_back(utterance->GetText(), utterance->GetLang());
   if (loop_runner_.get())
     loop_runner_->Quit();
 }

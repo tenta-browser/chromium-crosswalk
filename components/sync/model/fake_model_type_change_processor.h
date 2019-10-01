@@ -39,10 +39,15 @@ class FakeModelTypeChangeProcessor : public ModelTypeChangeProcessor {
   void UntrackEntityForClientTagHash(
       const std::string& client_tag_hash) override;
   bool IsEntityUnsynced(const std::string& storage_key) override;
+  base::Time GetEntityCreationTime(
+      const std::string& storage_key) const override;
+  base::Time GetEntityModificationTime(
+      const std::string& storage_key) const override;
   void OnModelStarting(ModelTypeSyncBridge* bridge) override;
   void ModelReadyToSync(std::unique_ptr<MetadataBatch> batch) override;
   bool IsTrackingMetadata() override;
   std::string TrackedAccountId() override;
+  std::string TrackedCacheGuid() override;
   void ReportError(const ModelError& error) override;
   base::Optional<ModelError> GetError() const override;
   base::WeakPtr<ModelTypeControllerDelegate> GetControllerDelegate() override;

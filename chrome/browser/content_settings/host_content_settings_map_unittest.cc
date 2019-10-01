@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/auto_reset.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
@@ -70,7 +71,7 @@ class MockUserModifiableProvider
                     const ContentSettingsPattern&,
                     ContentSettingsType,
                     const content_settings::ResourceIdentifier&,
-                    base::Value*));
+                    std::unique_ptr<base::Value>&&));
 
   MOCK_METHOD1(ClearAllContentSettingsRules, void(ContentSettingsType));
 
@@ -227,7 +228,7 @@ TEST_F(HostContentSettingsMapTest, IndividualSettings) {
             host_content_settings_map->GetContentSetting(
                 host, host, CONTENT_SETTINGS_TYPE_COOKIES, std::string()));
 #if BUILDFLAG(ENABLE_PLUGINS)
-  EXPECT_EQ(CONTENT_SETTING_DETECT_IMPORTANT_CONTENT,
+  EXPECT_EQ(CONTENT_SETTING_BLOCK,
             host_content_settings_map->GetContentSetting(
                 host, host, CONTENT_SETTINGS_TYPE_PLUGINS, std::string()));
 #endif
@@ -632,24 +633,13 @@ TEST_F(HostContentSettingsMapTest, HostTrimEndingDotCheck) {
                 std::string()));
 
 #if BUILDFLAG(ENABLE_PLUGINS)
-  EXPECT_EQ(CONTENT_SETTING_DETECT_IMPORTANT_CONTENT,
+  EXPECT_EQ(CONTENT_SETTING_BLOCK,
             host_content_settings_map->GetContentSetting(
-                host_ending_with_dot,
-                host_ending_with_dot,
-                CONTENT_SETTINGS_TYPE_PLUGINS,
-                std::string()));
+                host_ending_with_dot, host_ending_with_dot,
+                CONTENT_SETTINGS_TYPE_PLUGINS, std::string()));
   host_content_settings_map->SetContentSettingDefaultScope(
       host_ending_with_dot, GURL(), CONTENT_SETTINGS_TYPE_PLUGINS,
       std::string(), CONTENT_SETTING_DEFAULT);
-  EXPECT_EQ(CONTENT_SETTING_DETECT_IMPORTANT_CONTENT,
-            host_content_settings_map->GetContentSetting(
-                host_ending_with_dot,
-                host_ending_with_dot,
-                CONTENT_SETTINGS_TYPE_PLUGINS,
-                std::string()));
-  host_content_settings_map->SetContentSettingDefaultScope(
-      host_ending_with_dot, GURL(), CONTENT_SETTINGS_TYPE_PLUGINS,
-      std::string(), CONTENT_SETTING_BLOCK);
   EXPECT_EQ(CONTENT_SETTING_BLOCK,
             host_content_settings_map->GetContentSetting(
                 host_ending_with_dot,
@@ -1146,13 +1136,13 @@ TEST_F(HostContentSettingsMapTest, CanonicalizeExceptionsUnicodeOnly) {
 TEST_F(HostContentSettingsMapTest, CanonicalizeExceptionsUnicodeAndPunycode) {
   TestingProfile profile;
 
-  std::unique_ptr<base::Value> value =
-      base::JSONReader::Read("{\"[*.]\\xC4\\x87ira.com,*\":{\"setting\":1}}");
+  std::unique_ptr<base::Value> value = base::JSONReader::ReadDeprecated(
+      "{\"[*.]\\xC4\\x87ira.com,*\":{\"setting\":1}}");
   profile.GetPrefs()->Set(GetPrefName(CONTENT_SETTINGS_TYPE_COOKIES), *value);
 
   // Set punycode equivalent, with different setting.
-  std::unique_ptr<base::Value> puny_value =
-      base::JSONReader::Read("{\"[*.]xn--ira-ppa.com,*\":{\"setting\":2}}");
+  std::unique_ptr<base::Value> puny_value = base::JSONReader::ReadDeprecated(
+      "{\"[*.]xn--ira-ppa.com,*\":{\"setting\":2}}");
   profile.GetPrefs()->Set(GetPrefName(CONTENT_SETTINGS_TYPE_COOKIES),
                           *puny_value);
 
@@ -1204,7 +1194,7 @@ TEST_F(HostContentSettingsMapTest, ManagedDefaultContentSetting) {
 
   // Remove the preference to manage the default-content-setting for Plugins.
   prefs->RemoveManagedPref(prefs::kManagedDefaultPluginsSetting);
-  EXPECT_EQ(CONTENT_SETTING_DETECT_IMPORTANT_CONTENT,
+  EXPECT_EQ(CONTENT_SETTING_BLOCK,
             host_content_settings_map->GetDefaultContentSetting(
                 CONTENT_SETTINGS_TYPE_PLUGINS, NULL));
 #endif
@@ -1401,10 +1391,11 @@ TEST_F(HostContentSettingsMapTest, AddContentSettingsObserver) {
 // Guest profiles do not exist on Android, so don't run these tests there.
 #if !defined(OS_ANDROID)
 TEST_F(HostContentSettingsMapTest, GuestProfile) {
-  TestingProfile profile;
-  profile.SetGuestSession(true);
+  TestingProfile::Builder profile_builder;
+  profile_builder.SetGuestSession();
+  std::unique_ptr<Profile> profile = profile_builder.Build();
   HostContentSettingsMap* host_content_settings_map =
-      HostContentSettingsMapFactory::GetForProfile(&profile);
+      HostContentSettingsMapFactory::GetForProfile(profile.get());
 
   GURL host("http://example.com/");
   ContentSettingsPattern pattern =
@@ -1424,7 +1415,7 @@ TEST_F(HostContentSettingsMapTest, GuestProfile) {
                 host, host, CONTENT_SETTINGS_TYPE_COOKIES, std::string()));
 
   const base::DictionaryValue* all_settings_dictionary =
-      profile.GetPrefs()->GetDictionary(
+      profile->GetPrefs()->GetDictionary(
           GetPrefName(CONTENT_SETTINGS_TYPE_COOKIES));
   EXPECT_TRUE(all_settings_dictionary->empty());
 }
@@ -1432,10 +1423,11 @@ TEST_F(HostContentSettingsMapTest, GuestProfile) {
 // Default settings should not be modifiable for the guest profile (there is no
 // UI to do this).
 TEST_F(HostContentSettingsMapTest, GuestProfileDefaultSetting) {
-  TestingProfile profile;
-  profile.SetGuestSession(true);
+  TestingProfile::Builder profile_builder;
+  profile_builder.SetGuestSession();
+  std::unique_ptr<Profile> profile = profile_builder.Build();
   HostContentSettingsMap* host_content_settings_map =
-      HostContentSettingsMapFactory::GetForProfile(&profile);
+      HostContentSettingsMapFactory::GetForProfile(profile.get());
 
   GURL host("http://example.com/");
 
@@ -1450,26 +1442,6 @@ TEST_F(HostContentSettingsMapTest, GuestProfileDefaultSetting) {
   EXPECT_EQ(CONTENT_SETTING_ALLOW,
             host_content_settings_map->GetContentSetting(
                 host, host, CONTENT_SETTINGS_TYPE_COOKIES, std::string()));
-}
-
-// We used to incorrectly store content settings in prefs for the guest profile.
-// We need to ensure these get deleted appropriately.
-TEST_F(HostContentSettingsMapTest, GuestProfileMigration) {
-  TestingProfile profile;
-  profile.SetGuestSession(true);
-
-  // Set a pref manually in the guest profile.
-  std::unique_ptr<base::Value> value =
-      base::JSONReader::Read("{\"[*.]\\xC4\\x87ira.com,*\":{\"setting\":1}}");
-  profile.GetPrefs()->Set(GetPrefName(CONTENT_SETTINGS_TYPE_COOKIES), *value);
-
-  // Test that during construction all the prefs get cleared.
-  HostContentSettingsMapFactory::GetForProfile(&profile);
-
-  const base::DictionaryValue* all_settings_dictionary =
-      profile.GetPrefs()->GetDictionary(
-          GetPrefName(CONTENT_SETTINGS_TYPE_COOKIES));
-  EXPECT_TRUE(all_settings_dictionary->empty());
 }
 #endif  // !defined(OS_ANDROID)
 
@@ -1883,7 +1855,7 @@ TEST_F(HostContentSettingsMapTest, PluginDataMigration) {
   }
   TestingProfile profile;
   // Set a website-specific Flash preference and a pattern exception.
-  std::unique_ptr<base::Value> value = base::JSONReader::Read(
+  std::unique_ptr<base::Value> value = base::JSONReader::ReadDeprecated(
       "{\"https://urlwithflashchanged.com:443,*\":{\"setting\":1}, "
       "\"[*.]patternurl.com:443,*\":{\"setting\":1}}");
   profile.GetPrefs()->Set(GetPrefName(CONTENT_SETTINGS_TYPE_PLUGINS), *value);
@@ -1914,10 +1886,10 @@ TEST_F(HostContentSettingsMapTest, PluginDataMigrated) {
   TestingProfile profile;
   // Set a website-specific Flash preference and another preference indicating
   // that the Flash setting has changed for a different website.
-  std::unique_ptr<base::Value> value = base::JSONReader::Read(
+  std::unique_ptr<base::Value> value = base::JSONReader::ReadDeprecated(
       "{\"https://unmigratedurl.com:443,*\":{\"setting\":1}}");
   profile.GetPrefs()->Set(GetPrefName(CONTENT_SETTINGS_TYPE_PLUGINS), *value);
-  value = base::JSONReader::Read(
+  value = base::JSONReader::ReadDeprecated(
       "{\"https://"
       "example.com:443,*\":{\"setting\":{\"flashPreviouslyChanged\":true}}}");
   profile.GetPrefs()->Set(GetPrefName(CONTENT_SETTINGS_TYPE_PLUGINS_DATA),
@@ -2073,7 +2045,7 @@ TEST_F(HostContentSettingsMapTest, EphemeralTypeDoesntReadFromPrefProvider) {
   content_settings::PrefProvider pref_provider(profile.GetPrefs(), true, true);
   pref_provider.SetWebsiteSetting(
       pattern, pattern, ephemeral_type, std::string(),
-      std::make_unique<base::Value>(CONTENT_SETTING_ALLOW).get());
+      std::make_unique<base::Value>(CONTENT_SETTING_ALLOW));
 
   EXPECT_EQ(CONTENT_SETTING_ASK,
             map->GetContentSetting(url, url, ephemeral_type, std::string()));

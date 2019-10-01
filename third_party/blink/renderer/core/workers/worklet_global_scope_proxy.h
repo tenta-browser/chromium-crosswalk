@@ -15,6 +15,7 @@ namespace blink {
 
 class FetchClientSettingsObjectSnapshot;
 class WorkletPendingTasks;
+class WorkerResourceTimingNotifier;
 
 // Abstracts communication from (Main/Threaded)Worklet on the main thread to
 // (Main/Threaded)WorkletGlobalScope so that Worklet class doesn't have to care
@@ -28,7 +29,8 @@ class CORE_EXPORT WorkletGlobalScopeProxy : public GarbageCollectedMixin {
   virtual void FetchAndInvokeScript(
       const KURL& module_url_record,
       network::mojom::FetchCredentialsMode,
-      FetchClientSettingsObjectSnapshot* outside_settings_object,
+      const FetchClientSettingsObjectSnapshot& outside_settings_object,
+      WorkerResourceTimingNotifier& outside_resource_timing_notifier,
       scoped_refptr<base::SingleThreadTaskRunner> outside_settings_task_runner,
       WorkletPendingTasks*) = 0;
 

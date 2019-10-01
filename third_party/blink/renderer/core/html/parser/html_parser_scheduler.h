@@ -26,8 +26,6 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_HTML_PARSER_HTML_PARSER_SCHEDULER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_HTML_PARSER_HTML_PARSER_SCHEDULER_H_
 
-#include <memory>
-
 #include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/single_thread_task_runner.h"
@@ -38,14 +36,6 @@
 namespace blink {
 
 class HTMLDocumentParser;
-
-class PumpSession : public NestingLevelIncrementer {
-  STACK_ALLOCATED();
-
- public:
-  PumpSession(unsigned& nesting_level);
-  ~PumpSession();
-};
 
 class SpeculationsPumpSession : public NestingLevelIncrementer {
   STACK_ALLOCATED();
@@ -66,13 +56,6 @@ class SpeculationsPumpSession : public NestingLevelIncrementer {
 class HTMLParserScheduler final
     : public GarbageCollectedFinalized<HTMLParserScheduler> {
  public:
-  static HTMLParserScheduler* Create(
-      HTMLDocumentParser* parser,
-      scoped_refptr<base::SingleThreadTaskRunner> loading_task_runner) {
-    return MakeGarbageCollected<HTMLParserScheduler>(
-        parser, std::move(loading_task_runner));
-  }
-
   HTMLParserScheduler(HTMLDocumentParser*,
                       scoped_refptr<base::SingleThreadTaskRunner>);
   ~HTMLParserScheduler();

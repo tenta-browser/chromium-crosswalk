@@ -30,6 +30,18 @@ Polymer({
       type: Object,
       value: chrome.networkingPrivate,
     },
+
+    /**
+     * Whether to show technology badge on mobile network icons.
+     * @private
+     */
+    showTechnologyBadge_: {
+      type: Boolean,
+      value: function() {
+        return loadTimeData.valueExists('showTechnologyBadge') &&
+            loadTimeData.getBoolean('showTechnologyBadge');
+      }
+    },
   },
 
   /**
@@ -114,7 +126,7 @@ Polymer({
    * @private
    */
   getNetworkDetails_: function() {
-    assert(!!this.guid);
+    assert(this.guid);
     this.networkingPrivate.getManagedProperties(
         this.guid, this.getPropertiesCallback_.bind(this));
   },
@@ -155,7 +167,7 @@ Polymer({
     if (!this.networkPropertiesReceived_)
       return;
 
-    assert(!!this.guid);
+    assert(this.guid);
     this.networkingPrivate.setProperties(this.guid, onc, () => {
       if (chrome.runtime.lastError) {
         // An error typically indicates invalid input; request the properties
@@ -257,6 +269,28 @@ Polymer({
 
   /**
    * @param {!CrOnc.NetworkProperties} networkProperties
+   * @return {string}
+   * @private
+   */
+  getConnectDisconnectText_: function(networkProperties) {
+    if (this.showConnect_(networkProperties)) {
+      return this.i18n('networkButtonConnect');
+    }
+    return this.i18n('networkButtonDisconnect');
+  },
+
+  /**
+   * @param {!CrOnc.NetworkProperties} networkProperties
+   * @return {boolean}
+   * @private
+   */
+  showConnectDisconnect_: function(networkProperties) {
+    return this.showConnect_(networkProperties) ||
+        this.showDisconnect_(networkProperties);
+  },
+
+  /**
+   * @param {!CrOnc.NetworkProperties} networkProperties
    * @return {boolean}
    * @private
    */
@@ -291,6 +325,23 @@ Polymer({
 
   /**
    * @param {!CrOnc.NetworkProperties} networkProperties
+   * @return {boolean}
+   * @private
+   */
+  enableConnectDisconnect_: function(networkProperties) {
+    if (!this.showConnectDisconnect_(networkProperties)) {
+      return false;
+    }
+
+    if (this.showConnect_(networkProperties)) {
+      return this.enableConnect_(networkProperties);
+    }
+
+    return true;
+  },
+
+  /**
+   * @param {!CrOnc.NetworkProperties} networkProperties
    * @return {boolean} Whether or not to enable the network connect button.
    * @private
    */
@@ -302,6 +353,17 @@ Polymer({
       return false;
     }
     return true;
+  },
+
+  /** @private */
+  onConnectDisconnectTap_: function() {
+    assert(this.networkProperties);
+    if (this.showConnect_(this.networkProperties)) {
+      this.onConnectTap_();
+      return;
+    }
+
+    this.onDisconnectTap_();
   },
 
   /** @private */
@@ -328,7 +390,7 @@ Polymer({
 
   /**
    * Event triggered for elements associated with network properties.
-   * @param {!{detail: !{field: string, value: (string|!Object)}}} event
+   * @param {!CustomEvent<!{field: string, value: (string|!Object)}>} event
    * @private
    */
   onNetworkPropertyChange_: function(event) {
@@ -352,10 +414,10 @@ Polymer({
    * Event triggered when the IP Config or NameServers element changes.
    * TODO(stevenjb): Move this logic down to network_ip_config.js and
    * network_nameservers.js and remove it from here and internet_detail_page.js.
-   * @param {!{detail: !{field: string,
-   *                     value: (string|!CrOnc.IPConfigProperties|
-   *                             !Array<string>)}}} event
-   *     The network-ip-config or network-nameservers change event.
+   * @param {!CustomEvent<!{
+   *     field: string,
+   *     value: (string|!CrOnc.IPConfigProperties|!Array<string>)
+   * }>} event The network-ip-config or network-nameservers change event.
    * @private
    */
   onIPConfigChange_: function(event) {
@@ -433,7 +495,7 @@ Polymer({
 
   /**
    * Event triggered when the Proxy configuration element changes.
-   * @param {!{detail: {field: string, value: !CrOnc.ProxySettings}}} event
+   * @param {!CustomEvent<!{field: string, value: !CrOnc.ProxySettings}>} event
    *     The network-proxy change event.
    * @private
    */
@@ -475,7 +537,7 @@ Polymer({
   getInfoFields_: function() {
     /** @type {!Array<string>} */ var fields = [];
     var type = this.networkProperties.Type;
-    if (type == CrOnc.Type.CELLULAR && !!this.networkProperties.Cellular) {
+    if (type == CrOnc.Type.CELLULAR && this.networkProperties.Cellular) {
       fields.push(
           'Cellular.HomeProvider.Name', 'Cellular.ServingOperator.Name',
           'Cellular.ActivationState', 'Cellular.RoamingState',

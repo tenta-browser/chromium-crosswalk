@@ -50,7 +50,7 @@ TouchSelectionMenuViews::TouchSelectionMenuViews(
   set_shadow(BubbleBorder::SMALL_SHADOW);
   set_parent_window(context);
   set_margins(gfx::Insets(kMenuMargin, kMenuMargin, kMenuMargin, kMenuMargin));
-  set_can_activate(false);
+  SetCanActivate(false);
   set_adjust_if_offscreen(true);
   EnableCanvasFlippingForRTLUI(true);
 
@@ -98,11 +98,11 @@ bool TouchSelectionMenuViews::IsMenuAvailable(
     const ui::TouchSelectionMenuClient* client) {
   DCHECK(client);
 
-  for (size_t i = 0; i < base::size(kMenuCommands); i++) {
-    if (client->IsCommandIdEnabled(kMenuCommands[i]))
-      return true;
-  }
-  return false;
+  const auto is_enabled = [client](int command) {
+    return client->IsCommandIdEnabled(command);
+  };
+  return std::any_of(std::cbegin(kMenuCommands), std::cend(kMenuCommands),
+                     is_enabled);
 }
 
 void TouchSelectionMenuViews::CloseMenu() {
@@ -116,8 +116,7 @@ void TouchSelectionMenuViews::CloseMenu() {
 TouchSelectionMenuViews::~TouchSelectionMenuViews() = default;
 
 void TouchSelectionMenuViews::CreateButtons() {
-  for (size_t i = 0; i < base::size(kMenuCommands); i++) {
-    int command_id = kMenuCommands[i];
+  for (int command_id : kMenuCommands) {
     if (!client_->IsCommandIdEnabled(command_id))
       continue;
 
@@ -129,7 +128,7 @@ void TouchSelectionMenuViews::CreateButtons() {
   // Finally, add ellipses button.
   AddChildView(
       CreateButton(base::UTF8ToUTF16(kEllipsesButtonText), kEllipsesButtonTag));
-  Layout();
+  InvalidateLayout();
 }
 
 LabelButton* TouchSelectionMenuViews::CreateButton(const base::string16& title,
@@ -152,10 +151,12 @@ void TouchSelectionMenuViews::DisconnectOwner() {
 
 void TouchSelectionMenuViews::OnPaint(gfx::Canvas* canvas) {
   BubbleDialogDelegateView::OnPaint(canvas);
+  if (children().empty())
+    return;
 
   // Draw separator bars.
-  for (int i = 0; i < child_count() - 1; ++i) {
-    View* child = child_at(i);
+  for (auto i = children().cbegin(); i != std::prev(children().cend()); ++i) {
+    const View* child = *i;
     int x = child->bounds().right() + kSpacingBetweenButtons / 2;
     canvas->FillRect(gfx::Rect(x, 0, 1, child->height()),
                      kButtonSeparatorColor);

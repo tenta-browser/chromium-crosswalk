@@ -12,6 +12,7 @@
 #include "base/time/time.h"
 #include "device/gamepad/gamepad_id_list.h"
 #include "device/gamepad/gamepad_uma.h"
+#include "device/gamepad/nintendo_controller.h"
 
 #import <Foundation/Foundation.h>
 #include <IOKit/hid/IOHIDKeys.h>
@@ -27,11 +28,11 @@ const uint16_t kGameUsageNumber = 0x05;
 const uint16_t kMultiAxisUsageNumber = 0x08;
 
 void CopyNSStringAsUTF16LittleEndian(NSString* src,
-                                     UChar* dest,
+                                     base::char16* dest,
                                      size_t dest_len) {
   NSData* as16 = [src dataUsingEncoding:NSUTF16LittleEndianStringEncoding];
   memset(dest, 0, dest_len);
-  [as16 getBytes:dest length:dest_len - sizeof(UChar)];
+  [as16 getBytes:dest length:dest_len - sizeof(base::char16)];
 }
 
 NSDictionary* DeviceMatching(uint32_t usage_page, uint32_t usage) {
@@ -190,6 +191,10 @@ void GamepadPlatformDataFetcherMac::DeviceAdd(IOHIDDeviceRef device) {
   uint16_t vendor_int = [vendor_id intValue];
   uint16_t product_int = [product_id intValue];
   uint16_t version_int = [version_number intValue];
+
+  // Nintendo devices are handled by the Nintendo data fetcher.
+  if (NintendoController::IsNintendoController(vendor_int, product_int))
+    return;
 
   // Record the device before excluding Made for iOS gamepads. This allows us to
   // recognize these devices even though the GameController API masks the vendor

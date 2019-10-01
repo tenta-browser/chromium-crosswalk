@@ -27,13 +27,14 @@
 #include <memory>
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/layout/layout_box.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "third_party/blink/renderer/platform/wtf/list_hash_set.h"
 
 namespace blink {
 
 struct PaintInfo;
 class LineLayoutBox;
-class NGConstraintSpace;
+class NGBlockNode;
 class WordMeasurement;
 
 typedef WTF::ListHashSet<LayoutBox*, 16> TrackedLayoutBoxListHashSet;
@@ -139,8 +140,6 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
   LayoutUnit MinLineHeightForReplacedObject(bool is_first_line,
                                             LayoutUnit replaced_height) const;
 
-  virtual bool CreatesNewFormattingContext() const { return true; }
-
   const char* GetName() const override;
 
  protected:
@@ -164,7 +163,8 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
                                ContainingBlockState = kSameContainingBlock);
 
   TrackedLayoutBoxListHashSet* PositionedObjects() const {
-    return HasPositionedObjects() ? PositionedObjectsInternal() : nullptr;
+    return UNLIKELY(HasPositionedObjects()) ? PositionedObjectsInternal()
+                                            : nullptr;
   }
   bool HasPositionedObjects() const {
     DCHECK(has_positioned_objects_ ? (PositionedObjectsInternal() &&
@@ -320,9 +320,6 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
   LayoutUnit AvailableLogicalHeightForPercentageComputation() const;
   bool HasDefiniteLogicalHeight() const;
 
-  const NGConstraintSpace* CachedConstraintSpace() const;
-  void SetCachedConstraintSpace(const NGConstraintSpace& space);
-
  protected:
   bool RecalcNormalFlowChildLayoutOverflowIfNeeded(LayoutObject*);
   void RecalcNormalFlowChildVisualOverflowIfNeeded(LayoutObject*);
@@ -395,9 +392,9 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
  public:
   void Paint(const PaintInfo&) const override;
   virtual void PaintObject(const PaintInfo&,
-                           const LayoutPoint& paint_offset) const;
+                           const PhysicalOffset& paint_offset) const;
   virtual void PaintChildren(const PaintInfo&,
-                             const LayoutPoint& paint_offset) const;
+                             const PhysicalOffset& paint_offset) const;
   void UpdateAfterLayout() override;
 
  protected:
@@ -464,8 +461,8 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
   virtual void AddLayoutOverflowFromChildren();
   void AddVisualOverflowFromChildren();
 
-  void AddOutlineRects(Vector<LayoutRect>&,
-                       const LayoutPoint& additional_offset,
+  void AddOutlineRects(Vector<PhysicalRect>&,
+                       const PhysicalOffset& additional_offset,
                        NGOutlineType) const override;
 
   void UpdateBlockChildDirtyBitsBeforeLayout(bool relayout_children,
@@ -555,7 +552,6 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
   virtual bool UpdateLogicalWidthAndColumnWidth();
 
   LayoutObjectChildList children_;
-  std::unique_ptr<NGConstraintSpace> cached_constraint_space_;
 
   unsigned
       has_margin_before_quirk_ : 1;  // Note these quirk values can't be put
@@ -592,14 +588,14 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
   // This is necessary for now for interoperability between the old and new
   // layout code. Primarily for calling layoutPositionedObjects at the moment.
   friend class NGBlockNode;
-
- public:
-  // TODO(loonybear): Temporary in order to ensure compatibility with existing
-  // web test results.
-  virtual void AdjustChildDebugRect(LayoutRect&) const {}
 };
 
-DEFINE_LAYOUT_OBJECT_TYPE_CASTS(LayoutBlock, IsLayoutBlock());
+template <>
+struct DowncastTraits<LayoutBlock> {
+  static bool AllowFrom(const LayoutObject& object) {
+    return object.IsLayoutBlock();
+  }
+};
 
 }  // namespace blink
 

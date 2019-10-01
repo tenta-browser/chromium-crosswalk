@@ -17,9 +17,9 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "ios/web/public/browser_state.h"
+#import "ios/web/public/deprecated/crw_js_injection_manager.h"
+#import "ios/web/public/deprecated/crw_js_injection_receiver.h"
 #import "ios/web/public/navigation_manager.h"
-#import "ios/web/public/web_state/js/crw_js_injection_manager.h"
-#import "ios/web/public/web_state/js/crw_js_injection_receiver.h"
 #import "ios/web/public/web_state/web_state.h"
 #include "ios/web/public/web_state/web_state_observer.h"
 #import "ios/web/public/web_state/web_state_policy_decider.h"
@@ -193,6 +193,7 @@ void DistillerPageIOS::DistillPageImpl(const GURL& url,
   }
   // Load page using WebState.
   web::NavigationManager::WebLoadParams params(url_);
+  web_state_->SetKeepRenderProcessAlive(true);
   web_state_->GetNavigationManager()->LoadURLWithParams(params);
   // LoadIfNecessary is needed because the view is not created (but needed) when
   // loading the page. TODO(crbug.com/705819): Remove this call.

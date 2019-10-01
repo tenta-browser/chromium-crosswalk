@@ -8,6 +8,7 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
@@ -89,6 +90,7 @@ class MockAudioOutputStream : public AudioOutputStream {
   MOCK_METHOD1(SetVolume, void(double volume));
   MOCK_METHOD1(GetVolume, void(double* volume));
   MOCK_METHOD0(Close, void());
+  MOCK_METHOD0(Flush, void());
 
  private:
   bool start_called_;

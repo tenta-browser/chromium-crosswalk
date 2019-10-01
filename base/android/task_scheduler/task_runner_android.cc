@@ -5,6 +5,7 @@
 #include "base/android/task_scheduler/task_runner_android.h"
 
 #include "base/android/task_scheduler/post_task_android.h"
+#include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/task/post_task.h"
 #include "base/time/time.h"
@@ -19,11 +20,12 @@ jlong JNI_TaskRunnerImpl_Init(
     jboolean priority_set_explicitly,
     jint priority,
     jboolean may_block,
+    jboolean thread_pool,
     jbyte extension_id,
     const base::android::JavaParamRef<jbyteArray>& extension_data) {
   TaskTraits task_traits = PostTaskAndroid::CreateTaskTraits(
-      env, priority_set_explicitly, priority, may_block, extension_id,
-      extension_data);
+      env, priority_set_explicitly, priority, may_block, thread_pool,
+      extension_id, extension_data);
   scoped_refptr<TaskRunner> task_runner;
   switch (static_cast<TaskRunnerType>(task_runner_type)) {
     case TaskRunnerType::BASE:

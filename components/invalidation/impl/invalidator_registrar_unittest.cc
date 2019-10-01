@@ -36,14 +36,12 @@ class RegistrarInvalidator : public Invalidator {
 
   bool UpdateRegisteredIds(InvalidationHandler* handler,
                            const ObjectIdSet& ids) override {
-    TopicSet topics;
-    for (const auto& id : ids)
-      topics.insert(id.name());
-    return registrar_.UpdateRegisteredTopics(handler, topics);
+    return registrar_.UpdateRegisteredTopics(handler,
+                                             ConvertIdsToTopics(ids, handler));
   }
 
   bool UpdateRegisteredIds(InvalidationHandler* handler,
-                           const TopicSet& ids) override {
+                           const Topics& ids) override {
     NOTREACHED();
     return false;
   }
@@ -114,9 +112,9 @@ class RegistrarInvalidatorTestDelegate {
   std::unique_ptr<RegistrarInvalidator> invalidator_;
 };
 
-INSTANTIATE_TYPED_TEST_CASE_P(RegistrarInvalidatorTest,
-                              InvalidatorTest,
-                              RegistrarInvalidatorTestDelegate);
+INSTANTIATE_TYPED_TEST_SUITE_P(RegistrarInvalidatorTest,
+                               InvalidatorTest,
+                               RegistrarInvalidatorTestDelegate);
 
 }  // namespace
 

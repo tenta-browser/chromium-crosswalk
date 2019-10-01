@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/base_switches.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/metrics/field_trial.h"
@@ -39,6 +40,7 @@
 #include "components/previews/core/previews_switches.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "mojo/public/cpp/bindings/binding.h"
+#include "net/base/features.h"
 #include "net/nqe/effective_connection_type.h"
 #include "net/nqe/network_quality_estimator_params.h"
 #include "services/network/public/cpp/network_switches.h"
@@ -279,21 +281,29 @@ class InterventionsInternalsPageHandlerTest : public testing::Test {
     ASSERT_TRUE(profile_manager_.SetUp());
 
     mojom::InterventionsInternalsPageHandlerPtr page_handler_ptr;
-    handler_request_ = mojo::MakeRequest(&page_handler_ptr);
+
+    mojom::InterventionsInternalsPageHandlerRequest handler_request =
+        mojo::MakeRequest(&page_handler_ptr);
     page_handler_ = std::make_unique<InterventionsInternalsPageHandler>(
-        std::move(handler_request_), previews_ui_service_.get());
+        std::move(handler_request), previews_ui_service_.get(),
+        &test_network_quality_tracker_);
 
     mojom::InterventionsInternalsPagePtr page_ptr;
-    page_request_ = mojo::MakeRequest(&page_ptr);
+    mojom::InterventionsInternalsPageRequest page_request =
+        mojo::MakeRequest(&page_ptr);
     page_ = std::make_unique<TestInterventionsInternalsPage>(
-        std::move(page_request_));
+        std::move(page_request));
 
     page_handler_->SetClientPage(std::move(page_ptr));
 
     scoped_feature_list_ = std::make_unique<base::test::ScopedFeatureList>();
   }
 
-  void TearDown() override { profile_manager_.DeleteAllTestingProfiles(); }
+  void TearDown() override {
+    profile_manager_.DeleteAllTestingProfiles();
+    page_handler_.reset();
+    page_.reset();
+  }
 
   content::TestBrowserThreadBundle thread_bundle_;
 
@@ -305,11 +315,9 @@ class InterventionsInternalsPageHandlerTest : public testing::Test {
   std::unique_ptr<TestPreviewsUIService> previews_ui_service_;
 
   // InterventionsInternalPageHandler's variables.
-  mojom::InterventionsInternalsPageHandlerRequest handler_request_;
   std::unique_ptr<InterventionsInternalsPageHandler> page_handler_;
 
   // InterventionsInternalPage's variables.
-  mojom::InterventionsInternalsPageRequest page_request_;
   std::unique_ptr<TestInterventionsInternalsPage> page_;
 
   std::unique_ptr<base::test::ScopedFeatureList> scoped_feature_list_;
@@ -536,8 +544,8 @@ TEST_F(InterventionsInternalsPageHandlerTest, GetFlagsEctForceFieldtrialValue) {
 
   std::map<std::string, std::string> params;
   params[net::kForceEffectiveConnectionType] = expected_ect;
-  ASSERT_TRUE(base::AssociateFieldTrialParams(trial_name, group_name, params));
-  base::FieldTrialList::CreateFieldTrial(trial_name, group_name);
+  scoped_feature_list_->InitAndEnableFeatureWithParameters(
+      net::features::kNetworkQualityEstimator, params);
 
   page_handler_->GetPreviewsFlagsDetails(
       base::BindOnce(&MockGetPreviewsFlagsCallback));
@@ -907,8 +915,7 @@ TEST_F(InterventionsInternalsPageHandlerTest,
 
 TEST_F(InterventionsInternalsPageHandlerTest,
        IgnoreBlacklistReversedOnLastObserverRemovedCalled) {
-  ASSERT_FALSE(base::CommandLine::ForCurrentProcess()->HasSwitch(
-      previews::switches::kIgnorePreviewsBlacklist));
+  ASSERT_FALSE(previews::switches::ShouldIgnorePreviewsBlacklist());
   page_handler_->OnLastObserverRemove();
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(page_->blacklist_ignored());
@@ -919,8 +926,7 @@ TEST_F(InterventionsInternalsPageHandlerTest,
   base::test::ScopedCommandLine scoped_command_line;
   base::CommandLine* command_line = scoped_command_line.GetProcessCommandLine();
   command_line->AppendSwitch(previews::switches::kIgnorePreviewsBlacklist);
-  ASSERT_TRUE(base::CommandLine::ForCurrentProcess()->HasSwitch(
-      previews::switches::kIgnorePreviewsBlacklist));
+  ASSERT_TRUE(previews::switches::ShouldIgnorePreviewsBlacklist());
   page_handler_->OnLastObserverRemove();
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(page_->blacklist_ignored());

@@ -10,6 +10,8 @@
 // clang-format off
 #include "third_party/blink/renderer/bindings/tests/results/core/v8_test_attributes.h"
 
+#include <algorithm>
+
 #include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/bindings/core/v8/idl_types.h"
 #include "third_party/blink/renderer/bindings/core/v8/native_value_traits_impl.h"
@@ -20,6 +22,7 @@
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/runtime_call_stats.h"
 #include "third_party/blink/renderer/platform/bindings/v8_object_constructor.h"
+#include "third_party/blink/renderer/platform/scheduler/public/cooperative_scheduling_manager.h"
 #include "third_party/blink/renderer/platform/wtf/get_ptr.h"
 
 namespace blink {
@@ -81,9 +84,7 @@ static void StringPromiseAttributeAttributeGetter(const v8::FunctionCallbackInfo
   // This attribute returns a Promise.
   // Per https://heycam.github.io/webidl/#dfn-attribute-getter, all exceptions
   // must be turned into a Promise rejection.
-  ExceptionState exception_state(
-      info.GetIsolate(), ExceptionState::kGetterContext,
-      "TestAttributes", "stringPromiseAttribute");
+  ExceptionState exception_state(info.GetIsolate(), ExceptionState::kGetterContext, "TestAttributes", "stringPromiseAttribute");
   ExceptionToRejectPromiseScope reject_promise_scope(info, exception_state);
 
   // Returning a Promise type requires us to disable some of V8's type checks,
@@ -118,9 +119,7 @@ static void RaisesExceptionShortPromiseAttributeAttributeGetter(const v8::Functi
   // This attribute returns a Promise.
   // Per https://heycam.github.io/webidl/#dfn-attribute-getter, all exceptions
   // must be turned into a Promise rejection.
-  ExceptionState exception_state(
-      info.GetIsolate(), ExceptionState::kGetterContext,
-      "TestAttributes", "raisesExceptionShortPromiseAttribute");
+  ExceptionState exception_state(info.GetIsolate(), ExceptionState::kGetterContext, "TestAttributes", "raisesExceptionShortPromiseAttribute");
   ExceptionToRejectPromiseScope reject_promise_scope(info, exception_state);
 
   // Returning a Promise type requires us to disable some of V8's type checks,
@@ -134,9 +133,6 @@ static void RaisesExceptionShortPromiseAttributeAttributeGetter(const v8::Functi
   v8::Local<v8::Object> holder = info.Holder();
 
   TestAttributes* impl = V8TestAttributes::ToImpl(holder);
-
-      info.GetIsolate(), ExceptionState::kGetterContext,
-      "TestAttributes", "raisesExceptionShortPromiseAttribute");
 
   ScriptPromise cpp_value(impl->raisesExceptionShortPromiseAttribute(exception_state));
 

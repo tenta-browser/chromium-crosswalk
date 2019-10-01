@@ -26,8 +26,8 @@ void OnCanDownloadDecided(base::WeakPtr<DownloadResourceThrottle> throttle,
                           bool storage_permission_granted, bool allow) {
   base::PostTaskWithTraits(
       FROM_HERE, {BrowserThread::IO},
-      base::Bind(&DownloadResourceThrottle::ContinueDownload, throttle,
-                 storage_permission_granted, allow));
+      base::BindOnce(&DownloadResourceThrottle::ContinueDownload, throttle,
+                     storage_permission_granted, allow));
 }
 
 void CanDownload(
@@ -116,7 +116,7 @@ void DownloadResourceThrottle::WillProcessResponse(bool* defer) {
   WillDownload(defer);
 }
 
-const char* DownloadResourceThrottle::GetNameForLogging() const {
+const char* DownloadResourceThrottle::GetNameForLogging() {
   return "DownloadResourceThrottle";
 }
 

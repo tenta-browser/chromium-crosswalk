@@ -14,11 +14,13 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/timer/timer.h"
 #include "build/build_config.h"
 #include "chrome/browser/net/reporting_permissions_checker.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_impl_io_data.h"
 #include "chrome/common/buildflags.h"
+#include "components/keyed_service/core/simple_factory_key.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "content/public/browser/content_browser_client.h"
 #include "extensions/buildflags/buildflags.h"
@@ -47,8 +49,7 @@ class SequencedTaskRunner;
 namespace policy {
 class ConfigurationPolicyProvider;
 class ProfilePolicyConnector;
-class SchemaRegistryService;
-}
+}  // namespace policy
 
 namespace sync_preferences {
 class PrefServiceSyncable;
@@ -56,6 +57,10 @@ class PrefServiceSyncable;
 
 namespace user_prefs {
 class PrefRegistrySyncable;
+}
+
+namespace content {
+class SmsService;
 }
 
 // The default profile implementation.
@@ -113,6 +118,7 @@ class ProfileImpl : public Profile {
   std::string GetMediaDeviceIDSalt() override;
   download::InProgressDownloadManager* RetriveInProgressDownloadManager()
       override;
+  content::SmsService* GetSmsService() override;
 
   // Profile implementation:
   scoped_refptr<base::SequencedTaskRunner> GetIOTaskRunner() override;
@@ -129,6 +135,7 @@ class ProfileImpl : public Profile {
   bool IsSupervised() const override;
   bool IsChild() const override;
   bool IsLegacySupervised() const override;
+  bool AllowsBrowserWindows() const override;
   ExtensionSpecialStoragePolicy* GetExtensionSpecialStoragePolicy() override;
   PrefService* GetPrefs() override;
   const PrefService* GetPrefs() const override;
@@ -137,12 +144,25 @@ class ProfileImpl : public Profile {
 #endif
   PrefService* GetOffTheRecordPrefs() override;
   PrefService* GetReadOnlyOffTheRecordPrefs() override;
+  policy::SchemaRegistryService* GetPolicySchemaRegistryService() override;
+#if defined(OS_CHROMEOS)
+  policy::UserCloudPolicyManagerChromeOS* GetUserCloudPolicyManagerChromeOS()
+      override;
+  policy::ActiveDirectoryPolicyManager* GetActiveDirectoryPolicyManager()
+      override;
+#else
+  policy::UserCloudPolicyManager* GetUserCloudPolicyManager() override;
+#endif  // defined(OS_CHROMEOS)
+  policy::ProfilePolicyConnector* GetProfilePolicyConnector() override;
+  const policy::ProfilePolicyConnector* GetProfilePolicyConnector()
+      const override;
   net::URLRequestContextGetter* GetRequestContext() override;
   base::OnceCallback<net::CookieStore*()> GetExtensionsCookieStoreGetter()
       override;
   scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory() override;
   bool IsSameProfile(Profile* profile) override;
   base::Time GetStartTime() const override;
+  ProfileKey* GetProfileKey() const override;
   base::FilePath last_selected_directory() override;
   void set_last_selected_directory(const base::FilePath& path) override;
   GURL GetHomePage() override;
@@ -176,6 +196,15 @@ class ProfileImpl : public Profile {
               CreateMode create_mode,
               scoped_refptr<base::SequencedTaskRunner> io_task_runner);
 
+#if defined(OS_ANDROID)
+  // Takes the ownership of the pre-created PrefService and other objects if
+  // they have been created.
+  void TakePrefsFromStartupData();
+#endif
+
+  // Creates |prefs| from scratch in normal startup.
+  void LoadPrefsForNormalStartup(bool async_prefs);
+
   // Does final initialization. Should be called after prefs were loaded.
   void DoFinalInit();
 
@@ -199,6 +228,8 @@ class ProfileImpl : public Profile {
 
   void GetMediaCacheParameters(base::FilePath* cache_path, int* max_size);
 
+  policy::ConfigurationPolicyProvider* configuration_policy_provider();
+
   PrefChangeRegistrar pref_change_registrar_;
 
   base::FilePath path_;
@@ -215,12 +246,28 @@ class ProfileImpl : public Profile {
   // TODO(mnissler, joaodasilva): The |profile_policy_connector_| provides the
   // PolicyService that the |prefs_| depend on, and must outlive |prefs_|. This
   // can be removed once |prefs_| becomes a KeyedService too.
-  // |profile_policy_connector_| in turn depends on
-  // |configuration_policy_provider_|, which depends on
-  // |schema_registry_service_|.
+
+  // - |prefs_| depends on |profile_policy_connector_|
+  // - |profile_policy_connector_| depends on configuration_policy_provider(),
+  //   which can be:
+  //     - |user_cloud_policy_manager_|;
+  //     - |user_cloud_policy_manager_chromeos_|;
+  //     - or |active_directory_policy_manager_|.
+  // - configuration_policy_provider() depends on |schema_registry_service_|
+
   std::unique_ptr<policy::SchemaRegistryService> schema_registry_service_;
-  std::unique_ptr<policy::ConfigurationPolicyProvider>
-      configuration_policy_provider_;
+
+  // configuration_policy_provider() is either of these, or nullptr in some
+  // tests.
+#if defined(OS_CHROMEOS)
+  std::unique_ptr<policy::UserCloudPolicyManagerChromeOS>
+      user_cloud_policy_manager_chromeos_;
+  std::unique_ptr<policy::ActiveDirectoryPolicyManager>
+      active_directory_policy_manager_;
+#else
+  std::unique_ptr<policy::UserCloudPolicyManager> user_cloud_policy_manager_;
+#endif
+
   std::unique_ptr<policy::ProfilePolicyConnector> profile_policy_connector_;
 
   // Keep |prefs_| on top for destruction order because |extension_prefs_|,
@@ -249,6 +296,10 @@ class ProfileImpl : public Profile {
 
   // See GetStartTime for details.
   base::Time start_time_;
+
+  // The key to index KeyedService instances created by
+  // SimpleKeyedServiceFactory.
+  std::unique_ptr<ProfileKey> key_;
 
 #if defined(OS_CHROMEOS)
   std::unique_ptr<chromeos::Preferences> chromeos_preferences_;

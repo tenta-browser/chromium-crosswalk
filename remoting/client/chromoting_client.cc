@@ -21,6 +21,7 @@
 #include "remoting/protocol/video_renderer.h"
 #include "remoting/protocol/webrtc_connection_to_host.h"
 #include "remoting/signaling/jid_util.h"
+#include "remoting/signaling/signaling_address.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_geometry.h"
 
 namespace remoting {
@@ -89,7 +90,9 @@ void ChromotingClient::Start(
 #endif
     } else {
       DCHECK(protocol_config_->ice_supported());
-      connection_.reset(new protocol::IceConnectionToHost());
+      bool use_turn_api = SignalingAddress(host_jid).channel() ==
+                          SignalingAddress::Channel::FTL;
+      connection_.reset(new protocol::IceConnectionToHost(use_turn_api));
     }
   }
   connection_->set_client_stub(this);
@@ -184,12 +187,11 @@ void ChromotingClient::SetVideoLayout(const protocol::VideoLayout& layout) {
   user_interface_->SetDesktopSize(size_pixels,
                                   webrtc::DesktopVector(x_dpi, y_dpi));
 
-  mouse_input_scaler_.set_input_size(
-      webrtc::DesktopRect::MakeSize(size_pixels));
+  mouse_input_scaler_.set_input_size(webrtc::DesktopSize(size_pixels));
   mouse_input_scaler_.set_output_size(
       connection_->config().protocol() == protocol::SessionConfig::Protocol::ICE
-          ? webrtc::DesktopRect::MakeSize(size_pixels)
-          : webrtc::DesktopRect::MakeSize(size_dips));
+          ? webrtc::DesktopSize(size_pixels)
+          : webrtc::DesktopSize(size_dips));
 }
 
 void ChromotingClient::InjectClipboardEvent(

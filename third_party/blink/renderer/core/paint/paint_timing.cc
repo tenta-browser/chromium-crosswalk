@@ -169,33 +169,37 @@ void PaintTiming::SetFirstContentfulPaint(TimeTicks stamp) {
   SetFirstPaint(stamp);
   first_contentful_paint_ = stamp;
   RegisterNotifySwapTime(PaintEvent::kFirstContentfulPaint);
+
+  // Restart commits that may have been deferred.
+  if (!GetFrame() || !GetFrame()->GetPage())
+    return;
+  GetFrame()->GetPage()->GetChromeClient().StopDeferringCommits(
+      cc::PaintHoldingCommitTrigger::kFirstContentfulPaint);
 }
 
 void PaintTiming::RegisterNotifySwapTime(PaintEvent event) {
   RegisterNotifySwapTime(
-      event, CrossThreadBind(&PaintTiming::ReportSwapTime,
-                             WrapCrossThreadWeakPersistent(this), event));
+      event, CrossThreadBindOnce(&PaintTiming::ReportSwapTime,
+                                 WrapCrossThreadWeakPersistent(this), event));
 }
 
 void PaintTiming::RegisterNotifySwapTime(PaintEvent event,
                                          ReportTimeCallback callback) {
-  // ReportSwapTime on layerTreeView will queue a swap-promise, the callback is
-  // called when the swap for current render frame completes or fails to happen.
+  // ReportSwapTime will queue a swap-promise, the callback is called when the
+  // compositor submission of the current render frame completes or fails to
+  // happen.
   if (!GetFrame() || !GetFrame()->GetPage())
     return;
-  if (WebLayerTreeView* layerTreeView =
-          GetFrame()->GetPage()->GetChromeClient().GetWebLayerTreeView(
-              GetFrame())) {
-    layerTreeView->NotifySwapTime(ConvertToBaseCallback(std::move(callback)));
-  }
+  GetFrame()->GetPage()->GetChromeClient().NotifySwapTime(*GetFrame(),
+                                                          std::move(callback));
 }
 
 void PaintTiming::ReportSwapTime(PaintEvent event,
-                                 WebLayerTreeView::SwapResult result,
+                                 WebWidgetClient::SwapResult result,
                                  base::TimeTicks timestamp) {
   DCHECK(IsMainThread());
   // If the swap fails for any reason, we use the timestamp when the SwapPromise
-  // was broken. |result| == WebLayerTreeView::SwapResult::kDidNotSwapSwapFails
+  // was broken. |result| == WebWidgetClient::SwapResult::kDidNotSwapSwapFails
   // usually means the compositor decided not swap because there was no actual
   // damage, which can happen when what's being painted isn't visible. In this
   // case, the timestamp will be consistent with the case where the swap
@@ -225,8 +229,8 @@ void PaintTiming::ReportSwapTime(PaintEvent event,
 void PaintTiming::SetFirstPaintSwap(TimeTicks stamp) {
   DCHECK(first_paint_swap_.is_null());
   first_paint_swap_ = stamp;
-  probe::paintTiming(GetSupplementable(), "firstPaint",
-                     TimeTicksInSeconds(first_paint_swap_));
+  probe::PaintTiming(GetSupplementable(), "firstPaint",
+                     first_paint_swap_.since_origin().InSecondsF());
   WindowPerformance* performance = GetPerformanceInstance(GetFrame());
   if (performance)
     performance->AddFirstPaintTiming(first_paint_swap_);
@@ -235,9 +239,11 @@ void PaintTiming::SetFirstPaintSwap(TimeTicks stamp) {
 
 void PaintTiming::SetFirstContentfulPaintSwap(TimeTicks stamp) {
   DCHECK(first_contentful_paint_swap_.is_null());
+  TRACE_EVENT_INSTANT_WITH_TIMESTAMP0("loading", "FirstContentfulPaint",
+                                      TRACE_EVENT_SCOPE_GLOBAL, stamp);
   first_contentful_paint_swap_ = stamp;
-  probe::paintTiming(GetSupplementable(), "firstContentfulPaint",
-                     TimeTicksInSeconds(first_contentful_paint_swap_));
+  probe::PaintTiming(GetSupplementable(), "firstContentfulPaint",
+                     first_contentful_paint_swap_.since_origin().InSecondsF());
   WindowPerformance* performance = GetPerformanceInstance(GetFrame());
   if (performance)
     performance->AddFirstContentfulPaintTiming(first_contentful_paint_swap_);
@@ -250,16 +256,16 @@ void PaintTiming::SetFirstContentfulPaintSwap(TimeTicks stamp) {
 void PaintTiming::SetFirstImagePaintSwap(TimeTicks stamp) {
   DCHECK(first_image_paint_swap_.is_null());
   first_image_paint_swap_ = stamp;
-  probe::paintTiming(GetSupplementable(), "firstImagePaint",
-                     TimeTicksInSeconds(first_image_paint_swap_));
+  probe::PaintTiming(GetSupplementable(), "firstImagePaint",
+                     first_image_paint_swap_.since_origin().InSecondsF());
   NotifyPaintTimingChanged();
 }
 
 void PaintTiming::ReportSwapResultHistogram(
-    const WebLayerTreeView::SwapResult result) {
+    WebWidgetClient::SwapResult result) {
   DEFINE_STATIC_LOCAL(EnumerationHistogram, did_swap_histogram,
                       ("PageLoad.Internal.Renderer.PaintTiming.SwapResult",
-                       WebLayerTreeView::SwapResult::kSwapResultMax));
+                       WebWidgetClient::SwapResult::kSwapResultMax));
   did_swap_histogram.Count(result);
 }
 

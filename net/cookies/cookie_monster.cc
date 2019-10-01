@@ -49,7 +49,7 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/debug/dump_without_crashing.h"
+#include "base/feature_list.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
@@ -62,8 +62,8 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "base/timer/elapsed_timer.h"
 #include "base/trace_event/process_memory_dump.h"
+#include "net/base/features.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_monster_change_dispatcher.h"
@@ -71,7 +71,6 @@
 #include "net/cookies/cookie_util.h"
 #include "net/cookies/parsed_cookie.h"
 #include "net/log/net_log.h"
-#include "net/ssl/channel_id_service.h"
 #include "url/origin.h"
 
 using base::Time;
@@ -110,11 +109,6 @@ void MaybeRunDeleteCallback(base::WeakPtr<net::CookieMonster> cookie_monster,
     std::move(callback).Run();
 }
 
-void MaybeRunCookieCallback(base::OnceClosure callback) {
-  if (callback)
-    std::move(callback).Run();
-}
-
 template <typename T>
 void MaybeRunCookieCallback(base::OnceCallback<void(const T&)> callback,
                             const T& result) {
@@ -122,27 +116,20 @@ void MaybeRunCookieCallback(base::OnceCallback<void(const T&)> callback,
     std::move(callback).Run(result);
 }
 
+template <typename T, typename U>
+void MaybeRunCookieCallback(
+    base::OnceCallback<void(const T&, const U&)> callback,
+    const T& first,
+    const U& second) {
+  if (callback)
+    std::move(callback).Run(first, second);
+}
+
 template <typename T>
 void MaybeRunCookieCallback(base::OnceCallback<void(T)> callback,
                             const T& result) {
   if (callback)
     std::move(callback).Run(result);
-}
-
-// Wraps a OnceClosure -- specifically one used by
-// |GetCookieListWithOptionsAsync()| -- with additional bound state to track the
-// duration between when its creation and destruction time.
-// See https://crbug.com/824024 for context.
-base::OnceClosure InstrumentGetCookieListClosure(base::OnceClosure closure) {
-  return base::BindOnce(
-      [](std::unique_ptr<base::ElapsedTimer> timer, base::OnceClosure closure) {
-        UMA_HISTOGRAM_CUSTOM_TIMES("Cookie.GetCookieListCompletionTime",
-                                   timer->Elapsed(),
-                                   base::TimeDelta::FromMilliseconds(10),
-                                   base::TimeDelta::FromSeconds(60), 50);
-        std::move(closure).Run();
-      },
-      std::make_unique<base::ElapsedTimer>(), std::move(closure));
 }
 
 }  // namespace
@@ -351,22 +338,13 @@ size_t CountCookiesForPossibleDeletion(
 }  // namespace
 
 CookieMonster::CookieMonster(scoped_refptr<PersistentCookieStore> store,
-                             ChannelIDService* channel_id_service,
                              NetLog* net_log)
     : CookieMonster(
           std::move(store),
-          channel_id_service,
           base::TimeDelta::FromSeconds(kDefaultAccessUpdateThresholdSeconds),
           net_log) {}
 
 CookieMonster::CookieMonster(scoped_refptr<PersistentCookieStore> store,
-                             base::TimeDelta last_access_threshold,
-                             NetLog* net_log)
-    : CookieMonster(std::move(store), nullptr, last_access_threshold, net_log) {
-}
-
-CookieMonster::CookieMonster(scoped_refptr<PersistentCookieStore> store,
-                             ChannelIDService* channel_id_service,
                              base::TimeDelta last_access_threshold,
                              NetLog* net_log)
     : initialized_(false),
@@ -376,7 +354,6 @@ CookieMonster::CookieMonster(scoped_refptr<PersistentCookieStore> store,
       net_log_(NetLogWithSource::Make(net_log, NetLogSourceType::COOKIE_STORE)),
       store_(std::move(store)),
       last_access_threshold_(last_access_threshold),
-      channel_id_service_(channel_id_service),
       last_statistic_record_time_(base::Time::Now()),
       persist_session_cookies_(false),
       weak_ptr_factory_(this) {
@@ -384,21 +361,10 @@ CookieMonster::CookieMonster(scoped_refptr<PersistentCookieStore> store,
   cookieable_schemes_.insert(
       cookieable_schemes_.begin(), kDefaultCookieableSchemes,
       kDefaultCookieableSchemes + kDefaultCookieableSchemesCount);
-  if (channel_id_service_ && store_) {
-    // |store_| can outlive this CookieMonster, but there are no guarantees
-    // about the lifetime of |channel_id_service_| relative to |store_|. The
-    // only guarantee is that |channel_id_service_| will outlive this
-    // CookieMonster. To avoid the PersistentCookieStore retaining a pointer to
-    // the ChannelIDStore via this callback after this CookieMonster is
-    // destroyed, CookieMonster's d'tor sets the callback to a null callback.
-    store_->SetBeforeFlushCallback(
-        base::Bind(&ChannelIDStore::Flush,
-                   base::Unretained(channel_id_service_->GetChannelIDStore())));
-  }
   net_log_.BeginEvent(
       NetLogEventType::COOKIE_STORE_ALIVE,
       base::BindRepeating(&NetLogCookieMonsterConstructorCallback,
-                          store != nullptr, channel_id_service != nullptr));
+                          store != nullptr));
 }
 
 // Asynchronous CookieMonster API
@@ -433,8 +399,8 @@ void CookieMonster::SetAllCookiesAsync(const CookieList& list,
 
 void CookieMonster::SetCanonicalCookieAsync(
     std::unique_ptr<CanonicalCookie> cookie,
-    bool secure_source,
-    bool modify_http_only,
+    std::string source_scheme,
+    const CookieOptions& options,
     SetCookiesCallback callback) {
   DCHECK(cookie->IsCanonical());
 
@@ -445,7 +411,7 @@ void CookieMonster::SetCanonicalCookieAsync(
           // the callback on |*this|, so the callback will not outlive
           // the object.
           &CookieMonster::SetCanonicalCookie, base::Unretained(this),
-          std::move(cookie), secure_source, modify_http_only,
+          std::move(cookie), std::move(source_scheme), options,
           std::move(callback)),
       domain);
 }
@@ -469,12 +435,12 @@ void CookieMonster::GetCookieListWithOptionsAsync(
     const CookieOptions& options,
     GetCookieListCallback callback) {
   DoCookieCallbackForURL(
-      InstrumentGetCookieListClosure(base::BindOnce(
+      base::BindOnce(
           // base::Unretained is safe as DoCookieCallbackForURL stores
           // the callback on |*this|, so the callback will not outlive
           // the object.
           &CookieMonster::GetCookieListWithOptions, base::Unretained(this), url,
-          options, std::move(callback))),
+          options, std::move(callback)),
       url);
 }
 
@@ -485,19 +451,6 @@ void CookieMonster::GetAllCookiesAsync(GetCookieListCallback callback) {
       // the object.
       &CookieMonster::GetAllCookies, base::Unretained(this),
       std::move(callback)));
-}
-
-void CookieMonster::DeleteCookieAsync(const GURL& url,
-                                      const std::string& cookie_name,
-                                      base::OnceClosure callback) {
-  DoCookieCallbackForURL(
-      base::BindOnce(
-          // base::Unretained is safe as DoCookieCallbackForURL stores
-          // the callback on |*this|, so the callback will not outlive
-          // the object.
-          &CookieMonster::DeleteCookie, base::Unretained(this), url,
-          cookie_name, std::move(callback)),
-      url);
 }
 
 void CookieMonster::DeleteCanonicalCookieAsync(const CanonicalCookie& cookie,
@@ -542,15 +495,19 @@ void CookieMonster::DeleteSessionCookiesAsync(
 }
 
 void CookieMonster::SetCookieableSchemes(
-    const std::vector<std::string>& schemes) {
+    const std::vector<std::string>& schemes,
+    SetCookieableSchemesCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   // Calls to this method will have no effect if made after a WebView or
   // CookieManager instance has been created.
-  if (initialized_)
+  if (initialized_) {
+    MaybeRunCookieCallback(std::move(callback), false);
     return;
+  }
 
   cookieable_schemes_ = schemes;
+  MaybeRunCookieCallback(std::move(callback), true);
 }
 
 // This function must be called before the CookieMonster is used.
@@ -576,10 +533,6 @@ const int CookieMonster::kDefaultCookieableSchemesCount =
 
 CookieChangeDispatcher& CookieMonster::GetChangeDispatcher() {
   return change_dispatcher_;
-}
-
-bool CookieMonster::IsEphemeral() {
-  return store_.get() == nullptr;
 }
 
 void CookieMonster::DumpMemoryStats(
@@ -619,10 +572,6 @@ void CookieMonster::TriggerCookieFetch() {
 CookieMonster::~CookieMonster() {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  if (channel_id_service_ && store_) {
-    store_->SetBeforeFlushCallback(base::Closure());
-  }
-
   // TODO(mmenke): Does it really make sense to run
   // CookieChanged callbacks when the CookieStore is destroyed?
   for (auto cookie_it = cookies_.begin(); cookie_it != cookies_.end();) {
@@ -646,7 +595,7 @@ void CookieMonster::GetAllCookies(GetCookieListCallback callback) {
   // Note that this does not prune cookies to be below our limits (if we've
   // exceeded them) the way that calling GarbageCollect() would.
   GarbageCollectExpired(
-      Time::Now(), CookieMapItPair(cookies_.begin(), cookies_.end()), NULL);
+      Time::Now(), CookieMapItPair(cookies_.begin(), cookies_.end()), nullptr);
 
   // Copy the CanonicalCookie pointers from the map so that we can use the same
   // sorter as elsewhere, then copy the result out.
@@ -661,7 +610,7 @@ void CookieMonster::GetAllCookies(GetCookieListCallback callback) {
   for (auto* cookie_ptr : cookie_ptrs)
     cookie_list.push_back(*cookie_ptr);
 
-  MaybeRunCookieCallback(std::move(callback), cookie_list);
+  MaybeRunCookieCallback(std::move(callback), cookie_list, CookieStatusList());
 }
 
 void CookieMonster::GetCookieListWithOptions(const GURL& url,
@@ -670,17 +619,23 @@ void CookieMonster::GetCookieListWithOptions(const GURL& url,
   DCHECK(thread_checker_.CalledOnValidThread());
 
   CookieList cookies;
+  CookieStatusList excluded_cookies;
   if (HasCookieableScheme(url)) {
     std::vector<CanonicalCookie*> cookie_ptrs;
-    FindCookiesForHostAndDomain(url, options, &cookie_ptrs);
+    FindCookiesForRegistryControlledHost(url, &cookie_ptrs);
     std::sort(cookie_ptrs.begin(), cookie_ptrs.end(), CookieSorter);
 
     cookies.reserve(cookie_ptrs.size());
-    for (std::vector<CanonicalCookie*>::const_iterator it = cookie_ptrs.begin();
-         it != cookie_ptrs.end(); it++)
-      cookies.push_back(**it);
+    std::vector<CanonicalCookie*> included_cookie_ptrs;
+    FilterCookiesWithOptions(url, options, &cookie_ptrs, &included_cookie_ptrs,
+                             &excluded_cookies);
+
+    for (auto* cookie : included_cookie_ptrs) {
+      cookies.push_back(*cookie);
+    }
   }
-  MaybeRunCookieCallback(std::move(callback), cookies);
+
+  MaybeRunCookieCallback(std::move(callback), cookies, excluded_cookies);
 }
 
 void CookieMonster::DeleteAllCreatedInTimeRange(const TimeRange& creation_range,
@@ -734,71 +689,30 @@ void CookieMonster::SetCookieWithOptions(const GURL& url,
   DCHECK(thread_checker_.CalledOnValidThread());
 
   if (!HasCookieableScheme(url)) {
-    MaybeRunCookieCallback(std::move(callback), false);
+    MaybeRunCookieCallback(
+        std::move(callback),
+        CanonicalCookie::CookieInclusionStatus::EXCLUDE_NONCOOKIEABLE_SCHEME);
     return;
   }
 
-  VLOG(net::cookie_util::kVlogSetCookies)
+  DVLOG(net::cookie_util::kVlogSetCookies)
       << "SetCookie() line: " << cookie_line;
 
-  Time creation_time = CurrentTime();
-  last_time_seen_ = creation_time;
+  CanonicalCookie::CookieInclusionStatus status;
 
   std::unique_ptr<CanonicalCookie> cc(
-      CanonicalCookie::Create(url, cookie_line, creation_time, options));
+      CanonicalCookie::Create(url, cookie_line, Time::Now(), options, &status));
 
-  if (!cc.get()) {
-    VLOG(net::cookie_util::kVlogSetCookies)
+  if (status != CanonicalCookie::CookieInclusionStatus::INCLUDE) {
+    DCHECK(!cc);
+    DVLOG(net::cookie_util::kVlogSetCookies)
         << "WARNING: Failed to allocate CanonicalCookie";
-    MaybeRunCookieCallback(std::move(callback), false);
-    return;
-  }
-  SetCanonicalCookie(std::move(cc), url.SchemeIsCryptographic(),
-                     !options.exclude_httponly(), std::move(callback));
-}
-
-void CookieMonster::DeleteCookie(const GURL& url,
-                                 const std::string& cookie_name,
-                                 base::OnceClosure callback) {
-  DCHECK(thread_checker_.CalledOnValidThread());
-
-  if (!HasCookieableScheme(url)) {
-    // TODO(rdsmith): Would be good to provide a failure indication here.
-    MaybeRunCookieCallback(std::move(callback));
+    MaybeRunCookieCallback(std::move(callback), status);
     return;
   }
 
-  CookieOptions options;
-  options.set_include_httponly();
-  options.set_same_site_cookie_mode(
-      CookieOptions::SameSiteCookieMode::INCLUDE_STRICT_AND_LAX);
-  // Get the cookies for this host and its domain(s).
-  std::vector<CanonicalCookie*> cookies;
-  FindCookiesForHostAndDomain(url, options, &cookies);
-  std::set<CanonicalCookie*> matching_cookies;
-
-  for (auto* cookie : cookies) {
-    if (cookie->Name() != cookie_name)
-      continue;
-    if (!cookie->IsOnPath(url.path()))
-      continue;
-    matching_cookies.insert(cookie);
-  }
-
-  for (auto it = cookies_.begin(); it != cookies_.end();) {
-    auto curit = it;
-    ++it;
-    if (matching_cookies.find(curit->second.get()) != matching_cookies.end()) {
-      InternalDeleteCookie(curit, true, DELETE_COOKIE_EXPLICIT);
-    }
-  }
-
-  FlushStore(base::BindOnce(&MaybeRunDeleteCallback,
-                            weak_ptr_factory_.GetWeakPtr(),
-                            // No callback null check needed as BindOnce
-                            // is not being called and MaybeRunDeleteCallback
-                            // has its own check.
-                            std::move(callback)));
+  DCHECK(cc);
+  SetCanonicalCookie(std::move(cc), url.scheme(), options, std::move(callback));
 }
 
 void CookieMonster::DeleteCanonicalCookie(const CanonicalCookie& cookie,
@@ -869,8 +783,8 @@ void CookieMonster::FetchAllCookies() {
 
   // We bind in the current time so that we can report the wall-clock time for
   // loading cookies.
-  store_->Load(base::Bind(&CookieMonster::OnLoaded,
-                          weak_ptr_factory_.GetWeakPtr(), TimeTicks::Now()),
+  store_->Load(base::BindOnce(&CookieMonster::OnLoaded,
+                              weak_ptr_factory_.GetWeakPtr(), TimeTicks::Now()),
                net_log_);
 }
 
@@ -1075,32 +989,15 @@ void CookieMonster::TrimDuplicateCookiesForKey(const std::string& key,
   DCHECK_EQ(num_duplicates, num_duplicates_found);
 }
 
-void CookieMonster::FindCookiesForHostAndDomain(
+void CookieMonster::FindCookiesForRegistryControlledHost(
     const GURL& url,
-    const CookieOptions& options,
     std::vector<CanonicalCookie*>* cookies) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  const Time current_time(CurrentTime());
+  Time current_time = Time::Now();
 
-  // Probe to save statistics relatively frequently.  We do it here rather
-  // than in the set path as many websites won't set cookies, and we
-  // want to collect statistics whenever the browser's being used.
-  RecordPeriodicStats(current_time);
-
-  // Can just dispatch to FindCookiesForKey
+  // Retrieve all cookies for a given key
   const std::string key(GetKey(url.host_piece()));
-  FindCookiesForKey(key, url, options, current_time, cookies);
-}
-
-void CookieMonster::FindCookiesForKey(const std::string& key,
-                                      const GURL& url,
-                                      const CookieOptions& options,
-                                      const Time& current,
-                                      std::vector<CanonicalCookie*>* cookies) {
-  DCHECK(thread_checker_.CalledOnValidThread());
-
-  std::vector<CanonicalCookie*> full_cookie_list;
 
   for (CookieMapItPair its = cookies_.equal_range(key);
        its.first != its.second;) {
@@ -1109,31 +1006,50 @@ void CookieMonster::FindCookiesForKey(const std::string& key,
     ++its.first;
 
     // If the cookie is expired, delete it.
-    if (cc->IsExpired(current)) {
+    if (cc->IsExpired(current_time)) {
       InternalDeleteCookie(curit, true, DELETE_COOKIE_EXPIRED);
       continue;
-    }
-    full_cookie_list.push_back(cc);
-  }
-
-  for (CanonicalCookie* cc : full_cookie_list) {
-    // Filter out cookies that should not be included for a request to the
-    // given |url|. HTTP only cookies are filtered depending on the passed
-    // cookie |options|.
-    if (cc->IncludeForRequestURL(url, options) !=
-        CanonicalCookie::CookieInclusionStatus::INCLUDE)
-      continue;
-
-    // Add this cookie to the set of matching cookies. Update the access
-    // time if we've been requested to do so.
-    if (options.update_access_time()) {
-      InternalUpdateCookieAccessTime(cc, current);
     }
     cookies->push_back(cc);
   }
 }
 
-bool CookieMonster::DeleteAnyEquivalentCookie(
+void CookieMonster::FilterCookiesWithOptions(
+    const GURL url,
+    const CookieOptions options,
+    std::vector<CanonicalCookie*>* cookie_ptrs,
+    std::vector<CanonicalCookie*>* included_cookie_ptrs,
+    CookieStatusList* excluded_cookies) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+
+  // Probe to save statistics relatively frequently.  We do it here rather
+  // than in the set path as many websites won't set cookies, and we
+  // want to collect statistics whenever the browser's being used.
+  Time current_time = Time::Now();
+  RecordPeriodicStats(current_time);
+
+  for (std::vector<CanonicalCookie*>::iterator it = cookie_ptrs->begin();
+       it != cookie_ptrs->end(); it++) {
+    // Filter out cookies that should not be included for a request to the
+    // given |url|. HTTP only cookies are filtered depending on the passed
+    // cookie |options|.
+    CanonicalCookie::CookieInclusionStatus status =
+        (*it)->IncludeForRequestURL(url, options);
+
+    if (status != CanonicalCookie::CookieInclusionStatus::INCLUDE) {
+      if (options.return_excluded_cookies())
+        excluded_cookies->push_back({**it, status});
+      continue;
+    }
+
+    if (options.update_access_time())
+      InternalUpdateCookieAccessTime(*it, current_time);
+
+    included_cookie_ptrs->push_back(*it);
+  }
+}
+
+CanonicalCookie::CookieInclusionStatus CookieMonster::DeleteAnyEquivalentCookie(
     const std::string& key,
     const CanonicalCookie& ecc,
     bool source_secure,
@@ -1230,7 +1146,13 @@ bool CookieMonster::DeleteAnyEquivalentCookie(
     }
   }
 
-  return skipped_httponly || skipped_secure_cookie;
+  if (skipped_httponly)
+    return CanonicalCookie::CookieInclusionStatus::EXCLUDE_OVERWRITE_HTTP_ONLY;
+
+  if (skipped_secure_cookie)
+    return CanonicalCookie::CookieInclusionStatus::EXCLUDE_OVERWRITE_SECURE;
+
+  return CanonicalCookie::CookieInclusionStatus::INCLUDE;
 }
 
 CookieMonster::CookieMap::iterator CookieMonster::InternalInsertCookie(
@@ -1250,9 +1172,10 @@ CookieMonster::CookieMap::iterator CookieMonster::InternalInsertCookie(
   auto inserted = cookies_.insert(CookieMap::value_type(key, std::move(cc)));
 
   // See InitializeHistograms() for details.
-  int32_t type_sample = cc_ptr->SameSite() != CookieSameSite::NO_RESTRICTION
-                            ? 1 << COOKIE_TYPE_SAME_SITE
-                            : 0;
+  int32_t type_sample =
+      cc_ptr->GetEffectiveSameSite() != CookieSameSite::NO_RESTRICTION
+          ? 1 << COOKIE_TYPE_SAME_SITE
+          : 0;
   type_sample |= cc_ptr->IsHttpOnly() ? 1 << COOKIE_TYPE_HTTPONLY : 0;
   type_sample |= cc_ptr->IsSecure() ? 1 << COOKIE_TYPE_SECURE : 0;
   histogram_cookie_type_->Add(type_sample);
@@ -1263,45 +1186,79 @@ CookieMonster::CookieMap::iterator CookieMonster::InternalInsertCookie(
 }
 
 void CookieMonster::SetCanonicalCookie(std::unique_ptr<CanonicalCookie> cc,
-                                       bool secure_source,
-                                       bool modify_http_only,
+                                       std::string source_scheme,
+                                       const CookieOptions& options,
                                        SetCookiesCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  if ((cc->IsSecure() && !secure_source) ||
-      (cc->IsHttpOnly() && !modify_http_only)) {
-    MaybeRunCookieCallback(std::move(callback), false);
+  std::string scheme_lower = base::ToLowerASCII(source_scheme);
+  bool secure_source = GURL::SchemeIsCryptographic(scheme_lower);
+  if ((cc->IsSecure() && !secure_source)) {
+    MaybeRunCookieCallback(
+        std::move(callback),
+        CanonicalCookie::CookieInclusionStatus::EXCLUDE_SECURE_ONLY);
+    return;
+  }
+
+  CanonicalCookie::CookieInclusionStatus status =
+      cc->IsSetPermittedInContext(options);
+  if (status != CanonicalCookie::CookieInclusionStatus::INCLUDE) {
+    // IsSetPermittedInContext already logs if it rejects a cookie, so
+    // CookieMonster doesn't need to.
+    MaybeRunCookieCallback(std::move(callback), status);
+    return;
+  }
+
+  if (!IsCookieableScheme(scheme_lower)) {
+    MaybeRunCookieCallback(
+        std::move(callback),
+        CanonicalCookie::CookieInclusionStatus::EXCLUDE_NONCOOKIEABLE_SCHEME);
+    return;
+  }
+
+  // If both SameSiteByDefaultCookies and CookiesWithoutSameSiteMustBeSecure
+  // are enabled, non-SameSite cookies without the Secure attribute will be
+  // rejected.
+  if (base::FeatureList::IsEnabled(features::kSameSiteByDefaultCookies) &&
+      base::FeatureList::IsEnabled(
+          features::kCookiesWithoutSameSiteMustBeSecure) &&
+      cc->GetEffectiveSameSite() == CookieSameSite::NO_RESTRICTION &&
+      !cc->IsSecure()) {
+    DVLOG(net::cookie_util::kVlogSetCookies)
+        << "SetCookie() rejecting insecure cookie with SameSite=None.";
+    status =
+        CanonicalCookie::CookieInclusionStatus::EXCLUDE_SAMESITE_NONE_INSECURE;
+    MaybeRunCookieCallback(std::move(callback), status);
     return;
   }
 
   const std::string key(GetKey(cc->Domain()));
 
-  // TODO(mmenke): This class assumes each cookie to have a unique creation
-  // time. Allowing the caller to set the creation time violates that
-  // assumption. Worth fixing? Worth noting that time changes between browser
-  // restarts can cause the same issue.
   base::Time creation_date = cc->CreationDate();
   if (creation_date.is_null()) {
-    creation_date = CurrentTime();
+    creation_date = Time::Now();
     cc->SetCreationDate(creation_date);
-    last_time_seen_ = creation_date;
   }
   bool already_expired = cc->IsExpired(creation_date);
 
   base::Time creation_date_to_inherit;
-  if (DeleteAnyEquivalentCookie(key, *cc, secure_source, !modify_http_only,
-                                already_expired, &creation_date_to_inherit)) {
+
+  status = DeleteAnyEquivalentCookie(
+      key, *cc, secure_source, options.exclude_httponly(), already_expired,
+      &creation_date_to_inherit);
+
+  if (status != CanonicalCookie::CookieInclusionStatus::INCLUDE) {
     std::string error;
     error =
         "SetCookie() not clobbering httponly cookie or secure cookie for "
         "insecure scheme";
 
-    VLOG(net::cookie_util::kVlogSetCookies) << error;
-    MaybeRunCookieCallback(std::move(callback), false);
+    DVLOG(net::cookie_util::kVlogSetCookies) << error;
+    MaybeRunCookieCallback(std::move(callback), status);
     return;
   }
 
-  VLOG(net::cookie_util::kVlogSetCookies)
+  DVLOG(net::cookie_util::kVlogSetCookies)
       << "SetCookie() key: " << key << " cc: " << cc->DebugString();
 
   // Realize that we might be setting an expired cookie, and the only point
@@ -1330,14 +1287,11 @@ void CookieMonster::SetCanonicalCookie(std::unique_ptr<CanonicalCookie> cc,
 
     if (!creation_date_to_inherit.is_null()) {
       cc->SetCreationDate(creation_date_to_inherit);
-      // |last_time_seen_| is intentionally not updated, as moving it into the
-      // past might cause duplicate cookie creation dates. See
-      // `CookieMonster::CurrentTime()` for details.
     }
 
     InternalInsertCookie(key, std::move(cc), true);
   } else {
-    VLOG(net::cookie_util::kVlogSetCookies)
+    DVLOG(net::cookie_util::kVlogSetCookies)
         << "SetCookie() not storing already expired cookie.";
   }
 
@@ -1348,7 +1302,8 @@ void CookieMonster::SetCanonicalCookie(std::unique_ptr<CanonicalCookie> cc,
   // and we will purge the expired cookies in GetCookies().
   GarbageCollect(creation_date, key);
 
-  MaybeRunCookieCallback(std::move(callback), true);
+  MaybeRunCookieCallback(std::move(callback),
+                         CanonicalCookie::CookieInclusionStatus::INCLUDE);
 }
 
 void CookieMonster::SetAllCookies(CookieList list,
@@ -1381,7 +1336,8 @@ void CookieMonster::SetAllCookies(CookieList list,
   // shouldn't have a return value.  But it should also be deleted (see
   // https://codereview.chromium.org/2882063002/#msg64), which would
   // solve the return value problem.
-  MaybeRunCookieCallback(std::move(callback), true);
+  MaybeRunCookieCallback(std::move(callback),
+                         CanonicalCookie::CookieInclusionStatus::INCLUDE);
 }
 
 void CookieMonster::InternalUpdateCookieAccessTime(CanonicalCookie* cc,
@@ -1414,7 +1370,7 @@ void CookieMonster::InternalDeleteCookie(CookieMap::iterator it,
                 "kChangeCauseMapping size should match DeletionCause size");
 
   CanonicalCookie* cc = it->second.get();
-  VLOG(net::cookie_util::kVlogSetCookies)
+  DVLOG(net::cookie_util::kVlogSetCookies)
       << "InternalDeleteCookie()"
       << ", cause:" << deletion_cause << ", cc: " << cc->DebugString();
 
@@ -1444,7 +1400,7 @@ size_t CookieMonster::GarbageCollect(const Time& current,
 
   // Collect garbage for this key, minding cookie priorities.
   if (cookies_.count(key) > kDomainMaxCookies) {
-    VLOG(net::cookie_util::kVlogGarbageCollection)
+    DVLOG(net::cookie_util::kVlogGarbageCollection)
         << "GarbageCollect() key: " << key;
 
     CookieItVector* cookie_its;
@@ -1455,7 +1411,7 @@ size_t CookieMonster::GarbageCollect(const Time& current,
         GarbageCollectExpired(current, cookies_.equal_range(key), cookie_its);
 
     if (cookie_its->size() > kDomainMaxCookies) {
-      VLOG(net::cookie_util::kVlogGarbageCollection)
+      DVLOG(net::cookie_util::kVlogGarbageCollection)
           << "Deep Garbage Collect domain.";
       size_t purge_goal =
           cookie_its->size() - (kDomainMaxCookies - kDomainPurgeCookies);
@@ -1534,7 +1490,7 @@ size_t CookieMonster::GarbageCollect(const Time& current,
   // Collect garbage for everything. With firefox style we want to preserve
   // cookies accessed in kSafeFromGlobalPurgeDays, otherwise evict.
   if (cookies_.size() > kMaxCookies && earliest_access_time_ < safe_date) {
-    VLOG(net::cookie_util::kVlogGarbageCollection)
+    DVLOG(net::cookie_util::kVlogGarbageCollection)
         << "GarbageCollect() everything";
     CookieItVector cookie_its;
 
@@ -1543,7 +1499,7 @@ size_t CookieMonster::GarbageCollect(const Time& current,
         &cookie_its);
 
     if (cookie_its.size() > kMaxCookies) {
-      VLOG(net::cookie_util::kVlogGarbageCollection)
+      DVLOG(net::cookie_util::kVlogGarbageCollection)
           << "Deep Garbage Collect everything.";
       size_t purge_goal = cookie_its.size() - (kMaxCookies - kPurgeCookies);
       DCHECK(purge_goal > kPurgeCookies);
@@ -1712,8 +1668,8 @@ size_t CookieMonster::GarbageCollectLeastRecentlyAccessed(
 
 // A wrapper around registry_controlled_domains::GetDomainAndRegistry
 // to make clear we're creating a key for our local map or for the persistent
-// store's use. Here and in FindCookiesForHostAndDomain() are the only two
-// places where we need to conditionalize based on key type.
+// store's use. Here and in FindCookiesForRegistryControlledHost() are the only
+// two places where we need to conditionalize based on key type.
 //
 // Note that this key algorithm explicitly ignores the scheme.  This is
 // because when we're entering cookies into the map from the backing store,
@@ -1760,7 +1716,7 @@ bool CookieMonster::HasCookieableScheme(const GURL& url) {
   }
 
   // The scheme didn't match any in our whitelist.
-  VLOG(net::cookie_util::kVlogPerCookieMonster)
+  DVLOG(net::cookie_util::kVlogPerCookieMonster)
       << "WARNING: Unsupported cookie scheme: " << url.scheme();
   return false;
 }
@@ -1845,14 +1801,6 @@ void CookieMonster::InitializeHistograms() {
       base::Histogram::kUmaTargetedHistogramFlag);
 }
 
-// The system resolution is not high enough, so we can have multiple
-// set cookies that result in the same system time.  When this happens, we
-// increment by one Time unit.  Let's hope computers don't get too fast.
-Time CookieMonster::CurrentTime() {
-  return std::max(Time::Now(), Time::FromInternalValue(
-                                   last_time_seen_.ToInternalValue() + 1));
-}
-
 void CookieMonster::DoCookieCallback(base::OnceClosure callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
@@ -1897,8 +1845,8 @@ void CookieMonster::DoCookieCallbackForHostOrDomain(
       auto it = tasks_pending_for_key_.find(key);
       if (it == tasks_pending_for_key_.end()) {
         store_->LoadCookiesForKey(
-            key, base::Bind(&CookieMonster::OnKeyLoaded,
-                            weak_ptr_factory_.GetWeakPtr(), key));
+            key, base::BindOnce(&CookieMonster::OnKeyLoaded,
+                                weak_ptr_factory_.GetWeakPtr(), key));
         it = tasks_pending_for_key_
                  .insert(std::make_pair(
                      key, base::circular_deque<base::OnceClosure>()))

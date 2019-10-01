@@ -17,6 +17,7 @@ import org.chromium.base.TraceEvent;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.compositor.layouts.content.InvalidationAwareThumbnailProvider;
+import org.chromium.chrome.browser.gesturenav.HistoryNavigationDelegate;
 import org.chromium.chrome.browser.gesturenav.HistoryNavigationLayout;
 import org.chromium.chrome.browser.native_page.ContextMenuManager;
 import org.chromium.chrome.browser.ntp.NewTabPage.FakeboxDelegate;
@@ -30,6 +31,7 @@ import org.chromium.chrome.browser.suggestions.TileGroup;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.util.ViewUtils;
 import org.chromium.chrome.browser.widget.displaystyle.UiConfig;
+import org.chromium.chrome.browser.widget.displaystyle.ViewResizer;
 
 /**
  * The native new tab page, represented by some basic data such as title and url, and an Android
@@ -46,6 +48,7 @@ public class NewTabPageView extends HistoryNavigationLayout {
     private Tab mTab;
     private SnapScrollHelper mSnapScrollHelper;
     private UiConfig mUiConfig;
+    private ViewResizer mRecyclerViewResizer;
 
     private boolean mNewTabPageRecyclerViewChanged;
     private int mSnapshotWidth;
@@ -125,6 +128,7 @@ public class NewTabPageView extends HistoryNavigationLayout {
                 mRecyclerView::setTouchEnabled, closeContextMenuCallback,
                 NewTabPage.CONTEXT_MENU_USER_ACTION_PREFIX);
         mTab.getWindowAndroid().addContextMenuCloseListener(mContextMenuManager);
+        setNavigationDelegate(HistoryNavigationDelegate.createForNativePage(mTab));
 
         mNewTabPageLayout.initialize(manager, tab, tileGroupDelegate, searchProviderHasLogo,
                 searchProviderIsGoogle, mRecyclerView, mContextMenuManager, mUiConfig);
@@ -177,7 +181,7 @@ public class NewTabPageView extends HistoryNavigationLayout {
         initializeLayoutChangeListener();
         mNewTabPageLayout.setSearchProviderInfo(searchProviderHasLogo, searchProviderIsGoogle);
 
-        mRecyclerView.init(mUiConfig, mContextMenuManager);
+        mRecyclerView.init(mUiConfig, closeContextMenuCallback);
 
         // Set up snippets
         NewTabPageAdapter newTabPageAdapter = new NewTabPageAdapter(
@@ -185,6 +189,12 @@ public class NewTabPageView extends HistoryNavigationLayout {
         newTabPageAdapter.refreshSuggestions();
         mRecyclerView.setAdapter(newTabPageAdapter);
         mRecyclerView.getLinearLayoutManager().scrollToPosition(scrollPosition);
+
+        mRecyclerViewResizer = ViewResizer.createAndAttach(mRecyclerView, mUiConfig,
+                mRecyclerView.getResources().getDimensionPixelSize(
+                        R.dimen.content_suggestions_card_modern_margin),
+                mRecyclerView.getResources().getDimensionPixelSize(
+                        R.dimen.ntp_wide_card_lateral_margins));
 
         setupScrollHandling();
 

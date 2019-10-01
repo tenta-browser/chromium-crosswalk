@@ -11,19 +11,42 @@
 #include "ash/ash_export.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "services/media_session/public/mojom/media_controller.mojom.h"
+#include "services/media_session/public/mojom/media_session.mojom.h"
+#include "ui/gfx/image/image_skia.h"
 
 namespace ash {
 
+class MediaNotificationController;
 class MediaNotificationView;
 
 // MediaNotificationItem manages hiding/showing a media notification and
 // updating the metadata for a single media session.
 class ASH_EXPORT MediaNotificationItem
-    : public media_session::mojom::MediaControllerObserver {
+    : public media_session::mojom::MediaControllerObserver,
+      public media_session::mojom::MediaControllerImageObserver {
  public:
-  MediaNotificationItem(const std::string& id,
+  // The name of the histogram used when recording user actions.
+  static const char kUserActionHistogramName[];
+
+  // The name of the histogram used when recording the source.
+  static const char kSourceHistogramName[];
+
+  // The source of the media session. This is used in metrics so new values must
+  // only be added to the end.
+  enum class Source {
+    kUnknown,
+    kWeb,
+    kAssistant,
+    kArc,
+    kMaxValue = kArc,
+  };
+
+  MediaNotificationItem(MediaNotificationController* notification_controller,
+                        const std::string& request_id,
+                        const std::string& source_name,
                         media_session::mojom::MediaControllerPtr controller,
                         media_session::mojom::MediaSessionInfoPtr session_info);
   ~MediaNotificationItem() override;
@@ -36,8 +59,23 @@ class ASH_EXPORT MediaNotificationItem
   void MediaSessionActionsChanged(
       const std::vector<media_session::mojom::MediaSessionAction>& actions)
       override;
+  void MediaSessionChanged(
+      const base::Optional<base::UnguessableToken>& request_id) override {}
 
+  // media_session::mojom::MediaControllerImageObserver:
+  void MediaControllerImageChanged(
+      media_session::mojom::MediaSessionImageType type,
+      const SkBitmap& bitmap) override;
+
+  // Called by MediaNotificationView when created or destroyed.
   void SetView(MediaNotificationView* view);
+
+  void OnMediaSessionActionButtonPressed(
+      media_session::mojom::MediaSessionAction action);
+
+  base::WeakPtr<MediaNotificationItem> GetWeakPtr() {
+    return weak_ptr_factory_.GetWeakPtr();
+  }
 
   void FlushForTesting();
 
@@ -51,15 +89,17 @@ class ASH_EXPORT MediaNotificationItem
 
   void HideNotification();
 
+  MediaNotificationController* controller_;
+
   // Weak reference to the view of the currently shown media notification.
   MediaNotificationView* view_ = nullptr;
 
-  void OnNotificationClicked(base::Optional<int> button_id);
+  // The |request_id_| is the request id of the media session and is guaranteed
+  // to be globally unique.
+  const std::string request_id_;
 
-  // The id is the |request_id| of the media session and is guaranteed to be
-  // globally unique. It is also used as the id of the notification for this
-  // media session.
-  const std::string id_;
+  // The source of the media session (e.g. arc, web).
+  const Source source_;
 
   media_session::mojom::MediaControllerPtr media_controller_ptr_;
 
@@ -69,8 +109,22 @@ class ASH_EXPORT MediaNotificationItem
 
   std::set<media_session::mojom::MediaSessionAction> session_actions_;
 
+  base::Optional<gfx::ImageSkia> session_artwork_;
+
+  gfx::ImageSkia session_icon_;
+
+  // True if the metadata needs to be updated on |view_|. Used to prevent
+  // updating |view_|'s metadata twice on a single change.
+  bool view_needs_metadata_update_ = false;
+
   mojo::Binding<media_session::mojom::MediaControllerObserver>
       observer_binding_{this};
+
+  mojo::Binding<media_session::mojom::MediaControllerImageObserver>
+      artwork_observer_binding_{this};
+
+  mojo::Binding<media_session::mojom::MediaControllerImageObserver>
+      icon_observer_binding_{this};
 
   base::WeakPtrFactory<MediaNotificationItem> weak_ptr_factory_{this};
 

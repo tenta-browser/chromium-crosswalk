@@ -8,15 +8,12 @@
 #include <memory>
 
 #include "ash/animation/animation_change_type.h"
-#include "ash/public/cpp/ash_switches.h"
 #include "ash/public/cpp/login_constants.h"
 #include "ash/public/cpp/wallpaper_types.h"
 #include "ash/shelf/shelf.h"
 #include "ash/shelf/shelf_background_animator_observer.h"
 #include "ash/shelf/shelf_constants.h"
-#include "ash/shell.h"
-#include "ash/wallpaper/wallpaper_controller.h"
-#include "base/command_line.h"
+#include "ash/wallpaper/wallpaper_controller_impl.h"
 #include "ui/gfx/animation/slide_animation.h"
 #include "ui/gfx/color_analysis.h"
 #include "ui/gfx/color_palette.h"
@@ -30,28 +27,9 @@ namespace ash {
 
 namespace {
 
-// Returns color profile used for shelf based on the kAshShelfColorScheme
-// command line arg.
+// Returns the color profile used for the shelf.
 ColorProfile GetShelfColorProfile() {
-  const std::string switch_value =
-      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-          switches::kAshShelfColorScheme);
-
-  ColorProfile color_profile(LumaRange::DARK, SaturationRange::MUTED);
-
-  if (switch_value.find("light") != std::string::npos)
-    color_profile.luma = LumaRange::LIGHT;
-  else if (switch_value.find("normal") != std::string::npos)
-    color_profile.luma = LumaRange::NORMAL;
-  else if (switch_value.find("dark") != std::string::npos)
-    color_profile.luma = LumaRange::DARK;
-
-  if (switch_value.find("vibrant") != std::string::npos)
-    color_profile.saturation = SaturationRange::VIBRANT;
-  else if (switch_value.find("muted") != std::string::npos)
-    color_profile.saturation = SaturationRange::MUTED;
-
-  return color_profile;
+  return ColorProfile(LumaRange::DARK, SaturationRange::MUTED);
 }
 
 }  // namespace
@@ -79,7 +57,7 @@ bool ShelfBackgroundAnimator::AnimationValues::InitialValuesEqualTargetValuesOf(
 ShelfBackgroundAnimator::ShelfBackgroundAnimator(
     ShelfBackgroundType background_type,
     Shelf* shelf,
-    WallpaperController* wallpaper_controller)
+    WallpaperControllerImpl* wallpaper_controller)
     : shelf_(shelf), wallpaper_controller_(wallpaper_controller) {
   if (wallpaper_controller_)
     wallpaper_controller_->AddObserver(this);
@@ -143,13 +121,12 @@ int ShelfBackgroundAnimator::GetBackgroundAlphaValue(
     ShelfBackgroundType background_type) const {
   switch (background_type) {
     case SHELF_BACKGROUND_DEFAULT:
+    case SHELF_BACKGROUND_OVERVIEW:
       return kShelfTranslucentAlpha;
     case SHELF_BACKGROUND_MAXIMIZED:
       return kShelfTranslucentMaximizedWindow;
     case SHELF_BACKGROUND_APP_LIST:
       return kShelfTranslucentOverAppList;
-    case SHELF_BACKGROUND_SPLIT_VIEW:
-      return ShelfBackgroundAnimator::kMaxAlpha;
     case SHELF_BACKGROUND_OOBE:
       return SK_AlphaTRANSPARENT;
     case SHELF_BACKGROUND_LOGIN:
@@ -226,10 +203,10 @@ void ShelfBackgroundAnimator::CreateAnimator(
       duration_ms = 500;
       break;
     case SHELF_BACKGROUND_MAXIMIZED:
-    case SHELF_BACKGROUND_SPLIT_VIEW:
     case SHELF_BACKGROUND_OOBE:
     case SHELF_BACKGROUND_LOGIN:
     case SHELF_BACKGROUND_LOGIN_NONBLURRED_WALLPAPER:
+    case SHELF_BACKGROUND_OVERVIEW:
       duration_ms = 250;
       break;
   }
@@ -267,13 +244,11 @@ void ShelfBackgroundAnimator::GetTargetValues(
   switch (background_type) {
     case SHELF_BACKGROUND_DEFAULT:
     case SHELF_BACKGROUND_APP_LIST:
+    case SHELF_BACKGROUND_OVERVIEW:
       shelf_target_color = darken_wallpaper(kShelfTranslucentColorDarkenAlpha);
       break;
     case SHELF_BACKGROUND_MAXIMIZED:
       shelf_target_color = darken_wallpaper(kShelfOpaqueColorDarkenAlpha);
-      break;
-    case SHELF_BACKGROUND_SPLIT_VIEW:
-      shelf_target_color = darken_wallpaper(ShelfBackgroundAnimator::kMaxAlpha);
       break;
     case SHELF_BACKGROUND_OOBE:
       shelf_target_color = SK_ColorTRANSPARENT;

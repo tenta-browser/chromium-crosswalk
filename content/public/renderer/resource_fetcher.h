@@ -41,7 +41,7 @@ namespace content {
 // canceled, and the callback will not be called.
 class CONTENT_EXPORT ResourceFetcher {
  public:
-  using Callback =
+  using StartCallback =
       base::OnceCallback<void(const blink::WebURLResponse& response,
                               const std::string& data)>;
 
@@ -59,6 +59,8 @@ class CONTENT_EXPORT ResourceFetcher {
   virtual void SetBody(const std::string& body) = 0;
   virtual void SetHeader(const std::string& header,
                          const std::string& value) = 0;
+  virtual void SetFetchRequestMode(
+      network::mojom::FetchRequestMode fetch_request_mode) = 0;
 
   // Starts the request using the specified frame.  Calls |callback| when
   // done.
@@ -67,7 +69,7 @@ class CONTENT_EXPORT ResourceFetcher {
       blink::mojom::RequestContextType request_context,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       const net::NetworkTrafficAnnotationTag& annotation_tag,
-      Callback callback,
+      StartCallback callback,
       size_t maximum_download_size = kDefaultMaximumDownloadSize) = 0;
 
   // Sets how long to wait for the server to reply.  By default, there is no

@@ -11,16 +11,20 @@ function openWindow(url) {
   return win;
 }
 
-function resource_load_priority_test(windowURL, expected_priority, description) {
+function resource_load_priority_test(windowURL, expected_priority,
+                                     description) {
   promise_test(async () => {
     openWindow('resources/' + windowURL);
+
     const priority_event =
       await new Promise(resolve => window.onmessage = resolve);
-    assert_not_equals(priority_event.data,
-                      'FAILED',
-                      'The resource failed to load for some reason.');
-
     assert_equals(priority_event.data, expected_priority);
+
+    const subresource_finished_loading_event =
+      await new Promise(resolve => window.onmessage = resolve);
+    assert_equals(subresource_finished_loading_event.data, 'LOADED',
+                  'The resource loaded successfully');
+
   }, description);
 }
 
@@ -49,9 +53,6 @@ resource_load_priority_test(
   'Module scripts should be loaded with kHigh priority');
 
 resource_load_priority_test(
-  'iframe.html', kVeryHigh, 'Iframes should be loaded with kVeryHigh priority');
-
-resource_load_priority_test(
   'fetch.html', kHigh,
   'Requests from the Fetch API should be loaded with kHigh priority');
 
@@ -74,14 +75,6 @@ resource_load_priority_test(
 resource_load_priority_test(
   'preload/as-font.html', kHigh,
   'Preloaded fonts should be loaded with kHigh priority');
-
-resource_load_priority_test(
-  'preload/as-audio.html', kLow,
-  'Preloaded audio files should be loaded with kLow priority');
-
-resource_load_priority_test(
-  'preload/as-video.html', kLow,
-  'Preloaded videos should be loaded with kLow priority');
 
 resource_load_priority_test(
   'preload/as-fetch.html', kHigh,

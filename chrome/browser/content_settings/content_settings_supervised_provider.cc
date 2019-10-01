@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "chrome/browser/supervised_user/supervised_user_constants.h"
 #include "chrome/browser/supervised_user/supervised_user_settings_service.h"
 
@@ -51,8 +52,8 @@ SupervisedProvider::SupervisedProvider(
   // DependsOn the SupervisedUserSettingsService (through their factories).
   // This means this will get destroyed before the SUSS and will be
   // unsubscribed from it.
-  user_settings_subscription_ = supervised_user_settings_service->Subscribe(
-      base::Bind(
+  user_settings_subscription_ =
+      supervised_user_settings_service->SubscribeForSettingsChange(base::Bind(
           &content_settings::SupervisedProvider::OnSupervisedSettingsAvailable,
           base::Unretained(this)));
 }
@@ -102,7 +103,7 @@ bool SupervisedProvider::SetWebsiteSetting(
     const ContentSettingsPattern& secondary_pattern,
     ContentSettingsType content_type,
     const ResourceIdentifier& resource_identifier,
-    base::Value* value) {
+    std::unique_ptr<base::Value>&& value) {
   return false;
 }
 

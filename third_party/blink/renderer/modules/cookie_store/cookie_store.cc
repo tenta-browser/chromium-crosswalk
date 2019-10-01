@@ -24,6 +24,7 @@
 #include "third_party/blink/renderer/modules/service_worker/service_worker_registration.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
@@ -344,7 +345,7 @@ ScriptPromise CookieStore::subscribeToChanges(
     return ScriptPromise();
   }
 
-  ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   int64_t service_worker_registration_id =
       scope->registration()->RegistrationId();
   subscription_backend_->AppendSubscriptions(
@@ -366,7 +367,7 @@ ScriptPromise CookieStore::getChangeSubscriptions(
     return ScriptPromise();
   }
 
-  ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   auto* scope = To<ServiceWorkerGlobalScope>(GetExecutionContext());
   int64_t service_worker_registration_id =
       scope->registration()->RegistrationId();
@@ -458,7 +459,7 @@ ScriptPromise CookieStore::DoRead(
     return ScriptPromise();
   }
 
-  ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   backend_->GetAllForUrl(
       default_cookie_url_, default_site_for_cookies_,
       std::move(backend_options),
@@ -519,7 +520,7 @@ ScriptPromise CookieStore::DoWrite(ScriptState* script_state,
     return ScriptPromise();
   }
 
-  ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   backend_->SetCanonicalCookie(
       std::move(canonical_cookie.value()), default_cookie_url_,
       default_site_for_cookies_,
@@ -536,7 +537,7 @@ void CookieStore::OnSetCanonicalCookieResult(ScriptPromiseResolver* resolver,
     return;
 
   if (!backend_success) {
-    resolver->Reject(DOMException::Create(
+    resolver->Reject(MakeGarbageCollected<DOMException>(
         DOMExceptionCode::kUnknownError,
         "An unknown error occured while writing the cookie."));
     return;
@@ -553,7 +554,7 @@ void CookieStore::OnSubscribeToCookieChangesResult(
     return;
 
   if (!backend_success) {
-    resolver->Reject(DOMException::Create(
+    resolver->Reject(MakeGarbageCollected<DOMException>(
         DOMExceptionCode::kUnknownError,
         "An unknown error occured while subscribing to cookie changes."));
     return;
@@ -571,7 +572,7 @@ void CookieStore::OnGetCookieChangeSubscriptionResult(
     return;
 
   if (!backend_success) {
-    resolver->Reject(DOMException::Create(
+    resolver->Reject(MakeGarbageCollected<DOMException>(
         DOMExceptionCode::kUnknownError,
         "An unknown error occured while reading cookie change subscriptions."));
     return;

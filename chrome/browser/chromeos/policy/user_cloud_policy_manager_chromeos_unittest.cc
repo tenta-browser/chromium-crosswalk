@@ -27,7 +27,6 @@
 #include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/chromeos/policy/user_cloud_policy_token_forwarder.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
-#include "chrome/browser/chromeos/settings/stub_install_attributes.h"
 #include "chrome/browser/policy/cloud/cloud_policy_test_utils.h"
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
@@ -38,6 +37,7 @@
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
+#include "chromeos/tpm/stub_install_attributes.h"
 #include "components/policy/core/common/cloud/cloud_external_data_manager.h"
 #include "components/policy/core/common/cloud/cloud_policy_core.h"
 #include "components/policy/core/common/cloud/cloud_policy_refresh_scheduler.h"
@@ -194,7 +194,7 @@ class UserCloudPolicyManagerChromeOSTest
     policy_data_.set_device_id("id987");
     policy_data_.set_username("user@example.com");
     em::PolicyFetchResponse* policy_response =
-        policy_blob_.mutable_policy_response()->add_response();
+        policy_blob_.mutable_policy_response()->add_responses();
     ASSERT_TRUE(policy_data_.SerializeToString(
         policy_response->mutable_policy_data()));
 
@@ -202,7 +202,6 @@ class UserCloudPolicyManagerChromeOSTest
         .Times(AnyNumber());
 
     AccountId account_id = AccountId::FromUserEmailGaiaId(kEmail, kTestGaiaId);
-    user_manager_->AddUser(account_id);
     TestingProfile* profile =
         profile_manager_->CreateTestingProfile(account_id.GetUserEmail());
     user_manager_->AddUserWithAffiliationAndTypeAndProfile(account_id, false,
@@ -446,7 +445,7 @@ class UserCloudPolicyManagerChromeOSTest
 
 // TODO(agawronska): Remove test instantiation with kDMServerOAuthForChildUser
 // once it is enabled by default.
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     /* no prefix */,
     UserCloudPolicyManagerChromeOSTest,
     testing::Values(std::vector<base::Feature>(),
@@ -1027,7 +1026,7 @@ class UserCloudPolicyManagerChromeOSChildTest
 
 // TODO(agawronska): Remove test instantiation with kDMServerOAuthForChildUser
 // once it is enabled by default.
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     /* no prefix */,
     UserCloudPolicyManagerChromeOSChildTest,
     testing::Values(std::vector<base::Feature>{

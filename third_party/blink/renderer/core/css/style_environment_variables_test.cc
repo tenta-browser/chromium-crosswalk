@@ -38,13 +38,6 @@ static const char kSafeAreaInsetExpectedDefault[] = "0px";
 
 class StyleEnvironmentVariablesTest : public PageTestBase {
  public:
-  void SetUp() override {
-    PageTestBase::SetUp();
-
-    // Needed for RecordUseCounter_IgnoreMediaControls.
-    RuntimeEnabledFeatures::SetModernMediaControlsEnabled(true);
-  }
-
   void TearDown() override {
     StyleEnvironmentVariables::GetRootInstance().ClearForTesting();
   }
@@ -232,13 +225,11 @@ TEST_F(StyleEnvironmentVariablesTest, MultiDocumentInvalidation_FromRoot) {
   InitializeTestPageWithVariableNamed(GetFrame(), kVariableName);
 
   // Create a second page that uses the variable.
-  std::unique_ptr<DummyPageHolder> new_page =
-      DummyPageHolder::Create(IntSize(800, 600));
+  auto new_page = std::make_unique<DummyPageHolder>(IntSize(800, 600));
   InitializeTestPageWithVariableNamed(new_page->GetFrame(), kVariableName);
 
   // Create an empty page that does not use the variable.
-  std::unique_ptr<DummyPageHolder> empty_page =
-      DummyPageHolder::Create(IntSize(800, 600));
+  auto empty_page = std::make_unique<DummyPageHolder>(IntSize(800, 600));
   empty_page->GetDocument().View()->UpdateAllLifecyclePhases(
       DocumentLifecycle::LifecycleUpdateReason::kTest);
 
@@ -255,8 +246,7 @@ TEST_F(StyleEnvironmentVariablesTest, MultiDocumentInvalidation_FromDocument) {
   InitializeTestPageWithVariableNamed(GetFrame(), kVariableName);
 
   // Create a second page that uses the variable.
-  std::unique_ptr<DummyPageHolder> new_page =
-      DummyPageHolder::Create(IntSize(800, 600));
+  auto new_page = std::make_unique<DummyPageHolder>(IntSize(800, 600));
   InitializeTestPageWithVariableNamed(new_page->GetFrame(), kVariableName);
 
   GetDocumentVariables().SetVariable(kVariableName, kVariableTestColor);
@@ -379,68 +369,61 @@ TEST_F(StyleEnvironmentVariablesTest,
 TEST_F(StyleEnvironmentVariablesTest, RecordUseCounter_IgnoreMediaControls) {
   InitializeWithHTML(GetFrame(), "<video controls />");
 
-  EXPECT_FALSE(UseCounter::IsCounted(GetDocument(),
-                                     WebFeature::kCSSEnvironmentVariable));
-  EXPECT_FALSE(UseCounter::IsCounted(
-      GetDocument(), WebFeature::kCSSEnvironmentVariable_SafeAreaInsetTop));
-  EXPECT_FALSE(UseCounter::IsCounted(
-      GetDocument(), WebFeature::kCSSEnvironmentVariable_SafeAreaInsetLeft));
-  EXPECT_FALSE(UseCounter::IsCounted(
-      GetDocument(), WebFeature::kCSSEnvironmentVariable_SafeAreaInsetBottom));
-  EXPECT_FALSE(UseCounter::IsCounted(
-      GetDocument(), WebFeature::kCSSEnvironmentVariable_SafeAreaInsetRight));
+  EXPECT_FALSE(GetDocument().IsUseCounted(WebFeature::kCSSEnvironmentVariable));
+  EXPECT_FALSE(GetDocument().IsUseCounted(
+      WebFeature::kCSSEnvironmentVariable_SafeAreaInsetTop));
+  EXPECT_FALSE(GetDocument().IsUseCounted(
+      WebFeature::kCSSEnvironmentVariable_SafeAreaInsetLeft));
+  EXPECT_FALSE(GetDocument().IsUseCounted(
+      WebFeature::kCSSEnvironmentVariable_SafeAreaInsetBottom));
+  EXPECT_FALSE(GetDocument().IsUseCounted(
+      WebFeature::kCSSEnvironmentVariable_SafeAreaInsetRight));
 }
 
 TEST_F(StyleEnvironmentVariablesTest, RecordUseCounter_InvalidProperty) {
   InitializeTestPageWithVariableNamed(GetFrame(), kVariableName);
-  EXPECT_TRUE(UseCounter::IsCounted(GetDocument(),
-                                    WebFeature::kCSSEnvironmentVariable));
+  EXPECT_TRUE(GetDocument().IsUseCounted(WebFeature::kCSSEnvironmentVariable));
 }
 
 TEST_F(StyleEnvironmentVariablesTest, RecordUseCounter_NoVariable) {
   InitializeWithHTML(GetFrame(), "");
-  EXPECT_FALSE(UseCounter::IsCounted(GetDocument(),
-                                     WebFeature::kCSSEnvironmentVariable));
+  EXPECT_FALSE(GetDocument().IsUseCounted(WebFeature::kCSSEnvironmentVariable));
 }
 
 TEST_F(StyleEnvironmentVariablesTest, RecordUseCounter_SafeAreaInsetBottom) {
   InitializeTestPageWithVariableNamed(GetFrame(),
                                       UADefinedVariable::kSafeAreaInsetBottom);
 
-  EXPECT_TRUE(UseCounter::IsCounted(GetDocument(),
-                                    WebFeature::kCSSEnvironmentVariable));
-  EXPECT_TRUE(UseCounter::IsCounted(
-      GetDocument(), WebFeature::kCSSEnvironmentVariable_SafeAreaInsetBottom));
+  EXPECT_TRUE(GetDocument().IsUseCounted(WebFeature::kCSSEnvironmentVariable));
+  EXPECT_TRUE(GetDocument().IsUseCounted(
+      WebFeature::kCSSEnvironmentVariable_SafeAreaInsetBottom));
 }
 
 TEST_F(StyleEnvironmentVariablesTest, RecordUseCounter_SafeAreaInsetLeft) {
   InitializeTestPageWithVariableNamed(GetFrame(),
                                       UADefinedVariable::kSafeAreaInsetLeft);
 
-  EXPECT_TRUE(UseCounter::IsCounted(GetDocument(),
-                                    WebFeature::kCSSEnvironmentVariable));
-  EXPECT_TRUE(UseCounter::IsCounted(
-      GetDocument(), WebFeature::kCSSEnvironmentVariable_SafeAreaInsetLeft));
+  EXPECT_TRUE(GetDocument().IsUseCounted(WebFeature::kCSSEnvironmentVariable));
+  EXPECT_TRUE(GetDocument().IsUseCounted(
+      WebFeature::kCSSEnvironmentVariable_SafeAreaInsetLeft));
 }
 
 TEST_F(StyleEnvironmentVariablesTest, RecordUseCounter_SafeAreaInsetRight) {
   InitializeTestPageWithVariableNamed(GetFrame(),
                                       UADefinedVariable::kSafeAreaInsetRight);
 
-  EXPECT_TRUE(UseCounter::IsCounted(GetDocument(),
-                                    WebFeature::kCSSEnvironmentVariable));
-  EXPECT_TRUE(UseCounter::IsCounted(
-      GetDocument(), WebFeature::kCSSEnvironmentVariable_SafeAreaInsetRight));
+  EXPECT_TRUE(GetDocument().IsUseCounted(WebFeature::kCSSEnvironmentVariable));
+  EXPECT_TRUE(GetDocument().IsUseCounted(
+      WebFeature::kCSSEnvironmentVariable_SafeAreaInsetRight));
 }
 
 TEST_F(StyleEnvironmentVariablesTest, RecordUseCounter_SafeAreaInsetTop) {
   InitializeTestPageWithVariableNamed(GetFrame(),
                                       UADefinedVariable::kSafeAreaInsetTop);
 
-  EXPECT_TRUE(UseCounter::IsCounted(GetDocument(),
-                                    WebFeature::kCSSEnvironmentVariable));
-  EXPECT_TRUE(UseCounter::IsCounted(
-      GetDocument(), WebFeature::kCSSEnvironmentVariable_SafeAreaInsetTop));
+  EXPECT_TRUE(GetDocument().IsUseCounted(WebFeature::kCSSEnvironmentVariable));
+  EXPECT_TRUE(GetDocument().IsUseCounted(
+      WebFeature::kCSSEnvironmentVariable_SafeAreaInsetTop));
 }
 
 }  // namespace blink

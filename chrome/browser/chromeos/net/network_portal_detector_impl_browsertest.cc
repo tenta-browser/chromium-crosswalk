@@ -4,6 +4,8 @@
 
 #include <memory>
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/location.h"
@@ -23,7 +25,7 @@
 #include "chrome/common/pref_names.h"
 #include "chromeos/constants/chromeos_switches.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/shill_service_client.h"
+#include "chromeos/dbus/shill/shill_service_client.h"
 #include "chromeos/network/portal_detector/network_portal_detector.h"
 #include "chromeos/network/portal_detector/network_portal_detector_strategy.h"
 #include "components/account_id/account_id.h"
@@ -56,7 +58,7 @@ constexpr char kWifiGuid[] = "wifi";
 
 void ErrorCallbackFunction(const std::string& error_name,
                            const std::string& error_message) {
-  CHECK(false) << "Shill Error: " << error_name << " : " << error_message;
+  LOG(FATAL) << "Shill Error: " << error_name << " : " << error_message;
 }
 
 void SetConnected(const std::string& service_path) {
@@ -91,7 +93,7 @@ class NetworkPortalDetectorImplBrowserTest
                              true /* add_to_visible */);
     DBusThreadManager::Get()->GetShillServiceClient()->SetProperty(
         dbus::ObjectPath(kWifiServicePath), shill::kStateProperty,
-        base::Value(shill::kStatePortal), base::DoNothing(),
+        base::Value(shill::kStateRedirectFound), base::DoNothing(),
         base::Bind(&ErrorCallbackFunction));
 
     display_service_ = std::make_unique<NotificationDisplayServiceTester>(
@@ -269,8 +271,8 @@ IN_PROC_BROWSER_TEST_P(NetworkPortalDetectorImplBrowserTestIgnoreProxy,
   TestImpl(GetParam());
 }
 
-INSTANTIATE_TEST_CASE_P(CaptivePortalAuthenticationIgnoresProxy,
-                        NetworkPortalDetectorImplBrowserTestIgnoreProxy,
-                        testing::Bool());
+INSTANTIATE_TEST_SUITE_P(CaptivePortalAuthenticationIgnoresProxy,
+                         NetworkPortalDetectorImplBrowserTestIgnoreProxy,
+                         testing::Bool());
 
 }  // namespace chromeos

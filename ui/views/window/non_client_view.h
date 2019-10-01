@@ -84,13 +84,13 @@ class VIEWS_EXPORT NonClientFrameView : public View,
   // Whether the widget can be resized or maximized has changed.
   virtual void SizeConstraintsChanged() = 0;
 
-  // The widget's activation state has changed to |active|.
-  virtual void ActivationChanged(bool active);
+  // Called when whether the non-client view should paint as active has changed.
+  virtual void PaintAsActiveChanged(bool active);
 
   // View:
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   const char* GetClassName() const override;
-  void OnNativeThemeChanged(const ui::NativeTheme* theme) override;
+  void OnThemeChanged() override;
 
  protected:
   NonClientFrameView();
@@ -99,16 +99,7 @@ class VIEWS_EXPORT NonClientFrameView : public View,
   bool DoesIntersectRect(const View* target,
                          const gfx::Rect& rect) const override;
 
-  void set_active_state_override(bool* active_state_override) {
-    active_state_override_ = active_state_override;
-  }
-
  private:
-  // Used to force ShouldPaintAsActive() to treat the active state a particular
-  // way.  This is normally null; when non-null, its value will override the
-  // normal "active" value computed by the function.
-  bool* active_state_override_;
-
   DISALLOW_COPY_AND_ASSIGN(NonClientFrameView);
 };
 
@@ -242,7 +233,7 @@ class VIEWS_EXPORT NonClientView : public View, public ViewTargeterDelegate {
   // A ClientView object or subclass, responsible for sizing the contents view
   // of the window, hit testing and perhaps other tasks depending on the
   // implementation.
-  ClientView* client_view_;
+  ClientView* client_view_ = nullptr;
 
   // The NonClientFrameView that renders the non-client portions of the window.
   // This object is not owned by the view hierarchy because it can be replaced
@@ -251,7 +242,7 @@ class VIEWS_EXPORT NonClientView : public View, public ViewTargeterDelegate {
 
   // The overlay view, when non-NULL and visible, takes up the entire widget and
   // is placed on top of the ClientView and NonClientFrameView.
-  View* overlay_view_;
+  View* overlay_view_ = nullptr;
 
   // The accessible name of this view.
   base::string16 accessible_name_;

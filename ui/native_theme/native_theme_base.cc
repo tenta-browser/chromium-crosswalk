@@ -264,11 +264,6 @@ gfx::Rect NativeThemeBase::GetNinePatchAperture(Part part) const {
   return gfx::Rect();
 }
 
-bool NativeThemeBase::UsesHighContrastColors() const {
-  return base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kForceHighContrast);
-}
-
 NativeThemeBase::NativeThemeBase()
     : scrollbar_width_(kDefaultScrollbarWidth),
       scrollbar_button_length_(kDefaultScrollbarButtonLength) {
@@ -606,7 +601,7 @@ SkRect NativeThemeBase::PaintCheckboxRadioCommon(
   cc::PaintFlags flags;
   flags.setAntiAlias(true);
   flags.setShader(cc::PaintShader::MakeLinearGradient(
-      gradient_bounds, colors, nullptr, 3, SkShader::kClamp_TileMode));
+      gradient_bounds, colors, nullptr, 3, SkTileMode::kClamp));
   flags.setStyle(cc::PaintFlags::kFill_Style);
   canvas->drawRoundRect(skrect, borderRadius, borderRadius, flags);
   flags.setShader(nullptr);
@@ -687,7 +682,7 @@ void NativeThemeBase::PaintButton(cc::PaintCanvas* canvas,
   flags.setStyle(cc::PaintFlags::kFill_Style);
   flags.setAntiAlias(true);
   flags.setShader(cc::PaintShader::MakeLinearGradient(
-      gradient_bounds, colors, nullptr, 2, SkShader::kClamp_TileMode));
+      gradient_bounds, colors, nullptr, 2, SkTileMode::kClamp));
 
   canvas->drawRoundRect(skrect, SkIntToScalar(1), SkIntToScalar(1), flags);
   flags.setShader(nullptr);

@@ -8,8 +8,6 @@
 #include <string>
 #include <vector>
 
-#include "base/values.h"
-
 namespace credential_provider {
 
 // The the UI process can exit with the following exit code.
@@ -48,9 +46,11 @@ extern const char kKeyMdmIdToken[];
 extern const char kKeyPassword[];
 extern const char kKeyRefreshToken[];
 extern const char kKeyAccessToken[];
+extern const char kKeyMdmAccessToken[];
 extern const char kKeySID[];
 extern const char kKeyTokenHandle[];
 extern const char kKeyUsername[];
+extern const char kKeyDomain[];
 extern const char kKeyExitCode[];
 
 // Name of registry value that holds user properties.
@@ -72,6 +72,7 @@ extern const wchar_t kDesktopFullName[];
 // Google Update related registry paths.
 extern const wchar_t kRegUpdaterClientStateAppPath[];
 extern const wchar_t kRegUpdaterClientsAppPath[];
+extern const wchar_t kRegUsageStatsName[];
 
 // These are command line switches passed to chrome to start it as a process
 // used as a logon stub.
@@ -80,7 +81,10 @@ extern const char kPrefillEmailSwitch[];
 extern const char kEmailDomainsSwitch[];
 extern const char kGaiaIdSwitch[];
 extern const char kGcpwEndpointPathSwitch[];
+extern const char kGcpwAdditionalOauthScopes[];
 
+// Parameter appended to sign in URL to pass valid signin domains to the inline
+// login handler. These domains are separated by ','.
 extern const char kEmailDomainsSigninPromoParameter[];
 extern const char kEmailDomainsSeparator[];
 extern const char kValidateGaiaIdSigninPromoParameter[];

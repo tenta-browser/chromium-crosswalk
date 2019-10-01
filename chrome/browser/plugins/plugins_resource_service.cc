@@ -87,9 +87,9 @@ PluginsResourceService::PluginsResourceService(PrefService* local_state)
           g_browser_process->system_network_context_manager()
               ->GetSharedURLLoaderFactory(),
           switches::kDisableBackgroundNetworking,
-          base::Bind(data_decoder::SafeJsonParser::Parse,
-                     content::ServiceManagerConnection::GetForProcess()
-                         ->GetConnector()),
+          base::BindRepeating(&data_decoder::SafeJsonParser::Parse,
+                              content::ServiceManagerConnection::GetForProcess()
+                                  ->GetConnector()),
           kPluginResourceServiceTrafficAnnotation,
           base::BindOnce(&content::GetNetworkConnectionTracker)) {}
 
@@ -105,8 +105,7 @@ PluginsResourceService::~PluginsResourceService() {
 
 // static
 void PluginsResourceService::RegisterPrefs(PrefRegistrySimple* registry) {
-  registry->RegisterDictionaryPref(prefs::kPluginsMetadata,
-                                   std::make_unique<base::DictionaryValue>());
+  registry->RegisterDictionaryPref(prefs::kPluginsMetadata);
   registry->RegisterStringPref(prefs::kPluginsResourceCacheUpdate, "0");
 }
 

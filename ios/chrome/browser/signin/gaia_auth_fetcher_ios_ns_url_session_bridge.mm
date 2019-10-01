@@ -6,12 +6,14 @@
 
 #import <Foundation/Foundation.h>
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/mac/foundation_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "ios/chrome/browser/signin/feature_flags.h"
 #include "ios/net/cookies/system_cookie_util.h"
+#include "ios/web/common/features.h"
 #include "ios/web/public/browser_state.h"
-#include "ios/web/public/features.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -92,8 +94,8 @@ void GaiaAuthFetcherIOSNSURLSessionBridge::FetchPendingRequest() {
       GetBrowserState()->GetCookieManager();
   net::CookieOptions options;
   options.set_include_httponly();
-  options.set_same_site_cookie_mode(
-      net::CookieOptions::SameSiteCookieMode::INCLUDE_STRICT_AND_LAX);
+  options.set_same_site_cookie_context(
+      net::CookieOptions::SameSiteCookieContext::SAME_SITE_STRICT);
   cookie_manager->GetCookieList(
       GetRequest().url, options,
       base::BindOnce(
@@ -114,15 +116,21 @@ void GaiaAuthFetcherIOSNSURLSessionBridge::SetCanonicalCookiesFromResponse(
   network::mojom::CookieManager* cookie_manager =
       GetBrowserState()->GetCookieManager();
   for (NSHTTPCookie* cookie : cookies) {
+    net::CookieOptions options;
+    options.set_include_httponly();
+    // Permit it to set a SameSite cookie if it wants to.
+    options.set_same_site_cookie_context(
+        net::CookieOptions::SameSiteCookieContext::SAME_SITE_STRICT);
     cookie_manager->SetCanonicalCookie(
         net::CanonicalCookieFromSystemCookie(cookie, base::Time::Now()),
-        /*secure_source=*/true,
-        /*modify_http_only=*/true, base::DoNothing());
+        base::SysNSStringToUTF8(response.URL.scheme), options,
+        base::DoNothing());
   }
 }
 
 void GaiaAuthFetcherIOSNSURLSessionBridge::FetchPendingRequestWithCookies(
-    const std::vector<net::CanonicalCookie>& cookies) {
+    const std::vector<net::CanonicalCookie>& cookies,
+    const net::CookieStatusList& excluded_cookies) {
   DCHECK(!url_session_);
   url_session_ = CreateNSURLSession(url_session_delegate_);
   url_session_delegate_.requestSession = url_session_;

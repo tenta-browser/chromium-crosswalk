@@ -37,6 +37,9 @@ class APP_LIST_EXPORT SearchBoxView : public search_box::SearchBoxViewBase,
                 AppListView* app_list_view = nullptr);
   ~SearchBoxView() override;
 
+  // Returns the total focus ring spacing for use in folders.
+  static int GetFocusRingSpacing();
+
   // Overridden from search_box::SearchBoxViewBase:
   void ClearSearch() override;
   views::View* GetSelectedViewInContentsView() override;
@@ -55,6 +58,8 @@ class APP_LIST_EXPORT SearchBoxView : public search_box::SearchBoxViewBase,
   void OnKeyEvent(ui::KeyEvent* event) override;
   bool OnMouseWheel(const ui::MouseWheelEvent& event) override;
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
+  void OnPaintBackground(gfx::Canvas* canvas) override;
+  const char* GetClassName() const override;
 
   // Overridden from views::ButtonListener:
   void ButtonPressed(views::Button* sender, const ui::Event& event) override;
@@ -91,6 +96,9 @@ class APP_LIST_EXPORT SearchBoxView : public search_box::SearchBoxViewBase,
   // Updates the search box with |new_query| and starts a new search.
   void UpdateQuery(const base::string16& new_query);
 
+  // Clears the search query and de-activate the search box.
+  void ClearSearchAndDeactivateSearchBox();
+
   void set_contents_view(ContentsView* contents_view) {
     contents_view_ = contents_view;
   }
@@ -101,15 +109,6 @@ class APP_LIST_EXPORT SearchBoxView : public search_box::SearchBoxViewBase,
   }
 
  private:
-  // Gets the wallpaper prominent colors.
-  void GetWallpaperProminentColors(
-      AppListViewDelegate::GetWallpaperProminentColorsCallback callback);
-
-  // Callback invoked when the wallpaper prominent colors are returned after
-  // calling |AppListViewDelegate::GetWallpaperProminentColors|.
-  void OnWallpaperProminentColorsReceived(
-      const std::vector<SkColor>& prominent_colors);
-
   // Notifies SearchBoxViewDelegate that the autocomplete text is valid.
   void AcceptAutocompleteText();
 

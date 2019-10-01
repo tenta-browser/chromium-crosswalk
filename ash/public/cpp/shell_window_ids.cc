@@ -4,38 +4,68 @@
 
 #include "ash/public/cpp/shell_window_ids.h"
 
+#include <array>
+
+#include "ash/public/cpp/ash_features.h"
 #include "base/stl_util.h"
 
 namespace ash {
 
-// NOTE: this list is ordered by activation order. That is, windows in
-// containers appearing earlier in the list are activated before windows in
-// containers appearing later in the list.
-const int32_t kActivatableShellWindowIds[] = {
-    kShellWindowId_OverlayContainer, kShellWindowId_LockSystemModalContainer,
+namespace {
+
+// TODO(afakhry): Consolidate the below lists when we launch Virtual Desks.
+
+// List of IDs of the containers whose windows are actiavated *before* windows
+// in the desks containers.
+constexpr std::array<int, 10> kPreDesksActivatableContainersIds = {
+    kShellWindowId_OverlayContainer,
+    kShellWindowId_LockSystemModalContainer,
     kShellWindowId_AccessibilityPanelContainer,
-    kShellWindowId_SettingBubbleContainer, kShellWindowId_PowerMenuContainer,
+    kShellWindowId_SettingBubbleContainer,
+    kShellWindowId_PowerMenuContainer,
     kShellWindowId_LockActionHandlerContainer,
-    kShellWindowId_LockScreenContainer, kShellWindowId_SystemModalContainer,
-    kShellWindowId_AlwaysOnTopContainer, kShellWindowId_AppListContainer,
-    kShellWindowId_DefaultContainer, kShellWindowId_AppListTabletModeContainer,
+    kShellWindowId_LockScreenContainer,
+    kShellWindowId_SystemModalContainer,
+    kShellWindowId_AlwaysOnTopContainer,
+    kShellWindowId_AppListContainer,
+};
+
+// List of IDs of the containers whose windows are actiavated *after* windows in
+// the desks containers.
+constexpr std::array<int, 5> kPostDesksActivatableContainersIds = {
+    kShellWindowId_HomeScreenContainer,
 
     // Launcher and status are intentionally checked after other containers
     // even though these layers are higher. The user expects their windows
     // to be focused before these elements.
-    kShellWindowId_ShelfContainer, kShellWindowId_ShelfBubbleContainer,
+    kShellWindowId_PipContainer,
+    kShellWindowId_ShelfContainer,
+    kShellWindowId_ShelfBubbleContainer,
     kShellWindowId_StatusContainer,
 };
 
-const size_t kNumActivatableShellWindowIds =
-    base::size(kActivatableShellWindowIds);
+}  // namespace
 
-bool IsActivatableShellWindowId(int32_t id) {
-  for (size_t i = 0; i < kNumActivatableShellWindowIds; i++) {
-    if (id == kActivatableShellWindowIds[i])
-      return true;
+std::vector<int> GetActivatableShellWindowIds() {
+  std::vector<int> ids(kPreDesksActivatableContainersIds.begin(),
+                       kPreDesksActivatableContainersIds.end());
+
+  // Add the desks containers IDs. Can't use desks_util since we're in
+  // ash/public here.
+  ids.emplace_back(kShellWindowId_DefaultContainerDeprecated);
+  if (features::IsVirtualDesksEnabled()) {
+    ids.emplace_back(kShellWindowId_DeskContainerB);
+    ids.emplace_back(kShellWindowId_DeskContainerC);
+    ids.emplace_back(kShellWindowId_DeskContainerD);
   }
-  return false;
+
+  ids.insert(ids.end(), kPostDesksActivatableContainersIds.begin(),
+             kPostDesksActivatableContainersIds.end());
+  return ids;
+}
+
+bool IsActivatableShellWindowId(int id) {
+  return base::ContainsValue(GetActivatableShellWindowIds(), id);
 }
 
 }  // namespace ash

@@ -42,6 +42,7 @@ namespace blink {
 
 class ComputedStyle;
 class FontDescription;
+class PseudoElement;
 
 // A per-element object which wraps an ElementResolveContext. It collects state
 // throughout the process of computing the style. It also gives convenient
@@ -52,10 +53,12 @@ class CORE_EXPORT StyleResolverState {
  public:
   StyleResolverState(Document&,
                      const ElementResolveContext&,
+                     PseudoElement* pseudo_element,
                      const ComputedStyle* parent_style,
                      const ComputedStyle* layout_parent_style);
   StyleResolverState(Document&,
                      Element*,
+                     PseudoElement* pseudo_element,
                      const ComputedStyle* parent_style = nullptr,
                      const ComputedStyle* layout_parent_style = nullptr);
   ~StyleResolverState();
@@ -97,6 +100,7 @@ class CORE_EXPORT StyleResolverState {
     return css_to_length_conversion_data_;
   }
   CSSToLengthConversionData FontSizeConversionData() const;
+  CSSToLengthConversionData UnzoomedLengthConversionData() const;
 
   void SetConversionFontSizes(
       const CSSToLengthConversionData::FontSizes& font_sizes) {
@@ -190,9 +194,12 @@ class CORE_EXPORT StyleResolverState {
 
   HeapHashMap<CSSPropertyID, Member<const CSSValue>>&
   ParsedPropertiesForPendingSubstitutionCache(
-      const CSSPendingSubstitutionValue&) const;
+      const cssvalue::CSSPendingSubstitutionValue&) const;
 
  private:
+  CSSToLengthConversionData UnzoomedLengthConversionData(
+      const ComputedStyle* font_style) const;
+
   ElementResolveContext element_context_;
   Member<Document> document_;
 
@@ -224,7 +231,7 @@ class CORE_EXPORT StyleResolverState {
   ElementStyleResources element_style_resources_;
 
   mutable HeapHashMap<
-      Member<const CSSPendingSubstitutionValue>,
+      Member<const cssvalue::CSSPendingSubstitutionValue>,
       Member<HeapHashMap<CSSPropertyID, Member<const CSSValue>>>>
       parsed_properties_for_pending_substitution_cache_;
   DISALLOW_COPY_AND_ASSIGN(StyleResolverState);

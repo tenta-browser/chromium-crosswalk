@@ -8,6 +8,7 @@
 
 #include <algorithm>
 
+#include "base/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_dialogs.h"
@@ -118,8 +119,10 @@ views::View* ProfileSigninConfirmationDialogViews::CreateExtraView() {
 
   const base::string16 continue_signin_text =
       l10n_util::GetStringUTF16(IDS_ENTERPRISE_SIGNIN_CONTINUE);
+
   return views::MdTextButton::CreateSecondaryUiButton(this,
-                                                      continue_signin_text);
+                                                      continue_signin_text)
+      .release();
 }
 
 bool ProfileSigninConfirmationDialogViews::Accept() {
@@ -146,7 +149,7 @@ ui::ModalType ProfileSigninConfirmationDialogViews::GetModalType() const {
 }
 
 void ProfileSigninConfirmationDialogViews::ViewHierarchyChanged(
-    const ViewHierarchyChangedDetails& details) {
+    const views::ViewHierarchyChangedDetails& details) {
   views::DialogDelegateView::ViewHierarchyChanged(details);
   if (!details.is_add || details.child != this)
     return;

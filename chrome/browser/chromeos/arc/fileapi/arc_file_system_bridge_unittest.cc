@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/files/file.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
@@ -20,7 +21,7 @@
 #include "chrome/test/base/testing_profile_manager.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/fake_virtual_file_provider_client.h"
-#include "components/arc/arc_bridge_service.h"
+#include "components/arc/session/arc_bridge_service.h"
 #include "components/arc/test/connection_holder_util.h"
 #include "components/arc/test/fake_file_system_instance.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -124,6 +125,42 @@ TEST_F(ArcFileSystemBridgeTest, GetFileNameNonASCII) {
             EXPECT_EQ(expected, result.value());
           },
           &run_loop, filename));
+  run_loop.Run();
+}
+
+// net::UnescapeURLComponent() leaves UTF-8 lock icons escaped, but they're
+// valid file names, so shouldn't be left escaped here.
+TEST_F(ArcFileSystemBridgeTest, GetFileNameLockIcon) {
+  const GURL url("externalfile:abc:test-filesystem:/%F0%9F%94%92");
+
+  base::RunLoop run_loop;
+  arc_file_system_bridge_->GetFileName(
+      EncodeToChromeContentProviderUrl(url).spec(),
+      base::BindOnce(
+          [](base::RunLoop* run_loop,
+             const base::Optional<std::string>& result) {
+            run_loop->Quit();
+            ASSERT_TRUE(result.has_value());
+            EXPECT_EQ("\xF0\x9F\x94\x92", result.value());
+          },
+          &run_loop));
+  run_loop.Run();
+}
+
+// An escaped path separator should cause GetFileName() to fail.
+TEST_F(ArcFileSystemBridgeTest, GetFileNameEscapedPathSeparator) {
+  const GURL url("externalfile:abc:test-filesystem:/foo%2F");
+
+  base::RunLoop run_loop;
+  arc_file_system_bridge_->GetFileName(
+      EncodeToChromeContentProviderUrl(url).spec(),
+      base::BindOnce(
+          [](base::RunLoop* run_loop,
+             const base::Optional<std::string>& result) {
+            run_loop->Quit();
+            ASSERT_FALSE(result.has_value());
+          },
+          &run_loop));
   run_loop.Run();
 }
 

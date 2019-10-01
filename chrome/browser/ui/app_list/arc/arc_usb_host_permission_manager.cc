@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/profiles/profile.h"
@@ -80,7 +81,7 @@ ArcUsbHostPermissionManager::UsbPermissionRequest::~UsbPermissionRequest() =
 void ArcUsbHostPermissionManager::UsbPermissionRequest::Resolve(bool allowed) {
   if (!callback_)
     return;
-  base::ResetAndReturn(&*callback_).Run(allowed);
+  std::move(*callback_).Run(allowed);
 }
 
 // UsbDeviceEntry

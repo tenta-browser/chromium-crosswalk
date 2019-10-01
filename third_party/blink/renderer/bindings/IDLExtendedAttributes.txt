@@ -37,7 +37,7 @@ AllowShared
 CEReactions
 CachedAccessor
 CachedAttribute=*
-CallWith=CurrentWindow|EnteredWindow|ExecutionContext|Isolate|ScriptState|ThisValue
+CallWith=ExecutionContext|Isolate|ScriptState|ThisValue
 CheckSecurity=Receiver|ReturnValue
 Clamp
 Constructor
@@ -62,7 +62,6 @@ HighEntropy
 HTMLConstructor
 ImmutablePrototype
 ImplementedAs=*
-LegacyInterfaceTypeChecking
 LegacyTreatAsPartialInterface
 LegacyUnenumerableNamedProperties
 LenientSetter
@@ -98,11 +97,10 @@ SameObject
 SaveSameObject
 SecureContext=|*
 Serializable
-SetterCallWith=CurrentWindow|EnteredWindow|ExecutionContext|Isolate|ScriptState
+SetterCallWith=ExecutionContext|Isolate|ScriptState
 Transferable
 TreatNonObjectAsNull
 TreatNullAs=EmptyString
 URL
 Unforgeable
 Unscopable
-WebAgentAPI

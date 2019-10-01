@@ -18,6 +18,7 @@ import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.compat.ApiHelperForN;
 import org.chromium.base.task.AsyncTask;
+import org.chromium.base.task.BackgroundOnlyAsyncTask;
 import org.chromium.components.background_task_scheduler.TaskIds;
 import org.chromium.components.variations.firstrun.VariationsSeedFetcher;
 import org.chromium.components.variations.firstrun.VariationsSeedFetcher.SeedInfo;
@@ -75,12 +76,15 @@ public class AwVariationsSeedFetcher extends JobService {
 
     private static JobScheduler getScheduler() {
         if (sMockJobScheduler != null) return sMockJobScheduler;
+
+        // This may be null due to vendor framework bugs. https://crbug.com/968636
         return (JobScheduler) ContextUtils.getApplicationContext().getSystemService(
                 Context.JOB_SCHEDULER_SERVICE);
     }
 
     public static void scheduleIfNeeded() {
         JobScheduler scheduler = getScheduler();
+        if (scheduler == null) return;
 
         // Check if it's already scheduled.
         if (getPendingJob(scheduler, JOB_ID) != null) {
@@ -107,7 +111,7 @@ public class AwVariationsSeedFetcher extends JobService {
         }
     }
 
-    private class FetchTask extends AsyncTask<Void> {
+    private class FetchTask extends BackgroundOnlyAsyncTask<Void> {
         private JobParameters mParams;
 
         FetchTask(JobParameters params) {

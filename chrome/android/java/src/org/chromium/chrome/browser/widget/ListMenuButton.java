@@ -193,12 +193,19 @@ public class ListMenuButton
             @Override
             public View getView(int position, View convertView, ViewGroup parent) {
                 View view = super.getView(position, convertView, parent);
+
+                // The view needs to have an OnClickListener for TalkBack to announce the disabled
+                // state. In this case, we need to let the ListView handle the click.
+                view.setOnClickListener(
+                        (View v) -> ((ListView) parent).performItemClick(v, position, 0));
+
                 view.setEnabled(isEnabled(position));
 
                 // Set the compound drawable at the end for items with a valid endIconId,
                 // otherwise clear the compound drawable if the endIconId is 0.
-                ApiCompatibilityUtils.setCompoundDrawablesRelativeWithIntrinsicBounds(
-                        (TextView) view, 0, 0, items[position].getEndIconId(), 0);
+                ((TextView) view)
+                        .setCompoundDrawablesRelativeWithIntrinsicBounds(
+                                0, 0, items[position].getEndIconId(), 0);
 
                 return view;
             }
@@ -222,8 +229,8 @@ public class ListMenuButton
         ViewRectProvider rectProvider = new ViewRectProvider(this);
         rectProvider.setIncludePadding(true);
         mPopupMenu = new AnchoredPopupWindow(getContext(), this,
-                ApiCompatibilityUtils.getDrawable(getResources(), R.drawable.popup_bg), contentView,
-                rectProvider);
+                ApiCompatibilityUtils.getDrawable(getResources(), R.drawable.popup_bg_tinted),
+                contentView, rectProvider);
         mPopupMenu.setVerticalOverlapAnchor(true);
         mPopupMenu.setHorizontalOverlapAnchor(true);
         mPopupMenu.setMaxWidth(mMenuWidth);

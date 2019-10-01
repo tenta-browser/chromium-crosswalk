@@ -8,8 +8,8 @@
 
 #include "components/viz/service/display/output_surface_client.h"
 #include "components/viz/service/display/output_surface_frame.h"
+#include "components/viz/service/display/overlay_candidate_validator.h"
 #include "components/viz/service/display_embedder/buffer_queue.h"
-#include "components/viz/service/display_embedder/compositor_overlay_candidate_validator.h"
 #include "content/browser/compositor/reflector_impl.h"
 #include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
@@ -22,15 +22,11 @@ GpuSurfacelessBrowserCompositorOutputSurface::
     GpuSurfacelessBrowserCompositorOutputSurface(
         scoped_refptr<ws::ContextProviderCommandBuffer> context,
         gpu::SurfaceHandle surface_handle,
-        const UpdateVSyncParametersCallback& update_vsync_parameters_callback,
-        std::unique_ptr<viz::CompositorOverlayCandidateValidator>
+        std::unique_ptr<viz::OverlayCandidateValidator>
             overlay_candidate_validator,
-        unsigned int target,
-        unsigned int internalformat,
         gfx::BufferFormat format,
         gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager)
     : GpuBrowserCompositorOutputSurface(std::move(context),
-                                        update_vsync_parameters_callback,
                                         std::move(overlay_candidate_validator)),
       use_gpu_fence_(
           context_provider_->ContextCapabilities().chromium_gpu_fence &&
@@ -50,8 +46,8 @@ GpuSurfacelessBrowserCompositorOutputSurface::
   capabilities_.max_frames_pending = 2;
 
   buffer_queue_.reset(new viz::BufferQueue(
-      context_provider_->ContextGL(), target, internalformat, format,
-      gpu_memory_buffer_manager_, surface_handle));
+      context_provider_->ContextGL(), format, gpu_memory_buffer_manager_,
+      surface_handle, context_provider_->ContextCapabilities()));
   buffer_queue_->Initialize();
 }
 
@@ -145,6 +141,12 @@ unsigned GpuSurfacelessBrowserCompositorOutputSurface::UpdateGpuFence() {
   gpu_fence_id_ = context_provider_->ContextGL()->CreateGpuFenceCHROMIUM();
 
   return gpu_fence_id_;
+}
+
+void GpuSurfacelessBrowserCompositorOutputSurface::SetDrawRectangle(
+    const gfx::Rect& damage) {
+  GpuBrowserCompositorOutputSurface::SetDrawRectangle(damage);
+  buffer_queue_->CopyDamageForCurrentSurface(damage);
 }
 
 }  // namespace content

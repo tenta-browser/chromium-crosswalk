@@ -21,14 +21,13 @@
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/policy/developer_tools_policy_handler.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
-#include "chrome/browser/policy/profile_policy_connector_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/common/pref_names.h"
 #include "chromeos/network/onc/onc_utils.h"
-#include "components/arc/arc_bridge_service.h"
 #include "components/arc/arc_browser_context_keyed_service_factory_base.h"
 #include "components/arc/arc_prefs.h"
+#include "components/arc/session/arc_bridge_service.h"
 #include "components/onc/onc_constants.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_namespace.h"
@@ -228,7 +227,8 @@ std::string GetFilteredJSONPolicies(const policy::PolicyMap& policy_map,
     std::string app_policy_string;
     app_policy_value->GetAsString(&app_policy_string);
     std::unique_ptr<base::DictionaryValue> app_policy_dict =
-        base::DictionaryValue::From(base::JSONReader::Read(app_policy_string));
+        base::DictionaryValue::From(
+            base::JSONReader::ReadDeprecated(app_policy_string));
     if (app_policy_dict) {
       // Need a deep copy of all values here instead of doing a swap, because
       // JSONReader::Read constructs a dictionary whose StringValues are
@@ -336,9 +336,7 @@ class ArcPolicyBridgeFactory
  private:
   friend base::DefaultSingletonTraits<ArcPolicyBridgeFactory>;
 
-  ArcPolicyBridgeFactory() {
-    DependsOn(policy::ProfilePolicyConnectorFactory::GetInstance());
-  }
+  ArcPolicyBridgeFactory() {}
   ~ArcPolicyBridgeFactory() override = default;
 };
 
@@ -438,9 +436,9 @@ void ArcPolicyBridge::ReportCompliance(const std::string& request,
   data_decoder::SafeJsonParser::Parse(
       content::ServiceManagerConnection::GetForProcess()->GetConnector(),
       request,
-      base::Bind(&ArcPolicyBridge::OnReportComplianceParseSuccess,
-                 weak_ptr_factory_.GetWeakPtr(), repeating_callback),
-      base::Bind(&OnReportComplianceParseFailure, repeating_callback));
+      base::BindOnce(&ArcPolicyBridge::OnReportComplianceParseSuccess,
+                     weak_ptr_factory_.GetWeakPtr(), repeating_callback),
+      base::BindOnce(&OnReportComplianceParseFailure, repeating_callback));
 }
 
 void ArcPolicyBridge::ReportCloudDpsRequested(
@@ -512,7 +510,7 @@ void ArcPolicyBridge::OnCommandReceived(
 
 void ArcPolicyBridge::InitializePolicyService() {
   auto* profile_policy_connector =
-      policy::ProfilePolicyConnectorFactory::GetForBrowserContext(context_);
+      Profile::FromBrowserContext(context_)->GetProfilePolicyConnector();
   policy_service_ = profile_policy_connector->policy_service();
   is_managed_ = profile_policy_connector->IsManaged();
 }
@@ -535,17 +533,17 @@ std::string ArcPolicyBridge::GetCurrentJSONPolicies() const {
 
 void ArcPolicyBridge::OnReportComplianceParseSuccess(
     base::OnceCallback<void(const std::string&)> callback,
-    std::unique_ptr<base::Value> parsed_json) {
+    base::Value parsed_json) {
   // Always returns "compliant".
   std::move(callback).Run(kPolicyCompliantJson);
   Profile::FromBrowserContext(context_)->GetPrefs()->SetBoolean(
       prefs::kArcPolicyComplianceReported, true);
 
   const base::DictionaryValue* dict = nullptr;
-  if (parsed_json->GetAsDictionary(&dict)) {
+  if (parsed_json.GetAsDictionary(&dict)) {
     UpdateComplianceReportMetrics(dict);
     for (Observer& observer : observers_) {
-      observer.OnComplianceReportReceived(parsed_json.get());
+      observer.OnComplianceReportReceived(&parsed_json);
     }
   }
 }

@@ -17,6 +17,7 @@
 #include "components/security_state/core/features.h"
 #include "content/public/test/browser_test_utils.h"
 #include "net/dns/mock_host_resolver.h"
+#include "services/network/public/cpp/network_switches.h"
 
 namespace {
 // SecureOriginWhitelistBrowsertests differ in the setup of the browser. Since
@@ -58,7 +59,7 @@ class SecureOriginWhitelistBrowsertest
       return;
 
     command_line->AppendSwitchASCII(
-        switches::kUnsafelyTreatInsecureOriginAsSecure, BaseURL());
+        network::switches::kUnsafelyTreatInsecureOriginAsSecure, BaseURL());
   }
 
   void SetUpInProcessBrowserTestFixture() override {
@@ -123,19 +124,19 @@ class SecureOriginWhitelistBrowsertest
   policy::MockConfigurationPolicyProvider provider_;
 };
 
-INSTANTIATE_TEST_CASE_P(SecureOriginWhitelistBrowsertest,
-                        SecureOriginWhitelistBrowsertest,
-                        testing::Values(TestVariant::kNone,
-                                        TestVariant::kCommandline,
+INSTANTIATE_TEST_SUITE_P(SecureOriginWhitelistBrowsertest,
+                         SecureOriginWhitelistBrowsertest,
+                         testing::Values(TestVariant::kNone,
+                                         TestVariant::kCommandline,
 // The legacy policy isn't defined on ChromeOS or Android, so skip tests that
 // use it on those platforms.
 #if !defined(OS_CHROMEOS) && !defined(OS_ANDROID)
-                                        TestVariant::kPolicyOld,
-                                        TestVariant::kPolicyOldAndNew,
+                                         TestVariant::kPolicyOld,
+                                         TestVariant::kPolicyOldAndNew,
 #endif
-                                        TestVariant::kPolicy,
-                                        TestVariant::kPolicy2,
-                                        TestVariant::kPolicy3));
+                                         TestVariant::kPolicy,
+                                         TestVariant::kPolicy2,
+                                         TestVariant::kPolicy3));
 
 IN_PROC_BROWSER_TEST_P(SecureOriginWhitelistBrowsertest, Simple) {
   GURL url = embedded_test_server()->GetURL(
@@ -185,21 +186,18 @@ IN_PROC_BROWSER_TEST_P(SecureOriginWhitelistBrowsertest, SecurityIndicators) {
   auto* helper = SecurityStateTabHelper::FromWebContents(
       browser()->tab_strip_model()->GetActiveWebContents());
   ASSERT_TRUE(helper);
-  security_state::SecurityInfo security_info;
-  helper->GetSecurityInfo(&security_info);
 
   if (GetParam() == TestVariant::kPolicyOldAndNew) {
     // When both policies are set, the new policy overrides the old policy.
-    EXPECT_EQ(security_state::DANGEROUS, security_info.security_level);
+    EXPECT_EQ(security_state::DANGEROUS, helper->GetSecurityLevel());
     ui_test_utils::NavigateToURL(
         browser(),
         embedded_test_server()->GetURL(
             "otherexample.com", "/secure_origin_whitelist_browsertest.html"));
-    helper->GetSecurityInfo(&security_info);
-    EXPECT_EQ(security_state::NONE, security_info.security_level);
+    EXPECT_EQ(security_state::NONE, helper->GetSecurityLevel());
   } else {
     EXPECT_EQ(ExpectSecureContext() ? security_state::NONE
                                     : security_state::DANGEROUS,
-              security_info.security_level);
+              helper->GetSecurityLevel());
   }
 }

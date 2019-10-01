@@ -592,30 +592,16 @@ void NavigationEntryImpl::AddExtraHeaders(
   extra_headers_ += more_extra_headers;
 }
 
+int64_t NavigationEntryImpl::GetMainFrameDocumentSequenceNumber() {
+  return frame_tree_->frame_entry->document_sequence_number();
+}
+
 void NavigationEntryImpl::SetCanLoadLocalResources(bool allow) {
   can_load_local_resources_ = allow;
 }
 
 bool NavigationEntryImpl::GetCanLoadLocalResources() {
   return can_load_local_resources_;
-}
-
-void NavigationEntryImpl::SetExtraData(const std::string& key,
-                                       const base::string16& data) {
-  extra_data_[key] = data;
-}
-
-bool NavigationEntryImpl::GetExtraData(const std::string& key,
-                                       base::string16* data) {
-  auto iter = extra_data_.find(key);
-  if (iter == extra_data_.end())
-    return false;
-  *data = iter->second;
-  return true;
-}
-
-void NavigationEntryImpl::ClearExtraData(const std::string& key) {
-  extra_data_.erase(key);
 }
 
 std::unique_ptr<NavigationEntryImpl> NavigationEntryImpl::Clone() const {
@@ -665,7 +651,7 @@ std::unique_ptr<NavigationEntryImpl> NavigationEntryImpl::CloneAndReplace(
   // ResetForCommit: frame_tree_node_id_
   copy->has_user_gesture_ = has_user_gesture_;
   // ResetForCommit: reload_type_
-  copy->extra_data_ = extra_data_;
+  copy->CloneDataFrom(*this);
   copy->replaced_entry_data_ = replaced_entry_data_;
   copy->should_skip_on_back_forward_ui_ = should_skip_on_back_forward_ui_;
 
@@ -681,9 +667,10 @@ CommonNavigationParams NavigationEntryImpl::ConstructCommonNavigationParams(
     PreviewsState previews_state,
     base::TimeTicks navigation_start,
     base::TimeTicks input_start) {
-  NavigationDownloadPolicy download_policy =
-      IsViewSourceMode() ? NavigationDownloadPolicy::kDisallowViewSource
-                         : NavigationDownloadPolicy::kAllow;
+  NavigationDownloadPolicy download_policy;
+  if (IsViewSourceMode())
+    download_policy.SetDisallowed(NavigationDownloadType::kViewSource);
+
   return CommonNavigationParams(
       dest_url,
       // This is constructing parameters for browser-initiated navigation,
@@ -693,7 +680,8 @@ CommonNavigationParams NavigationEntryImpl::ConstructCommonNavigationParams(
       GetHistoryURLForDataURL(), previews_state, navigation_start,
       frame_entry.method(), post_body ? post_body : post_data_,
       base::Optional<SourceLocation>(), has_started_from_context_menu(),
-      has_user_gesture(), InitiatorCSPInfo(), std::string(), input_start);
+      has_user_gesture(), InitiatorCSPInfo(), std::vector<int>(), std::string(),
+      false /* is_history_navigation_in_new_child_frame */, input_start);
 }
 
 CommitNavigationParams NavigationEntryImpl::ConstructCommitNavigationParams(
@@ -701,7 +689,6 @@ CommitNavigationParams NavigationEntryImpl::ConstructCommitNavigationParams(
     const GURL& original_url,
     const base::Optional<url::Origin>& origin_to_commit,
     const std::string& original_method,
-    bool is_history_navigation_in_new_child,
     const std::map<std::string, bool>& subframe_unique_names,
     bool intended_as_new_entry,
     int pending_history_list_offset,
@@ -729,9 +716,9 @@ CommitNavigationParams NavigationEntryImpl::ConstructCommitNavigationParams(
   CommitNavigationParams commit_params(
       origin_to_commit, GetIsOverridingUserAgent(), redirects, original_url,
       original_method, GetCanLoadLocalResources(), frame_entry.page_state(),
-      GetUniqueID(), is_history_navigation_in_new_child, subframe_unique_names,
-      intended_as_new_entry, pending_offset_to_send, current_offset_to_send,
-      current_length_to_send, IsViewSourceMode(), should_clear_history_list());
+      GetUniqueID(), subframe_unique_names, intended_as_new_entry,
+      pending_offset_to_send, current_offset_to_send, current_length_to_send,
+      IsViewSourceMode(), should_clear_history_list());
 #if defined(OS_ANDROID)
   if (NavigationControllerImpl::ValidateDataURLAsString(GetDataURLAsString())) {
     commit_params.data_url_as_string = GetDataURLAsString()->data();

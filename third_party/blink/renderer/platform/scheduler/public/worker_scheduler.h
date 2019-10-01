@@ -10,6 +10,7 @@
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/platform/scheduler/public/frame_or_worker_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/frame_scheduler.h"
+#include "third_party/blink/renderer/platform/wtf/allocator.h"
 
 namespace blink {
 namespace scheduler {
@@ -29,6 +30,8 @@ class PLATFORM_EXPORT WorkerScheduler : public FrameOrWorkerScheduler {
   ~WorkerScheduler() override;
 
   class PLATFORM_EXPORT PauseHandle {
+    USING_FAST_MALLOC(PauseHandle);
+
    public:
     PauseHandle(base::WeakPtr<WorkerScheduler>);
     ~PauseHandle();
@@ -40,8 +43,6 @@ class PLATFORM_EXPORT WorkerScheduler : public FrameOrWorkerScheduler {
   };
 
   std::unique_ptr<PauseHandle> Pause() WARN_UNUSED_RESULT;
-
-  std::unique_ptr<ActiveConnectionHandle> OnActiveConnectionCreated() override;
 
   // Unregisters the task queues and cancels tasks in them.
   void Dispose();
@@ -59,6 +60,11 @@ class PLATFORM_EXPORT WorkerScheduler : public FrameOrWorkerScheduler {
   void OnLifecycleStateChanged(SchedulingLifecycleState lifecycle_state);
 
   SchedulingLifecycleState CalculateLifecycleState(ObserverType) const override;
+
+  void OnStartedUsingFeature(SchedulingPolicy::Feature feature,
+                             const SchedulingPolicy& policy) override;
+  void OnStoppedUsingFeature(SchedulingPolicy::Feature feature,
+                             const SchedulingPolicy& policy) override;
 
  protected:
   scoped_refptr<NonMainThreadTaskQueue> ThrottleableTaskQueue();

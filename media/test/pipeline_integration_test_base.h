@@ -9,8 +9,8 @@
 #include <memory>
 
 #include "base/callback_forward.h"
-#include "base/md5.h"
-#include "base/test/scoped_feature_list.h"
+#include "base/hash/md5.h"
+#include "base/run_loop.h"
 #include "base/test/scoped_task_environment.h"
 #include "media/audio/clockless_audio_sink.h"
 #include "media/audio/null_audio_sink.h"
@@ -35,7 +35,7 @@ class RunLoop;
 namespace media {
 
 class FakeEncryptedMedia;
-class MockMediaSource;
+class TestMediaSource;
 
 // Empty MD5 hash string.  Used to verify empty video tracks.
 extern const char kNullVideoHash[];
@@ -158,6 +158,10 @@ class PipelineIntegrationTestBase : public Pipeline::Client {
   bool webaudio_attached_;
   bool mono_output_;
   bool fuzzing_;
+#if defined(ADDRESS_SANITIZER) || defined(UNDEFINED_SANITIZER)
+  // TODO(https://crbug.com/924030): ASAN causes Run() timeouts to be reached.
+  const base::RunLoop::ScopedDisableRunTimeoutForTest disable_run_timeout_;
+#endif
   std::unique_ptr<Demuxer> demuxer_;
   std::unique_ptr<DataSource> data_source_;
   std::unique_ptr<PipelineImpl> pipeline_;
@@ -191,12 +195,12 @@ class PipelineIntegrationTestBase : public Pipeline::Client {
       CreateAudioDecodersCB prepend_audio_decoders_cb =
           CreateAudioDecodersCB());
 
-  PipelineStatus StartPipelineWithMediaSource(MockMediaSource* source);
+  PipelineStatus StartPipelineWithMediaSource(TestMediaSource* source);
   PipelineStatus StartPipelineWithEncryptedMedia(
-      MockMediaSource* source,
+      TestMediaSource* source,
       FakeEncryptedMedia* encrypted_media);
   PipelineStatus StartPipelineWithMediaSource(
-      MockMediaSource* source,
+      TestMediaSource* source,
       uint8_t test_type,
       FakeEncryptedMedia* encrypted_media);
 
@@ -214,7 +218,7 @@ class PipelineIntegrationTestBase : public Pipeline::Client {
   // Creates Demuxer and sets |demuxer_|.
   void CreateDemuxer(std::unique_ptr<DataSource> data_source);
 
-  void OnVideoFramePaint(const scoped_refptr<VideoFrame>& frame);
+  void OnVideoFramePaint(scoped_refptr<VideoFrame> frame);
 
   void CheckDuration();
 
@@ -225,7 +229,7 @@ class PipelineIntegrationTestBase : public Pipeline::Client {
   // Pipeline::Client overrides.
   void OnError(PipelineStatus status) override;
   void OnEnded() override;
-  MOCK_METHOD1(OnMetadata, void(PipelineMetadata));
+  MOCK_METHOD1(OnMetadata, void(const PipelineMetadata&));
   MOCK_METHOD1(OnBufferingStateChange, void(BufferingState));
   MOCK_METHOD0(OnDurationChange, void());
   MOCK_METHOD2(OnAddTextTrack,

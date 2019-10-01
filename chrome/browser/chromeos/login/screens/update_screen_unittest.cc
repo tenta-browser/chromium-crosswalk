@@ -5,8 +5,8 @@
 #include "chrome/browser/chromeos/login/screens/update_screen.h"
 
 #include "base/command_line.h"
+#include "base/optional.h"
 #include "base/test/scoped_mock_time_message_loop_task_runner.h"
-#include "chrome/browser/chromeos/login/screens/mock_base_screen_delegate.h"
 #include "chrome/browser/chromeos/login/screens/mock_error_screen.h"
 #include "chrome/browser/chromeos/login/screens/mock_update_screen.h"
 #include "chrome/browser/chromeos/login/startup_utils.h"
@@ -42,20 +42,23 @@ class UpdateScreenUnitTest : public testing::Test {
       const std::unique_ptr<UpdateScreen>& update_screen,
       bool available,
       bool critical) {
-    update_engine_status_.status =
+    UpdateEngineClient::Status update_engine_status;
+    update_engine_status.status =
         UpdateEngineClient::UPDATE_STATUS_CHECKING_FOR_UPDATE;
     fake_update_engine_client_->NotifyObserversThatStatusChanged(
-        update_engine_status_);
+        update_engine_status);
+
     if (critical) {
       ASSERT_TRUE(available) << "Does not make sense for an update to be "
                                 "critical if one is not even available.";
-      update_screen->is_ignore_update_deadlines_ = true;
+      update_screen->set_ignore_update_deadlines_for_testing(true);
     }
-    update_engine_status_.status =
+    update_engine_status.status =
         available ? UpdateEngineClient::UPDATE_STATUS_UPDATE_AVAILABLE
                   : UpdateEngineClient::UPDATE_STATUS_IDLE;
+
     fake_update_engine_client_->NotifyObserversThatStatusChanged(
-        update_engine_status_);
+        update_engine_status);
   }
 
   // testing::Test:
@@ -72,16 +75,17 @@ class UpdateScreenUnitTest : public testing::Test {
     mock_network_portal_detector_ = new MockNetworkPortalDetector();
     network_portal_detector::SetNetworkPortalDetector(
         mock_network_portal_detector_);
-    mock_error_screen_.reset(
-        new MockErrorScreen(&mock_base_screen_delegate_, &mock_error_view_));
+    mock_error_screen_.reset(new MockErrorScreen(&mock_error_view_));
 
     // Ensure proper behavior of UpdateScreen's supporting objects.
     EXPECT_CALL(*mock_network_portal_detector_, IsEnabled())
         .Times(AnyNumber())
         .WillRepeatedly(Return(false));
-    EXPECT_CALL(mock_base_screen_delegate_, GetErrorScreen())
-        .Times(AnyNumber())
-        .WillRepeatedly(Return(mock_error_screen_.get()));
+
+    update_screen_ = std::make_unique<UpdateScreen>(
+        &mock_view_, mock_error_screen_.get(),
+        base::BindRepeating(&UpdateScreenUnitTest::HandleScreenExit,
+                            base::Unretained(this)));
   }
 
   void TearDown() override {
@@ -98,15 +102,20 @@ class UpdateScreenUnitTest : public testing::Test {
   std::unique_ptr<UpdateScreen> update_screen_;
 
   // Accessory objects needed by UpdateScreen.
-  MockBaseScreenDelegate mock_base_screen_delegate_;
   MockUpdateView mock_view_;
-  MockNetworkErrorView mock_error_view_;
-  UpdateEngineClient::Status update_engine_status_;
+  MockErrorScreenView mock_error_view_;
   std::unique_ptr<MockErrorScreen> mock_error_screen_;
   MockNetworkPortalDetector* mock_network_portal_detector_;
   FakeUpdateEngineClient* fake_update_engine_client_;
 
+  base::Optional<UpdateScreen::Result> last_screen_result_;
+
  private:
+  void HandleScreenExit(UpdateScreen::Result result) {
+    EXPECT_FALSE(last_screen_result_.has_value());
+    last_screen_result_ = result;
+  }
+
   // Test versions of core browser infrastructure.
   content::TestBrowserThreadBundle threads_;
   ScopedTestingLocalState local_state_;
@@ -115,16 +124,8 @@ class UpdateScreenUnitTest : public testing::Test {
 };
 
 TEST_F(UpdateScreenUnitTest, HandlesNoUpdate) {
-  // Set expectation that UpdateScreen will exit successfully
-  // with code UPDATE_NOUPDATE.
-  EXPECT_CALL(mock_base_screen_delegate_,
-              OnExit(ScreenExitCode::UPDATE_NOUPDATE))
-      .Times(1);
-
   // DUT reaches UpdateScreen.
-  update_screen_.reset(
-      new UpdateScreen(&mock_base_screen_delegate_, &mock_view_));
-  update_screen_->StartNetworkCheck();
+  update_screen_->Show();
 
   // Verify that the DUT checks for an update.
   EXPECT_EQ(fake_update_engine_client_->request_update_check_call_count(), 1);
@@ -132,21 +133,15 @@ TEST_F(UpdateScreenUnitTest, HandlesNoUpdate) {
   // No updates are available.
   SimulateUpdateAvailable(update_screen_, false /* available */,
                           false /* critical */);
+
+  ASSERT_TRUE(last_screen_result_.has_value());
+  EXPECT_EQ(UpdateScreen::Result::UPDATE_NOT_REQUIRED,
+            last_screen_result_.value());
 }
 
 TEST_F(UpdateScreenUnitTest, HandlesNonCriticalUpdate) {
-  // Set expectation that UpdateScreen will exit successfully
-  // with code UPDATE_NOUPDATE. No, this is not a typo.
-  // UPDATE_NOUPDATE means that either there was no update
-  // or there was a non-critical update.
-  EXPECT_CALL(mock_base_screen_delegate_,
-              OnExit(ScreenExitCode::UPDATE_NOUPDATE))
-      .Times(1);
-
   // DUT reaches UpdateScreen.
-  update_screen_.reset(
-      new UpdateScreen(&mock_base_screen_delegate_, &mock_view_));
-  update_screen_->StartNetworkCheck();
+  update_screen_->Show();
 
   // Verify that the DUT checks for an update.
   EXPECT_EQ(fake_update_engine_client_->request_update_check_call_count(), 1);
@@ -154,17 +149,15 @@ TEST_F(UpdateScreenUnitTest, HandlesNonCriticalUpdate) {
   // A non-critical update is available.
   SimulateUpdateAvailable(update_screen_, true /* available */,
                           false /* critical */);
+
+  ASSERT_TRUE(last_screen_result_.has_value());
+  EXPECT_EQ(UpdateScreen::Result::UPDATE_NOT_REQUIRED,
+            last_screen_result_.value());
 }
 
 TEST_F(UpdateScreenUnitTest, HandlesCriticalUpdate) {
-  // Set expectation that UpdateScreen does not exit.
-  // This is the case because a critical update mandates reboot.
-  EXPECT_CALL(mock_base_screen_delegate_, OnExit(_)).Times(0);
-
   // DUT reaches UpdateScreen.
-  update_screen_.reset(
-      new UpdateScreen(&mock_base_screen_delegate_, &mock_view_));
-  update_screen_->StartNetworkCheck();
+  update_screen_->Show();
 
   // Verify that the DUT checks for an update.
   EXPECT_EQ(fake_update_engine_client_->request_update_check_call_count(), 1);
@@ -172,6 +165,31 @@ TEST_F(UpdateScreenUnitTest, HandlesCriticalUpdate) {
   // An update is available, and it's critical!
   SimulateUpdateAvailable(update_screen_, true /* available */,
                           true /* critical */);
+
+  EXPECT_FALSE(last_screen_result_.has_value());
+}
+
+TEST_F(UpdateScreenUnitTest, HandleCriticalUpdateError) {
+  // DUT reaches UpdateScreen.
+  update_screen_->Show();
+
+  // Verify that the DUT checks for an update.
+  EXPECT_EQ(fake_update_engine_client_->request_update_check_call_count(), 1);
+
+  // An update is available, and it's critical!
+  SimulateUpdateAvailable(update_screen_, true /* available */,
+                          true /* critical */);
+
+  EXPECT_FALSE(last_screen_result_.has_value());
+
+  UpdateEngineClient::Status update_engine_status;
+  update_engine_status.status =
+      UpdateEngineClient::UPDATE_STATUS_REPORTING_ERROR_EVENT;
+  fake_update_engine_client_->NotifyObserversThatStatusChanged(
+      update_engine_status);
+
+  ASSERT_TRUE(last_screen_result_.has_value());
+  EXPECT_EQ(UpdateScreen::Result::UPDATE_ERROR, last_screen_result_.value());
 }
 
 }  // namespace chromeos

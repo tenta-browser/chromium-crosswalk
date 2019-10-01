@@ -1,10 +1,11 @@
 include_rules = [
+  "+chromeos/components/account_manager",
+  # TODO(crbug.com/816954): Remove this line when Account Manager is
+  # launched.
+  "+chromeos/constants",
   "+components/account_id",
-  "+components/data_use_measurement/core",
   "+components/image_fetcher/core",
-  "+components/invalidation/public",
   "+components/metrics",
-  "+google/cacheinvalidation",
   "+jni",
   "+mojo/public",
   "+services/identity/public",

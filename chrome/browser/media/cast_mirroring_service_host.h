@@ -8,14 +8,17 @@
 #include <memory>
 #include <string>
 
+#include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "components/mirroring/mojom/mirroring_service.mojom.h"
 #include "components/mirroring/mojom/mirroring_service_host.mojom.h"
 #include "components/mirroring/mojom/resource_provider.mojom.h"
 #include "content/public/browser/desktop_media_id.h"
+#include "content/public/browser/media_stream_request.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "extensions/buildflags/buildflags.h"
 #include "mojo/public/cpp/bindings/binding.h"
+#include "ui/gfx/geometry/size.h"
 
 // TODO(https://crbug.com/879012): Remove the build flag. OffscreenTab should
 // not only be defined when extension is enabled.
@@ -65,6 +68,12 @@ class CastMirroringServiceHost final : public mojom::MirroringServiceHost,
 
  private:
   friend class CastMirroringServiceHostBrowserTest;
+  FRIEND_TEST_ALL_PREFIXES(CastMirroringServiceHostTest,
+                           TestGetClampedResolution);
+
+  static gfx::Size GetCaptureResolutionConstraint();
+  // Clamp resolution constraint to the screen size.
+  static gfx::Size GetClampedResolution(gfx::Size screen_resolution);
 
   // ResourceProvider implementation.
   void GetVideoCaptureHost(
@@ -80,6 +89,10 @@ class CastMirroringServiceHost final : public mojom::MirroringServiceHost,
 
   // content::WebContentsObserver implementation.
   void WebContentsDestroyed() override;
+
+  // Registers the media stream to show a capture indicator icon on the
+  // tabstrip.
+  void ShowCaptureIndicator();
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   // OffscreenTab::Owner implementation.
@@ -106,6 +119,10 @@ class CastMirroringServiceHost final : public mojom::MirroringServiceHost,
 
   // Used to create an audio loopback stream through the Audio Service.
   std::unique_ptr<content::AudioLoopbackStreamCreator> audio_stream_creator_;
+
+  // The lifetime of the capture indicator icon on the tabstrip is tied to that
+  // of |media_stream_ui_|.
+  std::unique_ptr<content::MediaStreamUI> media_stream_ui_;
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   std::unique_ptr<OffscreenTab> offscreen_tab_;

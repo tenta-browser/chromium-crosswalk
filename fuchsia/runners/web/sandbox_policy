@@ -1,17 +1,20 @@
 {
-  "features": [],
+  "features": [
+    "isolated-persistent-storage"
+  ],
   "services": [
-      "chromium.web.ContextProvider",
       "fuchsia.fonts.Provider",
+      "fuchsia.logger.LogSink",
       "fuchsia.media.Audio",
       "fuchsia.mediacodec.CodecFactory",
-      "fuchsia.net.LegacySocketProvider",
+      "fuchsia.net.SocketProvider",
       "fuchsia.netstack.Netstack",
       "fuchsia.process.Launcher",
+      "fuchsia.sysmem.Allocator",
       "fuchsia.ui.input.ImeService",
       "fuchsia.ui.input.ImeVisibilityService",
       "fuchsia.ui.scenic.Scenic",
-      "fuchsia.ui.viewsv1.ViewManager",
-      "fuchsia.vulkan.loader.Loader"
+      "fuchsia.vulkan.loader.Loader",
+      "fuchsia.web.ContextProvider"
   ]
 }

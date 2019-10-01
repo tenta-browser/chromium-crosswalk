@@ -9,16 +9,15 @@
 #include "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/ui/commands/browser_commands.h"
 #import "ios/chrome/browser/ui/content_suggestions/ntp_home_constant.h"
-#import "ios/chrome/browser/ui/ntp/new_tab_page_controller.h"
 #import "ios/chrome/browser/ui/omnibox/popup/omnibox_popup_row.h"
 #import "ios/chrome/browser/ui/popup_menu/popup_menu_constants.h"
 #import "ios/chrome/browser/ui/toolbar/public/toolbar_constants.h"
 #include "ios/chrome/browser/ui/util/ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
-#import "ios/chrome/test/app/tab_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
+#import "ios/chrome/test/earl_grey/chrome_error_util.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
 #import "ios/web/public/test/http_server/http_server.h"
@@ -47,15 +46,16 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
   web::test::SetUpFileBasedHttpServer();
   const GURL URL = web::test::HttpServer::MakeUrl(
       "http://ios/testing/data/http_server_files/destination.html");
-  [ChromeEarlGrey loadURL:URL];
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:URL]);
   [[EarlGrey selectElementWithMatcher:OmniboxText(URL.GetContent())]
       assertWithMatcher:grey_notNil()];
-  [ChromeEarlGrey waitForWebViewContainingText:"You've arrived"];
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey waitForWebStateContainingText:"You've arrived"]);
 }
 
 // Verifies opening a new tab from the tools menu.
 - (void)testNewTabFromMenu {
-  [ChromeEarlGrey waitForMainTabCount:1];
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey waitForMainTabCount:1]);
 
   // Open tab via the UI.
   [ChromeEarlGreyUI openToolsMenu];
@@ -64,12 +64,12 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
   [[EarlGrey selectElementWithMatcher:newTabButtonMatcher]
       performAction:grey_tap()];
 
-  [ChromeEarlGrey waitForMainTabCount:2];
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey waitForMainTabCount:2]);
 }
 
 // Verifies opening a new incognito tab from the tools menu.
 - (void)testNewIncognitoTabFromMenu {
-  [ChromeEarlGrey waitForIncognitoTabCount:0];
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey waitForIncognitoTabCount:0]);
 
   // Open incognito tab.
   [ChromeEarlGreyUI openToolsMenu];
@@ -78,7 +78,7 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
   [[EarlGrey selectElementWithMatcher:newIncognitoTabButtonMatcher]
       performAction:grey_tap()];
 
-  [ChromeEarlGrey waitForIncognitoTabCount:1];
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey waitForIncognitoTabCount:1]);
 }
 
 // Tests whether input mode in an omnibox can be canceled via "Cancel" button
@@ -91,13 +91,10 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
 
   const GURL URL = web::test::HttpServer::MakeUrl("http://origin");
 
-  [ChromeEarlGrey loadURL:URL];
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:URL]);
 
-  if (IsRefreshLocationBarEnabled()) {
-    [[EarlGrey
-        selectElementWithMatcher:chrome_test_util::DefocusedLocationView()]
-        performAction:grey_tap()];
-  }
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::DefocusedLocationView()]
+      performAction:grey_tap()];
   [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
       assertWithMatcher:chrome_test_util::OmniboxText(URL.GetContent())];
   [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
@@ -127,7 +124,7 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
 
   const GURL URL = web::test::HttpServer::MakeUrl("http://origin");
 
-  [ChromeEarlGrey loadURL:URL];
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:URL]);
 
   [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
       assertWithMatcher:chrome_test_util::OmniboxText(URL.GetContent())];
@@ -156,7 +153,7 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
 
   const GURL URL = web::test::HttpServer::MakeUrl("http://origin");
 
-  [ChromeEarlGrey loadURL:URL];
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:URL]);
 
   [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
       assertWithMatcher:chrome_test_util::OmniboxText(URL.GetContent())];
@@ -182,19 +179,14 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
   // (Subsequent steps in this test require the omnibox to be tappable, but in
   // some configurations the NTP only has a fakebox and does not display the
   // omnibox.)
-  [ChromeEarlGrey loadURL:GURL("about:blank")];
-  [ChromeEarlGrey loadURL:GURL("chrome://version")];
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:GURL("about:blank")]);
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:GURL("chrome://version")]);
 
   // First test: check that the keyboard is opened when tapping the omnibox,
   // and that it is dismissed when the "Back" button is tapped.
-  if (IsRefreshLocationBarEnabled()) {
     [[EarlGrey
         selectElementWithMatcher:chrome_test_util::DefocusedLocationView()]
         performAction:grey_tap()];
-  } else {
-    [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
-        performAction:grey_tap()];
-  }
 
   [[EarlGrey selectElementWithMatcher:grey_accessibilityID(@"Typing Shield")]
       assertWithMatcher:grey_notNil()];
@@ -206,14 +198,9 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
 
   // Second test: check that the keyboard is opened when tapping the omnibox,
   // and that it is dismissed when the tools menu button is tapped.
-  if (IsRefreshLocationBarEnabled()) {
     [[EarlGrey
         selectElementWithMatcher:chrome_test_util::DefocusedLocationView()]
         performAction:grey_tap()];
-  } else {
-    [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
-        performAction:grey_tap()];
-  }
   [[EarlGrey selectElementWithMatcher:grey_accessibilityID(@"Typing Shield")]
       assertWithMatcher:grey_notNil()];
 
@@ -242,21 +229,16 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
   const GURL URL = web::test::HttpServer::MakeUrl("http://veryLongURLTestPage");
   const GURL secondURL = web::test::HttpServer::MakeUrl("http://pastePage");
 
-  [ChromeEarlGrey loadURL:URL];
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:URL]);
 
   [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
       assertWithMatcher:chrome_test_util::OmniboxText(URL.GetContent())];
 
   // Can't access share menu from xctest on iOS 11+, so use the text field
   // callout bar instead.
-  if (IsRefreshLocationBarEnabled()) {
     [[EarlGrey
         selectElementWithMatcher:chrome_test_util::DefocusedLocationView()]
         performAction:grey_tap()];
-  } else {
-    [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
-        performAction:grey_tap()];
-  }
   // Tap twice to get the pre-edit label callout bar copy button.
   [[EarlGrey
       selectElementWithMatcher:grey_allOf(
@@ -280,7 +262,7 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
         performAction:grey_tap()];
   }
 
-  [ChromeEarlGrey loadURL:secondURL];
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:secondURL]);
   [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
       performAction:grey_longPress()];
 
@@ -304,12 +286,9 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
 
   const GURL URL = web::test::HttpServer::MakeUrl("http://origin");
 
-  [ChromeEarlGrey loadURL:URL];
-  if (IsRefreshLocationBarEnabled()) {
-    [[EarlGrey
-        selectElementWithMatcher:chrome_test_util::DefocusedLocationView()]
-        performAction:grey_tap()];
-  }
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:URL]);
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::DefocusedLocationView()]
+      performAction:grey_tap()];
 
   [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
       performAction:grey_typeText(@"foo")];
@@ -336,7 +315,7 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
   GURL URL = web::test::HttpServer::MakeUrl("http://foo");
   responses[URL] = "bar";
   web::test::SetUpSimpleHttpServer(responses);
-  [ChromeEarlGrey loadURL:GURL(URL)];
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:GURL(URL)]);
 
   [ChromeEarlGreyUI focusOmniboxAndType:@"javascript:alert('Hello');\n"];
 
@@ -352,7 +331,7 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
   if (IsIPadIdiom()) {
     EARL_GREY_TEST_DISABLED(@"Disabled for iPad due to a typing bug.");
   }
-  [ChromeEarlGrey loadURL:GURL("chrome://version")];
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:GURL("chrome://version")]);
   [ChromeEarlGreyUI focusOmniboxAndType:@"javascript:alert('Hello');\n"];
 
   [[EarlGrey selectElementWithMatcher:grey_accessibilityLabel(@"Hello")]
@@ -453,8 +432,9 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
   // Select the omnibox to get the keyboard up.
   [[EarlGrey selectElementWithMatcher:chrome_test_util::NewTabPageOmnibox()]
       performAction:grey_tap()];
-  [ChromeEarlGrey
-      waitForElementWithMatcherSufficientlyVisible:chrome_test_util::Omnibox()];
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey waitForSufficientlyVisibleElementWithMatcher:
+                          chrome_test_util::Omnibox()]);
 
   // Tap the "/" keyboard accessory button.
   id<GREYMatcher> slashButtonMatcher = grey_allOf(

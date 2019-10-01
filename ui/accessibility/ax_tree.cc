@@ -6,12 +6,16 @@
 
 #include <stddef.h>
 
+#include <numeric>
 #include <set>
 
+#include "base/auto_reset.h"
 #include "base/command_line.h"
 #include "base/logging.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "ui/accessibility/accessibility_switches.h"
+#include "ui/accessibility/ax_language_info.h"
 #include "ui/accessibility/ax_node.h"
 #include "ui/accessibility/ax_role_properties.h"
 #include "ui/accessibility/ax_table_info.h"
@@ -22,12 +26,13 @@ namespace ui {
 
 namespace {
 
-std::string TreeToStringHelper(AXNode* node, int indent) {
-  std::string result = std::string(2 * indent, ' ');
-  result += node->data().ToString() + "\n";
-  for (int i = 0; i < node->child_count(); ++i)
-    result += TreeToStringHelper(node->ChildAtIndex(i), indent + 1);
-  return result;
+std::string TreeToStringHelper(const AXNode* node, int indent) {
+  return std::accumulate(
+      node->children().cbegin(), node->children().cend(),
+      std::string(2 * indent, ' ') + node->data().ToString() + "\n",
+      [indent](const std::string& str, const auto* child) {
+        return str + TreeToStringHelper(child, indent + 1);
+      });
 }
 
 template <typename K, typename V>
@@ -89,6 +94,10 @@ void CallIfAttributeValuesChanged(const std::vector<std::pair<K, V>>& pairs1,
   }
 }
 
+bool IsCollapsed(const AXNode* node) {
+  return node && node->data().HasState(ax::mojom::State::kCollapsed);
+}
+
 }  // namespace
 
 // Intermediate state to keep track of during a tree update.
@@ -100,7 +109,7 @@ struct AXTreeUpdateState {
   }
 
   // Returns whether this update removes |node|.
-  bool IsRemovedNode(const AXNode* node) {
+  bool IsRemovedNode(const AXNode* node) const {
     return removed_node_ids.find(node->id()) != removed_node_ids.end();
   }
 
@@ -109,9 +118,15 @@ struct AXTreeUpdateState {
     return new_nodes.find(node) != new_nodes.end();
   }
 
+  // If this node is removed, it should be considered reparented.
+  bool IsPotentiallyReparentedNode(const AXNode* node) const {
+    return potentially_reparented_ids.find(node->id()) !=
+           potentially_reparented_ids.end();
+  }
+
   // Returns whether this update reparents |node|.
-  bool IsReparentedNode(const AXNode* node) {
-    return IsNewNode(node) && IsRemovedNode(node);
+  bool IsReparentedNode(const AXNode* node) const {
+    return IsPotentiallyReparentedNode(node) && IsRemovedNode(node);
   }
 
   // During an update, this keeps track of all nodes that have been
@@ -125,6 +140,11 @@ struct AXTreeUpdateState {
   // us to know what nodes will be updated so we can make more intelligent
   // decisions about when to notify observers of removals or reparenting.
   std::set<int> changed_node_ids;
+
+  // Potentially reparented node ids include any child node ids touched by the
+  // update, as well as any new root node id. Nodes are considered
+  // reparented if they are in this list and removed from somewhere else.
+  std::set<int> potentially_reparented_ids;
 
   // Keeps track of new nodes created during this update.
   std::set<const AXNode*> new_nodes;
@@ -365,6 +385,11 @@ const std::set<AXTreeID> AXTree::GetAllChildTreeIds() const {
 }
 
 bool AXTree::Unserialize(const AXTreeUpdate& update) {
+  // Set update state to true.
+  // tree_update_in_progress_ gets set back to false whenever this function
+  // exits.
+  base::AutoReset<bool> update_state_resetter(&tree_update_in_progress_, true);
+
   AXTreeUpdateState update_state;
   int32_t old_root_id = root_ ? root_->id() : 0;
 
@@ -374,6 +399,15 @@ bool AXTree::Unserialize(const AXTreeUpdate& update) {
 
   if (update.has_tree_data)
     UpdateData(update.tree_data);
+
+  // Get all of the node ids that are certain to exist after the update.
+  // These are the nodes that are considered reparented if they are removed from
+  // somewhere else.
+  update_state.potentially_reparented_ids.emplace(update.root_id);
+  for (const AXNodeData& update_node_data : update.nodes) {
+    update_state.potentially_reparented_ids.insert(
+        update_node_data.child_ids.begin(), update_node_data.child_ids.end());
+  }
 
   // We distinguish between updating the root, e.g. changing its children or
   // some of its attributes, or replacing the root completely.
@@ -399,8 +433,8 @@ bool AXTree::Unserialize(const AXTreeUpdate& update) {
     // If the root has simply been updated, we treat it like an update to any
     // other node.
     if (node && root_ && (node != root_ || root_updated)) {
-      for (int i = 0; i < node->child_count(); ++i)
-        DestroySubtree(node->ChildAtIndex(i), &update_state);
+      for (auto* child : node->children())
+        DestroySubtree(child, &update_state);
       std::vector<AXNode*> children;
       node->SwapChildren(children);
       update_state.pending_nodes.insert(node);
@@ -445,6 +479,9 @@ bool AXTree::Unserialize(const AXTreeUpdate& update) {
     }
   }
 
+  // Clear list_info_map_
+  ordered_set_info_map_.clear();
+
   std::set<const AXNode*>& new_nodes = update_state.new_nodes;
   std::vector<AXTreeObserver::Change> changes;
   changes.reserve(update.nodes.size());
@@ -483,12 +520,13 @@ bool AXTree::Unserialize(const AXTreeUpdate& update) {
     }
     changes.push_back(AXTreeObserver::Change(node, change));
   }
+
+  // Tree is no longer updating.
+  SetTreeUpdateInProgressState(false);
+
   for (AXTreeObserver& observer : observers_) {
     observer.OnAtomicUpdateFinished(this, root_->id() != old_root_id, changes);
   }
-
-  // Clear list_info_map_
-  ordered_set_info_map_.clear();
 
   return true;
 }
@@ -540,16 +578,15 @@ std::string AXTree::ToString() const {
 
 AXNode* AXTree::CreateNode(AXNode* parent,
                            int32_t id,
-                           int32_t index_in_parent,
+                           size_t index_in_parent,
                            AXTreeUpdateState* update_state) {
   AXNode* new_node = new AXNode(this, parent, id, index_in_parent);
   id_map_[new_node->id()] = new_node;
   for (AXTreeObserver& observer : observers_) {
-    if (update_state->IsChangedNode(new_node) &&
-        !update_state->IsRemovedNode(new_node))
-      observer.OnNodeCreated(this, new_node);
-    else
+    if (update_state->IsReparentedNode(new_node))
       observer.OnNodeReparented(this, new_node);
+    else
+      observer.OnNodeCreated(this, new_node);
   }
   return new_node;
 }
@@ -804,10 +841,10 @@ void AXTree::DestroySubtree(AXNode* node,
                             AXTreeUpdateState* update_state) {
   DCHECK(update_state);
   for (AXTreeObserver& observer : observers_) {
-    if (!update_state->IsChangedNode(node))
-      observer.OnSubtreeWillBeDeleted(this, node);
-    else
+    if (update_state->IsPotentiallyReparentedNode(node))
       observer.OnSubtreeWillBeReparented(this, node);
+    else
+      observer.OnSubtreeWillBeDeleted(this, node);
   }
   DestroyNodeAndSubtree(node, update_state);
 }
@@ -827,20 +864,20 @@ void AXTree::DestroyNodeAndSubtree(AXNode* node,
   }
 
   for (AXTreeObserver& observer : observers_) {
-    if (!update_state || !update_state->IsChangedNode(node))
-      observer.OnNodeWillBeDeleted(this, node);
-    else
+    if (update_state && update_state->IsPotentiallyReparentedNode(node))
       observer.OnNodeWillBeReparented(this, node);
+    else
+      observer.OnNodeWillBeDeleted(this, node);
   }
   id_map_.erase(node->id());
-  for (int i = 0; i < node->child_count(); ++i)
-    DestroyNodeAndSubtree(node->ChildAtIndex(i), update_state);
+  for (auto* child : node->children())
+    DestroyNodeAndSubtree(child, update_state);
   if (update_state) {
     update_state->pending_nodes.erase(node);
     update_state->removed_node_ids.insert(node->id());
   }
 
-  if (update_state && update_state->IsChangedNode(node)) {
+  if (update_state && update_state->IsReparentedNode(node)) {
     update_state->reparented_node_id_to_data.insert(
         std::make_pair(node->id(), node->TakeData()));
   }
@@ -880,7 +917,6 @@ bool AXTree::CreateNewChildVector(AXNode* node,
   bool success = true;
   for (size_t i = 0; i < new_child_ids.size(); ++i) {
     int32_t child_id = new_child_ids[i];
-    int32_t index_in_parent = static_cast<int32_t>(i);
     AXNode* child = GetFromId(child_id);
     if (child) {
       if (child->parent() != node) {
@@ -895,9 +931,9 @@ bool AXTree::CreateNewChildVector(AXNode* node,
         success = false;
         continue;
       }
-      child->SetIndexInParent(index_in_parent);
+      child->SetIndexInParent(i);
     } else {
-      child = CreateNode(node, child_id, index_in_parent, update_state);
+      child = CreateNode(node, child_id, i, update_state);
       update_state->pending_nodes.insert(child);
       update_state->new_nodes.insert(child);
     }
@@ -927,7 +963,7 @@ int32_t AXTree::GetNextNegativeInternalNodeId() {
 void AXTree::PopulateOrderedSetItems(const AXNode* ordered_set,
                                      const AXNode* local_parent,
                                      std::vector<const AXNode*>& items,
-                                     bool node_is_radio_button) const {
+                                     const AXNode& original_node) const {
   // Stop searching current path if roles of local_parent and ordered set match.
   // Don't compare the container to itself.
   if (!(ordered_set == local_parent)) {
@@ -935,8 +971,58 @@ void AXTree::PopulateOrderedSetItems(const AXNode* ordered_set,
       return;
   }
 
-  for (int i = 0; i < local_parent->child_count(); ++i) {
-    const AXNode* child = local_parent->GetUnignoredChildAtIndex(i);
+  // Initialize necessary variables.
+  // Default hierarchical_level is 0, which represents that no hierarchical
+  // level was detected on original_node.
+  int original_level = original_node.GetIntAttribute(
+      ax::mojom::IntAttribute::kHierarchicalLevel);
+  // If original node is ordered set, then set its hierarchical level equal to
+  // its first child that sets a hierarchical level, if any.
+  if (ordered_set == &original_node) {
+    for (size_t i = 0; i < original_node.GetUnignoredChildCount(); ++i) {
+      int32_t level =
+          original_node.GetUnignoredChildAtIndex(i)->GetIntAttribute(
+              ax::mojom::IntAttribute::kHierarchicalLevel);
+      if (level)
+        original_level =
+            original_level ? std::min(level, original_level) : level;
+    }
+  }
+  size_t original_node_index = original_node.GetUnignoredIndexInParent();
+  bool node_is_radio_button =
+      (original_node.data().role == ax::mojom::Role::kRadioButton);
+
+  for (size_t i = 0; i < local_parent->children().size(); ++i) {
+    const AXNode* child = local_parent->children()[i];
+
+    // Invisible children should not be counted.
+    // However, in the collapsed container case (e.g. a combobox), items can
+    // still be chosen/navigated. However, the options in these collapsed
+    // containers are historically marked invisible. Therefore, in that case,
+    // count the invisible items. Only check 2 levels up, as combobox containers
+    // are never higher.
+    if (child->data().HasState(ax::mojom::State::kInvisible) &&
+        !IsCollapsed(local_parent) && !IsCollapsed(local_parent->parent())) {
+      continue;
+    }
+
+    int child_level =
+        child->GetIntAttribute(ax::mojom::IntAttribute::kHierarchicalLevel);
+
+    if (child_level < original_level) {
+      // If a decrease in level occurs after the original node has been
+      // examined, stop adding to this set.
+      if (original_node_index < i)
+        break;
+
+      // If a decrease in level has been detected before the original node
+      // has been examined, then everything previously added to items actually
+      // belongs to a different set. Clear items vector.
+      items.clear();
+      continue;
+    } else if (child_level > original_level) {
+      continue;
+    }
 
     // If role of node is kRadioButton, only add other kRadioButtons.
     if (node_is_radio_button &&
@@ -952,7 +1038,7 @@ void AXTree::PopulateOrderedSetItems(const AXNode* ordered_set,
     // Recurse if there is a generic container or is ignored.
     if (child->data().role == ax::mojom::Role::kGenericContainer ||
         child->data().role == ax::mojom::Role::kIgnored) {
-      PopulateOrderedSetItems(ordered_set, child, items, node_is_radio_button);
+      PopulateOrderedSetItems(ordered_set, child, items, original_node);
     }
   }
 }
@@ -964,20 +1050,15 @@ void AXTree::ComputeSetSizePosInSetAndCache(const AXNode& node,
                                             const AXNode* ordered_set) {
   DCHECK(ordered_set);
   std::vector<const AXNode*> items;
-
-  // True if the role of AXNode GetPosInSet() was called on is a kRadioButton.
-  bool node_is_radio_button =
-      (node.data().role == ax::mojom::Role::kRadioButton);
-
   // Find all items within ordered_set and add to vector.
-  PopulateOrderedSetItems(ordered_set, ordered_set, items,
-                          node_is_radio_button);
+  PopulateOrderedSetItems(ordered_set, ordered_set, items, node);
 
   // Keep track of the number of elements ordered_set has.
   int32_t num_elements = 0;
-
   // Necessary for calculating set_size.
   int32_t largest_assigned_set_size = 0;
+  int hierarchical_level =
+      node.GetIntAttribute(ax::mojom::IntAttribute::kHierarchicalLevel);
 
   // Compute pos_in_set_values.
   for (size_t i = 0; i < items.size(); ++i) {
@@ -993,6 +1074,13 @@ void AXTree::ComputeSetSizePosInSetAndCache(const AXNode& node,
     pos_in_set_value =
         std::max(pos_in_set_value,
                  item->GetIntAttribute(ax::mojom::IntAttribute::kPosInSet));
+
+    // If level is specified, use author-provided value, if present.
+    if (hierarchical_level != 0 &&
+        item->HasIntAttribute(ax::mojom::IntAttribute::kPosInSet)) {
+      pos_in_set_value =
+          item->GetIntAttribute(ax::mojom::IntAttribute::kPosInSet);
+    }
 
     // Assign pos_in_set and update role counts.
     ordered_set_info_map_[item->id()].pos_in_set = pos_in_set_value;
@@ -1020,22 +1108,38 @@ void AXTree::ComputeSetSizePosInSetAndCache(const AXNode& node,
   int32_t set_size_value = std::max(
       std::max(num_elements, largest_assigned_set_size), ordered_set_candidate);
 
-  // If ordered_set is not in the cache, assign it a new set_size.
-  if (ordered_set_info_map_.find(ordered_set->id()) ==
-      ordered_set_info_map_.end())
-    ordered_set_info_map_[ordered_set->id()] = OrderedSetInfo();
-
   // Assign set_size to ordered_set.
   // Must meet one of two conditions:
   // 1. Node role matches ordered set role.
   // 2. The node that calculations were called on is the ordered_set.
-  if (node.SetRoleMatchesItemRole(ordered_set) || ordered_set == &node)
-    ordered_set_info_map_[ordered_set->id()].set_size = set_size_value;
+  if (node.SetRoleMatchesItemRole(ordered_set) || ordered_set == &node) {
+    auto ordered_set_info_result =
+        ordered_set_info_map_.find(ordered_set->id());
+    // If ordered_set is not in the cache, assign it a new set_size.
+    if (ordered_set_info_result == ordered_set_info_map_.end()) {
+      ordered_set_info_map_[ordered_set->id()] = OrderedSetInfo();
+      ordered_set_info_map_[ordered_set->id()].set_size = set_size_value;
+      ordered_set_info_map_[ordered_set->id()].lowest_hierarchical_level =
+          hierarchical_level;
+    } else {
+      OrderedSetInfo ordered_set_info = ordered_set_info_result->second;
+      if (ordered_set_info.lowest_hierarchical_level > hierarchical_level) {
+        ordered_set_info.set_size = set_size_value;
+        ordered_set_info.lowest_hierarchical_level = hierarchical_level;
+      }
+    }
+  }
 
   // Assign set_size to items.
   for (size_t j = 0; j < items.size(); ++j) {
     const AXNode* item = items[j];
-    ordered_set_info_map_[item->id()].set_size = set_size_value;
+    // If level is specified, use author-provided value, if present.
+    if (hierarchical_level != 0 &&
+        item->HasIntAttribute(ax::mojom::IntAttribute::kSetSize))
+      ordered_set_info_map_[item->id()].set_size =
+          item->GetIntAttribute(ax::mojom::IntAttribute::kSetSize);
+    else
+      ordered_set_info_map_[item->id()].set_size = set_size_value;
   }
 }
 
@@ -1062,6 +1166,14 @@ int32_t AXTree::GetSetSize(const AXNode& node, const AXNode* ordered_set) {
   if (ordered_set_info_map_.find(node.id()) == ordered_set_info_map_.end())
     ComputeSetSizePosInSetAndCache(node, ordered_set);
   return ordered_set_info_map_[node.id()].set_size;
+}
+
+bool AXTree::GetTreeUpdateInProgressState() const {
+  return tree_update_in_progress_;
+}
+
+void AXTree::SetTreeUpdateInProgressState(bool set_tree_update_value) {
+  tree_update_in_progress_ = set_tree_update_value;
 }
 
 }  // namespace ui

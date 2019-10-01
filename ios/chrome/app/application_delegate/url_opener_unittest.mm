@@ -16,6 +16,7 @@
 #import "ios/chrome/browser/tabs/tab_model.h"
 #import "ios/chrome/browser/ui/main/test/stub_browser_interface.h"
 #import "ios/chrome/browser/ui/main/test/stub_browser_interface_provider.h"
+#import "ios/chrome/browser/url_loading/url_loading_params.h"
 #import "ios/chrome/browser/web_state_list/web_state_list.h"
 #import "ios/chrome/test/base/scoped_block_swizzler.h"
 #include "ios/web/public/test/test_web_thread_bundle.h"
@@ -64,20 +65,7 @@ enum class ExternalFilesLoadedInWebStateFeature {
 
 @end
 
-class URLOpenerTest
-    : public PlatformTest,
-      public testing::WithParamInterface<ExternalFilesLoadedInWebStateFeature> {
- protected:
-  URLOpenerTest() {
-    if (GetParam() == ExternalFilesLoadedInWebStateFeature::Enabled) {
-      scoped_feature_list_.InitAndEnableFeature(
-          experimental_flags::kExternalFilesLoadedInWebState);
-    } else {
-      scoped_feature_list_.InitAndDisableFeature(
-          experimental_flags::kExternalFilesLoadedInWebState);
-    }
-  }
-
+class URLOpenerTest : public PlatformTest {
  private:
   web::TestWebThreadBundle thread_bundle_;
   base::test::ScopedFeatureList scoped_feature_list_;
@@ -186,20 +174,19 @@ TEST_P(URLOpenerTest, HandleOpenURL) {
             else
               EXPECT_EQ(nil, startupInformation.startupParameters);
           } else if (result) {
-            if (GetParam() == ExternalFilesLoadedInWebStateFeature::Enabled) {
-              if ([params completeURL].SchemeIsFile()) {
-                // External file:// URL will be loaded by WebState, which
-                // expects complete // file:// URL. chrome:// URL is expected to
-                // be displayed in the omnibox, and omnibox shows virtual URL.
-                EXPECT_EQ([params completeURL], [tabOpener url]);
-                EXPECT_EQ([params externalURL], [tabOpener virtualURL]);
-              } else {
-                // External chromium-x-callback:// URL will be loaded by
-                // WebState, which expects externalURL URL.
-                EXPECT_EQ([params externalURL], [tabOpener url]);
-              }
+            if ([params completeURL].SchemeIsFile()) {
+              // External file:// URL will be loaded by WebState, which expects
+              // complete // file:// URL. chrome:// URL is expected to be
+              // displayed in the omnibox, and omnibox shows virtual URL.
+              EXPECT_EQ([params completeURL],
+                        tabOpener.urlLoadParams.web_params.url);
+              EXPECT_EQ([params externalURL],
+                        tabOpener.urlLoadParams.web_params.virtual_url);
             } else {
-              EXPECT_EQ([params externalURL], [tabOpener url]);
+              // External chromium-x-callback:// URL will be loaded by
+              // WebState, which expects externalURL URL.
+              EXPECT_EQ([params externalURL],
+                        tabOpener.urlLoadParams.web_params.url);
             }
             tabOpener.completionBlock();
             EXPECT_EQ(nil, startupInformation.startupParameters);

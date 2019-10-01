@@ -6,14 +6,15 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/memory/weak_ptr.h"
 #include "base/values.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
 #include "ios/chrome/browser/omaha/omaha_service.h"
 #include "ios/chrome/grit/ios_resources.h"
-#include "ios/web/public/web_ui_ios_data_source.h"
 #include "ios/web/public/webui/web_ui_ios.h"
+#include "ios/web/public/webui/web_ui_ios_data_source.h"
 #include "ios/web/public/webui/web_ui_ios_message_handler.h"
 
 using web::WebUIIOSMessageHandler;
@@ -27,7 +28,6 @@ web::WebUIIOSDataSource* CreateOmahaUIHTMLSource() {
   source->SetJsonPath("strings.js");
   source->AddResourcePath("omaha.js", IDR_IOS_OMAHA_JS);
   source->SetDefaultResource(IDR_IOS_OMAHA_HTML);
-  source->UseGzip();
   return source;
 }
 
@@ -76,8 +76,8 @@ void OmahaDOMHandler::HandleRequestDebugInformation(
 
 void OmahaDOMHandler::OnDebugInformationAvailable(
     base::DictionaryValue* debug_information) {
-  web_ui()->CallJavascriptFunction("updateOmahaDebugInformation",
-                                   *debug_information);
+  std::vector<const base::Value*> args{debug_information};
+  web_ui()->CallJavascriptFunction("updateOmahaDebugInformation", args);
 }
 
 }  // namespace

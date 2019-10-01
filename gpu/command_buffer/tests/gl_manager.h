@@ -47,7 +47,7 @@ namespace gles2 {
 class GLES2CmdHelper;
 class GLES2Implementation;
 
-};
+}  // namespace gles2
 
 class GLManager : private GpuControl {
  public:
@@ -164,6 +164,7 @@ class GLManager : private GpuControl {
                        base::OnceClosure callback) override;
   void WaitSyncToken(const gpu::SyncToken& sync_token) override;
   bool CanWaitUnverifiedSyncToken(const gpu::SyncToken& sync_token) override;
+  void SetDisplayTransform(gfx::OverlayTransform transform) override;
 
   size_t GetSharedMemoryBytesAllocated() const;
   ContextType GetContextType() const;

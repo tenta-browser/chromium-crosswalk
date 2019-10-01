@@ -39,6 +39,22 @@ void BackgroundSyncMetrics::RecordEventStarted(bool started_in_foreground) {
 }
 
 // static
+void BackgroundSyncMetrics::RecordRegistrationComplete(
+    bool event_succeeded,
+    int num_attempts_required) {
+  UMA_HISTOGRAM_BOOLEAN(
+      "BackgroundSync.Registration.OneShot.EventSucceededAtCompletion",
+      event_succeeded);
+
+  if (!event_succeeded)
+    return;
+
+  UMA_HISTOGRAM_EXACT_LINEAR(
+      "BackgroundSync.Registration.OneShot.NumAttemptsForSuccessfulEvent",
+      num_attempts_required, 50);
+}
+
+// static
 void BackgroundSyncMetrics::RecordEventResult(bool success,
                                               bool finished_in_foreground) {
   UMA_HISTOGRAM_ENUMERATION(
@@ -71,14 +87,19 @@ void BackgroundSyncMetrics::CountRegisterSuccess(
                         registration_could_fire == REGISTRATION_COULD_FIRE);
   UMA_HISTOGRAM_BOOLEAN("BackgroundSync.Registration.OneShot.IsDuplicate",
                         registration_is_duplicate == REGISTRATION_IS_DUPLICATE);
-  return;
 }
 
 // static
 void BackgroundSyncMetrics::CountRegisterFailure(BackgroundSyncStatus result) {
   UMA_HISTOGRAM_ENUMERATION("BackgroundSync.Registration.OneShot", result,
                             BACKGROUND_SYNC_STATUS_MAX + 1);
-  return;
+}
+
+// static
+void BackgroundSyncMetrics::CountUnregisterPeriodicSync(
+    BackgroundSyncStatus status) {
+  UMA_HISTOGRAM_ENUMERATION("BackgroundSync.Unregistration.Periodic", status,
+                            BACKGROUND_SYNC_STATUS_MAX + 1);
 }
 
 }  // namespace content

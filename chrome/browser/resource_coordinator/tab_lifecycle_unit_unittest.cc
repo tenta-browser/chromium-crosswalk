@@ -7,9 +7,11 @@
 #include <memory>
 #include <string>
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
 #include "base/test/simple_test_tick_clock.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
@@ -37,8 +39,8 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/referrer.h"
 #include "content/public/test/web_contents_tester.h"
-#include "device/usb/public/cpp/fake_usb_device_manager.h"
-#include "device/usb/public/mojom/device_manager.mojom.h"
+#include "services/device/public/cpp/test/fake_usb_device_manager.h"
+#include "services/device/public/mojom/usb_manager.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace resource_coordinator {
@@ -53,10 +55,14 @@ class MockTabLifecycleObserver : public TabLifecycleObserver {
  public:
   MockTabLifecycleObserver() = default;
 
-  MOCK_METHOD2(OnDiscardedStateChange,
-               void(content::WebContents* contents, bool is_discarded));
+  MOCK_METHOD3(OnDiscardedStateChange,
+               void(content::WebContents* contents,
+                    LifecycleUnitDiscardReason reason,
+                    bool is_discarded));
   MOCK_METHOD2(OnAutoDiscardableStateChange,
                void(content::WebContents* contents, bool is_auto_discardable));
+  MOCK_METHOD2(OnFrozenStateChange,
+               void(content::WebContents* contents, bool is_frozen));
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockTabLifecycleObserver);
@@ -89,6 +95,8 @@ class TabLifecycleUnitTest : public testing::ChromeTestHarnessWithLocalDB {
   class ScopedEnterpriseOptOut;
 
   TabLifecycleUnitTest() : scoped_set_tick_clock_for_testing_(&test_clock_) {
+    // Advance the clock so that it doesn't yield null time ticks.
+    test_clock_.Advance(base::TimeDelta::FromSeconds(1));
     observers_.AddObserver(&observer_);
   }
 
@@ -193,7 +201,7 @@ void TabLifecycleUnitTest::TestCannotDiscardBasedOnHeuristicUsage(
   test_clock_.Advance(kBackgroundUrgentProtectionTime);
 
   auto* observer = ResourceCoordinatorTabHelper::FromWebContents(web_contents_)
-                       ->local_site_characteristics_wc_observer_for_testing();
+                       ->local_site_characteristics_wc_observer();
   test_clock_.Advance(base::TimeDelta::FromSeconds(1));
   testing::MarkWebContentsAsLoadedInBackground(web_contents_);
   if (notify_feature_usage_method) {
@@ -230,7 +238,7 @@ void TabLifecycleUnitTest::TestCannotDiscardBasedOnHeuristicUsage(
   }
 
   testing::GetLocalSiteCharacteristicsDataImplForWC(web_contents_)
-      ->NotifySiteUnloaded(TabVisibility::kBackground);
+      ->NotifySiteUnloaded(performance_manager::TabVisibility::kBackground);
 }
 
 TEST_F(TabLifecycleUnitTest, AsTabLifecycleUnitExternal) {
@@ -259,14 +267,14 @@ TEST_F(TabLifecycleUnitTest, SetFocused) {
   ExpectCanDiscardTrueAllReasons(&tab_lifecycle_unit);
 
   tab_lifecycle_unit.SetFocused(true);
-  tab_strip_model_->ActivateTabAt(0, false);
+  tab_strip_model_->ActivateTabAt(0);
   web_contents_->WasShown();
   EXPECT_EQ(base::TimeTicks::Max(), tab_lifecycle_unit.GetLastFocusedTime());
   ExpectCanDiscardFalseAllReasons(&tab_lifecycle_unit,
                                   DecisionFailureReason::LIVE_STATE_VISIBLE);
 
   tab_lifecycle_unit.SetFocused(false);
-  tab_strip_model_->ActivateTabAt(1, false);
+  tab_strip_model_->ActivateTabAt(1);
   web_contents_->WasHidden();
   EXPECT_EQ(test_clock_.NowTicks(), tab_lifecycle_unit.GetLastFocusedTime());
   // Advance time enough that the tab is urgent discardable.
@@ -314,7 +322,7 @@ TEST_F(TabLifecycleUnitTest, CannotDiscardActive) {
                                       usage_clock_.get(), web_contents_,
                                       tab_strip_model_.get());
 
-  tab_strip_model_->ActivateTabAt(0, false);
+  tab_strip_model_->ActivateTabAt(0);
 
   // Advance time enough that the tab is urgent discardable.
   test_clock_.Advance(kBackgroundUrgentProtectionTime);
@@ -684,7 +692,9 @@ TEST_F(TabLifecycleUnitTest, CannotFreezeAFrozenTab) {
     DecisionDetails decision_details;
     EXPECT_TRUE(tab_lifecycle_unit.CanFreeze(&decision_details));
   }
+  EXPECT_CALL(observer_, OnFrozenStateChange(web_contents_, true));
   tab_lifecycle_unit.Freeze();
+  ::testing::Mock::VerifyAndClear(&observer_);
   {
     DecisionDetails decision_details;
     EXPECT_FALSE(tab_lifecycle_unit.CanFreeze(&decision_details));
@@ -827,7 +837,10 @@ TEST_F(TabLifecycleUnitTest, ReloadingAFrozenTabUnfreezeIt) {
   DecisionDetails decision_details;
   EXPECT_TRUE(tab_lifecycle_unit.CanFreeze(&decision_details));
 
+  EXPECT_CALL(observer_, OnFrozenStateChange(web_contents_, true));
   tab_lifecycle_unit.Freeze();
+  ::testing::Mock::VerifyAndClear(&observer_);
+
   web_contents_->GetController().Reload(content::ReloadType::NORMAL, false);
   EXPECT_NE(LifecycleUnitState::FROZEN, tab_lifecycle_unit.GetState());
 }

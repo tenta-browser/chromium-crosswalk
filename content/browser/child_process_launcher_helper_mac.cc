@@ -4,6 +4,7 @@
 
 #include "base/command_line.h"
 #include "base/feature_list.h"
+#include "base/metrics/field_trial.h"
 #include "base/path_service.h"
 #include "base/posix/global_descriptors.h"
 #include "base/strings/stringprintf.h"
@@ -20,18 +21,10 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/common/result_codes.h"
 #include "content/public/common/sandboxed_process_launcher_delegate.h"
+#include "mojo/public/cpp/platform/features.h"
 #include "sandbox/mac/seatbelt_exec.h"
 #include "services/service_manager/embedder/result_codes.h"
-#include "services/service_manager/sandbox/mac/audio.sb.h"
-#include "services/service_manager/sandbox/mac/cdm.sb.h"
-#include "services/service_manager/sandbox/mac/common.sb.h"
-#include "services/service_manager/sandbox/mac/gpu_v2.sb.h"
-#include "services/service_manager/sandbox/mac/nacl_loader.sb.h"
-#include "services/service_manager/sandbox/mac/network.sb.h"
-#include "services/service_manager/sandbox/mac/pdf_compositor.sb.h"
-#include "services/service_manager/sandbox/mac/ppapi.sb.h"
-#include "services/service_manager/sandbox/mac/renderer.sb.h"
-#include "services/service_manager/sandbox/mac/utility.sb.h"
+#include "services/service_manager/sandbox/mac/sandbox_mac.h"
 #include "services/service_manager/sandbox/sandbox.h"
 #include "services/service_manager/sandbox/sandbox_type.h"
 #include "services/service_manager/sandbox/switches.h"
@@ -59,13 +52,23 @@ ChildProcessLauncherHelper::GetFilesToMap() {
 }
 
 bool ChildProcessLauncherHelper::BeforeLaunchOnLauncherThread(
-    const FileMappedForLaunch& files_to_register,
+    FileMappedForLaunch& files_to_register,
     base::LaunchOptions* options) {
   // Convert FD mapping to FileHandleMappingVector.
   options->fds_to_remap = files_to_register.GetMappingWithIDAdjustment(
       base::GlobalDescriptors::kBaseDescriptor);
 
-  options->environ = delegate_->GetEnvironment();
+  base::FieldTrialList::InsertFieldTrialHandleIfNeeded(
+      &options->mach_ports_for_rendezvous);
+
+  if (base::FeatureList::IsEnabled(mojo::features::kMojoChannelMac)) {
+    options->mach_ports_for_rendezvous.insert(std::make_pair(
+        'mojo', base::MachRendezvousPort(mojo_channel_->TakeRemoteEndpoint()
+                                             .TakePlatformHandle()
+                                             .TakeMachReceiveRight())));
+  }
+
+  options->environment = delegate_->GetEnvironment();
 
   auto sandbox_type =
       service_manager::SandboxTypeFromCommandLine(*command_line_);
@@ -80,77 +83,17 @@ bool ChildProcessLauncherHelper::BeforeLaunchOnLauncherThread(
   if (use_v2 && !no_sandbox) {
     // Generate the profile string.
     std::string profile =
-        std::string(service_manager::kSeatbeltPolicyString_common);
-
-    switch (sandbox_type) {
-      case service_manager::SANDBOX_TYPE_CDM:
-        profile += service_manager::kSeatbeltPolicyString_cdm;
-        break;
-      case service_manager::SANDBOX_TYPE_GPU:
-        profile += service_manager::kSeatbeltPolicyString_gpu_v2;
-        break;
-      case service_manager::SANDBOX_TYPE_NACL_LOADER:
-        profile += service_manager::kSeatbeltPolicyString_nacl_loader;
-        break;
-      case service_manager::SANDBOX_TYPE_PPAPI:
-        profile += service_manager::kSeatbeltPolicyString_ppapi;
-        break;
-      case service_manager::SANDBOX_TYPE_RENDERER:
-        profile += service_manager::kSeatbeltPolicyString_renderer;
-        break;
-      case service_manager::SANDBOX_TYPE_PDF_COMPOSITOR:
-        profile += service_manager::kSeatbeltPolicyString_pdf_compositor;
-        break;
-      case service_manager::SANDBOX_TYPE_AUDIO:
-        profile += service_manager::kSeatbeltPolicyString_audio;
-        break;
-      case service_manager::SANDBOX_TYPE_NETWORK:
-        profile += service_manager::kSeatbeltPolicyString_network;
-        break;
-      case service_manager::SANDBOX_TYPE_UTILITY:
-      case service_manager::SANDBOX_TYPE_PROFILING:
-        profile += service_manager::kSeatbeltPolicyString_utility;
-        break;
-      case service_manager::SANDBOX_TYPE_INVALID:
-      case service_manager::SANDBOX_TYPE_FIRST_TYPE:
-      case service_manager::SANDBOX_TYPE_AFTER_LAST_TYPE:
-        CHECK(false);
-        break;
-    }
+        service_manager::SandboxMac::GetSandboxProfile(sandbox_type);
 
     // Disable os logging to com.apple.diagnosticd which is a performance
     // problem.
-    options->environ.insert(std::make_pair("OS_ACTIVITY_MODE", "disable"));
+    options->environment.insert(std::make_pair("OS_ACTIVITY_MODE", "disable"));
 
     seatbelt_exec_client_ = std::make_unique<sandbox::SeatbeltExecClient>();
     seatbelt_exec_client_->SetProfile(profile);
 
-    switch (sandbox_type) {
-      case service_manager::SANDBOX_TYPE_CDM:
-        SetupCDMSandboxParameters(seatbelt_exec_client_.get());
-        break;
-      case service_manager::SANDBOX_TYPE_GPU:
-      case service_manager::SANDBOX_TYPE_NACL_LOADER:
-      case service_manager::SANDBOX_TYPE_RENDERER:
-      case service_manager::SANDBOX_TYPE_PDF_COMPOSITOR:
-      case service_manager::SANDBOX_TYPE_AUDIO:
-        SetupCommonSandboxParameters(seatbelt_exec_client_.get());
-        break;
-      case service_manager::SANDBOX_TYPE_NETWORK:
-        SetupNetworkSandboxParameters(seatbelt_exec_client_.get());
-        break;
-      case service_manager::SANDBOX_TYPE_PPAPI:
-        SetupPPAPISandboxParameters(seatbelt_exec_client_.get());
-        break;
-      case service_manager::SANDBOX_TYPE_UTILITY:
-      case service_manager::SANDBOX_TYPE_PROFILING:
-        SetupUtilitySandboxParameters(seatbelt_exec_client_.get(),
-                                      *command_line_.get());
-        break;
-      default:
-        CHECK(false) << "Unhandled parameters for sandbox_type "
-                     << sandbox_type;
-    }
+    SetupSandboxParameters(sandbox_type, *command_line_.get(),
+                           seatbelt_exec_client_.get());
 
     int pipe = seatbelt_exec_client_->GetReadFD();
     if (pipe < 0) {

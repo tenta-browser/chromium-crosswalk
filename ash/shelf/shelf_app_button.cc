@@ -12,7 +12,7 @@
 #include "ash/shelf/shelf.h"
 #include "ash/shelf/shelf_constants.h"
 #include "ash/shelf/shelf_view.h"
-#include "ash/system/tray/tray_popup_utils.h"
+#include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
 #include "base/time/time.h"
@@ -294,8 +294,7 @@ class ShelfAppButton::AppStatusIndicatorView
 // static
 const char ShelfAppButton::kViewClassName[] = "ash/ShelfAppButton";
 
-ShelfAppButton::ShelfAppButton(ShelfView* shelf_view,
-                               const base::string16& title)
+ShelfAppButton::ShelfAppButton(ShelfView* shelf_view)
     : ShelfButton(shelf_view),
       icon_view_(new views::ImageView()),
       indicator_(new AppStatusIndicatorView()),
@@ -304,7 +303,6 @@ ShelfAppButton::ShelfAppButton(ShelfView* shelf_view,
       destroyed_flag_(nullptr),
       is_notification_indicator_enabled_(
           features::IsNotificationIndicatorEnabled()) {
-  SetTitle(title);
   const gfx::ShadowValue kShadows[] = {
       gfx::ShadowValue(gfx::Vector2d(0, 2), 0, SkColorSetARGB(0x1A, 0, 0, 0)),
       gfx::ShadowValue(gfx::Vector2d(0, 3), 1, SkColorSetARGB(0x1A, 0, 0, 0)),
@@ -317,8 +315,8 @@ ShelfAppButton::ShelfAppButton(ShelfView* shelf_view,
   // the ink drop ripple.
   icon_view_->SetPaintToLayer();
   icon_view_->layer()->SetFillsBoundsOpaquely(false);
-  icon_view_->SetHorizontalAlignment(views::ImageView::CENTER);
-  icon_view_->SetVerticalAlignment(views::ImageView::LEADING);
+  icon_view_->SetHorizontalAlignment(views::ImageView::Alignment::kCenter);
+  icon_view_->SetVerticalAlignment(views::ImageView::Alignment::kLeading);
   // Do not make this interactive, so that events are sent to ShelfView.
   icon_view_->set_can_process_events_within_subtree(false);
 
@@ -331,8 +329,6 @@ ShelfAppButton::ShelfAppButton(ShelfView* shelf_view,
     notification_indicator_->SetVisible(false);
     AddChildView(notification_indicator_);
   }
-
-  SetFocusPainter(TrayPopupUtils::CreateFocusPainter());
 }
 
 ShelfAppButton::~ShelfAppButton() {
@@ -343,10 +339,6 @@ ShelfAppButton::~ShelfAppButton() {
 void ShelfAppButton::SetShadowedImage(const gfx::ImageSkia& image) {
   icon_view_->SetImage(gfx::ImageSkiaOperations::CreateImageWithDropShadow(
       image, icon_shadows_));
-}
-
-void ShelfAppButton::SetTitle(const base::string16 title) {
-  SetAccessibleName(title);
 }
 
 void ShelfAppButton::SetImage(const gfx::ImageSkia& image) {
@@ -717,12 +709,12 @@ void ShelfAppButton::UpdateState() {
                           state_ & STATE_ACTIVE));
   indicator_->SetHorizontalShelf(is_horizontal_shelf);
 
-  icon_view_->SetHorizontalAlignment(is_horizontal_shelf
-                                         ? views::ImageView::CENTER
-                                         : views::ImageView::LEADING);
+  icon_view_->SetHorizontalAlignment(
+      is_horizontal_shelf ? views::ImageView::Alignment::kCenter
+                          : views::ImageView::Alignment::kLeading);
   icon_view_->SetVerticalAlignment(is_horizontal_shelf
-                                       ? views::ImageView::LEADING
-                                       : views::ImageView::CENTER);
+                                       ? views::ImageView::Alignment::kLeading
+                                       : views::ImageView::Alignment::kCenter);
   SchedulePaint();
 }
 

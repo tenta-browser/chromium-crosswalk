@@ -7,16 +7,10 @@
 #include <memory>
 
 #include "base/memory/ptr_util.h"
-#include "third_party/blink/renderer/platform/memory_coordinator.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
 #include "third_party/blink/renderer/platform/wtf/threading.h"
 
 namespace blink {
-
-std::unique_ptr<WebThreadSupportingGC> WebThreadSupportingGC::Create(
-    const ThreadCreationParams& params) {
-  return base::WrapUnique(new WebThreadSupportingGC(params));
-}
 
 WebThreadSupportingGC::WebThreadSupportingGC(
     const ThreadCreationParams& params) {
@@ -24,22 +18,24 @@ WebThreadSupportingGC::WebThreadSupportingGC(
 #if DCHECK_IS_ON()
   WTF::WillCreateThread();
 #endif
-  if (!thread_) {
-    if (params.thread_type == WebThreadType::kAudioWorkletThread) {
-      thread_ = Thread::CreateWebAudioThread();
-    } else {
-      thread_ = Thread::CreateThread(params);
-    }
+  if (params.thread_type == WebThreadType::kAudioWorkletThread) {
+    thread_ = Thread::CreateWebAudioThread();
+  } else {
+    ThreadCreationParams gc_enabled_params = params;
+    gc_enabled_params.supports_gc = true;
+    thread_ = Thread::CreateThread(gc_enabled_params);
   }
-  MemoryCoordinator::Instance().RegisterThread(thread_.get());
 }
 
 WebThreadSupportingGC::~WebThreadSupportingGC() {
   DETACH_FROM_THREAD(thread_checker_);
-  Thread* thread_pointer = thread_.get();
   // blink::Thread's destructor blocks until all the tasks are processed.
   thread_.reset();
-  MemoryCoordinator::Instance().UnregisterThread(thread_pointer);
+}
+
+scoped_refptr<base::SingleThreadTaskRunner>
+WebThreadSupportingGC::GetTaskRunner() const {
+  return thread_->GetTaskRunner();
 }
 
 void WebThreadSupportingGC::InitializeOnThread() {

@@ -52,23 +52,22 @@ bool FakeVideoEncodeAccelerator::Initialize(const Config& config,
   client_ = client;
   task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&FakeVideoEncodeAccelerator::DoRequireBitstreamBuffers,
-                 weak_this_factory_.GetWeakPtr(), kMinimumInputCount,
-                 config.input_visible_size, kMinimumOutputBufferSize));
+      base::BindOnce(&FakeVideoEncodeAccelerator::DoRequireBitstreamBuffers,
+                     weak_this_factory_.GetWeakPtr(), kMinimumInputCount,
+                     config.input_visible_size, kMinimumOutputBufferSize));
   return true;
 }
 
-void FakeVideoEncodeAccelerator::Encode(
-    const scoped_refptr<VideoFrame>& frame,
-    bool force_keyframe) {
+void FakeVideoEncodeAccelerator::Encode(scoped_refptr<VideoFrame> frame,
+                                        bool force_keyframe) {
   DCHECK(client_);
   queued_frames_.push(force_keyframe);
   EncodeTask();
 }
 
 void FakeVideoEncodeAccelerator::UseOutputBitstreamBuffer(
-    const BitstreamBuffer& buffer) {
-  available_buffers_.push_back(buffer);
+    BitstreamBuffer buffer) {
+  available_buffers_.push_back(std::move(buffer));
   EncodeTask();
 }
 
@@ -88,12 +87,9 @@ void FakeVideoEncodeAccelerator::Destroy() { delete this; }
 
 void FakeVideoEncodeAccelerator::SendDummyFrameForTesting(bool key_frame) {
   task_runner_->PostTask(
-        FROM_HERE,
-        base::Bind(&FakeVideoEncodeAccelerator::DoBitstreamBufferReady,
-                   weak_this_factory_.GetWeakPtr(),
-                   0,
-                   23,
-                   key_frame));
+      FROM_HERE,
+      base::BindOnce(&FakeVideoEncodeAccelerator::DoBitstreamBufferReady,
+                     weak_this_factory_.GetWeakPtr(), 0, 23, key_frame));
 }
 
 void FakeVideoEncodeAccelerator::SetWillInitializationSucceed(
@@ -119,11 +115,9 @@ void FakeVideoEncodeAccelerator::EncodeTask() {
     next_frame_is_first_frame_ = false;
     task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&FakeVideoEncodeAccelerator::DoBitstreamBufferReady,
-                   weak_this_factory_.GetWeakPtr(),
-                   bitstream_buffer_id,
-                   kMinimumOutputBufferSize,
-                   key_frame));
+        base::BindOnce(&FakeVideoEncodeAccelerator::DoBitstreamBufferReady,
+                       weak_this_factory_.GetWeakPtr(), bitstream_buffer_id,
+                       kMinimumOutputBufferSize, key_frame));
   }
 }
 

@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "base/auto_reset.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
@@ -212,8 +213,11 @@ std::unique_ptr<Layer> Layer::Clone() const {
   clone->SetMasksToBounds(GetMasksToBounds());
   clone->SetOpacity(GetTargetOpacity());
   clone->SetVisible(GetTargetVisibility());
+  clone->SetAcceptEvents(accept_events());
   clone->SetFillsBoundsOpaquely(fills_bounds_opaquely_);
   clone->SetFillsBoundsCompletely(fills_bounds_completely_);
+  clone->SetRoundedCornerRadius(rounded_corner_radii());
+  clone->SetIsFastRoundedCorner(is_fast_rounded_corner());
   clone->set_name(name_);
 
   return clone;
@@ -552,6 +556,13 @@ void Layer::SetVisible(bool visible) {
   GetAnimator()->SetVisibility(visible);
 }
 
+void Layer::SetAcceptEvents(bool accept_events) {
+  if (accept_events_ == accept_events)
+    return;
+  accept_events_ = accept_events;
+  cc_layer_->SetHitTestable(visible_ && accept_events_);
+}
+
 bool Layer::GetTargetVisibility() const {
   if (animator_ && animator_->IsAnimatingProperty(
       LayerAnimationElement::VISIBILITY))
@@ -568,6 +579,22 @@ bool Layer::IsDrawn() const {
 
 bool Layer::ShouldDraw() const {
   return type_ != LAYER_NOT_DRAWN && GetCombinedOpacity() > 0.0f;
+}
+
+void Layer::SetRoundedCornerRadius(const gfx::RoundedCornersF& corner_radii) {
+  cc_layer_->SetRoundedCorner(corner_radii);
+  ScheduleDraw();
+
+  for (const auto& mirror : mirrors_)
+    mirror->dest()->SetRoundedCornerRadius(corner_radii);
+}
+
+void Layer::SetIsFastRoundedCorner(bool enable) {
+  cc_layer_->SetIsFastRoundedCorner(enable);
+  ScheduleDraw();
+
+  for (const auto& mirror : mirrors_)
+    mirror->dest()->SetIsFastRoundedCorner(enable);
 }
 
 // static
@@ -609,6 +636,9 @@ void Layer::SetFillsBoundsOpaquely(bool fills_bounds_opaquely) {
   fills_bounds_opaquely_ = fills_bounds_opaquely;
 
   cc_layer_->SetContentsOpaque(fills_bounds_opaquely);
+
+  if (delegate_)
+    delegate_->OnLayerFillsBoundsOpaquelyChanged();
 }
 
 void Layer::SetFillsBoundsCompletely(bool fills_bounds_completely) {
@@ -635,8 +665,12 @@ void Layer::SwitchToLayer(scoped_refptr<cc::Layer> new_layer) {
   new_layer->SetTransform(cc_layer_->transform());
   new_layer->SetPosition(cc_layer_->position());
   new_layer->SetBackgroundColor(cc_layer_->background_color());
+  new_layer->SetSafeOpaqueBackgroundColor(
+      cc_layer_->SafeOpaqueBackgroundColor());
   new_layer->SetCacheRenderSurface(cc_layer_->cache_render_surface());
   new_layer->SetTrilinearFiltering(cc_layer_->trilinear_filtering());
+  new_layer->SetRoundedCorner(cc_layer_->corner_radii());
+  new_layer->SetIsFastRoundedCorner(cc_layer_->is_fast_rounded_corner());
 
   cc_layer_ = new_layer.get();
   if (content_layer_) {
@@ -655,6 +689,7 @@ void Layer::SwitchToLayer(scoped_refptr<cc::Layer> new_layer) {
   cc_layer_->SetTransformOrigin(gfx::Point3F());
   cc_layer_->SetContentsOpaque(fills_bounds_opaquely_);
   cc_layer_->SetIsDrawable(type_ != LAYER_NOT_DRAWN);
+  cc_layer_->SetHitTestable(visible_ && accept_events_);
   cc_layer_->SetHideLayerAndSubtree(!visible_);
   cc_layer_->SetBackdropFilterQuality(backdrop_filter_quality_);
   cc_layer_->SetElementId(cc::ElementId(cc_layer_->id()));
@@ -748,6 +783,15 @@ void Layer::SetSurfaceSize(gfx::Size surface_size_in_dip) {
   RecomputeDrawsContentAndUVRect();
 }
 
+bool Layer::ContainsMirrorForTest(Layer* mirror) const {
+  const auto it =
+      std::find_if(mirrors_.begin(), mirrors_.end(),
+                   [mirror](const std::unique_ptr<LayerMirror>& mirror_ptr) {
+                     return mirror_ptr.get()->dest() == mirror;
+                   });
+  return it != mirrors_.end();
+}
+
 void Layer::SetTransferableResource(
     const viz::TransferableResource& resource,
     std::unique_ptr<viz::SingleReleaseCallback> release_callback,
@@ -813,6 +857,7 @@ void Layer::SetShowSurface(const viz::SurfaceId& surface_id,
 
   surface_layer_->SetSurfaceId(surface_id, deadline_policy);
   surface_layer_->SetBackgroundColor(default_background_color);
+  surface_layer_->SetSafeOpaqueBackgroundColor(default_background_color);
   surface_layer_->SetStretchContentToFillBounds(stretch_content_to_fill_bounds);
 
   frame_size_in_dip_ = frame_size_in_dip;
@@ -849,10 +894,11 @@ void Layer::SetShowReflectedSurface(const viz::SurfaceId& surface_id,
   surface_layer_->SetSurfaceId(surface_id,
                                cc::DeadlinePolicy::UseInfiniteDeadline());
   surface_layer_->SetBackgroundColor(SK_ColorBLACK);
-  // TODO(kylechar): Include UV transform and don't stretch to fill bounds.
+  surface_layer_->SetSafeOpaqueBackgroundColor(SK_ColorBLACK);
   surface_layer_->SetStretchContentToFillBounds(true);
+  surface_layer_->SetIsReflection(true);
 
-  // The reflecting surface uses the native size of the display.
+  // The reflecting surface uses the native size of the reflected display.
   frame_size_in_dip_ = frame_size_in_pixels;
   RecomputeDrawsContentAndUVRect();
 }
@@ -960,6 +1006,11 @@ void Layer::ScheduleDraw() {
 }
 
 void Layer::SendDamagedRects() {
+  if (layer_mask_)
+    layer_mask_->SendDamagedRects();
+  if (delegate_)
+    delegate_->UpdateVisualState();
+
   if (damaged_region_.IsEmpty())
     return;
   if (!delegate_ && transfer_resource_.mailbox_holder.mailbox.IsZero())
@@ -969,8 +1020,6 @@ void Layer::SendDamagedRects() {
 
   for (gfx::Rect damaged_rect : damaged_region_)
     cc_layer_->SetNeedsDisplayRect(damaged_rect);
-  if (layer_mask_)
-    layer_mask_->SendDamagedRects();
 
   if (content_layer_)
     paint_region_.Union(damaged_region_);
@@ -986,6 +1035,37 @@ void Layer::CompleteAllAnimations() {
        ++it) {
     (*it)->StopAnimating();
   }
+}
+
+void Layer::StackChildrenAtBottom(
+    const std::vector<Layer*>& new_leading_children) {
+  std::vector<Layer*> new_children_order;
+  new_children_order.reserve(children_.size());
+
+  cc::LayerList new_cc_children_order;
+  new_cc_children_order.reserve(cc_layer_->children().size());
+
+  for (Layer* leading_child : new_leading_children) {
+    DCHECK_EQ(leading_child->cc_layer_->parent(), cc_layer_);
+    DCHECK_EQ(leading_child->parent(), this);
+    new_children_order.emplace_back(leading_child);
+    new_cc_children_order.emplace_back(
+        scoped_refptr<cc::Layer>(leading_child->cc_layer_));
+  }
+
+  base::flat_set<Layer*> reordered_children(new_children_order);
+
+  const cc::LayerList& old_cc_children_order = cc_layer_->children();
+
+  for (size_t i = 0; i < children_.size(); ++i) {
+    if (reordered_children.count(children_.at(i)) > 0)
+      continue;
+    new_children_order.emplace_back(children_.at(i));
+    new_cc_children_order.emplace_back(old_cc_children_order.at(i));
+  }
+
+  children_ = std::move(new_children_order);
+  cc_layer_->ReorderChildren(&new_cc_children_order);
 }
 
 void Layer::SuppressPaint() {
@@ -1022,8 +1102,8 @@ void Layer::OnDeviceScaleFactorChanged(float device_scale_factor) {
 }
 
 void Layer::SetDidScrollCallback(
-    base::Callback<void(const gfx::ScrollOffset&, const cc::ElementId&)>
-        callback) {
+    base::RepeatingCallback<void(const gfx::ScrollOffset&,
+                                 const cc::ElementId&)> callback) {
   cc_layer_->set_did_scroll_callback(std::move(callback));
 }
 
@@ -1102,7 +1182,7 @@ bool Layer::PrepareTransferableResource(
 }
 
 std::unique_ptr<base::trace_event::TracedValue> Layer::TakeDebugInfo(
-    cc::Layer* layer) {
+    const cc::Layer* layer) {
   auto value = std::make_unique<base::trace_event::TracedValue>();
   value->SetString("layer_name", name_);
   return value;
@@ -1186,9 +1266,10 @@ void Layer::SetBoundsFromAnimation(const gfx::Rect& bounds,
     SchedulePaint(gfx::Rect(bounds.size()));
   }
 
-  if (sync_bounds_) {
-    for (const auto& mirror : mirrors_)
-      mirror->dest()->SetBounds(bounds);
+  for (const auto& mirror : mirrors_) {
+    Layer* mirror_dest = mirror->dest();
+    if (mirror_dest->sync_bounds_with_source_)
+      mirror_dest->SetBounds(bounds);
   }
 }
 
@@ -1219,6 +1300,7 @@ void Layer::SetVisibilityFromAnimation(bool visible,
 
   visible_ = visible;
   cc_layer_->SetHideLayerAndSubtree(!visible_);
+  cc_layer_->SetHitTestable(visible_ && accept_events_);
 }
 
 void Layer::SetBrightnessFromAnimation(float brightness,
@@ -1236,6 +1318,7 @@ void Layer::SetGrayscaleFromAnimation(float grayscale,
 void Layer::SetColorFromAnimation(SkColor color, PropertyChangeReason reason) {
   DCHECK_EQ(type_, LAYER_SOLID_COLOR);
   cc_layer_->SetBackgroundColor(color);
+  cc_layer_->SetSafeOpaqueBackgroundColor(color);
   SetFillsBoundsOpaquely(SkColorGetA(color) == 0xFF);
 }
 
@@ -1319,7 +1402,11 @@ void Layer::CreateCcLayer() {
   }
   cc_layer_->SetTransformOrigin(gfx::Point3F());
   cc_layer_->SetContentsOpaque(true);
+  cc_layer_->SetSafeOpaqueBackgroundColor(SK_ColorWHITE);
   cc_layer_->SetIsDrawable(type_ != LAYER_NOT_DRAWN);
+  // TODO(sunxd): Allow ui::Layers to set if they accept events or not. See
+  // https://crbug.com/924294.
+  cc_layer_->SetHitTestable(type_ != LAYER_NOT_DRAWN);
   cc_layer_->SetLayerClient(weak_ptr_factory_.GetWeakPtr());
   cc_layer_->SetElementId(cc::ElementId(cc_layer_->id()));
   RecomputePosition();

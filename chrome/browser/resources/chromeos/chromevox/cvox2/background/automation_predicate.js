@@ -368,7 +368,8 @@ AutomationPredicate.container = function(node) {
  * @return {boolean}
  */
 AutomationPredicate.structuralContainer = AutomationPredicate.roles([
-  Role.ALERT_DIALOG, Role.CLIENT, Role.DIALOG, Role.ROOT_WEB_AREA,
+  Role.ALERT_DIALOG, Role.CLIENT, Role.DIALOG, Role.LAYOUT_TABLE,
+  Role.LAYOUT_TABLE_CELL, Role.LAYOUT_TABLE_ROW, Role.ROOT_WEB_AREA,
   Role.WEB_VIEW, Role.WINDOW, Role.EMBEDDED_OBJECT, Role.IFRAME,
   Role.IFRAME_PRESENTATIONAL, Role.IGNORED, Role.UNKNOWN
 ]);
@@ -392,7 +393,8 @@ AutomationPredicate.root = function(node) {
              return node.role == Role.WINDOW || node.role == Role.DIALOG;
            }));
     case Role.TOOLBAR:
-      return node.root.role == Role.DESKTOP;
+      return node.root.role == Role.DESKTOP &&
+          !(node.nextFocus || !node.previousFocus);
     case Role.ROOT_WEB_AREA:
       if (node.parent && node.parent.role == Role.WEB_VIEW &&
           !node.parent.state[State.FOCUSED]) {
@@ -440,12 +442,12 @@ AutomationPredicate.shouldIgnoreNode = function(node) {
 
   // Ignore nodes acting as labels for another control, that don't
   // have actionable descendants.
-  if (!!node.labelFor && node.labelFor.length > 0 &&
+  if (node.labelFor && node.labelFor.length > 0 &&
       !hasActionableDescendant(node))
     return true;
 
   // Similarly, ignore nodes acting as descriptions.
-  if (!!node.descriptionFor && node.descriptionFor.length > 0 &&
+  if (node.descriptionFor && node.descriptionFor.length > 0 &&
       !hasActionableDescendant(node))
     return true;
 
@@ -480,7 +482,13 @@ AutomationPredicate.checkable = function(node) {
  * @return {boolean}
  */
 AutomationPredicate.clickable = AutomationPredicate.match({
-  anyPredicate: [AutomationPredicate.button, AutomationPredicate.link],
+  anyPredicate: [
+    AutomationPredicate.button, AutomationPredicate.link,
+    (node) => {
+      return node.defaultActionVerb ==
+          chrome.automation.DefaultActionVerb.CLICK;
+    }
+  ],
   anyAttribute: {clickable: true}
 });
 
@@ -611,6 +619,10 @@ AutomationPredicate.multiline = function(node) {
  */
 AutomationPredicate.autoScrollable = function(node) {
   return !!node.scrollable &&
+      (node.standardActions.includes(
+           chrome.automation.ActionType.SCROLL_FORWARD) ||
+       node.standardActions.includes(
+           chrome.automation.ActionType.SCROLL_BACKWARD)) &&
       (node.role == Role.GRID || node.role == Role.LIST ||
        node.role == Role.POP_UP_BUTTON || node.role == Role.SCROLL_VIEW);
 };
@@ -644,4 +656,11 @@ AutomationPredicate.shouldOnlyOutputSelectionChangeInBraille = function(node) {
 AutomationPredicate.menuItem = AutomationPredicate.roles(
     [Role.MENU_ITEM, Role.MENU_ITEM_CHECK_BOX, Role.MENU_ITEM_RADIO]);
 
+/**
+ * Matches against text like nodes.
+ * @param {!AutomationNode} node
+ * @return {boolean}
+ */
+AutomationPredicate.text = AutomationPredicate.roles(
+    [Role.STATIC_TEXT, Role.INLINE_TEXT_BOX, Role.LINE_BREAK]);
 });  // goog.scope

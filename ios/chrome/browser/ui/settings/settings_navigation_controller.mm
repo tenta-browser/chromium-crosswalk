@@ -6,24 +6,26 @@
 
 #include "base/mac/foundation_util.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/unified_consent/feature.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/sync/sync_setup_service.h"
 #include "ios/chrome/browser/sync/sync_setup_service_factory.h"
 #import "ios/chrome/browser/ui/icons/chrome_icon.h"
 #import "ios/chrome/browser/ui/keyboard/UIKeyCommand+Chrome.h"
 #import "ios/chrome/browser/ui/material_components/utils.h"
-#import "ios/chrome/browser/ui/settings/accounts_table_view_controller.h"
-#import "ios/chrome/browser/ui/settings/autofill_credit_card_table_view_controller.h"
-#import "ios/chrome/browser/ui/settings/autofill_profile_table_view_controller.h"
-#import "ios/chrome/browser/ui/settings/google_services_settings_coordinator.h"
-#import "ios/chrome/browser/ui/settings/google_services_settings_view_controller.h"
+#import "ios/chrome/browser/ui/settings/autofill/autofill_credit_card_table_view_controller.h"
+#import "ios/chrome/browser/ui/settings/autofill/autofill_profile_table_view_controller.h"
+#import "ios/chrome/browser/ui/settings/google_services/accounts_table_view_controller.h"
+#import "ios/chrome/browser/ui/settings/google_services/google_services_settings_coordinator.h"
+#import "ios/chrome/browser/ui/settings/google_services/google_services_settings_view_controller.h"
 #import "ios/chrome/browser/ui/settings/import_data_table_view_controller.h"
-#import "ios/chrome/browser/ui/settings/passwords_table_view_controller.h"
+#import "ios/chrome/browser/ui/settings/password/passwords_table_view_controller.h"
 #import "ios/chrome/browser/ui/settings/settings_root_collection_view_controller.h"
 #import "ios/chrome/browser/ui/settings/settings_table_view_controller.h"
-#import "ios/chrome/browser/ui/settings/settings_utils.h"
-#import "ios/chrome/browser/ui/settings/sync_encryption_passphrase_table_view_controller.h"
-#import "ios/chrome/browser/ui/settings/sync_settings_collection_view_controller.h"
+#import "ios/chrome/browser/ui/settings/sync/sync_encryption_passphrase_table_view_controller.h"
+#import "ios/chrome/browser/ui/settings/sync/sync_settings_table_view_controller.h"
+#import "ios/chrome/browser/ui/settings/utils/settings_utils.h"
+#include "ios/chrome/browser/ui/ui_feature_flags.h"
 #include "ios/chrome/browser/ui/util/ui_util.h"
 #import "ios/chrome/browser/ui/util/uikit_ui_util.h"
 #import "ios/chrome/common/ui_util/constraints_ui_util.h"
@@ -35,6 +37,8 @@
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
+
+NSString* const kSettingsDoneButtonId = @"kSettingsDoneButtonId";
 
 @interface SettingsNavigationController () <
     GoogleServicesSettingsCoordinatorDelegate>
@@ -89,13 +93,28 @@ newAccountsController:(ios::ChromeBrowserState*)browserState
 }
 
 + (SettingsNavigationController*)
+    newGoogleServicesController:(ios::ChromeBrowserState*)browserState
+                       delegate:
+                           (id<SettingsNavigationControllerDelegate>)delegate {
+  // GoogleServicesSettings uses a coordinator to be presented, therefore the
+  // view controller is not accessible. Prefer creating a
+  // |SettingsNavigationController| with a nil root view controller and then
+  // use the coordinator to push the GoogleServicesSettings as the first
+  // root view controller.
+  SettingsNavigationController* nc = [[SettingsNavigationController alloc]
+      initWithRootViewController:nil
+                    browserState:browserState
+                        delegate:delegate];
+  [nc showGoogleServices];
+  return nc;
+}
+
++ (SettingsNavigationController*)
      newSyncController:(ios::ChromeBrowserState*)browserState
-allowSwitchSyncAccount:(BOOL)allowSwitchSyncAccount
               delegate:(id<SettingsNavigationControllerDelegate>)delegate {
-  SyncSettingsCollectionViewController* controller =
-      [[SyncSettingsCollectionViewController alloc]
-            initWithBrowserState:browserState
-          allowSwitchSyncAccount:allowSwitchSyncAccount];
+  SyncSettingsTableViewController* controller =
+      [[SyncSettingsTableViewController alloc] initWithBrowserState:browserState
+                                             allowSwitchSyncAccount:YES];
   controller.dispatcher = [delegate dispatcherForSettings];
   SettingsNavigationController* nc = [[SettingsNavigationController alloc]
       initWithRootViewController:controller
@@ -236,7 +255,12 @@ initWithRootViewController:(UIViewController*)rootViewController
   if (self) {
     mainBrowserState_ = browserState;
     delegate_ = delegate;
-    shouldCommitSyncChangesOnDismissal_ = YES;
+    // When Unified Consent is enabled, |self.googleServicesSettingsCoordinator|
+    // is responsible to commit the sync changes. Thus sync changes only need to
+    // be explicitly committed by this navigation controller when Unified
+    // Consent is disabled.
+    shouldCommitSyncChangesOnDismissal_ =
+        !unified_consent::IsUnifiedConsentFeatureEnabled();
     [self setModalPresentationStyle:UIModalPresentationFormSheet];
     [self setModalTransitionStyle:UIModalTransitionStyleCoverVertical];
   }
@@ -245,6 +269,9 @@ initWithRootViewController:(UIViewController*)rootViewController
 
 - (void)viewDidLoad {
   [super viewDidLoad];
+  if (base::FeatureList::IsEnabled(kSettingsRefresh)) {
+    self.navigationBar.backgroundColor = UIColor.whiteColor;
+  }
   self.navigationBar.prefersLargeTitles = YES;
   self.navigationBar.accessibilityIdentifier = @"SettingNavigationBar";
 }
@@ -272,8 +299,12 @@ initWithRootViewController:(UIViewController*)rootViewController
   // existing settings.
   if (shouldCommitSyncChangesOnDismissal_) {
     SyncSetupServiceFactory::GetForBrowserState([self mainBrowserState])
-        ->CommitChanges();
+        ->PreUnityCommitChanges();
   }
+
+  // GoogleServicesSettingsCoordinator must be stopped before dismissing the
+  // sync settings view.
+  [self stopGoogleServicesSettingsCoordinator];
 
   // Reset the delegate to prevent any queued transitions from attempting to
   // close the settings.
@@ -307,14 +338,42 @@ initWithRootViewController:(UIViewController*)rootViewController
 
 #pragma mark - Private
 
-// Creates an autoreleased "X" button that closes the settings when tapped.
+// Creates an autoreleased "Cancel" button that closes the settings when tapped.
 - (UIBarButtonItem*)closeButton {
-  UIBarButtonItem* closeButton =
-      [ChromeIcon templateBarButtonItemWithImage:[ChromeIcon closeIcon]
-                                          target:self
-                                          action:@selector(closeSettings)];
+  UIBarButtonItem* closeButton = [[UIBarButtonItem alloc]
+      initWithBarButtonSystemItem:UIBarButtonSystemItemCancel
+                           target:self
+                           action:@selector(closeSettings)];
   closeButton.accessibilityLabel = l10n_util::GetNSString(IDS_ACCNAME_CLOSE);
   return closeButton;
+}
+
+// Pushes a GoogleServicesSettingsViewController on this settings navigation
+// controller. Does nothing id the top view controller is already of type
+// |GoogleServicesSettingsViewController|.
+- (void)showGoogleServices {
+  if ([self.topViewController
+          isKindOfClass:[GoogleServicesSettingsViewController class]]) {
+    // The top view controller is already the Google services settings panel.
+    // No need to open it.
+    return;
+  }
+  self.googleServicesSettingsCoordinator =
+      [[GoogleServicesSettingsCoordinator alloc]
+          initWithBaseViewController:self
+                        browserState:mainBrowserState_
+                                mode:GoogleServicesSettingsModeSettings];
+  self.googleServicesSettingsCoordinator.dispatcher =
+      [delegate_ dispatcherForSettings];
+  self.googleServicesSettingsCoordinator.navigationController = self;
+  self.googleServicesSettingsCoordinator.delegate = self;
+  [self.googleServicesSettingsCoordinator start];
+}
+
+// Stops the underlying Google services settings coordinator if it exists.
+- (void)stopGoogleServicesSettingsCoordinator {
+  [self.googleServicesSettingsCoordinator stop];
+  self.googleServicesSettingsCoordinator = nil;
 }
 
 #pragma mark - GoogleServicesSettingsCoordinatorDelegate
@@ -322,7 +381,7 @@ initWithRootViewController:(UIViewController*)rootViewController
 - (void)googleServicesSettingsCoordinatorDidRemove:
     (GoogleServicesSettingsCoordinator*)coordinator {
   DCHECK_EQ(self.googleServicesSettingsCoordinator, coordinator);
-  self.googleServicesSettingsCoordinator = nil;
+  [self stopGoogleServicesSettingsCoordinator];
 }
 
 #pragma mark - Accessibility
@@ -373,28 +432,14 @@ initWithRootViewController:(UIViewController*)rootViewController
 // TODO(crbug.com/779791) : Do not pass |baseViewController| through dispatcher.
 - (void)showGoogleServicesSettingsFromViewController:
     (UIViewController*)baseViewController {
-  if ([self.topViewController
-          isKindOfClass:[GoogleServicesSettingsViewController class]]) {
-    // The top view controller is already the Google services settings panel.
-    // No need to open it.
-    return;
-  }
-  self.googleServicesSettingsCoordinator =
-      [[GoogleServicesSettingsCoordinator alloc]
-          initWithBaseViewController:self
-                        browserState:mainBrowserState_];
-  self.googleServicesSettingsCoordinator.dispatcher =
-      [delegate_ dispatcherForSettings];
-  self.googleServicesSettingsCoordinator.navigationController = self;
-  self.googleServicesSettingsCoordinator.delegate = self;
-  [self.googleServicesSettingsCoordinator start];
+  [self showGoogleServices];
 }
 
 // TODO(crbug.com/779791) : Do not pass |baseViewController| through dispatcher.
 - (void)showSyncSettingsFromViewController:
     (UIViewController*)baseViewController {
-  SyncSettingsCollectionViewController* controller =
-      [[SyncSettingsCollectionViewController alloc]
+  SyncSettingsTableViewController* controller =
+      [[SyncSettingsTableViewController alloc]
             initWithBrowserState:mainBrowserState_
           allowSwitchSyncAccount:YES];
   controller.dispatcher = [delegate_ dispatcherForSettings];

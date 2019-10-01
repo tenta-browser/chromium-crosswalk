@@ -35,6 +35,7 @@
 #include "third_party/blink/renderer/core/css/css_property_value_set.h"
 #include "third_party/blink/renderer/core/css/css_to_length_conversion_data.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 
@@ -59,11 +60,11 @@ void TestAccumulatePixelsAndPercent(
 CSSLengthArray& SetLengthArray(CSSLengthArray& length_array, String text) {
   for (double& x : length_array.values)
     x = 0;
-  MutableCSSPropertyValueSet* property_set =
-      MutableCSSPropertyValueSet::Create(kHTMLQuirksMode);
-  property_set->SetProperty(CSSPropertyLeft, text, /* important */ false,
+  auto* property_set =
+      MakeGarbageCollected<MutableCSSPropertyValueSet>(kHTMLQuirksMode);
+  property_set->SetProperty(CSSPropertyID::kLeft, text, /* important */ false,
                             SecureContextMode::kInsecureContext);
-  ToCSSPrimitiveValue(property_set->GetPropertyCSSValue(CSSPropertyLeft))
+  To<CSSPrimitiveValue>(property_set->GetPropertyCSSValue(CSSPropertyID::kLeft))
       ->AccumulateLengthArray(length_array);
   return length_array;
 }

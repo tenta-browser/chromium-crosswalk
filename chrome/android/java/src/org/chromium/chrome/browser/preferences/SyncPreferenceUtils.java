@@ -3,25 +3,42 @@
 // found in the LICENSE file.
 package org.chromium.chrome.browser.preferences;
 
+import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
 import android.content.res.Resources;
+import android.graphics.drawable.Drawable;
+import android.net.Uri;
 import android.preference.Preference;
 import android.preference.PreferenceFragment;
+import android.provider.Browser;
+import android.support.annotation.Nullable;
+import android.support.customtabs.CustomTabsIntent;
 
 import org.chromium.base.BuildInfo;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeFeatureList;
+import org.chromium.chrome.browser.IntentHandler;
+import org.chromium.chrome.browser.LaunchIntentDispatcher;
+import org.chromium.chrome.browser.customtabs.CustomTabIntentDataProvider;
 import org.chromium.chrome.browser.sync.GoogleServiceAuthError;
 import org.chromium.chrome.browser.sync.ProfileSyncService;
+import org.chromium.chrome.browser.util.IntentUtils;
 import org.chromium.components.signin.ChromeSigninController;
 import org.chromium.components.sync.AndroidSyncSettings;
-import org.chromium.components.sync.ProtocolErrorClientAction;
 import org.chromium.components.sync.StopSource;
+import org.chromium.ui.UiUtils;
 
 /**
  * Helper methods for sync preferences.
  */
 public class SyncPreferenceUtils {
+    private static final String DASHBOARD_URL = "https://www.google.com/settings/chrome/sync";
+    private static final String MY_ACCOUNT_URL =
+            "https://accounts.google.com/AccountChooser?Email=%s&continue=https://myaccount.google.com/";
+
     /**
      * Checks if sync error icon should be shown. Show sync error icon if sync is off because
      * of error, passphrase required or disabled in Android.
@@ -60,11 +77,11 @@ public class SyncPreferenceUtils {
         Resources res = context.getResources();
 
         if (!AndroidSyncSettings.get().isMasterSyncEnabled()) {
-            return res.getString(org.chromium.chrome.R.string.sync_android_master_sync_disabled);
+            return res.getString(R.string.sync_android_master_sync_disabled);
         }
 
         if (profileSyncService == null) {
-            return res.getString(org.chromium.chrome.R.string.sync_is_disabled);
+            return res.getString(R.string.sync_is_disabled);
         }
 
         if (profileSyncService.getAuthError() != GoogleServiceAuthError.State.NONE) {
@@ -72,35 +89,55 @@ public class SyncPreferenceUtils {
                     GoogleServiceAuthError.getMessageID(profileSyncService.getAuthError()));
         }
 
-        if (profileSyncService.getProtocolErrorClientAction()
-                == ProtocolErrorClientAction.UPGRADE_CLIENT) {
-            return res.getString(org.chromium.chrome.R.string.sync_error_upgrade_client,
-                    BuildInfo.getInstance().hostPackageLabel);
+        if (profileSyncService.requiresClientUpgrade()) {
+            return res.getString(
+                    R.string.sync_error_upgrade_client, BuildInfo.getInstance().hostPackageLabel);
         }
 
         if (profileSyncService.hasUnrecoverableError()) {
-            return res.getString(org.chromium.chrome.R.string.sync_error_generic);
+            return res.getString(R.string.sync_error_generic);
         }
 
         String accountName = ChromeSigninController.get().getSignedInAccountName();
         boolean syncEnabled = AndroidSyncSettings.get().isSyncEnabled();
         if (syncEnabled) {
             if (!profileSyncService.isSyncActive()) {
-                return res.getString(org.chromium.chrome.R.string.sync_setup_progress);
+                return res.getString(R.string.sync_setup_progress);
             }
 
             if (profileSyncService.isPassphraseRequiredForDecryption()) {
-                return res.getString(org.chromium.chrome.R.string.sync_need_passphrase);
+                return res.getString(R.string.sync_need_passphrase);
             }
-            return context.getString(
-                    org.chromium.chrome.R.string.account_management_sync_summary, accountName);
+            if (ChromeFeatureList.isEnabled(ChromeFeatureList.UNIFIED_CONSENT)) {
+                return context.getString(R.string.sync_and_services_summary_sync_on);
+            }
+            return context.getString(R.string.account_management_sync_summary, accountName);
+        }
+        return context.getString(R.string.sync_is_disabled);
+    }
+
+    /**
+     * Returns an icon that represents the current sync state.
+     */
+    public static @Nullable Drawable getSyncStatusIcon(Context context) {
+        if (!ChromeSigninController.get().isSignedIn()) return null;
+
+        ProfileSyncService profileSyncService = ProfileSyncService.get();
+        if (profileSyncService == null || !AndroidSyncSettings.get().isSyncEnabled()) {
+            return UiUtils.getTintedDrawable(
+                    context, R.drawable.ic_sync_green_40dp, R.color.default_icon_color);
         }
 
-        if (ChromeFeatureList.isEnabled(ChromeFeatureList.UNIFIED_CONSENT)) {
-            return context.getString(
-                    org.chromium.chrome.R.string.account_management_sync_off_summary, accountName);
+        if (profileSyncService.isEngineInitialized()
+                && (profileSyncService.hasUnrecoverableError()
+                        || profileSyncService.getAuthError() != GoogleServiceAuthError.State.NONE
+                        || profileSyncService.isPassphraseRequiredForDecryption())) {
+            return UiUtils.getTintedDrawable(
+                    context, R.drawable.ic_sync_error_40dp, R.color.default_red);
         }
-        return context.getString(org.chromium.chrome.R.string.sync_is_disabled);
+
+        return UiUtils.getTintedDrawable(
+                context, R.drawable.ic_sync_green_40dp, R.color.default_green);
     }
 
     /**
@@ -139,5 +176,47 @@ public class SyncPreferenceUtils {
             runnable.run();
             return false;
         };
+    }
+
+    /**
+     * Opens web dashboard to specified url in a custom tab.
+     * @param activity The activity to use for starting the intent.
+     * @param url The url link to open in the custom tab.
+     */
+    private static void openCustomTabWithURL(Activity activity, String url) {
+        CustomTabsIntent customTabIntent =
+                new CustomTabsIntent.Builder().setShowTitle(false).build();
+        customTabIntent.intent.setData(Uri.parse(url));
+
+        Intent intent = LaunchIntentDispatcher.createCustomTabActivityIntent(
+                activity, customTabIntent.intent);
+        intent.setPackage(activity.getPackageName());
+        intent.putExtra(CustomTabIntentDataProvider.EXTRA_UI_TYPE,
+                CustomTabIntentDataProvider.CustomTabsUiType.DEFAULT);
+        intent.putExtra(Browser.EXTRA_APPLICATION_ID, activity.getPackageName());
+        IntentHandler.addTrustedIntentExtras(intent);
+
+        IntentUtils.safeStartActivity(activity, intent);
+    }
+
+    /**
+     * Opens web dashboard to manage sync in a custom tab.
+     * @param activity The activity to use for starting the intent.
+     */
+    public static void openSyncDashboard(Activity activity) {
+        // TODO(https://crbug.com/948103): Create a builder for custom tab intents.
+        openCustomTabWithURL(activity, DASHBOARD_URL);
+    }
+
+    /**
+     * Opens web dashboard to manage google account in a custom tab.
+     * @param activity The activity to use for starting the intent.
+     */
+    public static void openGoogleMyAccount(Activity activity) {
+        assert ChromeSigninController.get().isSignedIn();
+        RecordUserAction.record("SyncPreferences_ManageGoogleAccountClicked");
+        openCustomTabWithURL(activity,
+                String.format(
+                        MY_ACCOUNT_URL, ChromeSigninController.get().getSignedInAccountName()));
     }
 }

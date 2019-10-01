@@ -10,9 +10,9 @@
 #include "chrome/browser/chromeos/arc/accessibility/accessibility_node_info_data_wrapper.h"
 #include "chrome/browser/chromeos/arc/accessibility/accessibility_window_info_data_wrapper.h"
 #include "chrome/browser/chromeos/arc/accessibility/arc_accessibility_util.h"
-#include "chrome/browser/extensions/api/automation_internal/automation_event_router.h"
 #include "chrome/browser/ui/aura/accessibility/automation_manager_aura.h"
 #include "chrome/common/extensions/chrome_extension_messages.h"
+#include "extensions/browser/api/automation_internal/automation_event_router.h"
 #include "extensions/common/extension_messages.h"
 #include "ui/accessibility/platform/ax_android_constants.h"
 #include "ui/aura/window.h"
@@ -329,14 +329,15 @@ void AXTreeSourceArc::SerializeNode(ArcAccessibilityInfoData* info_data,
   int32_t id = info_data->GetId();
   out_data->id = id;
   // If the node is the root, or if the node's parent is the root window,
-  // the role should be rootWebArea.
-  if (info_data->IsNode() && id == root_id_)
+  // set a role of generic container.
+  if (info_data->IsNode() && id == root_id_) {
     out_data->role = ax::mojom::Role::kRootWebArea;
-  else if (info_data->IsNode() && parent_map_.at(id) == root_id_)
-    out_data->role = ax::mojom::Role::kRootWebArea;
-  else
+  } else if (info_data->IsNode() && parent_map_.at(id) == root_id_) {
+    out_data->role = ax::mojom::Role::kGenericContainer;
+    out_data->AddBoolAttribute(ax::mojom::BoolAttribute::kModal, true);
+  } else {
     info_data->PopulateAXRole(out_data);
-
+  }
   info_data->Serialize(out_data);
 }
 
@@ -382,6 +383,10 @@ const gfx::Rect AXTreeSourceArc::GetBounds(ArcAccessibilityInfoData* info_data,
                                                    .y())));
   }
   return info_data_bounds;
+}
+
+void AXTreeSourceArc::InvalidateTree() {
+  current_tree_serializer_->Reset();
 }
 
 gfx::Rect AXTreeSourceArc::ComputeEnclosingBounds(

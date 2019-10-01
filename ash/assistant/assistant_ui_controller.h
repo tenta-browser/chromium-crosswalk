@@ -15,17 +15,16 @@
 #include "ash/assistant/model/assistant_screen_context_model_observer.h"
 #include "ash/assistant/model/assistant_ui_model.h"
 #include "ash/assistant/model/assistant_ui_model_observer.h"
-#include "ash/assistant/ui/assistant_mini_view.h"
+#include "ash/assistant/ui/assistant_view_delegate.h"
 #include "ash/assistant/ui/caption_bar.h"
-#include "ash/assistant/ui/dialog_plate/dialog_plate.h"
 #include "ash/highlighter/highlighter_controller.h"
+#include "ash/keyboard/ui/keyboard_controller_observer.h"
 #include "base/macros.h"
 #include "base/optional.h"
 #include "base/timer/timer.h"
 #include "ui/display/display_observer.h"
 #include "ui/events/event_observer.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/keyboard/keyboard_controller_observer.h"
 #include "ui/views/event_monitor.h"
 #include "ui/views/widget/widget_observer.h"
 
@@ -52,9 +51,8 @@ class ASH_EXPORT AssistantUiController
       public AssistantInteractionModelObserver,
       public AssistantScreenContextModelObserver,
       public AssistantUiModelObserver,
-      public AssistantMiniViewDelegate,
+      public AssistantViewDelegateObserver,
       public CaptionBarDelegate,
-      public DialogPlateObserver,
       public HighlighterController::Observer,
       public keyboard::KeyboardControllerObserver,
       public display::DisplayObserver,
@@ -87,14 +85,12 @@ class ASH_EXPORT AssistantUiController
   void OnScreenContextRequestStateChanged(
       ScreenContextRequestState request_state) override;
 
-  // AssistantMiniViewDelegate:
-  void OnAssistantMiniViewPressed() override;
-
   // CaptionBarDelegate:
   bool OnCaptionButtonPressed(AssistantButtonId id) override;
 
-  // DialogPlateObserver:
+  // AssistantViewDelegateObserver:
   void OnDialogPlateButtonPressed(AssistantButtonId id) override;
+  void OnMiniViewPressed() override;
 
   // HighlighterController::Observer:
   void OnHighlighterEnabledChanged(HighlighterEnabledState state) override;
@@ -105,7 +101,7 @@ class ASH_EXPORT AssistantUiController
   void OnDeepLinkReceived(
       assistant::util::DeepLinkType type,
       const std::map<std::string, std::string>& params) override;
-  void OnUrlOpened(const GURL& url, bool from_server) override;
+  void OnOpeningUrl(const GURL& url, bool from_server) override;
 
   // AssistantUiModelObserver:
   void OnUiVisibilityChanged(
@@ -135,8 +131,10 @@ class ASH_EXPORT AssistantUiController
 
  private:
   // Updates UI mode to |ui_mode| if specified. Otherwise UI mode is updated on
-  // the basis of interaction/widget visibility state.
-  void UpdateUiMode(base::Optional<AssistantUiMode> ui_mode = base::nullopt);
+  // the basis of interaction/widget visibility state. If |due_to_interaction|
+  // is true, the UI mode changed because of an Assistant interaction.
+  void UpdateUiMode(base::Optional<AssistantUiMode> ui_mode = base::nullopt,
+                    bool due_to_interaction = false);
 
   // Calculate and update the usable work area.
   void UpdateUsableWorkArea(aura::Window* root_window);

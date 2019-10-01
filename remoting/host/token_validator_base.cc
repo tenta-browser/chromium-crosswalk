@@ -97,6 +97,14 @@ bool WorseThan(const std::string& issuer,
   return c1->valid_expiry() < c2->valid_expiry();
 }
 
+#if defined(OS_WIN)
+HCERTSTORE OpenLocalMachineCertStore() {
+  return ::CertOpenStore(
+      CERT_STORE_PROV_SYSTEM, 0, NULL,
+      CERT_SYSTEM_STORE_LOCAL_MACHINE | CERT_STORE_READONLY_FLAG, L"MY");
+}
+#endif
+
 }  // namespace
 
 namespace remoting {
@@ -204,10 +212,8 @@ void TokenValidatorBase::OnCertificateRequested(
   // store instead.
   // The ACL on the private key of the machine certificate in the "Local
   // Machine" cert store needs to allow access by "Local Service".
-  HCERTSTORE cert_store = ::CertOpenStore(
-      CERT_STORE_PROV_SYSTEM, 0, NULL,
-      CERT_SYSTEM_STORE_LOCAL_MACHINE | CERT_STORE_READONLY_FLAG, L"MY");
-  client_cert_store = new net::ClientCertStoreWin(cert_store);
+  client_cert_store = new net::ClientCertStoreWin(
+      base::BindRepeating(&OpenLocalMachineCertStore));
 #elif defined(OS_MACOSX)
   client_cert_store = new net::ClientCertStoreMac();
 #else
@@ -219,8 +225,9 @@ void TokenValidatorBase::OnCertificateRequested(
   // give it a WeakPtr for |this|, and ownership of the other parameters.
   client_cert_store->GetClientCerts(
       *cert_request_info,
-      base::Bind(&TokenValidatorBase::OnCertificatesSelected,
-                 weak_factory_.GetWeakPtr(), base::Owned(client_cert_store)));
+      base::BindOnce(&TokenValidatorBase::OnCertificatesSelected,
+                     weak_factory_.GetWeakPtr(),
+                     base::Owned(client_cert_store)));
 }
 
 void TokenValidatorBase::OnCertificatesSelected(
@@ -246,8 +253,8 @@ void TokenValidatorBase::OnCertificatesSelected(
         (*best_match_position)->certificate();
     net::ClientCertIdentity::SelfOwningAcquirePrivateKey(
         std::move(*best_match_position),
-        base::Bind(&TokenValidatorBase::ContinueWithCertificate,
-                   weak_factory_.GetWeakPtr(), std::move(cert)));
+        base::BindOnce(&TokenValidatorBase::ContinueWithCertificate,
+                       weak_factory_.GetWeakPtr(), std::move(cert)));
   }
 }
 
@@ -287,7 +294,7 @@ std::string TokenValidatorBase::ProcessResponse(int net_result) {
   }
 
   // Decode the JSON data from the response.
-  std::unique_ptr<base::Value> value = base::JSONReader::Read(data_);
+  std::unique_ptr<base::Value> value = base::JSONReader::ReadDeprecated(data_);
   base::DictionaryValue* dict;
   if (!value || !value->GetAsDictionary(&dict)) {
     LOG(ERROR) << "Invalid token validation response: '" << data_ << "'";

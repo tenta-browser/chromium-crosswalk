@@ -42,7 +42,7 @@ class DeprecatedRegistrarInvalidator : public Invalidator {
     registrar_.UnregisterHandler(handler);
   }
 
-  bool UpdateRegisteredIds(InvalidationHandler*, const TopicSet&) override {
+  bool UpdateRegisteredIds(InvalidationHandler*, const Topics&) override {
     NOTREACHED();
     return false;
   }
@@ -105,9 +105,9 @@ class DeprecatedRegistrarInvalidatorTestDelegate {
   std::unique_ptr<DeprecatedRegistrarInvalidator> invalidator_;
 };
 
-INSTANTIATE_TYPED_TEST_CASE_P(DeprecatedRegistrarInvalidatorTest,
-                              InvalidatorTest,
-                              DeprecatedRegistrarInvalidatorTestDelegate);
+INSTANTIATE_TYPED_TEST_SUITE_P(DeprecatedRegistrarInvalidatorTest,
+                               InvalidatorTest,
+                               DeprecatedRegistrarInvalidatorTestDelegate);
 
 }  // namespace
 

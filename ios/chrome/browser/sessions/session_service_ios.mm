@@ -19,9 +19,9 @@
 #include "base/threading/scoped_blocking_call.h"
 #import "ios/chrome/browser/sessions/session_ios.h"
 #import "ios/chrome/browser/sessions/session_window_ios.h"
-#import "ios/web/public/crw_navigation_item_storage.h"
-#import "ios/web/public/crw_session_certificate_policy_cache_storage.h"
-#import "ios/web/public/crw_session_storage.h"
+#import "ios/web/public/session/crw_navigation_item_storage.h"
+#import "ios/web/public/session/crw_session_certificate_policy_cache_storage.h"
+#import "ios/web/public/session/crw_session_storage.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -170,7 +170,7 @@ NSString* const kRootObjectKey = @"root";  // Key for the root object.
   _taskRunner->PostTaskAndReply(
       FROM_HERE, base::BindOnce(^{
         base::ScopedBlockingCall scoped_blocking_call(
-            base::BlockingType::MAY_BLOCK);
+            FROM_HERE, base::BlockingType::MAY_BLOCK);
         NSFileManager* fileManager = [NSFileManager defaultManager];
         if (![fileManager fileExistsAtPath:sessionPath])
           return;
@@ -222,7 +222,7 @@ NSString* const kRootObjectKey = @"root";  // Key for the root object.
 - (void)performSaveSessionData:(NSData*)sessionData
                    sessionPath:(NSString*)sessionPath {
   base::ScopedBlockingCall scoped_blocking_call(
-            base::BlockingType::MAY_BLOCK);
+            FROM_HERE, base::BlockingType::MAY_BLOCK);
 
   NSFileManager* fileManager = [NSFileManager defaultManager];
   NSString* directory = [sessionPath stringByDeletingLastPathComponent];

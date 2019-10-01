@@ -6,11 +6,14 @@
 
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
+#include "chrome/browser/android/chrome_feature_list.h"
 #include "chrome/browser/android/metrics/android_profile_session_durations_service.h"
 #include "chrome/browser/android/metrics/android_profile_session_durations_service_factory.h"
 #include "chrome/browser/browser_process.h"
@@ -89,8 +92,11 @@ void UmaSessionStats::UmaEndSession(JNIEnv* env,
     DCHECK(g_browser_process);
     // Tell the metrics services they were cleanly shutdown.
     metrics::MetricsService* metrics = g_browser_process->metrics_service();
-    if (metrics)
-      metrics->OnAppEnterBackground();
+    if (metrics) {
+      const bool keep_reporting =
+          base::FeatureList::IsEnabled(chrome::android::kUmaBackgroundSessions);
+      metrics->OnAppEnterBackground(keep_reporting);
+    }
     ukm::UkmService* ukm_service =
         g_browser_process->GetMetricsServicesManager()->GetUkmService();
     if (ukm_service)
@@ -134,9 +140,10 @@ static void JNI_UmaSessionStats_ChangeMetricsReportingConsent(
   // will ensure that the consent file contains the ClientID. The ID is passed
   // to the renderer for crash reporting when things go wrong.
   GoogleUpdateSettings::CollectStatsConsentTaskRunner()->PostTask(
-      FROM_HERE, base::Bind(base::IgnoreResult(
-                                GoogleUpdateSettings::SetCollectStatsConsent),
-                            consent));
+      FROM_HERE,
+      base::BindOnce(
+          base::IgnoreResult(GoogleUpdateSettings::SetCollectStatsConsent),
+          consent));
 }
 
 // Initialize the local consent bool variable to false. Used only for testing.
@@ -214,7 +221,8 @@ static void JNI_UmaSessionStats_RegisterExternalExperiment(
   variations::ActiveGroupId active_group;
   active_group.name = variations::HashName(trial_name_utf8);
   for (int experiment_id : experiment_ids) {
-    active_group.group = variations::HashName(base::IntToString(experiment_id));
+    active_group.group =
+        variations::HashName(base::NumberToString(experiment_id));
     // Since external experiments are not based on Chrome's low entropy source,
     // they are only sent to Google web properties for signed in users to make
     // sure that this couldn't be used to identify a user that's not signed in.

@@ -11,15 +11,17 @@
 
 #include "ash/public/cpp/assistant/assistant_state_proxy.h"
 #include "ash/public/cpp/assistant/default_voice_interaction_observer.h"
+#include "ash/public/cpp/shelf_types.h"
 #include "ash/public/interfaces/ash_message_center_controller.mojom.h"
+#include "ash/public/interfaces/shelf_integration_test_api.mojom.h"
 #include "base/compiler_specific.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/chromeos/printing/cups_printers_manager.h"
 #include "chrome/browser/extensions/chrome_extension_function.h"
 #include "chromeos/services/assistant/public/mojom/assistant.mojom.h"
 #include "chromeos/services/machine_learning/public/mojom/machine_learning_service.mojom.h"
+#include "chromeos/services/machine_learning/public/mojom/model.mojom.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
-#include "services/ws/public/mojom/window_server_test.mojom.h"
 #include "ui/message_center/public/cpp/notification_types.h"
 #include "ui/snapshot/screenshot_grabber.h"
 
@@ -69,8 +71,6 @@ class AutotestPrivateLoginStatusFunction : public UIThreadExtensionFunction {
  private:
   ~AutotestPrivateLoginStatusFunction() override;
   ResponseAction Run() override;
-
-  void OnIsReadyForPassword(bool is_ready);
 };
 
 class AutotestPrivateLockScreenFunction : public UIThreadExtensionFunction {
@@ -219,6 +219,16 @@ class AutotestPrivateGetPlayStoreStateFunction
   ResponseAction Run() override;
 };
 
+class AutotestPrivateGetArcStateFunction : public UIThreadExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("autotestPrivate.getArcState",
+                             AUTOTESTPRIVATE_GETARCSTATE)
+
+ private:
+  ~AutotestPrivateGetArcStateFunction() override;
+  ResponseAction Run() override;
+};
+
 class AutotestPrivateSetPlayStoreEnabledFunction
     : public UIThreadExtensionFunction {
  public:
@@ -258,6 +268,7 @@ class AutotestPrivateIsAppShownFunction : public UIThreadExtensionFunction {
   ResponseAction Run() override;
 };
 
+// Deprecated, use GetArcState instead.
 class AutotestPrivateIsArcProvisionedFunction
     : public UIThreadExtensionFunction {
  public:
@@ -356,6 +367,30 @@ class AutotestPrivateRunCrostiniUninstallerFunction
   void CrostiniRemoved(crostini::CrostiniResult);
 };
 
+class AutotestPrivateExportCrostiniFunction : public UIThreadExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("autotestPrivate.exportCrostini",
+                             AUTOTESTPRIVATE_EXPORTCROSTINI)
+
+ private:
+  ~AutotestPrivateExportCrostiniFunction() override;
+  ResponseAction Run() override;
+
+  void CrostiniExported(crostini::CrostiniResult);
+};
+
+class AutotestPrivateImportCrostiniFunction : public UIThreadExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("autotestPrivate.importCrostini",
+                             AUTOTESTPRIVATE_IMPORTCROSTINI)
+
+ private:
+  ~AutotestPrivateImportCrostiniFunction() override;
+  ResponseAction Run() override;
+
+  void CrostiniImported(crostini::CrostiniResult);
+};
+
 class AutotestPrivateTakeScreenshotFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("autotestPrivate.takeScreenshot",
@@ -370,14 +405,24 @@ class AutotestPrivateTakeScreenshotFunction : public UIThreadExtensionFunction {
                        scoped_refptr<base::RefCountedMemory> png_data);
 };
 
-class AutotestPrivateGetPrinterListFunction : public UIThreadExtensionFunction {
+class AutotestPrivateGetPrinterListFunction
+    : public UIThreadExtensionFunction,
+      public chromeos::CupsPrintersManager::Observer {
  public:
   DECLARE_EXTENSION_FUNCTION("autotestPrivate.getPrinterList",
                              AUTOTESTPRIVATE_GETPRINTERLIST)
+  AutotestPrivateGetPrinterListFunction();
 
  private:
   ~AutotestPrivateGetPrinterListFunction() override;
   ResponseAction Run() override;
+  void RespondWithTimeoutError();
+  void RespondWithSuccess();
+  // chromeos::CupsPrintersManager::Observer
+  void OnEnterprisePrintersInitialized() override;
+  std::unique_ptr<base::Value> results_;
+  std::unique_ptr<chromeos::CupsPrintersManager> printers_manager_;
+  base::OneShotTimer timeout_timer_;
 };
 
 class AutotestPrivateUpdatePrinterFunction : public UIThreadExtensionFunction {
@@ -445,6 +490,7 @@ class AutotestPrivateSetAssistantEnabledFunction
   base::OneShotTimer timeout_timer_;
 };
 
+// Send text query to Assistant and return response.
 class AutotestPrivateSendAssistantTextQueryFunction
     : public UIThreadExtensionFunction,
       public chromeos::assistant::mojom::AssistantInteractionSubscriber {
@@ -481,6 +527,7 @@ class AutotestPrivateSendAssistantTextQueryFunction
       const std::string& final_result) override {}
   void OnSpeechLevelUpdated(float speech_level) override {}
   void OnTtsStarted(bool due_to_error) override {}
+  void OnWaitStarted() override {}
 
   // Called when Assistant service fails to respond in a certain amount of
   // time. We will respond with an error.
@@ -493,6 +540,18 @@ class AutotestPrivateSendAssistantTextQueryFunction
   std::unique_ptr<base::DictionaryValue> result_;
 };
 
+// Set user pref value in the pref tree.
+class AutotestPrivateSetWhitelistedPrefFunction
+    : public UIThreadExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("autotestPrivate.setWhitelistedPref",
+                             AUTOTESTPRIVATE_SETWHITELISTEDPREF)
+
+ private:
+  ~AutotestPrivateSetWhitelistedPrefFunction() override;
+  ResponseAction Run() override;
+};
+
 // Enable/disable a Crostini app's "scaled" property.
 // When an app is "scaled", it will use low display density.
 class AutotestPrivateSetCrostiniAppScaledFunction
@@ -503,26 +562,6 @@ class AutotestPrivateSetCrostiniAppScaledFunction
  private:
   ~AutotestPrivateSetCrostiniAppScaledFunction() override;
   ResponseAction Run() override;
-};
-
-// Ensure a Window Service client has drawn windows with a timeout.
-class AutotestPrivateEnsureWindowServiceClientHasDrawnWindowFunction
-    : public UIThreadExtensionFunction {
- public:
-  AutotestPrivateEnsureWindowServiceClientHasDrawnWindowFunction();
-  DECLARE_EXTENSION_FUNCTION(
-      "autotestPrivate.ensureWindowServiceClientHasDrawnWindow",
-      AUTOTESTPRIVATE_ENSUREWINDOWSERVICECLIENTHASDRAWNWINDOW)
-
- private:
-  ~AutotestPrivateEnsureWindowServiceClientHasDrawnWindowFunction() override;
-  ResponseAction Run() override;
-
-  void OnEnsureClientHasDrawnWindowCallback(bool success);
-  void OnTimeout();
-
-  ws::mojom::WindowServerTestPtr window_server_test_ptr_;
-  base::OneShotTimer timeout_timer_;
 };
 
 // The profile-keyed service that manages the autotestPrivate extension API.
@@ -557,6 +596,105 @@ class AutotestPrivateGetPrimaryDisplayScaleFactorFunction
                              AUTOTESTPRIVATE_GETPRIMARYDISPLAYSCALEFACTOR)
  private:
   ~AutotestPrivateGetPrimaryDisplayScaleFactorFunction() override;
+  ResponseAction Run() override;
+};
+
+// Returns if tablet mode is enabled.
+class AutotestPrivateIsTabletModeEnabledFunction
+    : public UIThreadExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("autotestPrivate.isTabletModeEnabled",
+                             AUTOTESTPRIVATE_ISTABLETMODEENABLED)
+ private:
+  ~AutotestPrivateIsTabletModeEnabledFunction() override;
+  ResponseAction Run() override;
+};
+
+// Enables/Disables tablet mode.
+class AutotestPrivateSetTabletModeEnabledFunction
+    : public UIThreadExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("autotestPrivate.setTabletModeEnabled",
+                             AUTOTESTPRIVATE_SETTABLETMODEENABLED)
+
+ private:
+  ~AutotestPrivateSetTabletModeEnabledFunction() override;
+  ResponseAction Run() override;
+};
+
+// Returns the shelf auto hide behavior.
+class AutotestPrivateGetShelfAutoHideBehaviorFunction
+    : public UIThreadExtensionFunction {
+ public:
+  AutotestPrivateGetShelfAutoHideBehaviorFunction();
+  DECLARE_EXTENSION_FUNCTION("autotestPrivate.getShelfAutoHideBehavior",
+                             AUTOTESTPRIVATE_GETSHELFAUTOHIDEBEHAVIOR)
+
+ private:
+  void OnGetShelfAutoHideBehaviorCompleted(ash::ShelfAutoHideBehavior behavior);
+  ~AutotestPrivateGetShelfAutoHideBehaviorFunction() override;
+  ResponseAction Run() override;
+
+  ash::mojom::ShelfIntegrationTestApiPtr shelf_test_api_;
+};
+
+// Sets shelf autohide behavior.
+class AutotestPrivateSetShelfAutoHideBehaviorFunction
+    : public UIThreadExtensionFunction {
+ public:
+  AutotestPrivateSetShelfAutoHideBehaviorFunction();
+  DECLARE_EXTENSION_FUNCTION("autotestPrivate.setShelfAutoHideBehavior",
+                             AUTOTESTPRIVATE_SETSHELFAUTOHIDEBEHAVIOR)
+
+ private:
+  void OnSetShelfAutoHideBehaviorCompleted();
+  ~AutotestPrivateSetShelfAutoHideBehaviorFunction() override;
+  ResponseAction Run() override;
+
+  ash::mojom::ShelfIntegrationTestApiPtr shelf_test_api_;
+};
+
+// Returns the shelf alignment.
+class AutotestPrivateGetShelfAlignmentFunction
+    : public UIThreadExtensionFunction {
+ public:
+  AutotestPrivateGetShelfAlignmentFunction();
+  DECLARE_EXTENSION_FUNCTION("autotestPrivate.getShelfAlignment",
+                             AUTOTESTPRIVATE_GETSHELFALIGNMENT)
+
+ private:
+  void OnGetShelfAlignmentCompleted(ash::ShelfAlignment alignment);
+  ~AutotestPrivateGetShelfAlignmentFunction() override;
+  ResponseAction Run() override;
+
+  ash::mojom::ShelfIntegrationTestApiPtr shelf_test_api_;
+};
+
+// Sets shelf alignment.
+class AutotestPrivateSetShelfAlignmentFunction
+    : public UIThreadExtensionFunction {
+ public:
+  AutotestPrivateSetShelfAlignmentFunction();
+  DECLARE_EXTENSION_FUNCTION("autotestPrivate.setShelfAlignment",
+                             AUTOTESTPRIVATE_SETSHELFALIGNMENT)
+
+ private:
+  void OnSetShelfAlignmentCompleted();
+  ~AutotestPrivateSetShelfAlignmentFunction() override;
+  ResponseAction Run() override;
+
+  ash::mojom::ShelfIntegrationTestApiPtr shelf_test_api_;
+};
+
+class AutotestPrivateShowVirtualKeyboardIfEnabledFunction
+    : public UIThreadExtensionFunction {
+ public:
+  AutotestPrivateShowVirtualKeyboardIfEnabledFunction();
+  DECLARE_EXTENSION_FUNCTION("autotestPrivate.showVirtualKeyboardIfEnabled",
+                             AUTOTESTPRIVATE_SHOWVIRTUALKEYBOARDIFENABLED)
+
+ private:
+  ~AutotestPrivateShowVirtualKeyboardIfEnabledFunction() override;
   ResponseAction Run() override;
 };
 

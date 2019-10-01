@@ -6,6 +6,7 @@
 
 #include <unordered_set>
 
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/format_macros.h"
 #include "base/strings/stringprintf.h"
@@ -590,11 +591,8 @@ TEST_F(ProfileAttributesStorageTest, AccessFromElsewhere) {
 }
 
 TEST_F(ProfileAttributesStorageTest, ChooseAvatarIconIndexForNewProfile) {
-  size_t total_icon_count = profiles::GetDefaultAvatarIconCount();
-#if defined(OS_CHROMEOS) || defined(OS_ANDROID)
-  size_t generic_icon_count = profiles::GetGenericAvatarIconCount();
-  ASSERT_LE(generic_icon_count, total_icon_count);
-#endif
+  size_t total_icon_count = profiles::GetDefaultAvatarIconCount() -
+                            profiles::GetModernAvatarIconStartIndex();
 
   // Run ChooseAvatarIconIndexForNewProfile |num_iterations| times before using
   // the final |icon_index| to add a profile. Multiple checks are needed because
@@ -610,14 +608,7 @@ TEST_F(ProfileAttributesStorageTest, ChooseAvatarIconIndexForNewProfile) {
       icon_index = storage()->ChooseAvatarIconIndexForNewProfile();
       // Icon must not be used.
       ASSERT_EQ(0u, used_icon_indices.count(icon_index));
-      ASSERT_GT(total_icon_count, icon_index);
-
-#if defined(OS_CHROMEOS) || defined(OS_ANDROID)
-      if (i < total_icon_count - generic_icon_count)
-        ASSERT_LE(generic_icon_count, icon_index);
-      else
-        ASSERT_GT(generic_icon_count, icon_index);
-#endif
+      ASSERT_TRUE(profiles::IsModernAvatarIconIndex(icon_index));
     }
 
     used_icon_indices.insert(icon_index);
@@ -633,8 +624,8 @@ TEST_F(ProfileAttributesStorageTest, ChooseAvatarIconIndexForNewProfile) {
 
   for (int iter = 0; iter < num_iterations; ++iter) {
     // All icons are used up, expect any valid icon.
-    ASSERT_GT(total_icon_count,
-              storage()->ChooseAvatarIconIndexForNewProfile());
+    ASSERT_TRUE(profiles::IsModernAvatarIconIndex(
+        storage()->ChooseAvatarIconIndexForNewProfile()));
   }
 }
 
@@ -727,7 +718,7 @@ TEST_F(ProfileAttributesStorageTest, DownloadHighResAvatarTest) {
   std::string icon_filename =
       profiles::GetDefaultAvatarIconFileNameAtIndex(kIconIndex);
   EXPECT_EQ(1U, storage()->cached_avatar_images_.size());
-  EXPECT_TRUE(storage()->cached_avatar_images_[icon_filename]->IsEmpty());
+  EXPECT_TRUE(storage()->cached_avatar_images_[icon_filename].IsEmpty());
 
   // Simulate downloading a high-res avatar.
   ProfileAvatarDownloader avatar_downloader(
@@ -747,13 +738,13 @@ TEST_F(ProfileAttributesStorageTest, DownloadHighResAvatarTest) {
 
   // The image should have been cached.
   EXPECT_EQ(1U, storage()->cached_avatar_images_.size());
-  EXPECT_FALSE(storage()->cached_avatar_images_[icon_filename]->IsEmpty());
-  EXPECT_EQ(storage()->cached_avatar_images_[icon_filename].get(),
+  EXPECT_FALSE(storage()->cached_avatar_images_[icon_filename].IsEmpty());
+  EXPECT_EQ(&storage()->cached_avatar_images_[icon_filename],
             entry->GetHighResAvatar());
 
   // Since we are not using GAIA image, |GetAvatarIcon| should return the same
   // image as |GetHighResAvatar| in desktop.
-  EXPECT_EQ(storage()->cached_avatar_images_[icon_filename].get(),
+  EXPECT_EQ(&storage()->cached_avatar_images_[icon_filename],
             &entry->GetAvatarIcon());
 
   // Finish the async calls that save the image to the disk.

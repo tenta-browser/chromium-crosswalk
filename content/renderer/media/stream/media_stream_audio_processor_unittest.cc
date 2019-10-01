@@ -21,13 +21,13 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "content/renderer/media/stream/media_stream_audio_processor.h"
-#include "content/renderer/media/stream/media_stream_audio_processor_options.h"
 #include "content/renderer/media/stream/mock_constraint_factory.h"
 #include "media/base/audio_bus.h"
 #include "media/base/audio_parameters.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/mediastream/media_stream_request.h"
+#include "third_party/blink/public/platform/modules/mediastream/media_stream_audio_processor_options.h"
 #include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
 #include "third_party/blink/public/platform/web_media_constraints.h"
 #include "third_party/webrtc/api/media_stream_interface.h"
@@ -111,7 +111,8 @@ class MediaStreamAudioProcessorTest : public ::testing::Test {
         expected_output_buffer_size * base::TimeDelta::FromSeconds(1) /
             expected_output_sample_rate;
     for (int i = 0; i < kNumberOfPacketsForTest; ++i) {
-      data_bus->FromInterleaved(data_ptr, data_bus->frames(), 2);
+      data_bus->FromInterleaved<media::SignedInt16SampleTypeTraits>(
+          data_ptr, data_bus->frames());
       audio_processor->PushCaptureData(*data_bus, input_capture_delay);
 
       // |audio_processor| does nothing when the audio processing is off in
@@ -156,25 +157,19 @@ class MediaStreamAudioProcessorTest : public ::testing::Test {
     const webrtc::AudioProcessing::Config config =
         audio_processing->GetConfig();
     EXPECT_TRUE(config.echo_canceller.enabled);
+    EXPECT_TRUE(config.gain_controller1.enabled);
+    EXPECT_TRUE(config.high_pass_filter.enabled);
+    EXPECT_TRUE(config.noise_suppression.enabled);
+    EXPECT_EQ(config.noise_suppression.level, config.noise_suppression.kHigh);
+    EXPECT_FALSE(config.voice_detection.enabled);
 #if defined(OS_ANDROID)
     EXPECT_TRUE(config.echo_canceller.mobile_mode);
-    EXPECT_FALSE(config.voice_detection.enabled);
+    EXPECT_EQ(config.gain_controller1.mode,
+              config.gain_controller1.kFixedDigital);
 #else
     EXPECT_FALSE(config.echo_canceller.mobile_mode);
-    EXPECT_TRUE(config.voice_detection.enabled);
-#endif
-    EXPECT_TRUE(config.high_pass_filter.enabled);
-
-    EXPECT_TRUE(audio_processing->noise_suppression()->is_enabled());
-    EXPECT_TRUE(audio_processing->noise_suppression()->level() ==
-        webrtc::NoiseSuppression::kHigh);
-    EXPECT_TRUE(audio_processing->gain_control()->is_enabled());
-#if defined(OS_ANDROID)
-    EXPECT_TRUE(audio_processing->gain_control()->mode() ==
-        webrtc::GainControl::kFixedDigital);
-#else
-    EXPECT_TRUE(audio_processing->gain_control()->mode() ==
-        webrtc::GainControl::kAdaptiveAnalog);
+    EXPECT_EQ(config.gain_controller1.mode,
+              config.gain_controller1.kAdaptiveAnalog);
 #endif
   }
 
@@ -191,7 +186,7 @@ class MediaStreamAudioProcessorTest : public ::testing::Test {
 TEST_F(MediaStreamAudioProcessorTest, MAYBE_WithAudioProcessing) {
   scoped_refptr<WebRtcAudioDeviceImpl> webrtc_audio_device(
       new rtc::RefCountedObject<WebRtcAudioDeviceImpl>());
-  AudioProcessingProperties properties;
+  blink::AudioProcessingProperties properties;
   scoped_refptr<MediaStreamAudioProcessor> audio_processor(
       new rtc::RefCountedObject<MediaStreamAudioProcessor>(
           properties, webrtc_audio_device.get()));
@@ -199,10 +194,9 @@ TEST_F(MediaStreamAudioProcessorTest, MAYBE_WithAudioProcessing) {
   audio_processor->OnCaptureFormatChanged(params_);
   VerifyDefaultComponents(audio_processor.get());
 
-  ProcessDataAndVerifyFormat(audio_processor.get(),
-                             kAudioProcessingSampleRate,
-                             kAudioProcessingNumberOfChannel,
-                             kAudioProcessingSampleRate / 100);
+  ProcessDataAndVerifyFormat(
+      audio_processor.get(), blink::kAudioProcessingSampleRate,
+      kAudioProcessingNumberOfChannel, blink::kAudioProcessingSampleRate / 100);
 
   // Stop |audio_processor| so that it removes itself from
   // |webrtc_audio_device| and clears its pointer to it.
@@ -210,7 +204,7 @@ TEST_F(MediaStreamAudioProcessorTest, MAYBE_WithAudioProcessing) {
 }
 
 TEST_F(MediaStreamAudioProcessorTest, TurnOffDefaultConstraints) {
-  AudioProcessingProperties properties;
+  blink::AudioProcessingProperties properties;
   // Turn off the default constraints and pass it to MediaStreamAudioProcessor.
   properties.DisableDefaultProperties();
   scoped_refptr<WebRtcAudioDeviceImpl> webrtc_audio_device(
@@ -240,14 +234,24 @@ TEST_F(MediaStreamAudioProcessorTest, TurnOffDefaultConstraints) {
 TEST_F(MediaStreamAudioProcessorTest, MAYBE_TestAllSampleRates) {
   scoped_refptr<WebRtcAudioDeviceImpl> webrtc_audio_device(
       new rtc::RefCountedObject<WebRtcAudioDeviceImpl>());
-  AudioProcessingProperties properties;
+  blink::AudioProcessingProperties properties;
   scoped_refptr<MediaStreamAudioProcessor> audio_processor(
       new rtc::RefCountedObject<MediaStreamAudioProcessor>(
           properties, webrtc_audio_device.get()));
   EXPECT_TRUE(audio_processor->has_audio_processing());
 
-  static const int kSupportedSampleRates[] =
-      { 8000, 16000, 22050, 32000, 44100, 48000 };
+  static const int kSupportedSampleRates[] = {
+    8000,
+    16000,
+    22050,
+    32000,
+    44100,
+    48000
+#if defined(IS_CHROMECAST)
+    ,
+    96000
+#endif  // defined(IS_CHROMECAST)
+  };
   for (size_t i = 0; i < base::size(kSupportedSampleRates); ++i) {
     int buffer_size = kSupportedSampleRates[i] / 100;
     media::AudioParameters params(media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
@@ -256,10 +260,15 @@ TEST_F(MediaStreamAudioProcessorTest, MAYBE_TestAllSampleRates) {
     audio_processor->OnCaptureFormatChanged(params);
     VerifyDefaultComponents(audio_processor.get());
 
-    ProcessDataAndVerifyFormat(audio_processor.get(),
-                               kAudioProcessingSampleRate,
+    int expected_sample_rate =
+#if defined(IS_CHROMECAST)
+        std::min(kSupportedSampleRates[i], blink::kAudioProcessingSampleRate);
+#else
+        blink::kAudioProcessingSampleRate;
+#endif  // defined(IS_CHROMECAST)
+    ProcessDataAndVerifyFormat(audio_processor.get(), expected_sample_rate,
                                kAudioProcessingNumberOfChannel,
-                               kAudioProcessingSampleRate / 100);
+                               expected_sample_rate / 100);
   }
 
   // Stop |audio_processor| so that it removes itself from
@@ -278,7 +287,7 @@ TEST_F(MediaStreamAudioProcessorTest, GetAecDumpMessageFilter) {
 
   scoped_refptr<WebRtcAudioDeviceImpl> webrtc_audio_device(
       new rtc::RefCountedObject<WebRtcAudioDeviceImpl>());
-  AudioProcessingProperties properties;
+  blink::AudioProcessingProperties properties;
   scoped_refptr<MediaStreamAudioProcessor> audio_processor(
       new rtc::RefCountedObject<MediaStreamAudioProcessor>(
           properties, webrtc_audio_device.get()));
@@ -293,7 +302,7 @@ TEST_F(MediaStreamAudioProcessorTest, GetAecDumpMessageFilter) {
 TEST_F(MediaStreamAudioProcessorTest, StartStopAecDump) {
   scoped_refptr<WebRtcAudioDeviceImpl> webrtc_audio_device(
       new rtc::RefCountedObject<WebRtcAudioDeviceImpl>());
-  AudioProcessingProperties properties;
+  blink::AudioProcessingProperties properties;
 
   base::ScopedTempDir temp_directory;
   ASSERT_TRUE(temp_directory.CreateUniqueTempDir());
@@ -327,7 +336,7 @@ TEST_F(MediaStreamAudioProcessorTest, StartStopAecDump) {
 TEST_F(MediaStreamAudioProcessorTest, TestStereoAudio) {
   scoped_refptr<WebRtcAudioDeviceImpl> webrtc_audio_device(
       new rtc::RefCountedObject<WebRtcAudioDeviceImpl>());
-  AudioProcessingProperties properties;
+  blink::AudioProcessingProperties properties;
   // Turn off the audio processing and turn on the stereo channels mirroring.
   properties.DisableDefaultProperties();
   properties.goog_audio_mirroring = true;
@@ -391,7 +400,7 @@ TEST_F(MediaStreamAudioProcessorTest, TestStereoAudio) {
 TEST_F(MediaStreamAudioProcessorTest, MAYBE_TestWithKeyboardMicChannel) {
   scoped_refptr<WebRtcAudioDeviceImpl> webrtc_audio_device(
       new rtc::RefCountedObject<WebRtcAudioDeviceImpl>());
-  AudioProcessingProperties properties;
+  blink::AudioProcessingProperties properties;
   scoped_refptr<MediaStreamAudioProcessor> audio_processor(
       new rtc::RefCountedObject<MediaStreamAudioProcessor>(
           properties, webrtc_audio_device.get()));
@@ -402,10 +411,9 @@ TEST_F(MediaStreamAudioProcessorTest, MAYBE_TestWithKeyboardMicChannel) {
                                 48000, 480);
   audio_processor->OnCaptureFormatChanged(params);
 
-  ProcessDataAndVerifyFormat(audio_processor.get(),
-                             kAudioProcessingSampleRate,
-                             kAudioProcessingNumberOfChannel,
-                             kAudioProcessingSampleRate / 100);
+  ProcessDataAndVerifyFormat(
+      audio_processor.get(), blink::kAudioProcessingSampleRate,
+      kAudioProcessingNumberOfChannel, blink::kAudioProcessingSampleRate / 100);
 
   // Stop |audio_processor| so that it removes itself from
   // |webrtc_audio_device| and clears its pointer to it.
@@ -416,9 +424,9 @@ TEST_F(MediaStreamAudioProcessorTest, GetExtraGainConfigNullOpt) {
   base::Optional<std::string> audio_processing_platform_config_json;
   base::Optional<double> pre_amplifier_fixed_gain_factor,
       gain_control_compression_gain_db;
-  GetExtraGainConfig(audio_processing_platform_config_json,
-                     &pre_amplifier_fixed_gain_factor,
-                     &gain_control_compression_gain_db);
+  blink::GetExtraGainConfig(audio_processing_platform_config_json,
+                            &pre_amplifier_fixed_gain_factor,
+                            &gain_control_compression_gain_db);
   EXPECT_FALSE(pre_amplifier_fixed_gain_factor);
   EXPECT_FALSE(gain_control_compression_gain_db);
 }
@@ -428,9 +436,9 @@ TEST_F(MediaStreamAudioProcessorTest, GetExtraGainConfig) {
       "{\"gain_control_compression_gain_db\": 10}";
   base::Optional<double> pre_amplifier_fixed_gain_factor,
       gain_control_compression_gain_db;
-  GetExtraGainConfig(audio_processing_platform_config_json,
-                     &pre_amplifier_fixed_gain_factor,
-                     &gain_control_compression_gain_db);
+  blink::GetExtraGainConfig(audio_processing_platform_config_json,
+                            &pre_amplifier_fixed_gain_factor,
+                            &gain_control_compression_gain_db);
   EXPECT_FALSE(pre_amplifier_fixed_gain_factor);
   EXPECT_TRUE(gain_control_compression_gain_db);
   EXPECT_EQ(gain_control_compression_gain_db.value(), 10);
