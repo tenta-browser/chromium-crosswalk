@@ -32,8 +32,7 @@ class DOMStorageContextWrapperTest : public testing::Test {
     storage_policy_ = new MockSpecialStoragePolicy();
     fake_mojo_task_runner_ = base::MakeRefCounted<base::TestSimpleTaskRunner>();
     context_ = new DOMStorageContextWrapper(
-        /*legacy_local_storage_path=*/base::FilePath(),
-        /*context_impl=*/nullptr, fake_mojo_task_runner_,
+        /*legacy_local_storage_path=*/base::FilePath(), fake_mojo_task_runner_,
         /*mojo_local_storage_context=*/nullptr,
         new SessionStorageContextMojo(
             fake_mojo_task_runner_, /*connector=*/nullptr,

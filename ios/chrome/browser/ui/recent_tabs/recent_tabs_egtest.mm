@@ -55,10 +55,10 @@ void OpenRecentTabsPanel() {
   // At least one tab is needed to be able to open the recent tabs panel.
   if ([ChromeEarlGrey isIncognitoMode]) {
     if ([ChromeEarlGrey incognitoTabCount] == 0)
-      CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey openNewIncognitoTab]);
+      [ChromeEarlGrey openNewIncognitoTab];
   } else {
     if ([ChromeEarlGrey mainTabCount] == 0)
-      CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey openNewTab]);
+      [ChromeEarlGrey openNewTab];
   }
 
   [ChromeEarlGreyUI openToolsMenu];
@@ -108,9 +108,8 @@ id<GREYMatcher> TitleOfTestPage() {
   const GURL testPageURL = web::test::HttpServer::MakeUrl(kURLOfTestPage);
 
   // Open the test page in a new tab.
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:testPageURL]);
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:"hello"]);
+  [ChromeEarlGrey loadURL:testPageURL];
+  [ChromeEarlGrey waitForWebStateContainingText:"hello"];
 
   // Open the Recent Tabs panel, check that the test page is not
   // present.
@@ -138,16 +137,16 @@ id<GREYMatcher> TitleOfTestPage() {
 }
 
 // Tests restoring a tab from incognito when the normal WebStateList is empty.
-- (void)testRestoreTabFromIncognitoWithNoNormalTabsOpen {
+// TODO(crbug.com/989487): Test DISABLED, to be deleted.
+- (void)DISABLED_testRestoreTabFromIncognitoWithNoNormalTabsOpen {
   const GURL testPageURL = web::test::HttpServer::MakeUrl(kURLOfTestPage);
 
   // Open the test page in a new tab.
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:testPageURL]);
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:"hello"]);
+  [ChromeEarlGrey loadURL:testPageURL];
+  [ChromeEarlGrey waitForWebStateContainingText:"hello"];
 
   // Open a new incognito tab, then close the non-OTR tab.
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey openNewIncognitoTab]);
+  [ChromeEarlGrey openNewIncognitoTab];
   CloseAllNormalTabs();
 
   // Open the Recent Tabs panel and check that the test page is present.
@@ -161,7 +160,7 @@ id<GREYMatcher> TitleOfTestPage() {
                  @"Unexpected tabs in the main WebStateList");
   [[EarlGrey selectElementWithMatcher:TitleOfTestPage()]
       performAction:grey_tap()];
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey waitForMainTabCount:1]);
+  [ChromeEarlGrey waitForMainTabCount:1];
   GREYAssertTrue([ChromeEarlGrey incognitoTabCount] == 1,
                  @"Unexpected tab added to the incognito WebStateList");
 }

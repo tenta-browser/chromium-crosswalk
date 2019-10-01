@@ -429,7 +429,7 @@ class PLATFORM_EXPORT GraphicsLayer : public cc::LayerClient,
 
   std::unique_ptr<RasterInvalidator> raster_invalidator_;
 
-  base::WeakPtrFactory<GraphicsLayer> weak_ptr_factory_;
+  base::WeakPtrFactory<GraphicsLayer> weak_ptr_factory_{this};
 
   FRIEND_TEST_ALL_PREFIXES(CompositingLayerPropertyUpdaterTest, MaskLayerState);
 

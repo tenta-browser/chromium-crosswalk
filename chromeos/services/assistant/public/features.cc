@@ -48,7 +48,40 @@ const base::Feature kEnableTextQueriesWithClientDiscourseContext{
     base::FEATURE_DISABLED_BY_DEFAULT};
 
 const base::Feature kTimerTicks{"ChromeOSAssistantTimerTicks",
-                                base::FEATURE_DISABLED_BY_DEFAULT};
+                                base::FEATURE_ENABLED_BY_DEFAULT};
+
+const base::Feature kEnableAssistantAlarmTimerManager{
+    "EnableAssistantAlarmTimerManager", base::FEATURE_ENABLED_BY_DEFAULT};
+
+const base::Feature kEnablePowerManager{"ChromeOSAssistantEnablePowerManager",
+                                        base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Enables sending a screen context request ("What's on my screen?" and
+// metalayer selection) as a text query. This is as opposed to sending
+// the request as a contextual cards request.
+const base::Feature kScreenContextQuery{"ChromeOSAssistantScreenContextQuery",
+                                        base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kEnableMediaSessionIntegration{
+    "AssistantEnableMediaSessionIntegration",
+    base::FEATURE_DISABLED_BY_DEFAULT};
+
+bool IsAlarmTimerManagerEnabled() {
+  return base::FeatureList::IsEnabled(kEnableAssistantAlarmTimerManager);
+}
+
+bool IsAppSupportEnabled() {
+  return base::FeatureList::IsEnabled(
+      assistant::features::kAssistantAppSupport);
+}
+
+bool IsAudioEraserEnabled() {
+  return base::FeatureList::IsEnabled(kAssistantAudioEraser);
+}
+
+bool IsClearCutLogEnabled() {
+  return base::FeatureList::IsEnabled(kEnableClearCutLog);
+}
 
 const base::Feature kEnableAssistantAlarmTimerManager{
     "EnableAssistantAlarmTimerManager", base::FEATURE_DISABLED_BY_DEFAULT};
@@ -98,10 +131,6 @@ bool IsInAssistantNotificationsEnabled() {
   return base::FeatureList::IsEnabled(kInAssistantNotifications);
 }
 
-bool IsKeyRemappingEnabled() {
-  return base::FeatureList::IsEnabled(kAssistantKeyRemapping);
-}
-
 bool IsMediaSessionIntegrationEnabled() {
   return base::FeatureList::IsEnabled(kEnableMediaSessionIntegration);
 }
@@ -129,7 +158,10 @@ bool IsTimerNotificationEnabled() {
 }
 
 bool IsTimerTicksEnabled() {
-  return base::FeatureList::IsEnabled(kTimerTicks);
+  // The timer ticks feature is dependent on new notification add/remove logic
+  // that is tied to new events delivered from the AlarmTimerManager API.
+  return IsAlarmTimerManagerEnabled() &&
+         base::FeatureList::IsEnabled(kTimerTicks);
 }
 
 bool IsWarmerWelcomeEnabled() {

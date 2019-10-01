@@ -293,9 +293,6 @@ void AddPrintPreviewStrings(content::WebUIDataSource* source) {
   AddLocalizedStringsBulk(source, kLocalizedStrings,
                           base::size(kLocalizedStrings));
 
-  source->AddString(
-      "settingsPrintingPage",
-      chrome::GetSettingsUrl(chrome::kPrintingSettingsSubPage).spec());
   source->AddString("gcpCertificateErrorLearnMoreURL",
                     chrome::kCloudPrintCertificateErrorLearnMoreURL);
 
@@ -479,9 +476,7 @@ PrintPreviewUI::PrintPreviewUI(content::WebUI* web_ui)
       handler_(CreatePrintPreviewHandlers(web_ui)) {
   // Set up the chrome://print/ data source.
   Profile* profile = Profile::FromWebUI(web_ui);
-  content::WebUIDataSource* source = CreatePrintPreviewUISource(profile);
-  DarkModeHandler::Initialize(web_ui, source);
-  content::WebUIDataSource::Add(profile, source);
+  content::WebUIDataSource::Add(profile, CreatePrintPreviewUISource(profile));
 
   // Set up the chrome://theme/ source.
   content::URLDataSource::Add(profile, std::make_unique<ThemeSource>(profile));
@@ -788,9 +783,8 @@ void PrintPreviewUI::SetSelectedFileForTesting(const base::FilePath& path) {
   handler_->FileSelectedForTesting(path, 0, nullptr);
 }
 
-void PrintPreviewUI::SetPdfSavedClosureForTesting(
-    const base::Closure& closure) {
-  handler_->SetPdfSavedClosureForTesting(closure);
+void PrintPreviewUI::SetPdfSavedClosureForTesting(base::OnceClosure closure) {
+  handler_->SetPdfSavedClosureForTesting(std::move(closure));
 }
 
 void PrintPreviewUI::SendEnableManipulateSettingsForTest() {

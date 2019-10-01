@@ -493,27 +493,6 @@ IN_PROC_BROWSER_TEST_P(SingleClientWalletSyncTestWithDefaultFeatures,
 }
 #endif  // !defined(OS_CHROMEOS)
 
-// ChromeOS does not sign out, so the test below does not apply.
-#if !defined(OS_CHROMEOS)
-// Wallet data should get cleared from the database when the user signs out.
-IN_PROC_BROWSER_TEST_P(SingleClientWalletSyncTest, ClearOnSignOut) {
-  InitWithDefaultFeatures();
-  GetFakeServer()->SetWalletData(
-      {CreateDefaultSyncWalletAddress(), CreateDefaultSyncWalletCard()});
-  ASSERT_TRUE(SetupSync());
-
-  // Make sure the card is in the DB.
-  autofill::PersonalDataManager* pdm = GetPersonalDataManager(0);
-  ASSERT_NE(nullptr, pdm);
-  ASSERT_EQ(1uL, pdm->GetCreditCards().size());
-
-  // Turn off sync, the card should be gone.
-  GetClient(0)->SignoutSyncService();
-
-  ASSERT_EQ(0uL, pdm->GetCreditCards().size());
-}
-#endif  // !defined(OS_CHROMEOS)
-
 // Wallet is not using incremental updates. Make sure existing data gets
 // replaced when synced down.
 IN_PROC_BROWSER_TEST_P(SingleClientWalletSyncTestWithDefaultFeatures,

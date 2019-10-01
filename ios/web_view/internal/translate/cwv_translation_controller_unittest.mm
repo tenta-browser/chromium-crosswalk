@@ -20,12 +20,11 @@
 #include "ios/web_view/internal/web_view_browser_state.h"
 #import "ios/web_view/public/cwv_translation_controller_delegate.h"
 #import "ios/web_view/public/cwv_translation_policy.h"
+#include "ios/web_view/test/test_with_locale_and_resources.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
 #include "testing/platform_test.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
-#include "ui/base/l10n/l10n_util_mac.h"
-#include "ui/base/resource/resource_bundle.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -39,13 +38,9 @@ NSString* const kTestToLangCode = @"en";
 NSString* const kTestPageHost = @"www.chromium.org";
 }  // namespace
 
-class CWVTranslationControllerTest : public PlatformTest {
+class CWVTranslationControllerTest : public TestWithLocaleAndResources {
  protected:
-  CWVTranslationControllerTest()
-      : browser_state_(
-            // Using comma-operator to perform required initialization before
-            // creating browser_state.
-            (InitializeLocaleAndResources(), /*off_the_record=*/false)) {
+  CWVTranslationControllerTest() : browser_state_(/*off_the_record=*/false) {
     web_state_.SetBrowserState(&browser_state_);
     auto test_navigation_manager =
         std::make_unique<web::TestNavigationManager>();

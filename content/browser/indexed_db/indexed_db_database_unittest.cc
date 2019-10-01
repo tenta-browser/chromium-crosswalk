@@ -66,7 +66,7 @@ class IndexedDBDatabaseTest : public ::testing::Test {
     metadata_coding_ = metadata_coding.get();
     leveldb::Status s;
 
-    std::tie(db_, s) = IndexedDBDatabase::Create(
+    std::tie(db_, s) = IndexedDBClassFactory::Get()->CreateIndexedDBDatabase(
         ASCIIToUTF16("db"), backing_store_.get(), factory_.get(),
         GetErrorCallback(), base::BindLambdaForTesting([&]() {
           db_.reset();
@@ -430,45 +430,6 @@ TEST_F(IndexedDBDatabaseTest, ForceCloseWhileOpenAndDeletePending) {
   EXPECT_FALSE(db_);
 }
 
-TEST_F(IndexedDBDatabaseTest, ForceCloseWhileOpenPending) {
-  // Verify that pending connection requests are handled correctly during a
-  // ForceClose.
-  scoped_refptr<MockIndexedDBCallbacks> request1(new MockIndexedDBCallbacks());
-  scoped_refptr<MockIndexedDBDatabaseCallbacks> callbacks1(
-      new MockIndexedDBDatabaseCallbacks());
-  const int64_t transaction_id1 = 1;
-  std::unique_ptr<IndexedDBPendingConnection> connection(
-      std::make_unique<IndexedDBPendingConnection>(
-          request1, callbacks1, kFakeChildProcessId, transaction_id1,
-          IndexedDBDatabaseMetadata::DEFAULT_VERSION));
-  db_->OpenConnection(std::move(connection));
-
-  EXPECT_EQ(db_->ConnectionCount(), 1UL);
-  EXPECT_EQ(db_->ActiveOpenDeleteCount(), 0UL);
-  EXPECT_EQ(db_->PendingOpenDeleteCount(), 0UL);
-  EXPECT_FALSE(backing_store_->HasOneRef());  // local and db
-
-  scoped_refptr<MockIndexedDBCallbacks> request2(
-      new MockIndexedDBCallbacks(false));
-  scoped_refptr<MockIndexedDBDatabaseCallbacks> callbacks2(
-      new MockIndexedDBDatabaseCallbacks());
-  const int64_t transaction_id2 = 2;
-  std::unique_ptr<IndexedDBPendingConnection> connection2(
-      std::make_unique<IndexedDBPendingConnection>(
-          request1, callbacks1, kFakeChildProcessId, transaction_id2, 3));
-  db_->OpenConnection(std::move(connection2));
-
-  EXPECT_EQ(db_->ConnectionCount(), 1UL);
-  EXPECT_EQ(db_->ActiveOpenDeleteCount(), 1UL);
-  EXPECT_EQ(db_->PendingOpenDeleteCount(), 0UL);
-  EXPECT_FALSE(backing_store_->HasOneRef());  // local and db
-
-  db_->ForceClose();
-  EXPECT_EQ(db_->ConnectionCount(), 0UL);
-  EXPECT_EQ(db_->ActiveOpenDeleteCount(), 0UL);
-  EXPECT_EQ(db_->PendingOpenDeleteCount(), 0UL);
-}
-
 leveldb::Status DummyOperation(IndexedDBTransaction* transaction) {
   return leveldb::Status::OK();
 }
@@ -486,7 +447,7 @@ class IndexedDBDatabaseOperationTest : public testing::Test {
         std::make_unique<FakeIndexedDBMetadataCoding>();
     metadata_coding_ = metadata_coding.get();
     leveldb::Status s;
-    std::tie(db_, s) = IndexedDBDatabase::Create(
+    std::tie(db_, s) = IndexedDBClassFactory::Get()->CreateIndexedDBDatabase(
         ASCIIToUTF16("db"), backing_store_.get(), factory_.get(),
         GetErrorCallback(), base::BindLambdaForTesting([&]() {
           db_.reset();

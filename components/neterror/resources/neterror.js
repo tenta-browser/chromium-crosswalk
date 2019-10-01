@@ -374,8 +374,7 @@ function onDocumentLoadOrUpdate() {
   // Show or hide control buttons.
   var controlButtonDiv = document.getElementById('control-buttons');
   controlButtonDiv.hidden = offlineContentVisible ||
-      !(reloadButtonVisible || downloadButtonVisible || attemptAutoFetch ||
-        cacheButtonVisible);
+      !(reloadButtonVisible || downloadButtonVisible || cacheButtonVisible);
 }
 
 function onDocumentLoad() {

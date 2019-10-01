@@ -57,12 +57,17 @@ const char kMonospaceCssClass[] = "monospace";
 
 std::string GetPlatformSpecificCss() {
 #if defined(OS_IOS)
-  return base::StrCat({GetResourceFromIdAsString(IDR_DISTILLER_MOBILE_CSS),
-                       GetResourceFromIdAsString(IDR_DISTILLER_IOS_CSS)});
+  return base::StrCat(
+      {ui::ResourceBundle::GetSharedInstance().DecompressDataResource(
+           IDR_DISTILLER_MOBILE_CSS),
+       ui::ResourceBundle::GetSharedInstance().DecompressDataResource(
+           IDR_DISTILLER_IOS_CSS)});
 #elif defined(OS_ANDROID)
-  return GetResourceFromIdAsString(IDR_DISTILLER_MOBILE_CSS);
+  return ui::ResourceBundle::GetSharedInstance().DecompressDataResource(
+      IDR_DISTILLER_MOBILE_CSS);
 #else  // Desktop
-  return GetResourceFromIdAsString(IDR_DISTILLER_DESKTOP_CSS);
+  return ui::ResourceBundle::GetSharedInstance().DecompressDataResource(
+      IDR_DISTILLER_DESKTOP_CSS);
 #endif
 }
 
@@ -115,7 +120,8 @@ std::string ReplaceHtmlTemplateValues(
     const DistilledPagePrefs::Theme theme,
     const DistilledPagePrefs::FontFamily font_family) {
   std::string html_template =
-      GetResourceFromIdAsString(IDR_DOM_DISTILLER_VIEWER_HTML);
+      ui::ResourceBundle::GetSharedInstance().DecompressDataResource(
+          IDR_DOM_DISTILLER_VIEWER_HTML);
   std::vector<std::string> substitutions;
 
   std::ostringstream css;
@@ -227,30 +233,34 @@ const std::string GetUnsafeArticleContentJs(
 
 const std::string GetCss() {
   return base::StrCat(
-      {GetResourceFromIdAsString(IDR_DISTILLER_CSS), GetPlatformSpecificCss()});
+      {ui::ResourceBundle::GetSharedInstance().DecompressDataResource(
+           IDR_DISTILLER_CSS),
+       GetPlatformSpecificCss()});
 }
 
 const std::string GetLoadingImage() {
-  return GetResourceFromIdAsString(IDR_DISTILLER_LOADING_IMAGE);
+  return ui::ResourceBundle::GetSharedInstance().DecompressDataResource(
+      IDR_DISTILLER_LOADING_IMAGE);
 }
 
 const std::string GetJavaScript() {
-  return GetResourceFromIdAsString(IDR_DOM_DISTILLER_VIEWER_JS);
+  return ui::ResourceBundle::GetSharedInstance().DecompressDataResource(
+      IDR_DOM_DISTILLER_VIEWER_JS);
 }
 
 std::unique_ptr<ViewerHandle> CreateViewRequest(
     DomDistillerServiceInterface* dom_distiller_service,
-    const std::string& path,
+    const GURL& url,
     ViewRequestDelegate* view_request_delegate,
     const gfx::Size& render_view_size) {
-  std::string entry_id =
-      url_utils::GetValueForKeyInUrlPathQuery(path, kEntryIdKey);
+  if (!url_utils::IsDistilledPage(url)) {
+    return nullptr;
+  }
+  std::string entry_id = url_utils::GetValueForKeyInUrl(url, kEntryIdKey);
   bool has_valid_entry_id = !entry_id.empty();
   entry_id = base::ToUpperASCII(entry_id);
 
-  std::string requested_url_str =
-      url_utils::GetValueForKeyInUrlPathQuery(path, kUrlKey);
-  GURL requested_url(requested_url_str);
+  GURL requested_url(url_utils::GetOriginalUrlFromDistillerUrl(url));
   bool has_valid_url = url_utils::IsUrlDistillable(requested_url);
 
   if (has_valid_entry_id && has_valid_url) {

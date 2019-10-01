@@ -235,7 +235,7 @@ void ApplyFramebufferAttachmentCMAAINTELResourceManager::
       TextureRef* texture =
           texture_manager->GetTexture(attachment->object_name());
       const bool rgba_immutable =
-          texture->texture()->IsImmutable() &&
+          texture->texture()->HasImmutableStorage() &&
           TextureManager::ExtractFormatFromStorageFormat(internal_format) ==
               GL_RGBA;
       const bool do_copy = !rgba_immutable;

@@ -27,7 +27,6 @@
 #include "ios/chrome/common/string_util.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
-#import "ios/chrome/test/earl_grey/accessibility_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_error_util.h"
@@ -197,8 +196,7 @@ id<GREYMatcher> OpenInNewIncognitoTabButton() {
   // Tap a history entry and assert that navigation to that entry's URL occurs.
   [[EarlGrey selectElementWithMatcher:HistoryEntry(_URL1, kTitle1)]
       performAction:grey_tap()];
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:kResponse1]);
+  [ChromeEarlGrey waitForWebStateContainingText:kResponse1];
 }
 
 // Tests that history is not changed after performing back navigation.
@@ -208,8 +206,7 @@ id<GREYMatcher> OpenInNewIncognitoTabButton() {
 
   [[EarlGrey selectElementWithMatcher:chrome_test_util::BackButton()]
       performAction:grey_tap()];
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:kResponse1]);
+  [ChromeEarlGrey waitForWebStateContainingText:kResponse1];
 
   [self openHistoryPanel];
 
@@ -223,7 +220,7 @@ id<GREYMatcher> OpenInNewIncognitoTabButton() {
 - (void)testSearchHistory {
   // TODO(crbug.com/753098): Re-enable this test on iPad once grey_typeText
   // works on iOS 11.
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_DISABLED(@"Test disabled on iPad.");
   }
 
@@ -412,7 +409,7 @@ id<GREYMatcher> OpenInNewIncognitoTabButton() {
 - (void)testAccessibilityOnHistory {
   [self loadTestURLs];
   [self openHistoryPanel];
-  chrome_test_util::VerifyAccessibilityForCurrentScreen();
+  [ChromeEarlGrey verifyAccessibilityForCurrentScreen];
   // Close history.
     id<GREYMatcher> exitMatcher =
         grey_accessibilityID(kHistoryNavigationControllerDoneButtonIdentifier);
@@ -422,17 +419,14 @@ id<GREYMatcher> OpenInNewIncognitoTabButton() {
 #pragma mark Helper Methods
 
 - (void)loadTestURLs {
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:_URL1]);
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:kResponse1]);
+  [ChromeEarlGrey loadURL:_URL1];
+  [ChromeEarlGrey waitForWebStateContainingText:kResponse1];
 
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:_URL2]);
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:kResponse2]);
+  [ChromeEarlGrey loadURL:_URL2];
+  [ChromeEarlGrey waitForWebStateContainingText:kResponse2];
 
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:_URL3]);
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:kResponse3]);
+  [ChromeEarlGrey loadURL:_URL3];
+  [ChromeEarlGrey waitForWebStateContainingText:kResponse3];
 }
 
 - (void)openHistoryPanel {

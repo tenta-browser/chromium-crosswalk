@@ -460,7 +460,6 @@ class DemoSetupTest : public LoginManagerTest {
   // TODO(agawronska): Maybe create a separate test fixture for offline setup.
   base::ScopedTempDir fake_demo_resources_dir_;
   policy::MockCloudPolicyStore mock_policy_store_;
-  base::test::ScopedFeatureList scoped_feature_list_;
   std::unique_ptr<base::AutoReset<bool>> official_build_override_;
 
   DISALLOW_COPY_AND_ASSIGN(DemoSetupTest);
@@ -604,7 +603,9 @@ IN_PROC_BROWSER_TEST_F(DemoSetupTest,
        {"dk", "Denmark"},
        {"fi", "Finland"},
        {"fr", "France"},
+       {"de", "Germany"},
        {"ie", "Ireland"},
+       {"jp", "Japan"},
        {"lu", "Luxembourg"},
        {"nl", "Netherlands"},
        {"no", "Norway"},

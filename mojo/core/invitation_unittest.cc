@@ -80,18 +80,8 @@ void PrepareToPassRemoteEndpoint(PlatformChannel* channel,
 #if defined(OS_FUCHSIA)
   channel->PrepareToPassRemoteEndpoint(&options->handles_to_transfer, &value);
 #elif defined(OS_MACOSX)
-  PlatformChannel::HandlePassingInfo info;
-  if (base::FeatureList::IsEnabled(features::kMojoChannelMac))
-    info = options->mach_ports_for_rendezvous;
-  else
-    info = options->fds_to_remap;
-
-  channel->PrepareToPassRemoteEndpoint(&info, &value);
-
-  if (base::FeatureList::IsEnabled(features::kMojoChannelMac))
-    options->mach_ports_for_rendezvous = info;
-  else
-    options->fds_to_remap = info;
+  channel->PrepareToPassRemoteEndpoint(&options->mach_ports_for_rendezvous,
+                                       &value);
 #elif defined(OS_POSIX)
   channel->PrepareToPassRemoteEndpoint(&options->fds_to_remap, &value);
 #elif defined(OS_WIN)

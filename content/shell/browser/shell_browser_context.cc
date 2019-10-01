@@ -48,12 +48,10 @@ ShellBrowserContext::ShellResourceContext::~ShellResourceContext() {
 }
 
 ShellBrowserContext::ShellBrowserContext(bool off_the_record,
-                                         net::NetLog* net_log,
                                          bool delay_services_creation)
     : resource_context_(new ShellResourceContext),
       ignore_certificate_errors_(false),
       off_the_record_(off_the_record),
-      net_log_(net_log),
       guest_manager_(nullptr) {
   InitWhileIOAllowed();
   if (!delay_services_creation) {
@@ -154,11 +152,11 @@ std::unique_ptr<ZoomLevelDelegate> ShellBrowserContext::CreateZoomLevelDelegate(
 }
 #endif  // !defined(OS_ANDROID)
 
-base::FilePath ShellBrowserContext::GetPath() const {
+base::FilePath ShellBrowserContext::GetPath() {
   return path_;
 }
 
-bool ShellBrowserContext::IsOffTheRecord() const {
+bool ShellBrowserContext::IsOffTheRecord() {
   return off_the_record_;
 }
 
@@ -179,7 +177,7 @@ ShellBrowserContext::CreateURLRequestContextGetter(
   return new ShellURLRequestContextGetter(
       ignore_certificate_errors_, off_the_record_, GetPath(),
       base::CreateSingleThreadTaskRunnerWithTraits({BrowserThread::IO}),
-      protocol_handlers, std::move(request_interceptors), net_log_);
+      protocol_handlers, std::move(request_interceptors));
 }
 
 net::URLRequestContextGetter* ShellBrowserContext::CreateRequestContext(
@@ -192,31 +190,9 @@ net::URLRequestContextGetter* ShellBrowserContext::CreateRequestContext(
 }
 
 net::URLRequestContextGetter*
-ShellBrowserContext::CreateRequestContextForStoragePartition(
-    const base::FilePath& partition_path,
-    bool in_memory,
-    ProtocolHandlerMap* protocol_handlers,
-    URLRequestInterceptorScopedVector request_interceptors) {
-  scoped_refptr<ShellURLRequestContextGetter>& context_getter =
-      isolated_url_request_getters_[partition_path];
-  if (!context_getter) {
-    context_getter = CreateURLRequestContextGetter(
-        protocol_handlers, std::move(request_interceptors));
-  }
-  return context_getter.get();
-}
-
-net::URLRequestContextGetter*
     ShellBrowserContext::CreateMediaRequestContext()  {
   DCHECK(url_request_getter_.get());
   return url_request_getter_.get();
-}
-
-net::URLRequestContextGetter*
-    ShellBrowserContext::CreateMediaRequestContextForStoragePartition(
-        const base::FilePath& partition_path,
-        bool in_memory) {
-  return nullptr;
 }
 
 ResourceContext* ShellBrowserContext::GetResourceContext()  {

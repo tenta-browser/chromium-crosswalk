@@ -15,7 +15,7 @@
 #include "third_party/blink/renderer/core/layout/ng/ng_layout_result.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_physical_container_fragment.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_positioned_float.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
@@ -213,6 +213,7 @@ class CORE_EXPORT NGLineBoxFragmentBuilder final
     void AddChild(Args&&... args) {
       children_.emplace_back(std::forward<Args>(args)...);
     }
+    void InsertChild(unsigned index);
     void InsertChild(unsigned index,
                      scoped_refptr<const NGLayoutResult> layout_result,
                      const LogicalOffset& offset,

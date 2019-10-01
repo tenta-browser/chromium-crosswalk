@@ -170,7 +170,7 @@ bool ServiceProcess::Initialize(base::OnceClosure quit_closure,
 
   // The NetworkChangeNotifier must be created after ThreadPool because it
   // posts tasks to it.
-  network_change_notifier_.reset(net::NetworkChangeNotifier::Create());
+  network_change_notifier_ = net::NetworkChangeNotifier::Create();
   network_connection_tracker_ =
       std::make_unique<InProcessNetworkConnectionTracker>();
 
@@ -350,11 +350,7 @@ mojo::ScopedMessagePipeHandle ServiceProcess::CreateChannelMessagePipe() {
   mojo::PlatformChannelServerEndpoint server_endpoint;
 #if defined(OS_MACOSX)
   // Mach receive rights (named server channels) are not Clone-able.
-  if (base::FeatureList::IsEnabled(mojo::features::kMojoChannelMac)) {
-    server_endpoint = std::move(server_endpoint_);
-  } else {
-    server_endpoint = server_endpoint_.Clone();
-  }
+  server_endpoint = std::move(server_endpoint_);
 #elif defined(OS_POSIX)
   server_endpoint = server_endpoint_.Clone();
 #elif defined(OS_WIN)

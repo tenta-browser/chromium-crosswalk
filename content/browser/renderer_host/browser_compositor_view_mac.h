@@ -209,8 +209,6 @@ class CONTENT_EXPORT BrowserCompositorMac : public DelegatedFrameHostClient,
 
   bool is_first_navigation_ = true;
 
-  bool is_first_navigation_ = true;
-
   base::WeakPtrFactory<BrowserCompositorMac> weak_factory_;
 };
 

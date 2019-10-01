@@ -2,7 +2,6 @@
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file. */
 
-
 /**
  * Enum for ids.
  * @enum {string}
@@ -23,7 +22,6 @@ const IDS = {
   URL_FIELD_NAME: 'url-field-name',      // URL input field name.
 };
 
-
 /**
  * Enum for key codes.
  * @enum {number}
@@ -36,7 +34,6 @@ const KEYCODES = {
   TAB: 9,
 };
 
-
 /**
  * The origin of this request, i.e. 'https://www.google.TLD' for the remote NTP,
  * or 'chrome-search://local-ntp' for the local NTP.
@@ -44,13 +41,11 @@ const KEYCODES = {
  */
 const DOMAIN_ORIGIN = '{{ORIGIN}}';
 
-
 /**
  * List of parameters passed by query args.
  * @type {Object}
  */
 let queryArgs = {};
-
 
 /**
  * The prepopulated data for the form. Includes title, url, and rid.
@@ -62,13 +57,11 @@ const prepopulatedLink = {
   url: '',
 };
 
-
 /**
  * The title of the dialog when adding a link.
  * @type {string}
  */
 let addLinkTitle = '';
-
 
 /**
  * The title of the dialog when editing a link.
@@ -76,13 +69,11 @@ let addLinkTitle = '';
  */
 let editLinkTitle = '';
 
-
 /**
  * The accessibility title of remove link button.
  * @type {string}
  */
 let deleteLinkTitle = '';
-
 
 /**
  * Handler for the 'linkData' message from the host page. Pre-populates the url
@@ -111,7 +102,6 @@ function prepopulateFields(rid) {
   $(IDS.DONE).title = editLinkTitle;
 }
 
-
 /**
  * Shows the invalid URL error message until the URL field is modified.
  */
@@ -123,7 +113,6 @@ function showInvalidUrlUntilTextInput() {
   };
   $(IDS.URL_FIELD).addEventListener('input', reenable);
 }
-
 
 /**
  * Send a message to close the edit dialog. Called when the edit flow has been
@@ -159,7 +148,6 @@ function finishEditLink() {
   closeDialog();
 }
 
-
 /**
  * Call the EmbeddedSearchAPI to delete the link. Closes the dialog.
  * @param {!Event} event The click event.
@@ -168,7 +156,6 @@ function deleteLink(event) {
   chrome.embeddedSearch.newTabPage.deleteMostVisitedItem(prepopulatedLink.rid);
   closeDialog();
 }
-
 
 /**
  * Send a message to close the edit dialog, clears the url and title fields, and
@@ -189,7 +176,6 @@ function closeDialog() {
   }, 10);
 }
 
-
 /**
  * Send a message to refocus the edited tile's three dot menu or the add
  * shortcut tile after the cancel button is clicked.
@@ -197,13 +183,12 @@ function closeDialog() {
  */
 function focusBackOnCancel(event) {
   if (event.keyCode === KEYCODES.ENTER || event.keyCode === KEYCODES.SPACE) {
-    const message = {cmd: 'focusMenu', tid: prepopulatedLink.rid};
+    const message = {cmd: 'focusMenu', rid: prepopulatedLink.rid};
     window.parent.postMessage(message, DOMAIN_ORIGIN);
     event.preventDefault();
     closeDialog();
   }
 }
-
 
 /**
  * Handler for the 'updateTheme' message from the host page.
@@ -222,10 +207,10 @@ function handlePostMessage(event) {
   const cmd = event.data.cmd;
   const args = event.data;
   if (cmd === 'linkData') {
-    if (args.tid) {  // We are editing a link, prepopulate the link data.
+    if (args.rid) {  // We are editing a link, prepopulate the link data.
       document.title = editLinkTitle;
       $(IDS.DIALOG_TITLE).textContent = editLinkTitle;
-      prepopulateFields(args.tid);
+      prepopulateFields(args.rid);
     } else {  // We are adding a link, disable the delete button.
       document.title = addLinkTitle;
       $(IDS.DIALOG_TITLE).textContent = addLinkTitle;
@@ -244,7 +229,6 @@ function handlePostMessage(event) {
     updateTheme(args);
   }
 }
-
 
 /**
  * Does some initialization and shows the dialog window.
@@ -328,8 +312,12 @@ function init() {
   $(IDS.URL_FIELD)
       .addEventListener('blur', () => changeColor(IDS.URL_FIELD_NAME));
   // Disables the "Done" button when the URL field is empty.
-  $(IDS.URL_FIELD).addEventListener('input',
-      () => $(IDS.DONE).disabled = ($(IDS.URL_FIELD).value.trim() === ''));
+  $(IDS.URL_FIELD)
+      .addEventListener(
+          'input',
+          () => $(IDS.DONE).disabled = ($(IDS.URL_FIELD).value.trim() === ''));
+
+  utils.setPlatformClass(document.body);
 
   utils.setPlatformClass(document.body);
 
@@ -337,6 +325,5 @@ function init() {
 
   window.addEventListener('message', handlePostMessage);
 }
-
 
 window.addEventListener('DOMContentLoaded', init);

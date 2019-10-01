@@ -229,29 +229,6 @@ void ActiveDirectoryPolicyManager::ExpandVariables(PolicyMap* policy_map) {
   }
 }
 
-void ActiveDirectoryPolicyManager::ExpandVariables(PolicyMap* policy_map) {
-  const em::PolicyData* policy = store_->policy();
-  if (!policy)
-    return;
-  if (policy->machine_name().empty()) {
-    LOG(ERROR) << "Cannot expand machine_name (empty string in policy)";
-    return;
-  }
-
-  chromeos::VariableExpander expander;
-  expander.SetVariable("machine_name", policy->machine_name());
-
-  for (const char* policy_name : kPoliciesToExpand) {
-    base::Value* value = policy_map->GetMutableValue(policy_name);
-    if (value) {
-      if (!expander.ExpandValue(value)) {
-        LOG(ERROR) << "Failed to expand at least one variable in policy "
-                   << policy_name;
-      }
-    }
-  }
-}
-
 UserActiveDirectoryPolicyManager::UserActiveDirectoryPolicyManager(
     const AccountId& account_id,
     bool policy_required,

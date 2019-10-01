@@ -21,9 +21,7 @@ FilteringNetworkManager::FilteringNetworkManager(
     OnEnumerationPermissionCallback callback)
     : network_manager_(network_manager),
       media_permission_(media_permission),
-      requesting_origin_(requesting_origin),
-      on_enumeration_permission_cb_(std::move(callback)),
-      weak_ptr_factory_(this) {
+      requesting_origin_(requesting_origin) {
   thread_checker_.DetachFromThread();
   SetEnumerationPermissionAndNotify(ENUMERATION_BLOCKED);
 

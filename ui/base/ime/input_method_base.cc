@@ -163,16 +163,9 @@ void InputMethodBase::OnInputMethodChanged() const {
 }
 
 ui::EventDispatchDetails InputMethodBase::DispatchKeyEventPostIME(
-    ui::KeyEvent* event,
-    ResultCallback result_callback) const {
-  if (delegate_) {
-    return delegate_->DispatchKeyEventPostIME(event,
-                                              std::move(result_callback));
-  }
-
-  if (result_callback)
-    std::move(result_callback).Run(false, false);
-  return EventDispatchDetails();
+    ui::KeyEvent* event) const {
+  return delegate_ ? delegate_->DispatchKeyEventPostIME(event)
+                   : ui::EventDispatchDetails();
 }
 
 void InputMethodBase::NotifyTextInputStateChanged(
@@ -222,7 +215,7 @@ std::vector<gfx::Rect> InputMethodBase::GetCompositionBounds(
 bool InputMethodBase::SendFakeProcessKeyEvent(bool pressed) const {
   KeyEvent evt(pressed ? ET_KEY_PRESSED : ET_KEY_RELEASED,
                pressed ? VKEY_PROCESSKEY : VKEY_UNKNOWN, EF_IME_FABRICATED_KEY);
-  ignore_result(DispatchKeyEventPostIME(&evt, base::NullCallback()));
+  ignore_result(DispatchKeyEventPostIME(&evt));
   return evt.stopped_propagation();
 }
 
@@ -293,6 +286,12 @@ void InputMethodBase::SendKeyEvent(KeyEvent* event) {
 
 InputMethod* InputMethodBase::GetInputMethod() {
   return this;
+}
+
+void InputMethodBase::ConfirmCompositionText() {
+  TextInputClient* client = GetTextInputClient();
+  if (client && client->HasCompositionText())
+    client->ConfirmCompositionText();
 }
 
 const std::vector<std::unique_ptr<ui::KeyEvent>>&

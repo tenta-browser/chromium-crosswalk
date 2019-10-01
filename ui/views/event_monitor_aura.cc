@@ -88,10 +88,4 @@ void EventMonitorAura::TearDown() {
   event_observer_ = nullptr;
 }
 
-void EventMonitorAura::TearDown() {
-  if (event_observer_)
-    env_->RemoveEventObserver(event_observer_);
-  event_observer_ = nullptr;
-}
-
 }  // namespace views

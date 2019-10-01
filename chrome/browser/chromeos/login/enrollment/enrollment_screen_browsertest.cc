@@ -25,9 +25,9 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+using testing::_;
 using testing::InvokeWithoutArgs;
 using testing::Mock;
-using testing::_;
 
 namespace chromeos {
 
@@ -109,25 +109,16 @@ IN_PROC_BROWSER_TEST_F(EnrollmentScreenTest, EnrollmentSpinner) {
   EnrollmentScreenView* view = enrollment_screen()->GetView();
   ASSERT_TRUE(view);
 
-  test::JSChecker checker(
-      LoginDisplayHost::default_host()->GetOobeWebContents());
-
   // Run through the flow
   view->Show();
   OobeScreenWaiter(EnrollmentScreenView::kScreenId).Wait();
-  checker.ExpectTrue(
-      "window.getComputedStyle(document.getElementById('oauth-enroll-step-"
-      "signin')).display !== 'none'");
+  enrollment_ui_.WaitForStep(test::ui::kEnrollmentStepSignin);
 
   view->ShowEnrollmentSpinnerScreen();
-  checker.ExpectTrue(
-      "window.getComputedStyle(document.getElementById('oauth-enroll-step-"
-      "working')).display !== 'none'");
+  enrollment_ui_.WaitForStep(test::ui::kEnrollmentStepWorking);
 
   view->ShowAttestationBasedEnrollmentSuccessScreen("fake domain");
-  checker.ExpectTrue(
-      "window.getComputedStyle(document.getElementById('oauth-enroll-step-"
-      "success')).display !== 'none'");
+  enrollment_ui_.WaitForStep(test::ui::kEnrollmentStepSuccess);
 }
 
 class ForcedAttestationAuthEnrollmentScreenTest : public EnrollmentScreenTest {

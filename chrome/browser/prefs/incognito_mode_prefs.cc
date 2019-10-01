@@ -133,6 +133,11 @@ static constexpr IncognitoModePrefs::Availability kDefaultAvailability =
 }  // namespace
 
 // static
+// Sadly, this is required until c++17.
+constexpr IncognitoModePrefs::Availability
+    IncognitoModePrefs::kDefaultAvailability;
+
+// static
 bool IncognitoModePrefs::IntToAvailability(int in_value,
                                            Availability* out_value) {
   if (in_value < 0 || in_value >= AVAILABILITY_NUM_TYPES) {

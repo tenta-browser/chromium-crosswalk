@@ -43,13 +43,26 @@ enum class MultiloginMode {
 };
 
 // Specifies the "source" parameter for Gaia calls.
-enum class GaiaSource {
-  kChrome,
-  kChromeOS,
-  kAccountReconcilorDice,
-  kAccountReconcilorMirror,
-  kOAuth2LoginVerifier,
-  kSigninManager
+class GaiaSource {
+ public:
+  enum Type {
+    kChrome,
+    kChromeOS,
+    kAccountReconcilorDice,
+    kAccountReconcilorMirror,
+    kOAuth2LoginVerifier,
+    kPrimaryAccountManager
+  };
+
+  // Implicit conversion is necessary to avoid boilerplate code.
+  GaiaSource(Type type);
+  GaiaSource(Type source, const std::string& suffix);
+  void SetGaiaSourceSuffix(const std::string& suffix);
+  std::string ToString();
+
+ private:
+  Type type_;
+  std::string suffix_;
 };
 
 }  // namespace gaia
@@ -71,14 +84,6 @@ class GaiaAuthFetcher {
       token_ = token;
     }
   };
-
-  // Magic string indicating that, while a second factor is still
-  // needed to complete authentication, the user provided the right password.
-  static const char kSecondFactor[];
-
-  // Magic string indicating that though the user does not have Less Secure
-  // Apps enabled, the user provided the right password.
-  static const char kWebLoginRequired[];
 
   // This will later be hidden behind an auth service which caches tokens.
   GaiaAuthFetcher(
@@ -245,21 +250,8 @@ class GaiaAuthFetcher {
   static const char kOAuthLoginFormat[];
 
   // Constants for parsing ClientLogin errors.
-  static const char kAccountDeletedError[];
-  static const char kAccountDeletedErrorCode[];
-  static const char kAccountDisabledError[];
-  static const char kAccountDisabledErrorCode[];
-  static const char kCaptchaError[];
-  static const char kCaptchaErrorCode[];
   static const char kErrorParam[];
   static const char kErrorUrlParam[];
-  static const char kCaptchaUrlParam[];
-  static const char kCaptchaTokenParam[];
-
-  // Constants for parsing ClientOAuth errors.
-  static const char kNeedsAdditional[];
-  static const char kCaptcha[];
-  static const char kTwoFactor[];
 
   // Constants for request/response for OAuth2 requests.
   static const char kAuthHeaderFormat[];
@@ -320,15 +312,7 @@ class GaiaAuthFetcher {
 
   static void ParseClientLoginFailure(const std::string& data,
                                       std::string* error,
-                                      std::string* error_url,
-                                      std::string* captcha_url,
-                                      std::string* captcha_token);
-
-  // Is this a special case Gaia error for TwoFactor auth?
-  static bool IsSecondFactorSuccess(const std::string& alleged_error);
-
-  // Is this a special case Gaia error for Less Secure Apps?
-  static bool IsWebLoginRequiredSuccess(const std::string& alleged_error);
+                                      std::string* error_url);
 
   // Supply the sid / lsid returned from ClientLogin in order to
   // request a long lived auth token for a service.
@@ -397,8 +381,6 @@ class GaiaAuthFetcher {
 
   friend class GaiaAuthFetcherTest;
   FRIEND_TEST_ALL_PREFIXES(GaiaAuthFetcherTest, CaptchaParse);
-  FRIEND_TEST_ALL_PREFIXES(GaiaAuthFetcherTest, AccountDeletedError);
-  FRIEND_TEST_ALL_PREFIXES(GaiaAuthFetcherTest, AccountDisabledError);
   FRIEND_TEST_ALL_PREFIXES(GaiaAuthFetcherTest, BadAuthenticationError);
   FRIEND_TEST_ALL_PREFIXES(GaiaAuthFetcherTest, BadAuthenticationShortError);
   FRIEND_TEST_ALL_PREFIXES(GaiaAuthFetcherTest, IncomprehensibleError);

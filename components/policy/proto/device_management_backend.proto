@@ -180,6 +180,12 @@ message DeviceRegisterRequest {
   // The date the device was manufactured in yyyy-mm-dd format.
   // This field might be set only if register type == DEVICE.
   optional string manufacture_date = 16;
+
+  // Currently using in token enrollment to ensure domain in request matches
+  // domain from token.
+  optional string expected_enrollment_domain = 17;
+
+  // Next id: 18.
 }
 
 // Response from server to device register request.
@@ -558,6 +564,8 @@ message PolicyData {
   optional string command_invalidation_topic = 27;
 
   // Whether the device needs to upload an enrollment identifier to the cloud.
+  // TODO(b/136188860) migrates to enrollment_certificate_needed under
+  // client_action_required.
   optional bool enrollment_id_needed = 28;
 
   // Gaia id of the user the policy is intended for.
@@ -586,6 +594,18 @@ message PolicyData {
   // http://google3/ccc/hosted/policies/services/common/sso_settings.proto?l=48&rcl=241246111
   // This field is currently only set for User Policy response.
   optional string change_password_uri = 32;
+
+  // This field is used for asking client to perform some actions. For instance,
+  // server asks client to re-upload enrollment certificate. In long term, new
+  // added field which asks client to perform an action in policy data should be
+  // put in ClientActionRequired message.
+  optional ClientActionRequired client_action_required = 33;
+}
+
+message ClientActionRequired {
+  // Whether device needs to upload an enterprise enrollment certificate to
+  // cloud.
+  optional bool enrollment_certificate_needed = 1;
 }
 
 message PolicyFetchResponse {
@@ -655,10 +675,9 @@ message PolicyFetchResponse {
   // See http://go/chrome-nac-server-design for more information.
   optional bytes new_public_key_verification_data_signature = 9;
 
-  // See PolicyFetchRequest.policy_type. This field is NOT signed by DMServer
-  // and is informational only. Client-side should verify and rely on the
-  // policy_type inside the signed policy_data.
-  optional string policy_type = 10;
+  // DEPRECATED! Client-side should verify and rely on the policy_type inside
+  // the signed policy_data.
+  optional string policy_type = 10 [deprecated = true];
 }
 
 // DEPRECATED: Protobuf used to generate the deprecated
@@ -1057,6 +1076,7 @@ message AppStatus {
 }
 
 // Chrome user profile level status.
+// Deprecated : Use ChromeUserProfileInfo instead.
 message ChromeUserProfileReport {
   // A string to uniquely identify this profile within the browser.
   optional string id = 1;
@@ -1087,6 +1107,220 @@ message ChromeUserProfileReport {
   // The name of the loaded profile, which was entered by the user when creating
   // the profile. Empty when in incognito mode.
   optional string name = 9;
+  // A list of extensions requested for installation.
+  repeated ExtensionRequest extension_requests = 10;
+}
+
+// Sign in information of Profile.
+message ChromeSignedInUser {
+  // The email of the signed in user.
+  optional string email = 1;
+  // The obfuscated GaiaID of the signed in user.
+  optional string obfudscated_gaiaid = 2;
+}
+
+// Extension request information.
+message ExtensionRequest {
+  // ID of the installed app/extension for a Chrome app or extension.
+  optional string id = 1;
+}
+
+// Extension information.
+message Extension {
+  reserved 7;
+
+  // ID of the installed app/extension for a Chrome app or extension.
+  optional string id = 1;
+  // Currently installed version of the extension.
+  optional string version = 2;
+  // The name of the extension.
+  optional string name = 3;
+  // The description of the extension that is provided by extension author.
+  optional string description = 4;
+
+  // The type of extension.
+  enum ExtensionType {
+    TYPE_UNKNOWN = 0;
+    TYPE_EXTENSION = 1;
+    TYPE_HOSTED_APP = 2;
+    TYPE_PACKAGED_APP = 3;
+    TYPE_LEGACY_PACKAGED_APP = 4;
+    TYPE_THEME = 5;
+    TYPE_USER_SCRIPT = 6;
+    TYPE_PLATFORM_APP = 7;
+    TYPE_LOGIN_SCREEN_EXTENSION = 8;
+  }
+  optional ExtensionType app_type = 5;
+
+  // URL of the homepage.
+  optional string homepage_url = 6;
+
+  // The installation source of the extension.
+  enum InstallType {
+    // An extension that is installed by user or installed by default but not
+    // component extension.
+    TYPE_NORMAL = 0;
+    // An extension that is loaded as unpacked extension from chrome extension
+    // page or --load-extension command line switch.
+    TYPE_DEVELOPMENT = 1;
+    // An extension that is loaded from the settings in Window Registry or
+    // a preferences JSON file on Mac and Linux.
+    TYPE_SIDELOAD = 2;
+    // An extension that is loaded from policy settings.
+    TYPE_ADMIN = 3;
+    // Chrome component extension and unknown sources.
+    TYPE_OTHER = 4;
+  }
+  optional InstallType install_type = 8;
+
+  // True if the extension is currently enabled.
+  optional bool enabled = 9;
+
+  // The list of api based permissions the extension requires.
+  repeated string permissions = 10;
+
+  // The list of host based permissions the extension requires.
+  repeated string host_permissions = 11;
+}
+
+// Plugin information.
+message Plugin {
+  // The human friendly name of plugin.
+  optional string name = 1;
+
+  // Currently installed version of the plugin.
+  optional string version = 2;
+
+  // The file name from the path of the plugin.
+  optional string filename = 3;
+
+  // More details of the plugin.
+  optional string description = 4;
+}
+
+// Policy information.
+message Policy {
+  // The name of the policy.
+  optional string name = 1;
+
+  // The level of a policy determines its enforceability and whether users can
+  // override it or not.
+  enum PolicyLevel {
+    LEVEL_UNKNOWN = 0;
+    // Recommended policies are a default value configured by admins and users
+    // can choose to override it.
+    LEVEL_RECOMMENDED = 1;
+
+    // Mandatory policies must be enforced and users can't circumvent them.
+    LEVEL_MANDATORY = 2;
+  }
+  optional PolicyLevel level = 2;
+
+  // The scope of a policy flags whether it's applied to the current user or to
+  // the machine.
+  enum PolicyScope {
+    SCOPE_UNKNOWN = 0;
+    // User policies apply to current Session/Profile if it's cloud policy.
+    // Or apply to current OS user on Windows.
+    SCOPE_USER = 1;
+
+    // Machine policies apply to any users of the current machine.
+    SCOPE_MACHINE = 2;
+  }
+  optional PolicyScope scope = 3;
+
+  // The source of a policy indicates where its value is originating from.
+  enum PolicySource {
+    SOURCE_UNKNOWN = 0;
+    // A policy is set by Chrome when it's running in an
+    // enterprise environment.
+    SOURCE_ENTERPRISE_DEFAULT = 1;
+
+    // A policy is set by Google's cloud management tool.
+    SOURCE_CLOUD = 2;
+
+    // A policy is set by active directory on ChromeOS.
+    SOURCE_ACTIVE_DIRECTORY = 3;
+
+    // A policy is overridden by ChromeOS if it's running in a public session or
+    // kiosk mode.
+    SOURCE_DEVICE_LOCAL_ACCOUNT_OVERRIDE = 4;
+
+    // A policy is set by OS built-in tool on desktop.
+    SOURCE_PLATFORM = 5;
+
+    // A policy is set by Google's cloud management tool but has higher
+    // priority.
+    SOURCE_PRIORITY_CLOUD = 6;
+
+    // A policy is set by multiple sources and value has been merged.
+    SOURCE_MERGED = 7;
+  }
+  optional PolicySource source = 4;
+
+  // The value of policy.
+  optional string value = 5;
+
+  // The error message of policy.
+  optional string error = 6;
+}
+
+// Extension policy information.
+message ExtensionPolicy {
+  // The id of extension that policies apply to.
+  optional string extension_id = 1;
+
+  // The list of policies that extension currently uses.
+  repeated Policy policies = 2;
+}
+
+// Cloud policy last fetch time.
+message PolicyFetchTimestamp {
+  // The type of cloud policy.
+  optional string type = 1;
+  // The last time the policies where fetched for the policy type.
+  // [timestamp] is milliseconds since Epoch in UTC timezone (Java time).
+  optional int64 timestamp = 2;
+}
+
+// Chrome user profile level status, used by activated Profiles. Profile name is
+// not listed here as they are in the ChromeUserProfileBasicInfo.
+message ChromeUserProfileInfo {
+  // A string to uniquely identify this profile within the browser.
+  optional string id = 1;
+
+  // The name of the profile, which was entered by the user when creating
+  // the profile. Empty when in incognito mode
+  optional string name = 2;
+
+  // A boolean to indicates if it's a full report which contains all Profile
+  // details. Only activated Profile is able to upload full report, idle Profile
+  // only uploads its |id| and |name|.
+  optional bool is_full_report = 3;
+
+  // Gaia account information if the Profile is signed in.
+  optional ChromeSignedInUser chrome_signed_in_user = 4;
+
+  // A list of extensions installed in the browser.
+  repeated Extension extensions = 5;
+
+  // A list of extensions requested for installation.
+  repeated ExtensionRequest extension_requests = 10;
+
+  // A list of plugins installed in the browser.
+  repeated Plugin plugins = 6;
+
+  // A list of Chrome browser policies set for this user profile.
+  repeated Policy chrome_policies = 7;
+
+  // A list of extensions' policies set for this user profile. The policies is
+  // only added if the extension is installed.
+  repeated ExtensionPolicy extension_policies = 8;
+
+  // The last time the cloud policies where fetched for each policy type.
+  // Only one policy type which is google/chrome/machine-level-user uploads
+  // timestamp currently. More details in b/132973694
+  repeated PolicyFetchTimestamp policy_fetched_timestamps = 9;
 }
 
 // Sign in information of Profile.
@@ -1310,16 +1544,15 @@ message BrowserReport {
   optional string executable_path = 3;
 
   // Profile specific reports, one per profile.
-  // This field is replaced by ChromeUserProfileInfo and only used by old Chrome
-  // browser.
+  // Deprecated by ChromeUserProfileInfo and only used by old Chrome browser.
   repeated ChromeUserProfileReport chrome_user_profile_reports = 4;
 
-  // A list of all Profiles that is created in the currently browser instance.
-  // Only activated Profiles is able to upload full details while the idle ones
+  // A list of all Profiles that are created in the current browser instance.
+  // Only activated Profiles are able to upload full details while the idle ones
   // contain id and name only. Please note that some activated Profiles may not
-  // upload full details like idle one due to the limitatin of report size.
+  // upload full details due to the limitation of the report size.
   // These details will be uploaded in the following reports.
-  repeated ChromeUserProfileInfo profile_info_list = 6;
+  repeated ChromeUserProfileInfo chrome_user_profile_infos = 6;
 }
 
 // Report Operating system related information.
@@ -1488,12 +1721,47 @@ message AndroidStatus {
   optional string droid_guard_info = 2;
 }
 
+enum CrostiniAppType {
+  // The default terminal App.
+  CROSTINI_APP_TYPE_TERMINAL = 0;
+  // A registered interactive Crostini App which is
+  // not the default terminal app.
+  CROSTINI_APP_TYPE_INTERACTIVE = 1;
+  // Detected non-registered container applications.
+  CROSTINI_APP_TYPE_OTHER = 2;
+}
+
+message CrostiniApp {
+  // The default display name of the App.
+  optional string app_name = 1;
+  // The type of the App.
+  optional CrostiniAppType app_type = 2;
+
+  // Time stamp of last launch of the App with a three day granularity.
+  // The timestamp is milliseconds since Epoch in UTC timezone (Java time).
+  optional int64 last_launch_time_window_start_timestamp = 3;
+
+  // If available, the name of the Debian package belonging to this App.
+  optional string package_name = 4;
+  // If available, the version of the Debian package belonging to this App.
+  optional string package_version = 5;
+  // If available, a hash of the package belonging to this App.
+  optional string package_hash = 6;
+}
+
 message CrostiniStatus {
   // Time stamp of last launch of a Crostini app with three day granularity,
   // The timestamp is milliseconds since Epoch in UTC timezone (Java time).
   optional int64 last_launch_time_window_start_timestamp = 1;
+
   // The VM image version at the time of the last launch.
   optional string last_launch_vm_image_version = 2;
+  // The VM kernel version at the time of the last launch.
+  optional string last_launch_vm_kernel_version = 3;
+
+  // Contains information about each installed app at the time of the
+  // report.
+  repeated CrostiniApp installed_apps = 4;
 }
 
 // Report current active session (a user on one device) level status.
@@ -1897,7 +2165,7 @@ message DeviceRemoteCommandResponse {
   // (and vice versa).
   //
   // The secure_commands.data field contains a serialized
-  // RemoteCommand. The  ecure_commands.signature field is a
+  // RemoteCommand. The secure_commands.signature field is a
   // signature of the data field with the policy key for the
   // domain the device belongs to.
   repeated SignedData secure_commands = 2;
@@ -2176,6 +2444,10 @@ message AppInstallReportLogEvent {
     INSTALLATION_FINISHED = 11;
     // Package installation failed
     INSTALLATION_FAILED = 12;
+    // Direct install scheduled
+    DIRECT_INSTALL = 13;
+    // No more regular attempts to install
+    CLOUDDPC_MAIN_LOOP_FAILED = 14;
   }
 
   // Enumerates the possible changes in session state.

@@ -35,9 +35,7 @@ Me2MeHostAuthenticatorFactory::CreateWithPin(
   std::unique_ptr<Me2MeHostAuthenticatorFactory> result(
       new Me2MeHostAuthenticatorFactory());
   result->use_service_account_ = use_service_account;
-  result->host_owner_ = host_owner;
-  result->canonical_host_owner_email_ = GetCanonicalEmail(
-      host_owner_email.empty() ? host_owner : host_owner_email);
+  result->canonical_host_owner_email_ = GetCanonicalEmail(host_owner);
   result->local_cert_ = local_cert;
   result->key_pair_ = key_pair;
   result->required_client_domain_list_ = std::move(required_client_domain_list);
@@ -59,9 +57,7 @@ Me2MeHostAuthenticatorFactory::CreateWithThirdPartyAuth(
   std::unique_ptr<Me2MeHostAuthenticatorFactory> result(
       new Me2MeHostAuthenticatorFactory());
   result->use_service_account_ = use_service_account;
-  result->host_owner_ = host_owner;
-  result->canonical_host_owner_email_ = GetCanonicalEmail(
-      host_owner_email.empty() ? host_owner : host_owner_email);
+  result->canonical_host_owner_email_ = GetCanonicalEmail(host_owner);
   result->local_cert_ = local_cert;
   result->key_pair_ = key_pair;
   result->required_client_domain_list_ = std::move(required_client_domain_list);
@@ -99,9 +95,7 @@ Me2MeHostAuthenticatorFactory::CreateAuthenticator(
     // always uses the user's actual email.
     remote_jid_prefix = canonical_host_owner_email_;
   } else {
-    // TODO(rmsousa): This only works for cases where the JID prefix matches
-    // the host owner email. Figure out a way to verify the JID in other cases.
-    remote_jid_prefix = host_owner_;
+    remote_jid_prefix = canonical_host_owner_email_;
   }
 
   // Verify that the client's jid is an ASCII string, and then check that the

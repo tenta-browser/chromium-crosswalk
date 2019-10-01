@@ -233,7 +233,7 @@ OverlayWindowViews::OverlayWindowViews(
   views::Widget::InitParams params(views::Widget::InitParams::TYPE_WINDOW);
   params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.bounds = CalculateAndUpdateWindowBounds();
-  params.keep_on_top = true;
+  params.z_order = ui::ZOrderLevel::kFloatingWindow;
   params.visible_on_all_workspaces = true;
   params.remove_standard_frame = true;
   params.name = "PictureInPictureWindow";
@@ -264,16 +264,9 @@ OverlayWindowViews::OverlayWindowViews(
 OverlayWindowViews::~OverlayWindowViews() = default;
 
 gfx::Rect OverlayWindowViews::CalculateAndUpdateWindowBounds() {
-  gfx::Rect work_area =
-      display::Screen::GetScreen()
-          ->GetDisplayNearestWindow(IsVisible()
-                                        ? GetNativeWindow()
-                                        : controller_->GetInitiatorWebContents()
-                                              ->GetTopLevelNativeWindow())
-          .work_area();
+  gfx::Rect work_area = GetWorkAreaForWindow();
 
-  // Upper bound size of the window is 50% of the display width and height.
-  max_size_ = gfx::Size(work_area.width() / 2, work_area.height() / 2);
+  UpdateMaxSize(work_area, window_bounds_.size());
 
   // Lower bound size of the window is a fixed value to allow for minimal sizes
   // on UI affordances, such as buttons.
@@ -509,10 +502,6 @@ void OverlayWindowViews::UpdateControlsVisibility(bool is_visible) {
   mute_controls_view_->ToggleVisibility(is_visible);
   skip_ad_controls_view_->ToggleVisibility(is_visible && show_skip_ad_button_);
 
-  // We need to do more than usual visibility change because otherwise control
-  // is accessible via accessibility tools.
-  skip_ad_controls_view_->ToggleVisibility(is_visible && show_skip_ad_button_);
-
 #if defined(OS_CHROMEOS)
   GetResizeHandleLayer()->SetVisible(is_visible);
 #endif
@@ -691,6 +680,10 @@ gfx::Rect OverlayWindowViews::CalculateControlsBounds(int x,
       gfx::Point(x, (GetBounds().size().height() - size.height()) / 2), size);
 }
 
+bool OverlayWindowViews::IsActive() {
+  return views::Widget::IsActive();
+}
+
 bool OverlayWindowViews::IsActive() const {
   return views::Widget::IsActive();
 }
@@ -722,15 +715,19 @@ void OverlayWindowViews::Hide() {
   views::Widget::Hide();
 }
 
+bool OverlayWindowViews::IsVisible() {
+  return is_initialized_ ? views::Widget::IsVisible() : false;
+}
+
 bool OverlayWindowViews::IsVisible() const {
   return is_initialized_ ? views::Widget::IsVisible() : false;
 }
 
-bool OverlayWindowViews::IsAlwaysOnTop() const {
+bool OverlayWindowViews::IsAlwaysOnTop() {
   return true;
 }
 
-gfx::Rect OverlayWindowViews::GetBounds() const {
+gfx::Rect OverlayWindowViews::GetBounds() {
   return views::Widget::GetRestoredBounds();
 }
 
@@ -836,6 +833,10 @@ void OverlayWindowViews::OnNativeWidgetMove() {
   // shown.
   window_bounds_ = GetBounds();
 
+  // Update the maximum size of the widget in case we have moved to another
+  // window.
+  UpdateMaxSize(GetWorkAreaForWindow(), window_bounds_.size());
+
 #if defined(OS_CHROMEOS)
   // Update the positioning of some icons when the window is moved.
   WindowQuadrant quadrant = GetCurrentWindowQuadrant(GetBounds(), controller_);
@@ -875,16 +876,14 @@ void OverlayWindowViews::OnKeyEvent(ui::KeyEvent* event) {
     UpdateControlsVisibility(true);
   }
 
-// On Mac, the space key event isn't automatically handled. Only handle space
-// for TogglePlayPause() since tabbing between the buttons is not supported and
-// there is no focus affordance on the buttons.
-#if defined(OS_MACOSX)
-  if (event->type() == ui::ET_KEY_PRESSED &&
+  // If there is no focus affordance on the buttons, only handle space key to
+  // for TogglePlayPause().
+  views::View* focused_view = GetFocusManager()->GetFocusedView();
+  if (!focused_view && event->type() == ui::ET_KEY_PRESSED &&
       event->key_code() == ui::VKEY_SPACE) {
     TogglePlayPause();
     event->SetHandled();
   }
-#endif  // OS_MACOSX
 
 // On Windows, the Alt+F4 keyboard combination closes the window. Only handle
 // closure on key press so Close() is not called a second time when the key
@@ -1082,6 +1081,31 @@ ui::Layer* OverlayWindowViews::GetCloseControlsLayer() {
 
 ui::Layer* OverlayWindowViews::GetResizeHandleLayer() {
   return resize_handle_view_->layer();
+}
+
+gfx::Rect OverlayWindowViews::GetWorkAreaForWindow() const {
+  return display::Screen::GetScreen()
+      ->GetDisplayNearestWindow(IsVisible()
+                                    ? GetNativeWindow()
+                                    : controller_->GetInitiatorWebContents()
+                                          ->GetTopLevelNativeWindow())
+      .work_area();
+}
+
+gfx::Size OverlayWindowViews::UpdateMaxSize(const gfx::Rect& work_area,
+                                            const gfx::Size& window_size) {
+  max_size_ = gfx::Size(work_area.width() / 2, work_area.height() / 2);
+
+  if (!IsVisible())
+    return window_size;
+
+  if (window_size.width() <= max_size_.width() &&
+      window_size.height() <= max_size_.height()) {
+    return window_size;
+  }
+
+  SetSize(max_size_);
+  return gfx::Size(max_size_);
 }
 
 void OverlayWindowViews::TogglePlayPause() {

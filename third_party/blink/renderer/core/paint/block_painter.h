@@ -9,7 +9,7 @@
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/layout/order_iterator.h"
 #include "third_party/blink/renderer/platform/geometry/layout_rect.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
@@ -41,9 +41,6 @@ class BlockPainter {
   static void PaintInlineBox(const InlineBox&, const PaintInfo&);
 
  private:
-  // Paint scroll hit test placeholders in the correct paint order (see:
-  // ScrollHitTestDisplayItem.h).
-  void PaintScrollHitTestDisplayItem(const PaintInfo&);
   void PaintBlockFlowContents(const PaintInfo&, const PhysicalOffset&);
   void PaintCarets(const PaintInfo&, const PhysicalOffset& paint_offset);
 

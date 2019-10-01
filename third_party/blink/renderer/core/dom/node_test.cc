@@ -40,6 +40,7 @@ class NodeTest : public EditingTestBase {
     GetDocument().Lifecycle().AdvanceTo(DocumentLifecycle::kInStyleRecalc);
     GetDocument().GetStyleEngine().RecalcStyle({});
     Node::AttachContext context;
+    context.parent = LayoutTreeBuilderTraversal::ParentLayoutObject(node);
     GetDocument().GetStyleEngine().in_layout_tree_rebuild_ = true;
     node.ReattachLayoutTree(context);
     return context.previous_in_flow;

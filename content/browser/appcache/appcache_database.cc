@@ -249,15 +249,8 @@ int64_t AppCacheDatabase::GetOriginUsage(const url::Origin& origin) {
     return 0;
 
   int64_t origin_usage = 0;
-  bool padding_enabled =
-      base::FeatureList::IsEnabled(features::kAppCacheIncludePaddingInQuota);
-  for (const auto& cache : caches) {
-    if (padding_enabled) {
-      origin_usage += cache.cache_size + cache.padding_size;
-    } else {
-      origin_usage += cache.cache_size;
-    }
-  }
+  for (const auto& cache : caches)
+    origin_usage += cache.cache_size + cache.padding_size;
   return origin_usage;
 }
 
@@ -1082,8 +1075,8 @@ bool AppCacheDatabase::LazyOpen(bool create_if_needed) {
     return false;
   }
 
-  db_.reset(new sql::Database);
-  meta_table_.reset(new sql::MetaTable);
+  db_ = std::make_unique<sql::Database>();
+  meta_table_ = std::make_unique<sql::MetaTable>();
 
   db_->set_histogram_tag("AppCache");
 
@@ -1099,10 +1092,6 @@ bool AppCacheDatabase::LazyOpen(bool create_if_needed) {
   }
 
   if (!opened || !db_->QuickIntegrityCheck() || !EnsureDatabaseVersion()) {
-    LOG(ERROR) << "Failed to open the appcache database.";
-    AppCacheHistograms::CountInitResult(
-        AppCacheHistograms::SQL_DATABASE_ERROR);
-
     // We're unable to open the database. This is a fatal error
     // which we can't recover from. We try to handle it by deleting
     // the existing appcache data and starting with a clean slate in
@@ -1114,7 +1103,6 @@ bool AppCacheDatabase::LazyOpen(bool create_if_needed) {
     return false;
   }
 
-  AppCacheHistograms::CountInitResult(AppCacheHistograms::INIT_OK);
   was_corruption_detected_ = false;
   db_->set_error_callback(base::BindRepeating(
       &AppCacheDatabase::OnDatabaseError, base::Unretained(this)));

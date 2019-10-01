@@ -16,8 +16,9 @@
 #include "base/bind.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/android/chrome_jni_headers/FaviconHelper_jni.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
-#include "chrome/browser/favicon/large_icon_service_factory.h"
+#include "chrome/browser/favicon/history_ui_favicon_request_handler_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_android.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
@@ -25,12 +26,12 @@
 #include "components/favicon/core/favicon_request_handler.h"
 #include "components/favicon/core/favicon_service.h"
 #include "components/favicon/core/favicon_util.h"
+#include "components/favicon/core/history_ui_favicon_request_handler.h"
 #include "components/favicon_base/favicon_util.h"
 #include "components/sync/driver/sync_service_utils.h"
 #include "components/sync_sessions/open_tabs_ui_delegate.h"
 #include "components/sync_sessions/session_sync_service.h"
 #include "content/public/browser/web_contents.h"
-#include "jni/FaviconHelper_jni.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/android/java_bitmap.h"
 #include "ui/gfx/codec/png_codec.h"
@@ -173,21 +174,25 @@ jboolean FaviconHelper::GetForeignFaviconImageForURL(
 
   GURL page_url(ConvertJavaStringToUTF8(env, j_page_url));
 
-  sync_sessions::OpenTabsUIDelegate* open_tabs = GetOpenTabsUIDelegate(profile);
-  // TODO(victorvianna): Consider passing icon types to the API.
-  favicon_request_handler_.GetRawFaviconForPageURL(
+  sync_sessions::SessionSyncService* session_sync_service =
+      SessionSyncServiceFactory::GetInstance()->GetForProfile(profile);
+  DCHECK(session_sync_service);
+  sync_sessions::OpenTabsUIDelegate* open_tabs =
+      session_sync_service->GetOpenTabsUIDelegate();
+  favicon::HistoryUiFaviconRequestHandler* history_ui_favicon_request_handler =
+      HistoryUiFaviconRequestHandlerFactory::GetForBrowserContext(profile);
+  // Can be null in tests.
+  if (!history_ui_favicon_request_handler)
+    return false;
+  history_ui_favicon_request_handler->GetRawFaviconForPageURL(
       page_url, static_cast<int>(j_desired_size_in_pixel),
       base::BindOnce(&OnFaviconBitmapResultAvailable,
                      ScopedJavaGlobalRef<jobject>(j_favicon_image_callback)),
-      favicon::FaviconRequestOrigin::RECENTLY_CLOSED_TABS,
       favicon::FaviconRequestPlatform::kMobile,
-      FaviconServiceFactory::GetForProfile(profile,
-                                           ServiceAccessType::EXPLICIT_ACCESS),
-      LargeIconServiceFactory::GetForBrowserContext(profile),
+      favicon::HistoryUiFaviconRequestOrigin::kRecentTabs,
       /*icon_url_for_uma=*/
       open_tabs ? open_tabs->GetIconUrlForPageUrl(page_url) : GURL(),
-      base::BindOnce(&GetSyncedFaviconForPageURL, profile),
-      CanSendHistoryDataToServer(profile), cancelable_task_tracker_.get());
+      cancelable_task_tracker_.get());
   return true;
 }
 

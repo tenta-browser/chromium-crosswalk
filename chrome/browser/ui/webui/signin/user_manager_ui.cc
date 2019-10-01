@@ -9,6 +9,7 @@
 
 #include "base/feature_list.h"
 #include "base/values.h"
+#include "build/branding_buildflags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_shortcut_manager.h"
@@ -43,9 +44,7 @@ UserManagerUI::UserManagerUI(content::WebUI* web_ui) : WebUIController(web_ui) {
   Profile* profile = Profile::FromWebUI(web_ui);
 
   // Set up the chrome://md-user-manager/ source.
-  auto* user_source = CreateUIDataSource(localized_strings);
-  DarkModeHandler::Initialize(web_ui, user_source);
-  content::WebUIDataSource::Add(profile, user_source);
+  content::WebUIDataSource::Add(profile, CreateUIDataSource(localized_strings));
 
   // Set up the chrome://theme/ source
   content::URLDataSource::Add(profile, std::make_unique<ThemeSource>(profile));
@@ -99,7 +98,7 @@ void UserManagerUI::GetLocalizedStrings(
   const std::string& app_locale = g_browser_process->GetApplicationLocale();
   webui::SetLoadTimeDataDefaults(app_locale, localized_strings);
 
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   localized_strings->SetString("buildType", "chrome");
 #else
   localized_strings->SetString("buildType", "chromium");

@@ -151,33 +151,6 @@ IN_PROC_BROWSER_TEST_F(CrostiniUninstalledUninstallerViewBrowserTest,
 
   WaitForViewDestroyed();
 
-  histogram_tester.ExpectUniqueSample(
-      "Crostini.UninstallResult",
-      static_cast<base::HistogramBase::Sample>(
-          CrostiniUninstallerView::UninstallResult::kSuccess),
-      1);
-}
-
-IN_PROC_BROWSER_TEST_F(CrostiniUninstalledUninstallerViewBrowserTest,
-                       OfflineUninstallFlowWithoutTermina) {
-  base::HistogramTester histogram_tester;
-
-  SetConnectionType(net::NetworkChangeNotifier::CONNECTION_NONE);
-  base::RunLoop().RunUntilIdle();
-
-  ShowUi("default");
-  EXPECT_NE(nullptr, ActiveView());
-  EXPECT_FALSE(ActiveView()->GetWidget()->IsClosed());
-  EXPECT_EQ(ui::DIALOG_BUTTON_OK | ui::DIALOG_BUTTON_CANCEL,
-            ActiveView()->GetDialogButtons());
-
-  EXPECT_TRUE(HasAcceptButton());
-  EXPECT_TRUE(HasCancelButton());
-
-  ActiveView()->GetDialogClientView()->AcceptWindow();
-
-  WaitForViewDestroyed();
-
   histogram_tester.ExpectBucketCount(
       "Crostini.UninstallResult",
       static_cast<base::HistogramBase::Sample>(

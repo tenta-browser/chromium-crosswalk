@@ -133,16 +133,10 @@ BOOL WaitForJavaScriptCondition(NSString* java_script_condition) {
 
 - (void)setUp {
   [super setUp];
-  GREYAssert(autofill::features::IsPasswordManualFallbackEnabled(),
-             @"Manual Fallback must be enabled for this Test Case");
-  GREYAssert(autofill::features::IsAutofillManualFallbackEnabled(),
-             @"Manual Fallback phase 2 must be enabled for this Test Case");
-
   GREYAssertTrue(self.testServer->Start(), @"Test server failed to start.");
   const GURL URL = self.testServer->GetURL(kFormHTMLFile);
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:URL]);
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:"hello!"]);
+  [ChromeEarlGrey loadURL:URL];
+  [ChromeEarlGrey waitForWebStateContainingText:"hello!"];
 
   _personalDataManager =
       autofill::PersonalDataManagerFactory::GetForBrowserState(
@@ -278,7 +272,7 @@ BOOL WaitForJavaScriptCondition(NSString* java_script_condition) {
 // Tests that the credit card View Controller is dismissed when tapping the
 // keyboard icon.
 - (void)testKeyboardIconDismissCreditCardController {
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     // The keyboard icon is never present in iPads.
     return;
   }
@@ -311,7 +305,7 @@ BOOL WaitForJavaScriptCondition(NSString* java_script_condition) {
 // Tests that the credit card View Controller is dismissed when tapping the
 // outside the popover on iPad.
 - (void)testIPadTappingOutsidePopOverDismissCreditCardController {
-  if (!IsIPadIdiom()) {
+  if (![ChromeEarlGrey isIPadIdiom]) {
     return;
   }
   [self saveLocalCreditCard];
@@ -345,7 +339,7 @@ BOOL WaitForJavaScriptCondition(NSString* java_script_condition) {
 // Tests that the credit card View Controller is dismissed when tapping the
 // keyboard.
 - (void)testTappingKeyboardDismissCreditCardControllerPopOver {
-  if (!IsIPadIdiom()) {
+  if (![ChromeEarlGrey isIPadIdiom]) {
     return;
   }
   [self saveLocalCreditCard];

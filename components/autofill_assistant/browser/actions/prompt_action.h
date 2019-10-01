@@ -17,19 +17,19 @@
 #include "components/autofill_assistant/browser/batch_element_checker.h"
 #include "components/autofill_assistant/browser/chip.h"
 #include "components/autofill_assistant/browser/element_precondition.h"
+#include "components/autofill_assistant/browser/user_action.h"
 
 namespace autofill_assistant {
 
 // Allow the selection of one or more suggestions.
 class PromptAction : public Action {
  public:
-  explicit PromptAction(const ActionProto& proto);
+  explicit PromptAction(ActionDelegate* delegate, const ActionProto& proto);
   ~PromptAction() override;
 
  private:
   // Overrides Action:
-  void InternalProcessAction(ActionDelegate* delegate,
-                             ProcessActionCallback callback) override;
+  void InternalProcessAction(ProcessActionCallback callback) override;
 
   void RunPeriodicChecks();
   void SetupPreconditions();
@@ -37,7 +37,7 @@ class PromptAction : public Action {
   void CheckPreconditions();
   void OnPreconditionResult(size_t choice_index, bool result);
   void OnPreconditionChecksDone();
-  void UpdateChips();
+  void UpdateUserActions();
   bool HasAutoSelect();
   void CheckAutoSelect();
   void OnAutoSelectElementExists(int choice_index, bool exists);
@@ -57,6 +57,29 @@ class PromptAction : public Action {
 
   // true if something in precondition_results_ has changed, which means that
   // the set of chips must be updated.
+  bool precondition_changed_ = false;
+
+  // Batch element checker for preconditions.
+  std::unique_ptr<BatchElementChecker> precondition_checker_;
+
+  // If >= 0, contains the index of the Choice to auto-select.
+  int auto_select_choice_index_ = -1;
+
+  // Batch element checker for auto-selection, if any.
+  std::unique_ptr<BatchElementChecker> auto_select_checker_;
+
+  std::unique_ptr<base::RepeatingTimer> timer_;
+
+  // preconditions_[i] contains the element preconditions for
+  // proto.prompt.choice[i].
+  std::vector<std::unique_ptr<ElementPrecondition>> preconditions_;
+
+  // precondition_results_[i] contains the last result reported by
+  // preconditions_[i].
+  std::vector<bool> precondition_results_;
+
+  // true if something in precondition_results_ has changed, which means that
+  // the set of user actions must be updated.
   bool precondition_changed_ = false;
 
   // Batch element checker for preconditions.

@@ -15,10 +15,9 @@ namespace net {
 
 namespace {
 
-base::Value NetLogInitEndInfoCallback(int result,
-                                      int total_size,
-                                      bool is_chunked,
-                                      NetLogCaptureMode /* capture_mode */) {
+base::Value NetLogInitEndInfoParams(int result,
+                                    int total_size,
+                                    bool is_chunked) {
   base::Value dict(base::Value::Type::DICTIONARY);
 
   dict.SetIntKey("net_error", result);
@@ -27,8 +26,7 @@ base::Value NetLogInitEndInfoCallback(int result,
   return dict;
 }
 
-base::Value NetLogReadInfoCallback(int current_position,
-                                   NetLogCaptureMode /* capture_mode */) {
+base::Value CreateReadInfoParams(int current_position) {
   base::Value dict(base::Value::Type::DICTIONARY);
 
   dict.SetIntKey("current_position", current_position);
@@ -76,7 +74,7 @@ int UploadDataStream::Read(IOBuffer* buf,
   DCHECK_GT(buf_len, 0);
 
   net_log_.BeginEvent(NetLogEventType::UPLOAD_DATA_STREAM_READ,
-                      base::Bind(&NetLogReadInfoCallback, current_position_));
+                      [&] { return CreateReadInfoParams(current_position_); });
 
   int result = 0;
   if (!is_eof_)
@@ -156,9 +154,9 @@ void UploadDataStream::OnInitCompleted(int result) {
       is_eof_ = true;
   }
 
-  net_log_.EndEvent(
-      NetLogEventType::UPLOAD_DATA_STREAM_INIT,
-      base::Bind(&NetLogInitEndInfoCallback, result, total_size_, is_chunked_));
+  net_log_.EndEvent(NetLogEventType::UPLOAD_DATA_STREAM_INIT, [&] {
+    return NetLogInitEndInfoParams(result, total_size_, is_chunked_);
+  });
 
   if (!callback_.is_null())
     std::move(callback_).Run(result);

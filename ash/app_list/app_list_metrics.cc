@@ -61,12 +61,39 @@ constexpr char kAppListSearchResultOpenSourceHistogram[] =
 // The UMA hisotogram that logs the action user performs on zero state
 // search result.
 constexpr char kAppListZeroStateSearchResultUserActionHistogram[] =
-    "Apps.AppListZeroStateSearchResultUserActionType";
+    "Apps.AppList.ZeroStateSearchResultUserActionType";
 
 // The UMA histogram that logs user's decision(remove or cancel) for zero state
 // search result removal confirmation.
 constexpr char kAppListZeroStateSearchResultRemovalHistogram[] =
-    "Apps.ZeroStateSearchResutRemovalDecision";
+    "Apps.AppList.ZeroStateSearchResultRemovalDecision";
+
+// The UMA histogram that logs the length of the query when user abandons
+// results of a queried search or recommendations of zero state(zero length
+// query) in launcher UI.
+constexpr char kSearchAbandonQueryLengthHistogram[] =
+    "Apps.AppListSearchAbandonQueryLength";
+
+// The base UMA histogram that logs app launches within the AppList and shelf.
+constexpr char kAppListAppLaunched[] = "Apps.AppListAppLaunchedV2";
+
+// The UMA histograms that log app launches within the AppList and shelf. The
+// app launches are divided by histogram for each of the the different AppList
+// states.
+constexpr char kAppListAppLaunchedClosed[] = "Apps.AppListAppLaunchedV2.Closed";
+constexpr char kAppListAppLaunchedPeeking[] =
+    "Apps.AppListAppLaunchedV2.Peeking";
+constexpr char kAppListAppLaunchedHalf[] = "Apps.AppListAppLaunchedV2.Half";
+constexpr char kAppListAppLaunchedFullscreenAllApps[] =
+    "Apps.AppListAppLaunchedV2.FullscreenAllApps";
+constexpr char kAppListAppLaunchedFullscreenSearch[] =
+    "Apps.AppListAppLaunchedV2.FullscreenSearch";
+constexpr char kAppListAppLaunchedHomecherClosed[] =
+    "Apps.AppListAppLaunchedV2.HomecherClosed";
+constexpr char kAppListAppLaunchedHomecherAllApps[] =
+    "Apps.AppListAppLaunchedV2.HomecherAllApps";
+constexpr char kAppListAppLaunchedHomecherSearch[] =
+    "Apps.AppListAppLaunchedV2.HomecherSearch";
 
 // The UMA histogram that logs the length of the query when user abandons
 // results of a queried search or recommendations of zero state(zero length
@@ -146,6 +173,9 @@ void RecordPageSwitcherSourceByEventType(ui::EventType type,
       break;
     case ui::ET_SCROLL_FLING_START:
       source = kFlingAppGrid;
+      break;
+    case ui::ET_MOUSE_RELEASED:
+      source = kMouseDrag;
       break;
     default:
       NOTREACHED();

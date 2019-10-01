@@ -126,13 +126,6 @@ public class UpdateMenuItemHelper {
         recordUpdateHistogram();
     };
 
-    private final Callback<UpdateStatusProvider.UpdateStatus> mUpdateCallback = status -> {
-        mStatus = status;
-        handleStateChanged();
-        pingObservers();
-        recordUpdateHistogram();
-    };
-
     /**
      * The current state of updates for Chrome.  This can change during runtime and may be {@code
      * null} if the status hasn't been determined yet.

@@ -8,8 +8,6 @@
 #include "base/strings/sys_string_conversions.h"
 #include "components/omnibox/browser/location_bar_model.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
-#include "ios/chrome/browser/infobars/infobar_badge_tab_helper.h"
-#include "ios/chrome/browser/infobars/infobar_badge_tab_helper_delegate.h"
 #import "ios/chrome/browser/search_engines/search_engine_observer_bridge.h"
 #import "ios/chrome/browser/search_engines/search_engines_util.h"
 #include "ios/chrome/browser/ssl/ios_security_state_tab_helper.h"
@@ -21,8 +19,8 @@
 #import "ios/chrome/browser/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/web_state_list/web_state_list_observer_bridge.h"
 #include "ios/chrome/grit/ios_theme_resources.h"
-#include "ios/web/public/navigation_item.h"
-#import "ios/web/public/navigation_manager.h"
+#include "ios/web/public/navigation/navigation_item.h"
+#import "ios/web/public/navigation/navigation_manager.h"
 #include "ios/web/public/security/ssl_status.h"
 #import "ios/web/public/web_client.h"
 #import "ios/web/public/web_state/web_state.h"
@@ -34,7 +32,6 @@
 #endif
 
 @interface LocationBarMediator () <CRWWebStateObserver,
-                                   InfobarBadgeTabHelperDelegate,
                                    SearchEngineObserving,
                                    WebStateListObserving>
 
@@ -50,7 +47,6 @@
   std::unique_ptr<WebStateListObserverBridge> _webStateListObserver;
   std::unique_ptr<SearchEngineObserverBridge> _searchEngineObserver;
 }
-@synthesize badgeState = _badgeState;
 
 - (instancetype)initWithLocationBarModel:(LocationBarModel*)locationBarModel {
   DCHECK(locationBarModel);
@@ -157,18 +153,6 @@
 - (void)searchEngineChanged {
   self.searchEngineSupportsSearchByImage =
       search_engines::SupportsSearchByImage(self.templateURLService);
-}
-
-#pragma mark - InfobarBadgeTabHelper
-
-- (void)displayBadge:(BOOL)display type:(InfobarType)infobarType {
-  DCHECK(IsInfobarUIRebootEnabled());
-  [self.consumer displayInfobarBadge:display type:infobarType];
-}
-
-- (void)setBadgeState:(InfobarBadgeState)badgeState {
-  _badgeState = badgeState;
-  [self.consumer activeInfobarBadge:_badgeState & InfobarBadgeStateAccepted];
 }
 
 #pragma mark - Setters

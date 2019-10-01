@@ -82,7 +82,7 @@ void AssertElementIsFocused(const std::string& element_id) {
   // the previous and next buttons are not shown in our keyboard input
   // accessory. Instead, they appear in the native keyboard's shortcut bar (to
   // the left and right of the QuickType suggestions).
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_SKIPPED(@"Skipped for iPad (no hidden toolbar in tablet)");
   }
 
@@ -91,8 +91,7 @@ void AssertElementIsFocused(const std::string& element_id) {
       "http://ios/testing/data/http_server_files/multi_field_form.html");
   CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:URL]);
 
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:"hello!"]);
+  [ChromeEarlGrey waitForWebStateContainingText:"hello!"];
 
   // Opening the keyboard from a webview blocks EarlGrey's synchronization.
   [[GREYConfiguration sharedInstance]

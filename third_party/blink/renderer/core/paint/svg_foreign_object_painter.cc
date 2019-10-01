@@ -50,34 +50,6 @@ void SVGForeignObjectPainter::PaintLayer(const PaintInfo& paint_info) {
       .Paint(paint_info.context, layer_painting_info, paint_info.PaintFlags());
 }
 
-void SVGForeignObjectPainter::PaintLayer(const PaintInfo& paint_info) {
-  if (!RuntimeEnabledFeatures::SlimmingPaintV175Enabled())
-    return;
-  if (paint_info.phase != PaintPhase::kForeground &&
-      paint_info.phase != PaintPhase::kSelection)
-    return;
-
-  // Early out in the case of trying to paint an image filter before
-  // pre-paint has finished.
-  if (!layout_svg_foreign_object_.FirstFragment().HasLocalBorderBoxProperties())
-    return;
-
-  // <foreignObject> is a replaced normal-flow stacking element.
-  // See IsReplacedNormalFlowStacking in paint_layer_painter.cc.
-  PaintLayerPaintingInfo layer_painting_info(
-      layout_svg_foreign_object_.Layer(),
-      // Reset to an infinite cull rect, for simplicity. Otherwise
-      // an adjustment would be needed for ancestor scrolling, and any
-      // SVG transforms would have to be taken into account. Further,
-      // cull rects under transform are intentionally reset to infinity,
-      // to improve cache invalidation performance in the pre-paint tree
-      // walk (see https://http://crrev.com/482854).
-      LayoutRect(LayoutRect::InfiniteIntRect()),
-      paint_info.GetGlobalPaintFlags(), LayoutSize());
-  PaintLayerPainter(*layout_svg_foreign_object_.Layer())
-      .Paint(paint_info.context, layer_painting_info, paint_info.PaintFlags());
-}
-
 void SVGForeignObjectPainter::Paint(const PaintInfo& paint_info) {
   PaintInfo paint_info_before_filtering(paint_info);
   ScopedSVGPaintState paint_state(layout_svg_foreign_object_,

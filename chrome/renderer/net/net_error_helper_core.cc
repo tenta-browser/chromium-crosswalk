@@ -369,26 +369,6 @@ std::unique_ptr<error_page::ErrorPageParams> CreateErrorPageParams(
   return params;
 }
 
-void ReportAutoReloadSuccess(const error_page::Error& error, size_t count) {
-  if (error.domain() != error_page::Error::kNetErrorDomain)
-    return;
-  base::UmaHistogramSparse("Net.AutoReload.ErrorAtSuccess", -error.reason());
-  UMA_HISTOGRAM_COUNTS_1M("Net.AutoReload.CountAtSuccess",
-                          static_cast<base::HistogramBase::Sample>(count));
-  if (count == 1) {
-    base::UmaHistogramSparse("Net.AutoReload.ErrorAtFirstSuccess",
-                             -error.reason());
-  }
-}
-
-void ReportAutoReloadFailure(const error_page::Error& error, size_t count) {
-  if (error.domain() != error_page::Error::kNetErrorDomain)
-    return;
-  base::UmaHistogramSparse("Net.AutoReload.ErrorAtStop", -error.reason());
-  UMA_HISTOGRAM_COUNTS_1M("Net.AutoReload.CountAtStop",
-                          static_cast<base::HistogramBase::Sample>(count));
-}
-
 // Tracks navigation correction service usage in UMA to enable more in depth
 // analysis.
 void TrackClickUMA(std::string type_id) {
@@ -524,13 +504,7 @@ NetErrorHelperCore::NetErrorHelperCore(Delegate* delegate,
 {
 }
 
-NetErrorHelperCore::~NetErrorHelperCore() {
-  if (committed_error_page_info_ &&
-      committed_error_page_info_->auto_reload_triggered) {
-    ReportAutoReloadFailure(committed_error_page_info_->error,
-                            auto_reload_count_);
-  }
-}
+NetErrorHelperCore::~NetErrorHelperCore() = default;
 
 void NetErrorHelperCore::CancelPendingFetches() {
   // Cancel loading the alternate error page, and prevent any pending error page
@@ -546,11 +520,6 @@ void NetErrorHelperCore::CancelPendingFetches() {
 }
 
 void NetErrorHelperCore::OnStop() {
-  if (committed_error_page_info_ &&
-      committed_error_page_info_->auto_reload_triggered) {
-    ReportAutoReloadFailure(committed_error_page_info_->error,
-                            auto_reload_count_);
-  }
   CancelPendingFetches();
   uncommitted_load_started_ = false;
   auto_reload_count_ = 0;
@@ -620,17 +589,40 @@ void NetErrorHelperCore::OnCommitLoad(FrameType frame_type, const GURL& url) {
   }
   navigation_from_button_ = NO_BUTTON;
 
-  if (committed_error_page_info_ && !pending_error_page_info_ &&
-      committed_error_page_info_->auto_reload_triggered) {
-    const error_page::Error& error = committed_error_page_info_->error;
-    const GURL& error_url = error.url();
-    if (url == error_url)
-      ReportAutoReloadSuccess(error, auto_reload_count_);
-    else if (url != content::kUnreachableWebDataURL)
-      ReportAutoReloadFailure(error, auto_reload_count_);
+  committed_error_page_info_ = std::move(pending_error_page_info_);
+}
+
+void NetErrorHelperCore::ErrorPageLoadedWithFinalErrorCode() {
+  ErrorPageInfo* page_info = committed_error_page_info_.get();
+  DCHECK(page_info);
+  error_page::Error updated_error = GetUpdatedError(*page_info);
+
+  if (page_info->page_state.is_offline_error)
+    RecordEvent(error_page::NETWORK_ERROR_PAGE_OFFLINE_ERROR_SHOWN);
+
+#if defined(OS_ANDROID)
+  // The fetch functions shouldn't be triggered multiple times per page load.
+  if (page_info->page_state.offline_content_feature_enabled) {
+    available_content_helper_.FetchAvailableContent(base::BindOnce(
+        &Delegate::OfflineContentAvailable, base::Unretained(delegate_)));
   }
 
-  committed_error_page_info_ = std::move(pending_error_page_info_);
+  // |TrySchedule()| shouldn't be called more than once per page.
+  if (page_info->page_state.auto_fetch_allowed) {
+    page_auto_fetcher_helper_->TrySchedule(
+        false, base::BindOnce(&Delegate::SetAutoFetchState,
+                              base::Unretained(delegate_)));
+  }
+#endif  // defined(OS_ANDROID)
+
+  if (page_info->page_state.download_button_shown)
+    RecordEvent(error_page::NETWORK_ERROR_PAGE_DOWNLOAD_BUTTON_SHOWN);
+
+  if (page_info->page_state.reload_button_shown)
+    RecordEvent(error_page::NETWORK_ERROR_PAGE_RELOAD_BUTTON_SHOWN);
+
+  delegate_->SetIsShowingDownloadButton(
+      page_info->page_state.download_button_shown);
 }
 
 void NetErrorHelperCore::ErrorPageLoadedWithFinalErrorCode() {

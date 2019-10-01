@@ -89,6 +89,7 @@ js_library("sidebar") {
     ":pages_settings",
     ":scaling_settings",
     "..:cloud_print_interface",
+    "..:dark_mode_behavior",
     "..:metrics",
     "../data:destination",
     "../data:state",
@@ -311,6 +312,7 @@ js_library("preview_area") {
     ":margin_control_container",
     ":plugin_proxy",
     ":settings_behavior",
+    "..:dark_mode_behavior",
     "..:native_layer",
     "../../pdf:pdf_scripting_api",
     "../data:coordinate2d",
@@ -347,6 +349,7 @@ js_library("margin_control") {
     ":input_behavior",
     "../data:coordinate2d",
     "../data:margins",
+    "../data:measurement_system",
     "../data:size",
     "//ui/webui/resources/js:i18n_behavior",
   ]

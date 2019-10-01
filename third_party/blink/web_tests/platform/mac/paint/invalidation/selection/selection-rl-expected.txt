@@ -18,8 +18,8 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "InlineTextBox 'Testing both hit testing'",
-          "rect": [774, 8, 18, 147],
+          "object": "NGPhysicalTextFragment 'Testing both hit testing'",
+          "rect": [774, 38, 18, 79],
           "reason": "selection"
         }
       ]

@@ -12,12 +12,30 @@
 #include "third_party/blink/public/platform/web_media_stream_source.h"
 #include "third_party/blink/public/platform/web_media_stream_track.h"
 #include "third_party/blink/renderer/core/imagebitmap/image_bitmap.h"
-#include "third_party/blink/renderer/platform/cross_thread_functional.h"
+#include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/thread_safe_ref_counted.h"
 #include "third_party/libyuv/include/libyuv.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkSurface.h"
+
+namespace WTF {
+// Template specialization of [1], needed to be able to pass callbacks
+// that have ScopedWebCallbacks paramaters across threads.
+//
+// [1] third_party/blink/renderer/platform/wtf/cross_thread_copier.h.
+template <typename T>
+struct CrossThreadCopier<blink::ScopedWebCallbacks<T>>
+    : public CrossThreadCopierPassThrough<blink::ScopedWebCallbacks<T>> {
+  STATIC_ONLY(CrossThreadCopier);
+  using Type = blink::ScopedWebCallbacks<T>;
+  static blink::ScopedWebCallbacks<T> Copy(
+      blink::ScopedWebCallbacks<T> pointer) {
+    return pointer;
+  }
+};
+
+}  // namespace WTF
 
 namespace blink {
 
@@ -128,7 +146,7 @@ void ImageCaptureFrameGrabber::SingleShotFrameHandler::OnVideoFrameOnIOThread(
 }
 
 ImageCaptureFrameGrabber::ImageCaptureFrameGrabber()
-    : frame_grab_in_progress_(false), weak_factory_(this) {}
+    : frame_grab_in_progress_(false) {}
 
 ImageCaptureFrameGrabber::~ImageCaptureFrameGrabber() {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
@@ -161,10 +179,10 @@ void ImageCaptureFrameGrabber::GrabFrame(
   frame_grab_in_progress_ = true;
   MediaStreamVideoSink::ConnectToTrack(
       *track,
-      ConvertToBaseCallback(CrossThreadBind(
+      ConvertToBaseCallback(CrossThreadBindRepeating(
           &SingleShotFrameHandler::OnVideoFrameOnIOThread,
           base::MakeRefCounted<SingleShotFrameHandler>(),
-          WTF::Passed(CrossThreadBind(
+          WTF::Passed(CrossThreadBindRepeating(
               &ImageCaptureFrameGrabber::OnSkImage, weak_factory_.GetWeakPtr(),
               WTF::Passed(std::move(scoped_callbacks)))),
           WTF::Passed(std::move(task_runner)))),

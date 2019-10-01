@@ -67,7 +67,7 @@ const char kContactDetailsFreeShippingPage[] =
 
 // Completes the Payment Request.
 - (void)completePayment {
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey tapWebStateElementWithID:@"buy"]);
+  [ChromeEarlGrey tapWebStateElementWithID:@"buy"];
 
   // Tap the buy button.
   [[EarlGrey selectElementWithMatcher:ButtonWithAccessibilityLabelId(
@@ -96,7 +96,7 @@ const char kContactDetailsFreeShippingPage[] =
 
   // Setup a credit card with an associated billing address.
   autofill::AutofillProfile billingAddress = autofill::test::GetFullProfile();
-  CHROME_EG_ASSERT_NO_ERROR([self addAutofillProfile:billingAddress]);
+  [self addAutofillProfile:billingAddress];
 
   autofill::CreditCard card = autofill::test::GetCreditCard();  // visa
   card.set_billing_address_id(billingAddress.guid());

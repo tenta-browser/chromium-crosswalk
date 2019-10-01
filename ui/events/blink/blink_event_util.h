@@ -13,6 +13,7 @@
 #include "third_party/blink/public/platform/web_touch_event.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/gesture_detection/motion_event.h"
+#include "ui/events/types/scroll_types.h"
 
 namespace gfx {
 class PointF;

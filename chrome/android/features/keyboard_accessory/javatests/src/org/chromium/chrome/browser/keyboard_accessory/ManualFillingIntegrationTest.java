@@ -61,8 +61,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * Integration tests for keyboard accessory and accessory sheet with other Chrome components.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@EnableFeatures({ChromeFeatureList.PASSWORDS_KEYBOARD_ACCESSORY,
-        ChromeFeatureList.AUTOFILL_KEYBOARD_ACCESSORY})
+@EnableFeatures({ChromeFeatureList.AUTOFILL_KEYBOARD_ACCESSORY})
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class ManualFillingIntegrationTest {
     @Rule
@@ -477,63 +476,6 @@ public class ManualFillingIntegrationTest {
 
         waitToBeHidden(withChild(withId(R.id.keyboard_accessory_sheet)));
         mHelper.waitForKeyboardAccessoryToDisappear();
-
-        whenDisplayed(withText(kInfoBarText));
-    }
-
-    @Test
-    @SmallTest
-    public void testInfobarStaysHiddenWhenOpeningSheet()
-            throws InterruptedException, TimeoutException {
-        mHelper.loadTestPage(false);
-
-        // TODO Create an infobar
-        InfoBarContainer container =
-                mActivityTestRule.getActivity().getActivityTab().getInfoBarContainer();
-        InfoBarTestAnimationListener mListener = new InfoBarTestAnimationListener();
-        container.addAnimationListener(mListener);
-        final SimpleConfirmInfoBarBuilder.Listener testListener =
-                new SimpleConfirmInfoBarBuilder.Listener() {
-                    @Override
-                    public void onInfoBarDismissed() {}
-                    @Override
-                    public boolean onInfoBarButtonClicked(boolean isPrimary) {
-                        return false;
-                    }
-                };
-        final String kInfoBarText = "SomeInfoBar";
-        ThreadUtils.runOnUiThread(() -> {
-            SimpleConfirmInfoBarBuilder.create(mActivityTestRule.getActivity().getActivityTab(),
-                    testListener, InfoBarIdentifier.DUPLICATE_DOWNLOAD_INFOBAR_DELEGATE_ANDROID, 0,
-                    kInfoBarText, null, null, false);
-        });
-        mListener.addInfoBarAnimationFinished("InfoBar not added.");
-
-        mHelper.createTestTab();
-        whenDisplayed(withText(kInfoBarText));
-
-        // Focus the field to bring up the accessory.
-        mHelper.clickPasswordField();
-        mHelper.waitForKeyboard();
-        assertThat(mActivityTestRule.getActivity()
-                           .getActivityTab()
-                           .getInfoBarContainer()
-                           .getVisibility(),
-                is(not(View.VISIBLE)));
-
-        // Click the tab to show the sheet and hide the keyboard.
-        whenDisplayed(withId(R.id.tabs)).perform(selectTabAtPosition(0));
-        mHelper.waitForKeyboardToDisappear();
-        whenDisplayed(withId(R.id.keyboard_accessory_sheet));
-        assertThat(mActivityTestRule.getActivity()
-                           .getActivityTab()
-                           .getInfoBarContainer()
-                           .getVisibility(),
-                is(not(View.VISIBLE)));
-        Espresso.pressBack();
-
-        mHelper.waitToBeHidden(withId(R.id.keyboard_accessory_sheet));
-        mHelper.waitToBeHidden(withId(R.id.keyboard_accessory));
 
         whenDisplayed(withText(kInfoBarText));
     }

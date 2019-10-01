@@ -169,7 +169,7 @@ GREYElementInteraction* CellWithMatcher(id<GREYMatcher> matcher) {
 // to iOS 10.2.
 + (NSArray*)testInvocations {
 #if TARGET_IPHONE_SIMULATOR
-  if (IsIPadIdiom() && !base::ios::IsRunningOnOrLater(10, 3, 0))
+  if ([ChromeEarlGrey isIPadIdiom] && !base::ios::IsRunningOnOrLater(10, 3, 0))
     return @[];
 #endif  // TARGET_IPHONE_SIMULATOR
   return [super testInvocations];
@@ -291,13 +291,16 @@ GREYElementInteraction* CellWithMatcher(id<GREYMatcher> matcher) {
       [ContentSuggestionsLearnMoreItem accessibilityIdentifier]))
       assertWithMatcher:grey_notNil()];
 
-  // Open the last item.
+  // Open the last item. After the extra space of the last suggestion is
+  // removed, this test case fails on iPhoneX. Double-Tap on the last suggestion
+  // is a workaround.
+  // TODO(crbug.com/979143): Find out the reason and fix it. Also consider
+  // converting the test case to EG2 or deprecating MDCCollectionView.
   [CellWithMatcher(grey_accessibilityID(@"AdditionalSuggestion9"))
-      performAction:grey_tap()];
+      performAction:grey_doubleTap()];
 
   // Check that the page has been opened.
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:kPageLoadedString]);
+  [ChromeEarlGrey waitForWebStateContainingText:kPageLoadedString];
   [[EarlGrey selectElementWithMatcher:chrome_test_util::OmniboxText(
                                           pageURL.GetContent())]
       assertWithMatcher:grey_notNil()];
@@ -367,8 +370,7 @@ GREYElementInteraction* CellWithMatcher(id<GREYMatcher> matcher) {
 
   // Check the page has been correctly opened.
   [ChromeEarlGrey selectTabAtIndex:1];
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:kPageLoadedString]);
+  [ChromeEarlGrey waitForWebStateContainingText:kPageLoadedString];
   [[EarlGrey selectElementWithMatcher:chrome_test_util::OmniboxText(
                                           pageURL.GetContent())]
       assertWithMatcher:grey_notNil()];
@@ -390,8 +392,7 @@ GREYElementInteraction* CellWithMatcher(id<GREYMatcher> matcher) {
   CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey waitForIncognitoTabCount:1]);
 
   // Check that the tab has been opened in foreground.
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:kPageLoadedString]);
+  [ChromeEarlGrey waitForWebStateContainingText:kPageLoadedString];
   [[EarlGrey selectElementWithMatcher:chrome_test_util::OmniboxText(
                                           pageURL.GetContent())]
       assertWithMatcher:grey_notNil()];
@@ -499,9 +500,8 @@ GREYElementInteraction* CellWithMatcher(id<GREYMatcher> matcher) {
 
   // Clear history and verify that the tile does not exist.
   [ChromeEarlGrey clearBrowsingHistory];
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:pageURL]);
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:kPageLoadedString]);
+  [ChromeEarlGrey loadURL:pageURL];
+  [ChromeEarlGrey waitForWebStateContainingText:kPageLoadedString];
 
   // After loading URL, need to do another action before opening a new tab
   // with the icon present.

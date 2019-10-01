@@ -78,6 +78,9 @@ Polymer({
     showCrostini_: Boolean,
 
     /** @private */
+    showParentalControls_: Boolean,
+
+    /** @private */
     showPluginVm_: Boolean,
 
     /** @private */
@@ -134,6 +137,8 @@ Polymer({
           loadTimeData.getString('controlledSettingNoOwner'),
       controlledSettingParent:
           loadTimeData.getString('controlledSettingParent'),
+      controlledSettingChildRestriction:
+          loadTimeData.getString('controlledSettingChildRestriction'),
       // </if>
     };
 
@@ -141,6 +146,7 @@ Polymer({
     CrOncStrings = {
       OncTypeCellular: loadTimeData.getString('OncTypeCellular'),
       OncTypeEthernet: loadTimeData.getString('OncTypeEthernet'),
+      OncTypeMobile: loadTimeData.getString('OncTypeMobile'),
       OncTypeTether: loadTimeData.getString('OncTypeTether'),
       OncTypeVPN: loadTimeData.getString('OncTypeVPN'),
       OncTypeWiFi: loadTimeData.getString('OncTypeWiFi'),
@@ -171,12 +177,12 @@ Polymer({
     this.showAndroidApps_ = showOSSettings &&
         loadTimeData.valueExists('androidAppsVisible') &&
         loadTimeData.getBoolean('androidAppsVisible');
-    this.showKioskNextShell_ = showOSSettings &&
-        loadTimeData.valueExists('showKioskNextShell') &&
-        loadTimeData.getBoolean('showKioskNextShell');
     this.showCrostini_ = showOSSettings &&
         loadTimeData.valueExists('showCrostini') &&
         loadTimeData.getBoolean('showCrostini');
+    this.showParentalControls_ = showOSSettings &&
+        loadTimeData.valueExists('showParentalControls') &&
+        loadTimeData.getBoolean('showParentalControls');
     this.showPluginVm_ = showOSSettings &&
         loadTimeData.valueExists('showPluginVm') &&
         loadTimeData.getBoolean('showPluginVm');
@@ -208,6 +214,11 @@ Polymer({
     settings.setGlobalScrollTarget(this.$.container);
 
     const scrollToTop = top => new Promise(resolve => {
+      if (this.$.container.scrollTop === top) {
+        resolve();
+        return;
+      }
+
       // When transitioning  back to main page from a subpage on ChromeOS, using
       // 'smooth' scroll here results in the scroll changing to whatever is last
       // value of |top|. This happens even after setting the scroll position the

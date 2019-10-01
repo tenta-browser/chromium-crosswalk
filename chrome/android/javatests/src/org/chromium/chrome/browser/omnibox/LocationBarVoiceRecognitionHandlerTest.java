@@ -259,8 +259,23 @@ public class LocationBarVoiceRecognitionHandlerTest {
         }
 
         @Override
-        public boolean shouldDisplaySearchTerms() {
-            return false;
+        public void updateSearchEngineStatusIcon(boolean shouldShowSearchEngineLogo,
+                boolean isSearchEngineGoogle, String searchEngineUrl) {}
+    }
+
+    /**
+     * TODO(crbug.com/962527): Remove this dependency on {@link AutocompleteCoordinatorImpl}.
+     */
+    private class TestAutocompleteCoordinatorImpl extends AutocompleteCoordinatorImpl {
+        public TestAutocompleteCoordinatorImpl(ViewGroup parent, AutocompleteDelegate delegate,
+                OmniboxSuggestionListEmbedder listEmbedder,
+                UrlBarEditingTextStateProvider urlBarEditingTextProvider) {
+            super(parent, delegate, listEmbedder, urlBarEditingTextProvider);
+        }
+
+        @Override
+        public void onVoiceResults(List<VoiceResult> results) {
+            mAutocompleteVoiceResults = results;
         }
     }
 
@@ -630,16 +645,15 @@ public class LocationBarVoiceRecognitionHandlerTest {
     @Test
     @SmallTest
     public void testParseResults_EmptyBundle() {
-        Assert.assertNull(
-                LocationBarVoiceRecognitionHandler.convertBundleToVoiceResults(new Bundle()));
+        Assert.assertNull(mHandler.convertBundleToVoiceResults(new Bundle()));
     }
 
     @Test
     @SmallTest
     public void testParseResults_MismatchedTextAndConfidenceScores() {
-        Assert.assertNull(LocationBarVoiceRecognitionHandler.convertBundleToVoiceResults(
+        Assert.assertNull(mHandler.convertBundleToVoiceResults(
                 createDummyBundle(new String[] {"blah"}, new float[] {0f, 1f})));
-        Assert.assertNull(LocationBarVoiceRecognitionHandler.convertBundleToVoiceResults(
+        Assert.assertNull(mHandler.convertBundleToVoiceResults(
                 createDummyBundle(new String[] {"blah", "foo"}, new float[] {7f})));
     }
 
@@ -651,8 +665,7 @@ public class LocationBarVoiceRecognitionHandlerTest {
             float[] confidences = new float[] {0.8f, 1.0f, 1.0f};
 
             List<VoiceResult> results =
-                    LocationBarVoiceRecognitionHandler.convertBundleToVoiceResults(
-                            createDummyBundle(texts, confidences));
+                    mHandler.convertBundleToVoiceResults(createDummyBundle(texts, confidences));
 
             assertVoiceResultsAreEqual(results, texts, confidences);
         });
@@ -666,8 +679,7 @@ public class LocationBarVoiceRecognitionHandlerTest {
                     new String[] {"a", "www. b .co .uk", "engadget .com", "www.google.com"};
             float[] confidences = new float[] {1.0f, 1.0f, 1.0f, 1.0f};
             List<VoiceResult> results =
-                    LocationBarVoiceRecognitionHandler.convertBundleToVoiceResults(
-                            createDummyBundle(texts, confidences));
+                    mHandler.convertBundleToVoiceResults(createDummyBundle(texts, confidences));
 
             assertVoiceResultsAreEqual(results,
                     new String[] {"a", "www.b.co.uk", "engadget.com", "www.google.com"},

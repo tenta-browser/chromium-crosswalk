@@ -17,7 +17,7 @@
 #include "services/service_manager/public/cpp/connector.h"
 #include "ui/chromeos/events/event_rewriter_chromeos.h"
 #include "ui/chromeos/events/keyboard_layout_util.h"
-#include "ui/events/devices/input_device_manager.h"
+#include "ui/events/devices/device_data_manager.h"
 
 namespace {
 
@@ -30,7 +30,7 @@ struct KeyboardsStateResult {
 KeyboardsStateResult GetKeyboardsState() {
   KeyboardsStateResult result;
   for (const ui::InputDevice& keyboard :
-       ui::InputDeviceManager::GetInstance()->GetKeyboardDevices()) {
+       ui::DeviceDataManager::GetInstance()->GetKeyboardDevices()) {
     result.has_internal_keyboard |=
         (keyboard.type == ui::INPUT_DEVICE_INTERNAL);
 
@@ -80,7 +80,7 @@ void KeyboardHandler::RegisterMessages() {
 }
 
 void KeyboardHandler::OnJavascriptAllowed() {
-  observer_.Add(ui::InputDeviceManager::GetInstance());
+  observer_.Add(ui::DeviceDataManager::GetInstance());
 }
 
 void KeyboardHandler::OnJavascriptDisallowed() {
@@ -121,7 +121,7 @@ void KeyboardHandler::UpdateKeyboards() {
   }
   if (!physical_keyboard) {
     for (const ui::InputDevice& keyboard :
-         ui::InputDeviceManager::GetInstance()->GetKeyboardDevices()) {
+         ui::DeviceDataManager::GetInstance()->GetKeyboardDevices()) {
       if (keyboard.type != ui::InputDeviceType::INPUT_DEVICE_INTERNAL) {
         physical_keyboard = true;
         break;
@@ -150,9 +150,7 @@ void KeyboardHandler::UpdateShowKeys() {
   keyboard_params.SetKey("hasInternalKeyboard",
                          base::Value(keyboards_state.has_internal_keyboard));
 
-  const bool show_assistant_key_settings =
-      chromeos::assistant::features::IsKeyRemappingEnabled() &&
-      ui::DeviceKeyboardHasAssistantKey();
+  const bool show_assistant_key_settings = ui::DeviceKeyboardHasAssistantKey();
   keyboard_params.SetKey("hasAssistantKey",
                          base::Value(show_assistant_key_settings));
 

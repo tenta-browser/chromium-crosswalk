@@ -12,7 +12,6 @@ import android.graphics.RectF;
 import android.os.SystemClock;
 import android.support.annotation.IntDef;
 import android.util.Pair;
-import android.view.MotionEvent;
 import android.view.ViewGroup;
 import android.view.ViewGroup.LayoutParams;
 import android.widget.FrameLayout;
@@ -353,10 +352,6 @@ public abstract class StackLayoutBase extends Layout {
 
         private void onUpOrCancel(long time) {
             if (shouldIgnoreTouchInput()) return;
-
-            if (mNavigationEnabled && mNavigationHandler.isActive()) {
-                mNavigationHandler.onTouchEvent(MotionEvent.ACTION_UP);
-            }
             cancelDragTabs(time);
         }
 
@@ -405,8 +400,6 @@ public abstract class StackLayoutBase extends Layout {
         mStackRects = new ArrayList<RectF>();
         mViewContainer = new FrameLayout(getContext());
         mSceneLayer = new TabListSceneLayer();
-        mNavigationEnabled =
-                ChromeFeatureList.isEnabled(ChromeFeatureList.OVERSCROLL_HISTORY_NAVIGATION);
         mDpToPx = context.getResources().getDisplayMetrics().density;
     }
 
@@ -1675,7 +1668,6 @@ public abstract class StackLayoutBase extends Layout {
 
     @Override
     public void destroy() {
-        if (mNavigationHandler != null) mNavigationHandler.destroy();
         super.destroy();
     }
 

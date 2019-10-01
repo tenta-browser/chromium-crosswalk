@@ -52,11 +52,11 @@
 #include "components/autofill/core/common/autofill_util.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/prefs/pref_service.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/sync/driver/sync_auth_util.h"
 #include "components/sync/driver/sync_service.h"
 #include "components/sync/driver/sync_service_utils.h"
 #include "components/version_info/version_info.h"
-#include "services/identity/public/cpp/identity_manager.h"
 #include "third_party/libaddressinput/src/cpp/include/libaddressinput/address_data.h"
 #include "third_party/libaddressinput/src/cpp/include/libaddressinput/address_formatter.h"
 #include "third_party/libaddressinput/src/cpp/include/libaddressinput/source.h"
@@ -266,7 +266,7 @@ void PersonalDataManager::Init(
     scoped_refptr<AutofillWebDataService> profile_database,
     scoped_refptr<AutofillWebDataService> account_database,
     PrefService* pref_service,
-    identity::IdentityManager* identity_manager,
+    signin::IdentityManager* identity_manager,
     AutofillProfileValidator* client_profile_validator,
     history::HistoryService* history_service,
     bool is_off_the_record) {
@@ -344,13 +344,6 @@ void PersonalDataManager::Shutdown() {
   identity_manager_ = nullptr;
 }
 
-void PersonalDataManager::Shutdown() {
-  if (sync_service_)
-    sync_service_->RemoveObserver(this);
-
-  sync_service_ = nullptr;
-}
-
 void PersonalDataManager::OnSyncServiceInitialized(
     syncer::SyncService* sync_service) {
   if (sync_service_ != sync_service) {
@@ -360,9 +353,6 @@ void PersonalDataManager::OnSyncServiceInitialized(
 
     sync_service_ = sync_service;
 
-    UMA_HISTOGRAM_BOOLEAN(
-        "Autofill.ResetFullServerCards.SyncServiceNullOnInitialized",
-        !sync_service_);
     if (!sync_service_) {
       ResetFullServerCards();
       return;
@@ -374,9 +364,6 @@ void PersonalDataManager::OnSyncServiceInitialized(
         syncer::GetUploadToGoogleState(
             sync_service_, syncer::ModelType::AUTOFILL_WALLET_DATA) ==
         syncer::UploadState::NOT_ACTIVE;
-    UMA_HISTOGRAM_BOOLEAN(
-        "Autofill.ResetFullServerCards.SyncServiceNotActiveOnInitialized",
-        is_upload_not_active);
     if (is_upload_not_active) {
       ResetFullServerCards();
     }
@@ -895,18 +882,14 @@ void PersonalDataManager::ResetFullServerCard(const std::string& guid) {
 }
 
 void PersonalDataManager::ResetFullServerCards() {
-  size_t nb_cards_reset = 0;
   for (const auto& card : server_credit_cards_) {
     if (card->record_type() == CreditCard::FULL_SERVER_CARD) {
-      ++nb_cards_reset;
       CreditCard card_copy = *card;
       card_copy.set_record_type(CreditCard::MASKED_SERVER_CARD);
       card_copy.SetNumber(card->LastFourDigits());
       UpdateServerCreditCard(card_copy);
     }
   }
-  UMA_HISTOGRAM_COUNTS_100("Autofill.ResetFullServerCards.NumberOfCardsReset",
-                           nb_cards_reset);
 }
 
 void PersonalDataManager::ClearAllServerData() {
@@ -1381,14 +1364,6 @@ bool PersonalDataManager::ShouldSuggestServerCards() const {
   return sync_service_->GetActiveDataTypes().Has(syncer::AUTOFILL_WALLET_DATA);
 }
 
-bool PersonalDataManager::IsAutofillCreditCardEnabled() const {
-  return pref_service_->GetBoolean(prefs::kAutofillCreditCardEnabled);
-}
-
-bool PersonalDataManager::IsAutofillWalletImportEnabled() const {
-  return pref_service_->GetBoolean(prefs::kAutofillWalletImportEnabled);
-}
-
 std::string PersonalDataManager::CountryCodeForCurrentTimezone() const {
   return base::CountryCodeForCurrentTimezone();
 }
@@ -1612,7 +1587,7 @@ bool PersonalDataManager::IsCountryOfInterest(
         AutofillCountry::CountryCodeForLocale(app_locale())));
   }
 
-  return base::ContainsValue(country_codes, base::ToLowerASCII(country_code));
+  return base::Contains(country_codes, base::ToLowerASCII(country_code));
 }
 
 const std::string& PersonalDataManager::GetDefaultCountryCodeForNewAddress()
@@ -1927,7 +1902,7 @@ std::string PersonalDataManager::MostCommonCountryCodeFromProfiles() const {
     std::string country_code = base::ToUpperASCII(
         base::UTF16ToASCII(profiles[i]->GetRawInfo(ADDRESS_HOME_COUNTRY)));
 
-    if (base::ContainsValue(country_codes, country_code)) {
+    if (base::Contains(country_codes, country_code)) {
       // Verified profiles count 100x more than unverified ones.
       votes[country_code] += profiles[i]->IsVerified() ? 100 : 1;
     }
@@ -2165,10 +2140,14 @@ std::vector<Suggestion> PersonalDataManager::GetSuggestionsForCards(
         }
       } else {
 #if defined(OS_ANDROID)
-        // E.g. "Visa  ••••1234".
-        suggestion->label = credit_card->NetworkOrBankNameAndLastFourDigits();
+        // On Android devices, the label is formatted as "Visa  ••••1234" when
+        // the keyboard accessory experiment is disabled and as "••••1234" when
+        // it's enabled.
+        suggestion->label =
+            base::FeatureList::IsEnabled(features::kAutofillKeyboardAccessory)
+                ? credit_card->ObfuscatedLastFourDigits()
+                : credit_card->NetworkOrBankNameAndLastFourDigits();
 #elif defined(OS_IOS)
-        // TODO(crbug.com/968267): Use the same format for iOS and Android.
         // E.g. "••••1234"".
         suggestion->label = credit_card->ObfuscatedLastFourDigits();
 #else

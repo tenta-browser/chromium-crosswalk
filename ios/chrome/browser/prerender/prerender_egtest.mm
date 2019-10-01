@@ -55,7 +55,7 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
 - (void)testTapPrerenderSuggestions {
   // TODO(crbug.com/793306): Re-enable the test on iPad once the alternate
   // letters problem is fixed.
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_DISABLED(
         @"Disabled for iPad due to alternate letters educational screen.");
   }
@@ -76,9 +76,8 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
 
   [[EarlGrey selectElementWithMatcher:chrome_test_util::FakeOmnibox()]
       performAction:grey_tap()];
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForSufficientlyVisibleElementWithMatcher:
-                          chrome_test_util::Omnibox()]);
+  [ChromeEarlGrey
+      waitForSufficientlyVisibleElementWithMatcher:chrome_test_util::Omnibox()];
   [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
       performAction:grey_typeText([pageString stringByAppendingString:@"\n"])];
   CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey waitForPageToFinishLoading]);
@@ -88,9 +87,8 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
   // Type the begining of the address to have the autocomplete suggestion.
   [[EarlGrey selectElementWithMatcher:chrome_test_util::FakeOmnibox()]
       performAction:grey_tap()];
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForSufficientlyVisibleElementWithMatcher:
-                          chrome_test_util::Omnibox()]);
+  [ChromeEarlGrey
+      waitForSufficientlyVisibleElementWithMatcher:chrome_test_util::Omnibox()];
   [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
       performAction:grey_typeText(
                         [pageString substringToIndex:[pageString length] - 6])];

@@ -4475,6 +4475,50 @@
             "--bucket",
             "chromium-result-details",
             "--test-name",
+            "android_browsertests"
+          ],
+          "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
+              "location": "bin",
+              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
+            }
+          ],
+          "dimension_sets": [
+            {
+              "device_os": "KTU84P",
+              "device_os_type": "userdebug",
+              "device_type": "hammerhead",
+              "os": "Android"
+            }
+          ],
+          "output_links": [
+            {
+              "link": [
+                "https://luci-logdog.appspot.com/v/?s",
+                "=android%2Fswarming%2Flogcats%2F",
+                "${TASK_ID}%2F%2B%2Funified_logcats"
+              ],
+              "name": "shard #${SHARD_INDEX} logcats"
+            }
+          ]
+        },
+        "test": "android_browsertests"
+      },
+      {
+        "args": [
+          "--gs-results-bucket=chromium-result-details",
+          "--recover-devices"
+        ],
+        "merge": {
+          "args": [
+            "--bucket",
+            "chromium-result-details",
+            "--test-name",
             "android_webview_unittests"
           ],
           "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
@@ -5450,6 +5494,53 @@
       },
       {
         "args": [
+          "--disable-features=NetworkService",
+          "--gs-results-bucket=chromium-result-details",
+          "--recover-devices"
+        ],
+        "merge": {
+          "args": [
+            "--bucket",
+            "chromium-result-details",
+            "--test-name",
+            "non_network_service_content_browsertests"
+          ],
+          "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
+        },
+        "name": "non_network_service_content_browsertests",
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
+              "location": "bin",
+              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
+            }
+          ],
+          "dimension_sets": [
+            {
+              "device_os": "KTU84P",
+              "device_os_type": "userdebug",
+              "device_type": "hammerhead",
+              "os": "Android"
+            }
+          ],
+          "output_links": [
+            {
+              "link": [
+                "https://luci-logdog.appspot.com/v/?s",
+                "=android%2Fswarming%2Flogcats%2F",
+                "${TASK_ID}%2F%2B%2Funified_logcats"
+              ],
+              "name": "shard #${SHARD_INDEX} logcats"
+            }
+          ],
+          "shards": 5
+        },
+        "test": "content_browsertests"
+      },
+      {
+        "args": [
           "--disable-perfetto",
           "--gtest_filter=TracingControllerTest.*:BackgroundTracingManagerBrowserTest.*",
           "--gs-results-bucket=chromium-result-details",
@@ -5556,6 +5647,53 @@
           "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
         },
         "name": "network_service_out_of_process_content_shell_test_apk",
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
+              "location": "bin",
+              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
+            }
+          ],
+          "dimension_sets": [
+            {
+              "device_os": "KTU84P",
+              "device_os_type": "userdebug",
+              "device_type": "hammerhead",
+              "os": "Android"
+            }
+          ],
+          "output_links": [
+            {
+              "link": [
+                "https://luci-logdog.appspot.com/v/?s",
+                "=android%2Fswarming%2Flogcats%2F",
+                "${TASK_ID}%2F%2B%2Funified_logcats"
+              ],
+              "name": "shard #${SHARD_INDEX} logcats"
+            }
+          ],
+          "shards": 5
+        },
+        "test": "content_shell_test_apk"
+      },
+      {
+        "args": [
+          "--disable-features=NetworkService",
+          "--gs-results-bucket=chromium-result-details",
+          "--recover-devices"
+        ],
+        "merge": {
+          "args": [
+            "--bucket",
+            "chromium-result-details",
+            "--test-name",
+            "non_network_service_content_shell_test_apk"
+          ],
+          "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
+        },
+        "name": "non_network_service_content_shell_test_apk",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -7330,6 +7468,9 @@
     ],
     "junit_tests": [
       {
+        "test": "android_webview_junit_tests"
+      },
+      {
         "test": "base_junit_tests"
       },
       {
@@ -7352,9 +7493,6 @@
       },
       {
         "test": "components_variations_junit_tests"
-      },
-      {
-        "test": "components_web_restrictions_junit_tests"
       },
       {
         "test": "content_junit_tests"
@@ -7456,6 +7594,50 @@
   },
   "ToTAndroidCFI": {
     "gtest_tests": [
+      {
+        "args": [
+          "--gs-results-bucket=chromium-result-details",
+          "--recover-devices"
+        ],
+        "merge": {
+          "args": [
+            "--bucket",
+            "chromium-result-details",
+            "--test-name",
+            "android_browsertests"
+          ],
+          "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
+              "location": "bin",
+              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
+            }
+          ],
+          "dimension_sets": [
+            {
+              "device_os": "MMB29Q",
+              "device_os_type": "userdebug",
+              "device_type": "bullhead",
+              "os": "Android"
+            }
+          ],
+          "output_links": [
+            {
+              "link": [
+                "https://luci-logdog.appspot.com/v/?s",
+                "=android%2Fswarming%2Flogcats%2F",
+                "${TASK_ID}%2F%2B%2Funified_logcats"
+              ],
+              "name": "shard #${SHARD_INDEX} logcats"
+            }
+          ]
+        },
+        "test": "android_browsertests"
+      },
       {
         "args": [
           "--gs-results-bucket=chromium-result-details",
@@ -8441,6 +8623,53 @@
       },
       {
         "args": [
+          "--disable-features=NetworkService",
+          "--gs-results-bucket=chromium-result-details",
+          "--recover-devices"
+        ],
+        "merge": {
+          "args": [
+            "--bucket",
+            "chromium-result-details",
+            "--test-name",
+            "non_network_service_content_browsertests"
+          ],
+          "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
+        },
+        "name": "non_network_service_content_browsertests",
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
+              "location": "bin",
+              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
+            }
+          ],
+          "dimension_sets": [
+            {
+              "device_os": "MMB29Q",
+              "device_os_type": "userdebug",
+              "device_type": "bullhead",
+              "os": "Android"
+            }
+          ],
+          "output_links": [
+            {
+              "link": [
+                "https://luci-logdog.appspot.com/v/?s",
+                "=android%2Fswarming%2Flogcats%2F",
+                "${TASK_ID}%2F%2B%2Funified_logcats"
+              ],
+              "name": "shard #${SHARD_INDEX} logcats"
+            }
+          ],
+          "shards": 5
+        },
+        "test": "content_browsertests"
+      },
+      {
+        "args": [
           "--disable-perfetto",
           "--gtest_filter=TracingControllerTest.*:BackgroundTracingManagerBrowserTest.*",
           "--gs-results-bucket=chromium-result-details",
@@ -8547,6 +8776,53 @@
           "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
         },
         "name": "network_service_out_of_process_content_shell_test_apk",
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
+              "location": "bin",
+              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
+            }
+          ],
+          "dimension_sets": [
+            {
+              "device_os": "MMB29Q",
+              "device_os_type": "userdebug",
+              "device_type": "bullhead",
+              "os": "Android"
+            }
+          ],
+          "output_links": [
+            {
+              "link": [
+                "https://luci-logdog.appspot.com/v/?s",
+                "=android%2Fswarming%2Flogcats%2F",
+                "${TASK_ID}%2F%2B%2Funified_logcats"
+              ],
+              "name": "shard #${SHARD_INDEX} logcats"
+            }
+          ],
+          "shards": 5
+        },
+        "test": "content_shell_test_apk"
+      },
+      {
+        "args": [
+          "--disable-features=NetworkService",
+          "--gs-results-bucket=chromium-result-details",
+          "--recover-devices"
+        ],
+        "merge": {
+          "args": [
+            "--bucket",
+            "chromium-result-details",
+            "--test-name",
+            "non_network_service_content_shell_test_apk"
+          ],
+          "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
+        },
+        "name": "non_network_service_content_shell_test_apk",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -10530,7 +10806,7 @@
             }
           ]
         },
-        "test": "boringssl_crypto_tests"
+        "test": "app_shell_unittests"
       },
       {
         "merge": {
@@ -10545,7 +10821,7 @@
             }
           ]
         },
-        "test": "boringssl_ssl_tests"
+        "test": "aura_unittests"
       },
       {
         "merge": {
@@ -10561,7 +10837,7 @@
           ],
           "shards": 10
         },
-        "test": "browser_tests"
+        "test": "base_unittests"
       },
       {
         "args": [
@@ -10581,7 +10857,7 @@
             }
           ]
         },
-        "test": "browser_tests"
+        "test": "base_util_unittests"
       },
       {
         "merge": {
@@ -10596,7 +10872,7 @@
             }
           ]
         },
-        "test": "cacheinvalidation_unittests"
+        "test": "blink_common_unittests"
       },
       {
         "args": [
@@ -10614,7 +10890,7 @@
             }
           ]
         },
-        "test": "capture_unittests"
+        "test": "blink_fuzzer_unittests"
       },
       {
         "merge": {
@@ -10629,7 +10905,7 @@
             }
           ]
         },
-        "test": "cast_unittests"
+        "test": "blink_heap_unittests"
       },
       {
         "merge": {
@@ -10644,7 +10920,7 @@
             }
           ]
         },
-        "test": "cc_unittests"
+        "test": "blink_platform_unittests"
       },
       {
         "merge": {
@@ -10659,7 +10935,7 @@
             }
           ]
         },
-        "test": "chrome_app_unittests"
+        "test": "blink_unittests"
       },
       {
         "merge": {
@@ -10702,7 +10978,8 @@
             {
               "os": "Ubuntu-14.04"
             }
-          ]
+          ],
+          "shards": 10
         },
         "test": "components_unittests"
       },
@@ -10791,6 +11068,21 @@
           ]
         },
         "test": "content_unittests"
+      },
+      {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "os": "Ubuntu-14.04"
+            }
+          ]
+        },
+        "test": "crashpad_tests"
       },
       {
         "merge": {
@@ -11139,7 +11431,8 @@
             {
               "os": "Ubuntu-14.04"
             }
-          ]
+          ],
+          "shards": 3
         },
         "test": "leveldb_service_unittests"
       },
@@ -12082,6 +12375,7 @@
           "args": [],
           "script": "//testing/merge_scripts/standard_gtest_merge.py"
         },
+        "name": "webui_html_imports_polyfill_browser_tests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -12259,6 +12553,24 @@
             }
           ]
         },
+        "test": "crashpad_tests"
+      },
+      {
+        "args": [
+          "--test-launcher-print-test-stdio=always"
+        ],
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "os": "Ubuntu-14.04"
+            }
+          ]
+        },
         "test": "cronet_tests"
       },
       {
@@ -12287,6 +12599,7 @@
           "args": [],
           "script": "//testing/merge_scripts/standard_gtest_merge.py"
         },
+        "name": "skia_renderer_content_browsertests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -12669,6 +12982,7 @@
           "args": [],
           "script": "//testing/merge_scripts/standard_gtest_merge.py"
         },
+        "name": "webui_html_imports_polyfill_interactive_ui_tests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -13440,21 +13754,6 @@
             }
           ]
         },
-        "test": "blink_common_unittests"
-      },
-      {
-        "merge": {
-          "args": [],
-          "script": "//testing/merge_scripts/standard_gtest_merge.py"
-        },
-        "swarming": {
-          "can_use_on_swarming_builders": true,
-          "dimension_sets": [
-            {
-              "os": "Ubuntu-14.04"
-            }
-          ]
-        },
         "test": "blink_fuzzer_unittests"
       },
       {
@@ -13470,38 +13769,7 @@
             }
           ]
         },
-        "test": "blink_heap_unittests"
-      },
-      {
-        "merge": {
-          "args": [],
-          "script": "//testing/merge_scripts/standard_gtest_merge.py"
-        },
-        "swarming": {
-          "can_use_on_swarming_builders": true,
-          "dimension_sets": [
-            {
-              "os": "Ubuntu-14.04"
-            }
-          ]
-        },
-        "test": "blink_platform_unittests"
-      },
-      {
-        "merge": {
-          "args": [],
-          "script": "//testing/merge_scripts/standard_gtest_merge.py"
-        },
-        "name": "webkit_unit_tests",
-        "swarming": {
-          "can_use_on_swarming_builders": true,
-          "dimension_sets": [
-            {
-              "os": "Ubuntu-14.04"
-            }
-          ]
-        },
-        "test": "blink_unittests"
+        "test": "blink_fuzzer_unittests"
       },
       {
         "merge": {
@@ -13532,6 +13800,53 @@
           ]
         },
         "test": "boringssl_ssl_tests"
+      },
+      {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
+        "name": "webkit_unit_tests",
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "os": "Ubuntu-14.04"
+            }
+          ]
+        },
+        "test": "blink_unittests"
+      },
+      {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "os": "Ubuntu-14.04"
+            }
+          ]
+        },
+        "test": "browser_tests"
+      },
+      {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
+        "name": "webui_html_imports_polyfill_browser_tests",
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "os": "Ubuntu-14.04"
+            }
+          ]
+        },
+        "test": "browser_tests"
       },
       {
         "merge": {
@@ -13582,7 +13897,7 @@
             }
           ]
         },
-        "test": "cacheinvalidation_unittests"
+        "test": "capture_unittests"
       },
       {
         "args": [
@@ -13600,82 +13915,7 @@
             }
           ]
         },
-        "test": "capture_unittests"
-      },
-      {
-        "merge": {
-          "args": [],
-          "script": "//testing/merge_scripts/standard_gtest_merge.py"
-        },
-        "swarming": {
-          "can_use_on_swarming_builders": true,
-          "dimension_sets": [
-            {
-              "os": "Ubuntu-14.04"
-            }
-          ]
-        },
-        "test": "cast_unittests"
-      },
-      {
-        "merge": {
-          "args": [],
-          "script": "//testing/merge_scripts/standard_gtest_merge.py"
-        },
-        "swarming": {
-          "can_use_on_swarming_builders": true,
-          "dimension_sets": [
-            {
-              "os": "Ubuntu-14.04"
-            }
-          ]
-        },
-        "test": "cc_unittests"
-      },
-      {
-        "merge": {
-          "args": [],
-          "script": "//testing/merge_scripts/standard_gtest_merge.py"
-        },
-        "swarming": {
-          "can_use_on_swarming_builders": true,
-          "dimension_sets": [
-            {
-              "os": "Ubuntu-14.04"
-            }
-          ]
-        },
         "test": "chrome_app_unittests"
-      },
-      {
-        "merge": {
-          "args": [],
-          "script": "//testing/merge_scripts/standard_gtest_merge.py"
-        },
-        "swarming": {
-          "can_use_on_swarming_builders": true,
-          "dimension_sets": [
-            {
-              "os": "Ubuntu-14.04"
-            }
-          ]
-        },
-        "test": "chromedriver_unittests"
-      },
-      {
-        "merge": {
-          "args": [],
-          "script": "//testing/merge_scripts/standard_gtest_merge.py"
-        },
-        "swarming": {
-          "can_use_on_swarming_builders": true,
-          "dimension_sets": [
-            {
-              "os": "Ubuntu-14.04"
-            }
-          ]
-        },
-        "test": "components_browsertests"
       },
       {
         "merge": {
@@ -13718,10 +13958,87 @@
             {
               "os": "Ubuntu-14.04"
             }
+          ]
+        },
+        "test": "chrome_app_unittests"
+      },
+      {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
+        "name": "nonperfetto_content_browsertests",
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "os": "Ubuntu-14.04"
+            }
+          ]
+        },
+        "test": "chromedriver_unittests"
+      },
+      {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "os": "Ubuntu-14.04"
+            }
+          ]
+        },
+        "test": "content_browsertests"
+      },
+      {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
+        "name": "skia_renderer_content_browsertests",
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "os": "Ubuntu-14.04"
+            }
+          ]
+        },
+        "test": "cronet_tests"
+      },
+      {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "os": "Ubuntu-14.04"
+            }
+          ]
+        },
+        "test": "compositor_unittests"
+      },
+      {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "os": "Ubuntu-14.04"
+            }
           ],
           "shards": 6
         },
-        "test": "content_browsertests"
+        "test": "dbus_unittests"
       },
       {
         "args": [
@@ -13741,7 +14058,7 @@
             }
           ]
         },
-        "test": "content_browsertests"
+        "test": "events_unittests"
       },
       {
         "args": [
@@ -13791,6 +14108,21 @@
             }
           ]
         },
+        "test": "crashpad_tests"
+      },
+      {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "os": "Ubuntu-14.04"
+            }
+          ]
+        },
         "test": "cronet_tests"
       },
       {
@@ -13821,7 +14153,7 @@
             }
           ]
         },
-        "test": "crypto_unittests"
+        "test": "filesystem_service_unittests"
       },
       {
         "merge": {
@@ -13851,7 +14183,7 @@
             }
           ]
         },
-        "test": "device_unittests"
+        "test": "gcm_unit_tests"
       },
       {
         "merge": {
@@ -13866,7 +14198,7 @@
             }
           ]
         },
-        "test": "display_unittests"
+        "test": "gfx_unittests"
       },
       {
         "merge": {
@@ -13881,7 +14213,7 @@
             }
           ]
         },
-        "test": "events_unittests"
+        "test": "google_apis_unittests"
       },
       {
         "merge": {
@@ -13948,6 +14280,7 @@
           "args": [],
           "script": "//testing/merge_scripts/standard_gtest_merge.py"
         },
+        "name": "webui_html_imports_polyfill_interactive_ui_tests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -13971,7 +14304,7 @@
             }
           ]
         },
-        "test": "gin_unittests"
+        "test": "interactive_ui_tests"
       },
       {
         "merge": {
@@ -14112,7 +14445,7 @@
             }
           ]
         },
-        "test": "latency_unittests"
+        "test": "mojo_unittests"
       },
       {
         "merge": {
@@ -14142,7 +14475,7 @@
             }
           ]
         },
-        "test": "libjingle_xmpp_unittests"
+        "test": "nacl_helper_nonsfi_unittests"
       },
       {
         "merge": {
@@ -14157,7 +14490,7 @@
             }
           ]
         },
-        "test": "media_blink_unittests"
+        "test": "nacl_loader_unittests"
       },
       {
         "merge": {
@@ -14172,7 +14505,7 @@
             }
           ]
         },
-        "test": "media_service_unittests"
+        "test": "native_theme_unittests"
       },
       {
         "merge": {
@@ -14187,7 +14520,7 @@
             }
           ]
         },
-        "test": "media_unittests"
+        "test": "net_unittests"
       },
       {
         "merge": {
@@ -14217,7 +14550,7 @@
             }
           ]
         },
-        "test": "midi_unittests"
+        "test": "perfetto_unittests"
       },
       {
         "merge": {
@@ -14307,7 +14640,7 @@
             }
           ]
         },
-        "test": "net_unittests"
+        "test": "remoting_unittests"
       },
       {
         "merge": {
@@ -14762,7 +15095,7 @@
             }
           ]
         },
-        "test": "base_unittests"
+        "test": "base_util_unittests"
       },
       {
         "merge": {
@@ -15129,6 +15462,21 @@
           ]
         },
         "test": "content_unittests"
+      },
+      {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "os": "Ubuntu-14.04"
+            }
+          ]
+        },
+        "test": "crashpad_tests"
       },
       {
         "merge": {
@@ -16132,7 +16480,7 @@
             }
           ]
         },
-        "test": "base_unittests"
+        "test": "base_util_unittests"
       },
       {
         "merge": {
@@ -17530,7 +17878,7 @@
             }
           ]
         },
-        "test": "blink_fuzzer_unittests"
+        "test": "blink_platform_unittests"
       },
       {
         "merge": {
@@ -17560,7 +17908,7 @@
             }
           ]
         },
-        "test": "blink_platform_unittests"
+        "test": "blink_unittests"
       },
       {
         "merge": {
@@ -17852,6 +18200,21 @@
           ]
         },
         "test": "content_unittests"
+      },
+      {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "os": "Ubuntu-14.04"
+            }
+          ]
+        },
+        "test": "crashpad_tests"
       },
       {
         "merge": {
@@ -18487,7 +18850,7 @@
             }
           ]
         },
-        "test": "service_manager_unittests"
+        "test": "services_unittests"
       },
       {
         "merge": {
@@ -18915,7 +19278,7 @@
             }
           ]
         },
-        "test": "blink_heap_unittests"
+        "test": "blink_unittests"
       },
       {
         "merge": {
@@ -18930,7 +19293,7 @@
             }
           ]
         },
-        "test": "blink_platform_unittests"
+        "test": "boringssl_crypto_tests"
       },
       {
         "merge": {
@@ -19222,6 +19585,21 @@
           ]
         },
         "test": "content_unittests"
+      },
+      {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "os": "Ubuntu-14.04"
+            }
+          ]
+        },
+        "test": "crashpad_tests"
       },
       {
         "merge": {
@@ -23217,7 +23595,7 @@
         "swarming": {
           "can_use_on_swarming_builders": true
         },
-        "test": "app_shell_unittests"
+        "test": "base_unittests"
       },
       {
         "merge": {
@@ -23683,7 +24061,7 @@
         "swarming": {
           "can_use_on_swarming_builders": true
         },
-        "test": "gpu_unittests"
+        "test": "headless_unittests"
       },
       {
         "merge": {
@@ -24104,7 +24482,7 @@
         "swarming": {
           "can_use_on_swarming_builders": true
         },
-        "test": "ui_base_unittests"
+        "test": "url_unittests"
       },
       {
         "merge": {
@@ -25956,7 +26334,7 @@
         "swarming": {
           "can_use_on_swarming_builders": true
         },
-        "test": "pdf_unittests"
+        "test": "perfetto_unittests"
       },
       {
         "merge": {
@@ -26596,7 +26974,7 @@
             }
           ]
         },
-        "test": "chrome_cleaner_unittests"
+        "test": "chrome_app_unittests"
       },
       {
         "merge": {
@@ -27911,7 +28289,7 @@
             }
           ]
         },
-        "test": "aura_unittests"
+        "test": "base_unittests"
       },
       {
         "merge": {
@@ -27927,7 +28305,7 @@
             }
           ]
         },
-        "test": "base_unittests"
+        "test": "base_util_unittests"
       },
       {
         "merge": {
@@ -31091,7 +31469,7 @@
         "swarming": {
           "can_use_on_swarming_builders": true
         },
-        "test": "base_unittests"
+        "test": "base_util_unittests"
       },
       {
         "merge": {
@@ -31162,6 +31540,16 @@
         "swarming": {
           "can_use_on_swarming_builders": true
         },
+        "test": "blink_unittests"
+      },
+      {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true
+        },
         "test": "boringssl_crypto_tests"
       },
       {
@@ -31173,17 +31561,6 @@
           "can_use_on_swarming_builders": true
         },
         "test": "boringssl_ssl_tests"
-      },
-      {
-        "merge": {
-          "args": [],
-          "script": "//testing/merge_scripts/standard_gtest_merge.py"
-        },
-        "swarming": {
-          "can_use_on_swarming_builders": true,
-          "shards": 10
-        },
-        "test": "browser_tests"
       },
       {
         "args": [
@@ -32092,16 +32469,6 @@
         "swarming": {
           "can_use_on_swarming_builders": true
         },
-        "test": "app_shell_unittests"
-      },
-      {
-        "merge": {
-          "args": [],
-          "script": "//testing/merge_scripts/standard_gtest_merge.py"
-        },
-        "swarming": {
-          "can_use_on_swarming_builders": true
-        },
         "test": "aura_unittests"
       },
       {
@@ -32113,6 +32480,16 @@
           "can_use_on_swarming_builders": true
         },
         "test": "base_unittests"
+      },
+      {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true
+        },
+        "test": "base_util_unittests"
       },
       {
         "merge": {
@@ -32183,6 +32560,16 @@
         "swarming": {
           "can_use_on_swarming_builders": true
         },
+        "test": "blink_unittests"
+      },
+      {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true
+        },
         "test": "boringssl_crypto_tests"
       },
       {
@@ -32194,17 +32581,6 @@
           "can_use_on_swarming_builders": true
         },
         "test": "boringssl_ssl_tests"
-      },
-      {
-        "merge": {
-          "args": [],
-          "script": "//testing/merge_scripts/standard_gtest_merge.py"
-        },
-        "swarming": {
-          "can_use_on_swarming_builders": true,
-          "shards": 10
-        },
-        "test": "browser_tests"
       },
       {
         "args": [
@@ -36588,6 +36964,21 @@
           ]
         },
         "test": "content_unittests"
+      },
+      {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "os": "Ubuntu-14.04"
+            }
+          ]
+        },
+        "test": "crashpad_tests"
       },
       {
         "merge": {

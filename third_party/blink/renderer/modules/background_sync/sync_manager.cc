@@ -61,7 +61,7 @@ ScriptPromise SyncManager::getTags(ScriptState* script_state) {
   return promise;
 }
 
-const mojom::blink::BackgroundSyncServicePtr&
+const mojom::blink::OneShotBackgroundSyncServicePtr&
 SyncManager::GetBackgroundSyncServicePtr() {
   if (!background_sync_service_.get()) {
     Platform::Current()->GetInterfaceProvider()->GetInterface(

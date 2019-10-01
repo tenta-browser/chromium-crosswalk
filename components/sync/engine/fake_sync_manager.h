@@ -147,6 +147,8 @@ class FakeSyncManager : public SyncManager {
 
   FakeSyncEncryptionHandler fake_encryption_handler_;
 
+  FakeModelTypeConnector fake_model_type_connector_;
+
   TestUserShare test_user_share_;
 
   // Number of invalidations received since startup.

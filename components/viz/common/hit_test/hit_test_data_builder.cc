@@ -187,23 +187,4 @@ base::Optional<HitTestRegionList> HitTestDataBuilder::CreateHitTestData(
   return hit_test_region_list;
 }
 
-}  // namespace
-
-// static
-base::Optional<HitTestRegionList> HitTestDataBuilder::CreateHitTestData(
-    const CompositorFrame& compositor_frame,
-    bool root_accepts_events,
-    bool should_ask_for_child_region) {
-  base::Optional<HitTestRegionList> hit_test_region_list(base::in_place);
-  hit_test_region_list->flags =
-      (root_accepts_events ? HitTestRegionFlags::kHitTestMine
-                           : HitTestRegionFlags::kHitTestIgnore) |
-      HitTestRegionFlags::kHitTestMouse | HitTestRegionFlags::kHitTestTouch;
-  hit_test_region_list->bounds.set_size(compositor_frame.size_in_pixels());
-  AddHitTestDataFromRenderPass(
-      compositor_frame, compositor_frame.render_pass_list.back()->id,
-      &hit_test_region_list->regions, should_ask_for_child_region);
-  return hit_test_region_list;
-}
-
 }  // namespace viz

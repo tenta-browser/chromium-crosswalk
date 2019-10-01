@@ -81,10 +81,43 @@ TEST_F(AccessibilitySelectionTest, FromCurrentSelection) {
   EXPECT_EQ(1, ax_selection.Extent().ChildIndex());
 
   EXPECT_EQ(
-      "++<Paragraph>\n"
-      "++++<StaticText: Hel^lo.>\n"
-      "++<Paragraph>\n"
-      "++++<StaticText: How are you?>\n|",
+      "++<GenericContainer>\n"
+      "++++<Paragraph>\n"
+      "++++++<StaticText: Hel^lo.>\n"
+      "++++<Paragraph>\n"
+      "++++++<StaticText: How are you?>\n|",
+      GetSelectionText(ax_selection));
+}
+
+TEST_F(AccessibilitySelectionTest, FromCurrentSelectionSelectAll) {
+  SetBodyInnerHTML(R"HTML(
+      <p id="paragraph1">Hello.</p>
+      <p id="paragraph2">How are you?</p>
+      )HTML");
+
+  ASSERT_FALSE(AXSelection::FromCurrentSelection(GetDocument()).IsValid());
+  Selection().SelectAll(SetSelectionBy::kUser);
+  UpdateAllLifecyclePhasesForTest();
+  ASSERT_NE(nullptr, GetAXRootObject());
+
+  const auto ax_selection = AXSelection::FromCurrentSelection(GetDocument());
+  ASSERT_TRUE(ax_selection.IsValid());
+
+  ASSERT_FALSE(ax_selection.Base().IsTextPosition());
+  EXPECT_EQ(GetAXRootObject(), ax_selection.Base().ContainerObject());
+  EXPECT_EQ(0, ax_selection.Base().ChildIndex());
+
+  ASSERT_FALSE(ax_selection.Extent().IsTextPosition());
+  EXPECT_EQ(GetAXRootObject(), ax_selection.Extent().ContainerObject());
+  EXPECT_EQ(GetAXRootObject()->ChildCount(),
+            ax_selection.Extent().ChildIndex());
+
+  EXPECT_EQ(
+      "^++<GenericContainer>\n"
+      "++++<Paragraph>\n"
+      "++++++<StaticText: Hello.>\n"
+      "++++<Paragraph>\n"
+      "++++++<StaticText: How are you?>\n|",
       GetSelectionText(ax_selection));
 }
 
@@ -196,10 +229,11 @@ TEST_F(AccessibilitySelectionTest, CancelSelect) {
   EXPECT_TRUE(ax_selection.Select()) << "The operation should now go through.";
   EXPECT_FALSE(Selection().GetSelectionInDOMTree().IsNone());
   EXPECT_EQ(
-      "++<Paragraph>\n"
-      "++++<StaticText: Hel^lo.>\n"
-      "++<Paragraph>\n"
-      "++++<StaticText: How are you?>\n|",
+      "++<GenericContainer>\n"
+      "++++<Paragraph>\n"
+      "++++++<StaticText: Hel^lo.>\n"
+      "++++<Paragraph>\n"
+      "++++++<StaticText: How are you?>\n|",
       GetSelectionText(AXSelection::FromCurrentSelection(GetDocument())));
 }
 
@@ -255,8 +289,9 @@ TEST_F(AccessibilitySelectionTest, SetSelectionInText) {
   EXPECT_EQ(text, dom_selection.Extent().AnchorNode());
   EXPECT_EQ(5, dom_selection.Extent().OffsetInContainerNode());
   EXPECT_EQ(
-      "++<Paragraph>\n"
-      "++++<StaticText: Hel^lo|>\n",
+      "++<GenericContainer>\n"
+      "++++<Paragraph>\n"
+      "++++++<StaticText: Hel^lo|>\n",
       GetSelectionText(ax_selection));
 }
 
@@ -285,8 +320,101 @@ TEST_F(AccessibilitySelectionTest, SetSelectionInTextWithWhiteSpace) {
   EXPECT_EQ(text, dom_selection.Extent().AnchorNode());
   EXPECT_EQ(10, dom_selection.Extent().OffsetInContainerNode());
   EXPECT_EQ(
-      "++<Paragraph>\n"
-      "++++<StaticText: Hel^lo|>\n",
+      "++<GenericContainer>\n"
+      "++++<Paragraph>\n"
+      "++++++<StaticText: Hel^lo|>\n",
+      GetSelectionText(ax_selection));
+}
+
+TEST_F(AccessibilitySelectionTest, SetSelectionAcrossLineBreak) {
+  SetBodyInnerHTML(R"HTML(
+      <p id="paragraph">Hello<br id="br">How are you.</p>
+      )HTML");
+
+  const Node* paragraph = GetDocument().QuerySelector("p");
+  ASSERT_NE(nullptr, paragraph);
+  ASSERT_TRUE(IsHTMLParagraphElement(paragraph));
+  const Node* br = GetDocument().QuerySelector("br");
+  ASSERT_NE(nullptr, br);
+  ASSERT_TRUE(IsHTMLBRElement(br));
+  const Node* line2 = GetDocument().QuerySelector("p")->lastChild();
+  ASSERT_NE(nullptr, line2);
+  ASSERT_TRUE(line2->IsTextNode());
+
+  const AXObject* ax_br = GetAXObjectByElementId("br");
+  ASSERT_NE(nullptr, ax_br);
+  ASSERT_EQ(ax::mojom::Role::kLineBreak, ax_br->RoleValue());
+  const AXObject* ax_line2 = GetAXObjectByElementId("paragraph")->LastChild();
+  ASSERT_NE(nullptr, ax_line2);
+  ASSERT_EQ(ax::mojom::Role::kStaticText, ax_line2->RoleValue());
+
+  const auto ax_base = AXPosition::CreatePositionBeforeObject(*ax_br);
+  const auto ax_extent = AXPosition::CreatePositionInTextObject(*ax_line2, 0);
+
+  AXSelection::Builder builder;
+  const AXSelection ax_selection =
+      builder.SetBase(ax_base).SetExtent(ax_extent).Build();
+  const SelectionInDOMTree dom_selection = ax_selection.AsSelection();
+  EXPECT_EQ(paragraph, dom_selection.Base().AnchorNode());
+  EXPECT_EQ(1, dom_selection.Base().OffsetInContainerNode());
+  EXPECT_EQ(line2, dom_selection.Extent().AnchorNode());
+  EXPECT_EQ(0, dom_selection.Extent().OffsetInContainerNode());
+
+  // The selection anchor marker '^' should be before the line break and the
+  // selection focus marker '|' should be after it.
+  EXPECT_EQ(
+      "++<GenericContainer>\n"
+      "++++<Paragraph>\n"
+      "++++++<StaticText: Hello>\n"
+      "^++++++<LineBreak: \n>\n"
+      "|++++++<StaticText: |How are you.>\n",
+      GetSelectionText(ax_selection));
+}
+
+TEST_F(AccessibilitySelectionTest, SetSelectionAcrossLineBreakInEditableText) {
+  SetBodyInnerHTML(R"HTML(
+      <p contenteditable id="paragraph">Hello<br id="br">How are you.</p>
+      )HTML");
+
+  const Node* paragraph = GetDocument().QuerySelector("p");
+  ASSERT_NE(nullptr, paragraph);
+  ASSERT_TRUE(IsHTMLParagraphElement(paragraph));
+  const Node* br = GetDocument().QuerySelector("br");
+  ASSERT_NE(nullptr, br);
+  ASSERT_TRUE(IsHTMLBRElement(br));
+  const Node* line2 = GetDocument().QuerySelector("p")->lastChild();
+  ASSERT_NE(nullptr, line2);
+  ASSERT_TRUE(line2->IsTextNode());
+
+  const AXObject* ax_br = GetAXObjectByElementId("br");
+  ASSERT_NE(nullptr, ax_br);
+  ASSERT_EQ(ax::mojom::Role::kLineBreak, ax_br->RoleValue());
+  const AXObject* ax_line2 = GetAXObjectByElementId("paragraph")->LastChild();
+  ASSERT_NE(nullptr, ax_line2);
+  ASSERT_EQ(ax::mojom::Role::kStaticText, ax_line2->RoleValue());
+
+  const auto ax_base = AXPosition::CreatePositionBeforeObject(*ax_br);
+  // In the case of text objects, the deep equivalent position should always be
+  // returned, i.e. a text position before the first character.
+  const auto ax_extent = AXPosition::CreatePositionBeforeObject(*ax_line2);
+
+  AXSelection::Builder builder;
+  const AXSelection ax_selection =
+      builder.SetBase(ax_base).SetExtent(ax_extent).Build();
+  const SelectionInDOMTree dom_selection = ax_selection.AsSelection();
+  EXPECT_EQ(paragraph, dom_selection.Base().AnchorNode());
+  EXPECT_EQ(1, dom_selection.Base().OffsetInContainerNode());
+  EXPECT_EQ(line2, dom_selection.Extent().AnchorNode());
+  EXPECT_EQ(0, dom_selection.Extent().OffsetInContainerNode());
+
+  // The selection anchor marker '^' should be before the line break and the
+  // selection focus marker '|' should be after it.
+  EXPECT_EQ(
+      "++<GenericContainer>\n"
+      "++++<Paragraph>\n"
+      "++++++<StaticText: Hello>\n"
+      "^++++++<LineBreak: \n>\n"
+      "|++++++<StaticText: |How are you.>\n",
       GetSelectionText(ax_selection));
 }
 
@@ -391,9 +519,9 @@ TEST_F(AccessibilitySelectionTest, SetSelectionInARIAHidden) {
   SetBodyInnerHTML(R"HTML(
       <div id="main" role="main">
         <p id="beforeHidden">Before aria-hidden.</p>
-        <p id="hidden1" aria-hidden="true">Aria-hidden 1.</p>
+        <p id="hidden1" aria-hidden="true" style="display:inline">Aria-hidden 1.</p>
         <p id="betweenHidden">In between two aria-hidden elements.</p>
-        <p id="hidden2" aria-hidden="true">Aria-hidden 2.</p>
+        <p id="hidden2" aria-hidden="true" style="display:inline">Aria-hidden 2.</p>
         <p id="afterHidden">After aria-hidden.</p>
       </div>
       )HTML");
@@ -409,17 +537,22 @@ TEST_F(AccessibilitySelectionTest, SetSelectionInARIAHidden) {
   const AXObject* ax_before = GetAXObjectByElementId("beforeHidden");
   ASSERT_NE(nullptr, ax_before);
   ASSERT_EQ(ax::mojom::Role::kParagraph, ax_before->RoleValue());
+  const AXObject* ax_hidden1 = GetAXObjectByElementId("hidden1");
+  ASSERT_NE(nullptr, ax_hidden1);
+  ASSERT_EQ(ax::mojom::Role::kParagraph, ax_hidden1->RoleValue());
+  ASSERT_TRUE(ax_hidden1->AccessibilityIsIgnored());
+  ASSERT_FALSE(ax_hidden1->AccessibilityIsIncludedInTree());
   const AXObject* ax_between = GetAXObjectByElementId("betweenHidden");
   ASSERT_NE(nullptr, ax_between);
   ASSERT_EQ(ax::mojom::Role::kParagraph, ax_between->RoleValue());
+  const AXObject* ax_hidden2 = GetAXObjectByElementId("hidden2");
+  ASSERT_NE(nullptr, ax_hidden2);
+  ASSERT_EQ(ax::mojom::Role::kParagraph, ax_hidden2->RoleValue());
+  ASSERT_TRUE(ax_hidden2->AccessibilityIsIgnored());
+  ASSERT_FALSE(ax_hidden2->AccessibilityIsIncludedInTree());
   const AXObject* ax_after = GetAXObjectByElementId("afterHidden");
   ASSERT_NE(nullptr, ax_after);
   ASSERT_EQ(ax::mojom::Role::kParagraph, ax_after->RoleValue());
-
-  ASSERT_NE(nullptr, GetAXObjectByElementId("hidden1"));
-  ASSERT_TRUE(GetAXObjectByElementId("hidden1")->AccessibilityIsIgnored());
-  ASSERT_NE(nullptr, GetAXObjectByElementId("hidden2"));
-  ASSERT_TRUE(GetAXObjectByElementId("hidden2")->AccessibilityIsIgnored());
 
   const auto hidden_1_first = Position::FirstPositionInNode(*hidden_1);
   const auto hidden_2_first = Position::FirstPositionInNode(*hidden_2);
@@ -460,13 +593,14 @@ TEST_F(AccessibilitySelectionTest, SetSelectionInARIAHidden) {
   // aria-hidden. However, the AX selections should still differ if converted to
   // DOM selections.
   const std::string selection_text(
-      "++<Main>\n"
-      "++++<Paragraph>\n"
-      "++++++<StaticText: Before aria-hidden.>\n"
-      "^++++<Paragraph>\n"
-      "++++++<StaticText: In between two aria-hidden elements.>\n"
-      "|++++<Paragraph>\n"
-      "++++++<StaticText: After aria-hidden.>\n");
+      "++<GenericContainer>\n"
+      "++++<Main>\n"
+      "++++++<Paragraph>\n"
+      "++++++++<StaticText: Before aria-hidden.>\n"
+      "^++++++<Paragraph>\n"
+      "++++++++<StaticText: In between two aria-hidden elements.>\n"
+      "|++++++<Paragraph>\n"
+      "++++++++<StaticText: After aria-hidden.>\n");
   EXPECT_EQ(selection_text, GetSelectionText(ax_selection_shrink));
   EXPECT_EQ(selection_text, GetSelectionText(ax_selection_extend));
 }
@@ -553,14 +687,15 @@ TEST_F(AccessibilitySelectionTest, SetSelectionAroundListBullet) {
   // The |AXSelection| should remain unaffected by any shrinking and should
   // include both list bullets.
   EXPECT_EQ(
-      "++<Main>\n"
-      "++++<List>\n"
-      "++++++<ListItem>\n"
-      "++++++++<ListMarker: \xE2\x80\xA2 >\n"
-      "^++++++++<StaticText: Item 1.>\n"
-      "++++++<ListItem>\n"
-      "++++++++<ListMarker: \xE2\x80\xA2 >\n"
-      "++++++++<StaticText: Item 2.|>\n",
+      "++<GenericContainer>\n"
+      "++++<Main>\n"
+      "++++++<List>\n"
+      "++++++++<ListItem>\n"
+      "++++++++++<ListMarker: \xE2\x80\xA2 >\n"
+      "^++++++++++<StaticText: Item 1.>\n"
+      "++++++++<ListItem>\n"
+      "++++++++++<ListMarker: \xE2\x80\xA2 >\n"
+      "++++++++++<StaticText: Item 2.|>\n",
       GetSelectionText(ax_selection));
 }
 

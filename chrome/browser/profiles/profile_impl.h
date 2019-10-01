@@ -16,7 +16,6 @@
 #include "base/memory/ref_counted.h"
 #include "base/timer/timer.h"
 #include "build/build_config.h"
-#include "chrome/browser/net/reporting_permissions_checker.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_impl_io_data.h"
 #include "chrome/common/buildflags.h"
@@ -39,7 +38,7 @@ class KioskTest;
 class LocaleChangeGuard;
 class Preferences;
 class SupervisedUserTestBase;
-}
+}  // namespace chromeos
 #endif
 
 namespace base {
@@ -78,7 +77,6 @@ class ProfileImpl : public Profile {
   std::unique_ptr<content::ZoomLevelDelegate> CreateZoomLevelDelegate(
       const base::FilePath& partition_path) override;
 #endif
-  base::FilePath GetPath() const override;
   content::DownloadManagerDelegate* GetDownloadManagerDelegate() override;
   content::ResourceContext* GetResourceContext() override;
   content::BrowserPluginGuestManager* GetGuestManager() override;
@@ -96,29 +94,22 @@ class ProfileImpl : public Profile {
   net::URLRequestContextGetter* CreateRequestContext(
       content::ProtocolHandlerMap* protocol_handlers,
       content::URLRequestInterceptorScopedVector request_interceptors) override;
-  net::URLRequestContextGetter* CreateRequestContextForStoragePartition(
-      const base::FilePath& partition_path,
-      bool in_memory,
-      content::ProtocolHandlerMap* protocol_handlers,
-      content::URLRequestInterceptorScopedVector request_interceptors) override;
   net::URLRequestContextGetter* CreateMediaRequestContext() override;
-  net::URLRequestContextGetter* CreateMediaRequestContextForStoragePartition(
-      const base::FilePath& partition_path,
-      bool in_memory) override;
   void SetCorsOriginAccessListForOrigin(
       const url::Origin& source_origin,
       std::vector<network::mojom::CorsOriginPatternPtr> allow_patterns,
       std::vector<network::mojom::CorsOriginPatternPtr> block_patterns,
       base::OnceClosure closure) override;
-  const content::SharedCorsOriginAccessList* GetSharedCorsOriginAccessList()
-      const override;
+  content::SharedCorsOriginAccessList* GetSharedCorsOriginAccessList() override;
   std::unique_ptr<service_manager::Service> HandleServiceRequest(
       const std::string& service_name,
       service_manager::mojom::ServiceRequest request) override;
   std::string GetMediaDeviceIDSalt() override;
   download::InProgressDownloadManager* RetriveInProgressDownloadManager()
       override;
-  content::SmsService* GetSmsService() override;
+  content::NativeFileSystemPermissionContext*
+  GetNativeFileSystemPermissionContext() override;
+  content::ContentIndexProvider* GetContentIndexProvider() override;
 
   // Profile implementation:
   scoped_refptr<base::SequencedTaskRunner> GetIOTaskRunner() override;
@@ -126,7 +117,10 @@ class ProfileImpl : public Profile {
   // not the Chrome user's display name.
   std::string GetProfileUserName() const override;
   ProfileType GetProfileType() const override;
+  base::FilePath GetPath() override;
+  bool IsOffTheRecord() override;
   bool IsOffTheRecord() const override;
+  base::FilePath GetPath() const override;
   Profile* GetOffTheRecordProfile() override;
   void DestroyOffTheRecordProfile() override;
   bool HasOffTheRecordProfile() override;
@@ -135,6 +129,7 @@ class ProfileImpl : public Profile {
   bool IsSupervised() const override;
   bool IsChild() const override;
   bool IsLegacySupervised() const override;
+  bool IsIndependentOffTheRecordProfile() override;
   bool AllowsBrowserWindows() const override;
   ExtensionSpecialStoragePolicy* GetExtensionSpecialStoragePolicy() override;
   PrefService* GetPrefs() override;
@@ -157,8 +152,6 @@ class ProfileImpl : public Profile {
   const policy::ProfilePolicyConnector* GetProfilePolicyConnector()
       const override;
   net::URLRequestContextGetter* GetRequestContext() override;
-  base::OnceCallback<net::CookieStore*()> GetExtensionsCookieStoreGetter()
-      override;
   scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory() override;
   bool IsSameProfile(Profile* profile) override;
   base::Time GetStartTime() const override;
@@ -226,7 +219,7 @@ class ProfileImpl : public Profile {
   void UpdateAvatarInStorage();
   void UpdateIsEphemeralInStorage();
 
-  void GetMediaCacheParameters(base::FilePath* cache_path, int* max_size);
+  policy::ConfigurationPolicyProvider* configuration_policy_provider();
 
   policy::ConfigurationPolicyProvider* configuration_policy_provider();
 
@@ -327,8 +320,6 @@ class ProfileImpl : public Profile {
   // components/keyed_service/content/browser_context_keyed_service_factory.*
 
   Profile::Delegate* delegate_;
-
-  ReportingPermissionsCheckerFactory reporting_permissions_checker_factory_;
 
   scoped_refptr<content::SharedCorsOriginAccessList>
       shared_cors_origin_access_list_;

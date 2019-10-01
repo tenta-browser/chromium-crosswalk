@@ -172,7 +172,7 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
 // Tests that the progress indicator is shown and has expected progress value
 // for a simple two item page, and the toolbar is visible.
 - (void)testProgressIndicatorShown {
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_SKIPPED(@"Skipped for iPad (no progress view in tablet)");
   }
 
@@ -186,12 +186,10 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
   web::test::SetUpHttpServer(std::move(uniqueInfinitePendingProvider));
   // The page being loaded never completes, so call the LoadUrl helper that
   // does not wait for the page to complete loading.
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:infinitePendingURL
-                                  waitForCompletion:NO]);
+  [ChromeEarlGrey loadURL:infinitePendingURL waitForCompletion:NO];
 
   // Wait until the page is half loaded.
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:kPageText]);
+  [ChromeEarlGrey waitForWebStateContainingText:kPageText];
 
   // Verify progress view visible and halfway progress.
   [[EarlGrey selectElementWithMatcher:ProgressViewWithProgress(0.5)]
@@ -204,7 +202,7 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
 // Tests that the progress indicator is shown and has expected progress value
 // after a form is submitted, and the toolbar is visible.
 - (void)testProgressIndicatorShownOnFormSubmit {
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_SKIPPED(@"Skipped for iPad (no progress view in tablet)");
   }
 
@@ -225,15 +223,13 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
   web::test::AddResponseProvider(std::move(uniqueInfinitePendingProvider));
 
   // Load form first.
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:formURL]);
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:kFormPageText]);
+  [ChromeEarlGrey loadURL:formURL];
+  [ChromeEarlGrey waitForWebStateContainingText:kFormPageText];
 
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey submitWebStateFormWithID:kFormID]);
+  [ChromeEarlGrey submitWebStateFormWithID:kFormID];
 
   // Wait until the page is half loaded.
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:kPageText]);
+  [ChromeEarlGrey waitForWebStateContainingText:kPageText];
 
   // Verify progress view visible and halfway progress.
   [[EarlGrey selectElementWithMatcher:ProgressViewWithProgress(0.5)]
@@ -245,7 +241,7 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
 
 // Tests that the progress indicator disappears after form has been submitted.
 - (void)testProgressIndicatorDisappearsAfterFormSubmit {
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_SKIPPED(@"Skipped for iPad (no progress view in tablet)");
   }
 
@@ -260,14 +256,12 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
 
   CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:formURL]);
 
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:kFormPageText]);
+  [ChromeEarlGrey waitForWebStateContainingText:kFormPageText];
 
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey submitWebStateFormWithID:kFormID]);
+  [ChromeEarlGrey submitWebStateFormWithID:kFormID];
 
   // Verify the new page has been loaded.
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:kPageText]);
+  [ChromeEarlGrey waitForWebStateContainingText:kPageText];
 
   // Verify progress view is not visible.
   [[EarlGrey selectElementWithMatcher:ProgressView()]
@@ -277,7 +271,7 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
 // Tests that the progress indicator disappears after form post attempt with a
 // submit event that returns false.
 - (void)testProgressIndicatorDisappearsAfterSuppressedFormPost {
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_SKIPPED(@"Skipped for iPad (no progress view in tablet)");
   }
 
@@ -290,10 +284,9 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
   CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:formURL]);
 
   // Verify the form page has been loaded.
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:kFormPageText]);
+  [ChromeEarlGrey waitForWebStateContainingText:kFormPageText];
 
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey submitWebStateFormWithID:kFormID]);
+  [ChromeEarlGrey submitWebStateFormWithID:kFormID];
 
   // Verify progress view is not visible.
   [[EarlGrey selectElementWithMatcher:grey_kindOfClass([MDCProgressView class])]

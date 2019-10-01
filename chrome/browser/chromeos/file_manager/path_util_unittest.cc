@@ -429,49 +429,6 @@ TEST_F(FileManagerPathUtilTest, MigrateToDriveFs) {
   }
 }
 
-TEST_F(FileManagerPathUtilTest, MigrateToDriveFs) {
-  base::FilePath home("/home/chronos/u-0123456789abcdef");
-  base::FilePath other("/some/other/path");
-  base::FilePath old_drive("/special/drive-0123456789abcdef");
-  base::FilePath my_drive = old_drive.Append("root");
-  base::FilePath file_in_my_drive = old_drive.Append("root").Append("file.txt");
-
-  // DriveFS disabled, no changes.
-  base::FilePath result;
-  {
-    drive::DriveIntegrationServiceFactory::GetForProfile(profile_.get())
-        ->SetEnabled(true);
-    base::test::ScopedFeatureList feature_list;
-    feature_list.InitAndDisableFeature(chromeos::features::kDriveFs);
-    EXPECT_FALSE(MigrateToDriveFs(profile_.get(), other, &result));
-    EXPECT_FALSE(MigrateToDriveFs(profile_.get(), my_drive, &result));
-  }
-  // MyFilesVolume enabled, migrate paths under Downloads.
-  {
-    TestingProfile profile2(base::FilePath("/home/chronos/u-0123456789abcdef"));
-    chromeos::FakeChromeUserManager user_manager;
-    user_manager.AddUser(
-        AccountId::FromUserEmailGaiaId(profile2.GetProfileUserName(), "12345"));
-    PrefService* prefs = profile2.GetPrefs();
-    prefs->SetString(drive::prefs::kDriveFsProfileSalt, "a");
-    drive::DriveIntegrationServiceFactory::GetForProfile(&profile2)->SetEnabled(
-        true);
-
-    base::test::ScopedFeatureList feature_list;
-    feature_list.InitAndEnableFeature(chromeos::features::kDriveFs);
-    EXPECT_FALSE(MigrateToDriveFs(&profile2, other, &result));
-    EXPECT_TRUE(MigrateToDriveFs(&profile2, my_drive, &result));
-    EXPECT_EQ(base::FilePath(
-                  "/media/fuse/drivefs-84675c855b63e12f384d45f033826980/root"),
-              result);
-    EXPECT_TRUE(MigrateToDriveFs(&profile2, file_in_my_drive, &result));
-    EXPECT_EQ(
-        base::FilePath("/media/fuse/drivefs-84675c855b63e12f384d45f033826980/"
-                       "root/file.txt"),
-        result);
-  }
-}
-
 TEST_F(FileManagerPathUtilTest, ConvertFileSystemURLToPathInsideCrostini) {
   base::test::ScopedFeatureList initial_features;
   initial_features.InitAndEnableFeature(chromeos::features::kDriveFs);

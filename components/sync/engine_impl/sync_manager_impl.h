@@ -31,11 +31,11 @@
 #include "components/sync/nigori/cryptographer.h"
 #include "components/sync/syncable/change_reorder_buffer.h"
 #include "components/sync/syncable/directory_change_delegate.h"
-#include "components/sync/syncable/user_share.h"
 #include "services/network/public/cpp/network_connection_tracker.h"
 
 namespace syncer {
 
+class Cryptographer;
 class ModelTypeRegistry;
 class SyncCycleContext;
 class TypeDebugInfoObserver;
@@ -255,7 +255,7 @@ class SyncManagerImpl
 
   // We give a handle to share_ to clients of the API for use when constructing
   // any transaction type.
-  UserShare share_;
+  UserShare* share_;
 
   // This can be called from any thread, but only between calls to
   // OpenDirectory() and ShutdownOnSyncThread().
@@ -315,13 +315,11 @@ class SyncManagerImpl
 
   base::Closure report_unrecoverable_error_function_;
 
-  // Points to either SyncEncryptionHandlerImpl or NigoriSyncBridgeImpl
-  // depending on whether USS implementation of Nigori is enabled or not.
-  std::unique_ptr<SyncEncryptionHandler> sync_encryption_handler_;
+  SyncEncryptionHandler* sync_encryption_handler_;
 
   std::unique_ptr<SyncEncryptionHandler::Observer> encryption_observer_proxy_;
 
-  base::WeakPtrFactory<SyncManagerImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<SyncManagerImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(SyncManagerImpl);
 };

@@ -119,14 +119,23 @@ syncer::SyncChange CreateDelete(
       CreateData(extension_id, key, no_value, type));
 }
 
-syncer::SyncableService* GetSyncableService(content::BrowserContext* context,
-                                            syncer::ModelType type) {
-  DCHECK(IsOnBackendSequence());
+base::OnceCallback<base::WeakPtr<syncer::SyncableService>()>
+GetSyncableServiceProvider(content::BrowserContext* context,
+                           syncer::ModelType type) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  DCHECK(context);
   DCHECK(type == syncer::APP_SETTINGS || type == syncer::EXTENSION_SETTINGS);
   StorageFrontend* frontend = StorageFrontend::Get(context);
+  // StorageFrontend can be null in tests.
+  if (!frontend) {
+    return base::BindOnce(
+        []() { return base::WeakPtr<syncer::SyncableService>(); });
+  }
   SyncValueStoreCache* sync_cache = static_cast<SyncValueStoreCache*>(
       frontend->GetValueStoreCache(settings_namespace::SYNC));
-  return sync_cache->GetSyncableService(type);
+  DCHECK(sync_cache);
+  return base::BindOnce(&GetSyncableServiceOnBackendSequence,
+                        sync_cache->AsWeakPtr(), type);
 }
 
 base::OnceCallback<base::WeakPtr<syncer::SyncableService>()>

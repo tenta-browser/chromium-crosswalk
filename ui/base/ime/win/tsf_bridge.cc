@@ -345,14 +345,12 @@ void TSFBridgeImpl::RemoveInputMethodDelegate() {
 }
 
 bool TSFBridgeImpl::IsInputLanguageCJK() {
-  LANGID lang_locale;
-  if (SUCCEEDED(input_processor_profiles_->GetCurrentLanguage(&lang_locale))) {
-    lang_locale = PRIMARYLANGID(lang_locale);
-    return lang_locale == LANG_CHINESE || lang_locale == LANG_JAPANESE ||
-           lang_locale == LANG_KOREAN;
-  } else {
-    return false;
-  }
+  // See the following article about how LANGID in HKL is determined.
+  // https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getkeyboardlayout
+  LANGID lang_locale =
+      PRIMARYLANGID(LOWORD(HandleToLong(GetKeyboardLayout(0))));
+  return lang_locale == LANG_CHINESE || lang_locale == LANG_JAPANESE ||
+         lang_locale == LANG_KOREAN;
 }
 
 TextInputClient* TSFBridgeImpl::GetFocusedTextInputClient() const {

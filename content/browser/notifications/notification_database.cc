@@ -14,7 +14,6 @@
 #include "base/strings/stringprintf.h"
 #include "base/task/post_task.h"
 #include "content/browser/notifications/notification_database_conversions.h"
-#include "content/common/service_worker/service_worker_types.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_database_data.h"
@@ -360,6 +359,19 @@ NotificationDatabase::Status NotificationDatabase::DeleteNotificationData(
   batch.Delete(CreateDataKey(origin, notification_id));
   batch.Delete(CreateResourcesKey(origin, notification_id));
 
+  return LevelDBStatusToNotificationDatabaseStatus(
+      db_->Write(leveldb::WriteOptions(), &batch));
+}
+
+NotificationDatabase::Status NotificationDatabase::DeleteNotificationResources(
+    const std::string& notification_id,
+    const GURL& origin) {
+  DCHECK(sequence_checker_.CalledOnValidSequence());
+  DCHECK_EQ(State::INITIALIZED, state_);
+  DCHECK(!notification_id.empty());
+  DCHECK(origin.is_valid());
+
+  std::string key = CreateResourcesKey(origin, notification_id);
   return LevelDBStatusToNotificationDatabaseStatus(
       db_->Write(leveldb::WriteOptions(), &batch));
 }

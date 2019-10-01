@@ -63,10 +63,6 @@ ChromeVariationsServiceClient::GetNetworkTimeTracker() {
   return g_browser_process->network_time_tracker();
 }
 
-version_info::Channel ChromeVariationsServiceClient::GetChannel() {
-  return chrome::GetChannel();
-}
-
 bool ChromeVariationsServiceClient::OverridesRestrictParameter(
     std::string* parameter) {
 #if defined(OS_CHROMEOS)
@@ -76,4 +72,8 @@ bool ChromeVariationsServiceClient::OverridesRestrictParameter(
 #else
   return false;
 #endif
+}
+
+version_info::Channel ChromeVariationsServiceClient::GetChannel() {
+  return chrome::GetChannel();
 }

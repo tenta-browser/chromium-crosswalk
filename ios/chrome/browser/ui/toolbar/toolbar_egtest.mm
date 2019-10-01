@@ -2,24 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#import <EarlGrey/EarlGrey.h>
 #import <XCTest/XCTest.h>
 
 #include "base/ios/ios_util.h"
 #include "components/strings/grit/components_strings.h"
-#import "ios/chrome/browser/ui/commands/browser_commands.h"
 #import "ios/chrome/browser/ui/content_suggestions/ntp_home_constant.h"
-#import "ios/chrome/browser/ui/omnibox/popup/omnibox_popup_row.h"
 #import "ios/chrome/browser/ui/popup_menu/popup_menu_constants.h"
 #import "ios/chrome/browser/ui/toolbar/public/toolbar_constants.h"
 #include "ios/chrome/browser/ui/util/ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
-#import "ios/chrome/test/app/chrome_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_error_util.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
+#import "ios/testing/earl_grey/earl_grey_test.h"
 #import "ios/web/public/test/http_server/http_server.h"
 #include "ios/web/public/test/http_server/http_server_util.h"
 #include "ui/base/l10n/l10n_util_mac.h"
@@ -49,8 +46,7 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
   CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:URL]);
   [[EarlGrey selectElementWithMatcher:OmniboxText(URL.GetContent())]
       assertWithMatcher:grey_notNil()];
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:"You've arrived"]);
+  [ChromeEarlGrey waitForWebStateContainingText:"You've arrived"];
 }
 
 // Verifies opening a new tab from the tools menu.
@@ -85,7 +81,7 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
 // and asserts it doesn't commit the omnibox contents if the input is canceled.
 - (void)testToolbarOmniboxCancel {
   // Handset only (tablet does not have cancel button).
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_SKIPPED(@"Test not support on iPad");
   }
 
@@ -113,12 +109,12 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
 // canceled.
 - (void)testToolbarOmniboxHideKeyboard {
   // TODO(crbug.com/642559): Enable the test for iPad when typing bug is fixed.
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_DISABLED(@"Disabled for iPad due to a simulator bug.");
   }
 
   // Tablet only (handset keyboard does not have "hide keyboard" button).
-  if (!IsIPadIdiom()) {
+  if (![ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_SKIPPED(@"Test not support on iPhone");
   }
 
@@ -143,7 +139,7 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
 // canceled.
 - (void)testToolbarOmniboxTypingShield {
   // Tablet only (handset keyboard does not have "hide keyboard" button).
-  if (!IsIPadIdiom()) {
+  if (![ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_SKIPPED(@"Test not support on iPhone");
   }
 
@@ -170,7 +166,7 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
 // is pressed (iPad specific).
 - (void)testIPadKeyboardDismissOnButtonPress {
   // Tablet only (handset keyboard does not have "hide keyboard" button).
-  if (!IsIPadIdiom()) {
+  if (![ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_SKIPPED(@"Test not supported on iPhone");
   }
 
@@ -212,11 +208,9 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
 
 // Verifies that copying and pasting a URL includes the hidden protocol prefix.
 - (void)testCopyPasteURL {
-  if (IsRefreshLocationBarEnabled()) {
-    // TODO(crbug.com/834345): Enable this test when long press on the steady
-    // location bar is supported.
-    EARL_GREY_TEST_SKIPPED(@"Test not supported yet in UI Refresh.");
-  }
+  // TODO(crbug.com/834345): Enable this test when long press on the steady
+  // location bar is supported.
+  EARL_GREY_TEST_SKIPPED(@"Test not supported yet in UI Refresh.");
 
   // Clear generalPasteboard before and after the test.
   [UIPasteboard generalPasteboard].string = @"";
@@ -246,10 +240,10 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
                                    grey_kindOfClass([UILabel class]), nil)]
       performAction:grey_tap()];
 
-  [[[EarlGrey selectElementWithMatcher:SystemSelectionCalloutCopyButton()]
-      inRoot:SystemSelectionCallout()] performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:SystemSelectionCalloutCopyButton()]
+      performAction:grey_tap()];
 
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     [[EarlGrey selectElementWithMatcher:grey_accessibilityID(@"Typing Shield")]
         performAction:grey_tap()];
 
@@ -280,13 +274,13 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
 - (void)testOmniboxClearTextButton {
   // TODO(crbug.com/753098): Re-enable this test on iPad once grey_typeText
   // works.
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_DISABLED(@"Test disabled on iPad.");
   }
 
   const GURL URL = web::test::HttpServer::MakeUrl("http://origin");
 
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:URL]);
+  [ChromeEarlGrey loadURL:URL];
   [[EarlGrey selectElementWithMatcher:chrome_test_util::DefocusedLocationView()]
       performAction:grey_tap()];
 
@@ -306,11 +300,6 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
 
 // Types JavaScript into Omnibox and verify that an alert is displayed.
 - (void)testTypeJavaScriptIntoOmnibox {
-  // TODO(crbug.com/642544): Enable the test for iPad when typing bug is fixed.
-  if (IsIPadIdiom()) {
-    EARL_GREY_TEST_DISABLED(@"Disabled for iPad due to a typing bug.");
-  }
-
   std::map<GURL, std::string> responses;
   GURL URL = web::test::HttpServer::MakeUrl("http://foo");
   responses[URL] = "bar";
@@ -327,11 +316,7 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
 // not displayed. WebUI pages have elevated privileges and should not allow
 // script execution.
 - (void)testTypeJavaScriptIntoOmniboxWithWebUIPage {
-  // TODO(crbug.com/642544): Enable the test for iPad when typing bug is fixed.
-  if (IsIPadIdiom()) {
-    EARL_GREY_TEST_DISABLED(@"Disabled for iPad due to a typing bug.");
-  }
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:GURL("chrome://version")]);
+  [ChromeEarlGrey loadURL:GURL("chrome://version")];
   [ChromeEarlGreyUI focusOmniboxAndType:@"javascript:alert('Hello');\n"];
 
   [[EarlGrey selectElementWithMatcher:grey_accessibilityLabel(@"Hello")]
@@ -341,23 +326,23 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
 // Tests typing in the omnibox.
 - (void)testToolbarOmniboxTyping {
   // TODO(crbug.com/642559): Enable this test for iPad when typing bug is fixed.
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_DISABLED(@"Disabled for iPad due to a simulator bug.");
   }
 
   [[EarlGrey selectElementWithMatcher:chrome_test_util::NewTabPageOmnibox()]
       performAction:grey_typeText(@"a")];
   [[EarlGrey selectElementWithMatcher:grey_allOf(grey_accessibilityLabel(@"a"),
-                                                 grey_kindOfClass(
-                                                     [OmniboxPopupRow class]),
+                                                 grey_kindOfClassName(
+                                                     @"OmniboxPopupRow"),
                                                  nil)]
       assertWithMatcher:grey_sufficientlyVisible()];
 
   [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
       performAction:grey_typeText(@"b")];
   [[EarlGrey selectElementWithMatcher:grey_allOf(grey_accessibilityLabel(@"ab"),
-                                                 grey_kindOfClass(
-                                                     [OmniboxPopupRow class]),
+                                                 grey_kindOfClassName(
+                                                     @"OmniboxPopupRow"),
                                                  nil)]
       assertWithMatcher:grey_sufficientlyVisible()];
 
@@ -366,7 +351,7 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
   [[EarlGrey
       selectElementWithMatcher:grey_allOf(
                                    grey_accessibilityLabel(@"abC"),
-                                   grey_kindOfClass([OmniboxPopupRow class]),
+                                   grey_kindOfClassName(@"OmniboxPopupRow"),
                                    nil)]
       assertWithMatcher:grey_sufficientlyVisible()];
 
@@ -375,7 +360,7 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
   [[EarlGrey
       selectElementWithMatcher:grey_allOf(
                                    grey_accessibilityLabel(@"abC1"),
-                                   grey_kindOfClass([OmniboxPopupRow class]),
+                                   grey_kindOfClassName(@"OmniboxPopupRow"),
                                    nil)]
       assertWithMatcher:grey_sufficientlyVisible()];
 
@@ -384,7 +369,7 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
   [[EarlGrey
       selectElementWithMatcher:grey_allOf(
                                    grey_accessibilityLabel(@"abC12"),
-                                   grey_kindOfClass([OmniboxPopupRow class]),
+                                   grey_kindOfClassName(@"OmniboxPopupRow"),
                                    nil)]
       assertWithMatcher:grey_sufficientlyVisible()];
 
@@ -393,7 +378,7 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
   [[EarlGrey
       selectElementWithMatcher:grey_allOf(
                                    grey_accessibilityLabel(@"abC12@"),
-                                   grey_kindOfClass([OmniboxPopupRow class]),
+                                   grey_kindOfClassName(@"OmniboxPopupRow"),
                                    nil)]
       assertWithMatcher:grey_sufficientlyVisible()];
 
@@ -402,7 +387,7 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
   [[EarlGrey
       selectElementWithMatcher:grey_allOf(
                                    grey_accessibilityLabel(@"abC12@{"),
-                                   grey_kindOfClass([OmniboxPopupRow class]),
+                                   grey_kindOfClassName(@"OmniboxPopupRow"),
                                    nil)]
       assertWithMatcher:grey_sufficientlyVisible()];
 
@@ -411,7 +396,7 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
   [[EarlGrey
       selectElementWithMatcher:grey_allOf(
                                    grey_accessibilityLabel(@"abC12@{#"),
-                                   grey_kindOfClass([OmniboxPopupRow class]),
+                                   grey_kindOfClassName(@"OmniboxPopupRow"),
                                    nil)]
       assertWithMatcher:grey_sufficientlyVisible()];
 
@@ -432,9 +417,8 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
   // Select the omnibox to get the keyboard up.
   [[EarlGrey selectElementWithMatcher:chrome_test_util::NewTabPageOmnibox()]
       performAction:grey_tap()];
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForSufficientlyVisibleElementWithMatcher:
-                          chrome_test_util::Omnibox()]);
+  [ChromeEarlGrey
+      waitForSufficientlyVisibleElementWithMatcher:chrome_test_util::Omnibox()];
 
   // Tap the "/" keyboard accessory button.
   id<GREYMatcher> slashButtonMatcher = grey_allOf(
@@ -455,7 +439,7 @@ using chrome_test_util::SystemSelectionCalloutCopyButton;
   [[EarlGrey
       selectElementWithMatcher:grey_allOf(
                                    grey_accessibilityLabel(@"/.com"),
-                                   grey_kindOfClass([OmniboxPopupRow class]),
+                                   grey_kindOfClassName(@"OmniboxPopupRow"),
                                    nil)]
       assertWithMatcher:grey_sufficientlyVisible()];
 }

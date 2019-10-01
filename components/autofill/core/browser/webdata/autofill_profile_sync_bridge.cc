@@ -159,9 +159,7 @@ Optional<ModelError> AutofillProfileSyncBridge::ApplySyncChanges(
     }
   }
 
-  RETURN_IF_ERROR(
-      FlushSyncTracker(std::move(metadata_change_list), &tracker,
-                       AutofillProfileSyncChangeOrigin::kIncrementalRemote));
+  RETURN_IF_ERROR(FlushSyncTracker(std::move(metadata_change_list), &tracker));
 
   web_data_backend_->CommitChanges();
   return base::nullopt;
@@ -182,7 +180,7 @@ void AutofillProfileSyncBridge::GetData(StorageKeyList storage_keys,
   auto batch = std::make_unique<syncer::MutableDataBatch>();
   for (const std::unique_ptr<AutofillProfile>& entry : entries) {
     std::string key = GetStorageKeyFromAutofillProfile(*entry);
-    if (base::ContainsKey(keys_set, key)) {
+    if (base::Contains(keys_set, key)) {
       batch->Put(key, CreateEntityDataFromAutofillProfile(*entry));
     }
   }

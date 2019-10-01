@@ -43,6 +43,7 @@
 #include "chrome/browser/ui/startup/bad_flags_prompt.h"
 #include "chrome/browser/ui/startup/google_api_keys_infobar_delegate.h"
 #include "chrome/browser/ui/startup/obsolete_system_infobar_delegate.h"
+#include "chrome/browser/ui/tab_sharing/tab_sharing_infobar_delegate.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/test/test_browser_ui.h"
 #include "chrome/grit/generated_resources.h"
@@ -405,9 +406,9 @@ void InfoBarUiTest::ShowUi(const std::string& name) {
       FlashDeprecationInfoBarDelegate::Create(GetInfoBarService(), nullptr);
       break;
     case IBD::TAB_SHARING_INFOBAR_DELEGATE:
-      TabSharingInfoBarDelegate::Create(GetInfoBarService(),
-                                        base::ASCIIToUTF16("example.com"),
-                                        base::ASCIIToUTF16("application.com"));
+      TabSharingInfoBarDelegate::Create(
+          GetInfoBarService(), base::ASCIIToUTF16("example.com"),
+          base::ASCIIToUTF16("application.com"), true, nullptr);
       break;
 
     default:
@@ -570,8 +571,6 @@ IN_PROC_BROWSER_TEST_F(InfoBarUiTest, InvokeUi_flash_deprecation) {
   ShowAndVerifyUi();
 }
 
-// TODO(https://crbug.com/965468) Resource generation fails on Windows.
-#if !defined(OS_WIN)
 IN_PROC_BROWSER_TEST_F(InfoBarUiTest, InvokeUi_tab_sharing) {
   ShowAndVerifyUi();
 }

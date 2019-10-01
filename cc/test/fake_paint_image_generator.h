@@ -17,6 +17,7 @@ class FakePaintImageGenerator : public PaintImageGenerator {
   // RGB decoding mode constructor.
   explicit FakePaintImageGenerator(
       const SkImageInfo& info,
+      const SkYUVASizeInfo& yuva_size_info,
       std::vector<FrameMetadata> frames = {FrameMetadata()},
       bool allocate_discardable_memory = true,
       std::vector<SkISize> supported_sizes = {});
@@ -60,6 +61,9 @@ class FakePaintImageGenerator : public PaintImageGenerator {
   }
   void reset_frames_decoded() { frames_decoded_count_.clear(); }
   void SetExpectFallbackToRGB() { expect_fallback_to_rgb_ = true; }
+  void SetEligibleForAcceleratedDecoding() {
+    is_eligible_for_accelerated_decode_ = true;
+  }
 
  private:
   std::vector<uint8_t> image_backing_memory_;
@@ -73,6 +77,7 @@ class FakePaintImageGenerator : public PaintImageGenerator {
   // planes and after Chrome implements it, we should no longer expect RGB
   // fallback.
   bool expect_fallback_to_rgb_ = false;
+  bool is_eligible_for_accelerated_decode_ = false;
 };
 
 }  // namespace cc

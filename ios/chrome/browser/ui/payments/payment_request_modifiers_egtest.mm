@@ -10,6 +10,7 @@
 #include "components/payments/core/features.h"
 #import "ios/chrome/browser/ui/payments/payment_request_egtest_base.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
+#import "ios/chrome/test/app/tab_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_error_util.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
@@ -66,8 +67,7 @@ id<GREYMatcher> PaymentMethodCellMatcher(
 
 - (void)setUp {
   [super setUp];
-  if (!base::FeatureList::IsEnabled(
-          payments::features::kWebPaymentsModifiers)) {
+  if (![ChromeEarlGrey isWebPaymentsModifiersEnabled]) {
     // payments::features::kWebPaymentsModifiers feature is not enabled,
     // You have to pass --enable-features=WebPaymentsModifiers command line
     // argument in order to run this test.
@@ -104,7 +104,7 @@ id<GREYMatcher> PaymentMethodCellMatcher(
   CHROME_EG_ASSERT_NO_ERROR(
       [ChromeEarlGrey loadURL:web::test::HttpServer::MakeUrl(kModifiersPage)]);
 
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey tapWebStateElementWithID:@"buy"]);
+  [ChromeEarlGrey tapWebStateElementWithID:@"buy"];
 
   // Verify there's no line item.
   [[EarlGrey selectElementWithMatcher:PriceCellMatcher(@"Total, USD $5.00", NO)]
@@ -119,7 +119,7 @@ id<GREYMatcher> PaymentMethodCellMatcher(
 
   [self addLocalCard];
 
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey tapWebStateElementWithID:@"buy"]);
+  [ChromeEarlGrey tapWebStateElementWithID:@"buy"];
 
   // Verify there's a selected payment method.
   [[EarlGrey selectElementWithMatcher:PaymentMethodCellMatcher(_localCard)]
@@ -148,7 +148,7 @@ id<GREYMatcher> PaymentMethodCellMatcher(
 
   [self addServerCardWithType:CREDIT];
 
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey tapWebStateElementWithID:@"buy"]);
+  [ChromeEarlGrey tapWebStateElementWithID:@"buy"];
 
   // Verify there's a selected payment method.
   [[EarlGrey selectElementWithMatcher:PaymentMethodCellMatcher(_serverCard)]
@@ -177,8 +177,7 @@ id<GREYMatcher> PaymentMethodCellMatcher(
 
   [self addServerCardWithType:CREDIT];
 
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey tapWebStateElementWithID:@"credit_supported_type"]);
+  [ChromeEarlGrey tapWebStateElementWithID:@"credit_supported_type"];
 
   // Verify there's a selected payment method.
   [[EarlGrey selectElementWithMatcher:PaymentMethodCellMatcher(_serverCard)]
@@ -203,8 +202,7 @@ id<GREYMatcher> PaymentMethodCellMatcher(
 
   [self addServerCardWithType:CREDIT];
 
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey tapWebStateElementWithID:@"debit_supported_type"]);
+  [ChromeEarlGrey tapWebStateElementWithID:@"debit_supported_type"];
 
   // Verify there's no line item.
   [[EarlGrey selectElementWithMatcher:PriceCellMatcher(@"Total, USD $5.00", NO)]
@@ -223,8 +221,7 @@ id<GREYMatcher> PaymentMethodCellMatcher(
 
   [self addServerCardWithType:CREDIT];
 
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey
-      tapWebStateElementWithID:@"mastercard_any_supported_type"]);
+  [ChromeEarlGrey tapWebStateElementWithID:@"mastercard_any_supported_type"];
 
   // Verify there's a selected payment method.
   [[EarlGrey selectElementWithMatcher:PaymentMethodCellMatcher(_serverCard)]
@@ -249,8 +246,7 @@ id<GREYMatcher> PaymentMethodCellMatcher(
 
   [self addLocalCard];
 
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey
-      tapWebStateElementWithID:@"mastercard_any_supported_type"]);
+  [ChromeEarlGrey tapWebStateElementWithID:@"mastercard_any_supported_type"];
 
   // Verify there's a selected payment method.
   [[EarlGrey selectElementWithMatcher:PaymentMethodCellMatcher(_localCard)]
@@ -274,8 +270,7 @@ id<GREYMatcher> PaymentMethodCellMatcher(
 
   [self addServerCardWithType:CREDIT];
 
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey
-      tapWebStateElementWithID:@"mastercard_supported_network"]);
+  [ChromeEarlGrey tapWebStateElementWithID:@"mastercard_supported_network"];
 
   // Verify there's a selected payment method.
   [[EarlGrey selectElementWithMatcher:PaymentMethodCellMatcher(_serverCard)]

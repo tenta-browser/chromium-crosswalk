@@ -37,8 +37,6 @@ extern const base::Feature kAutofillEnforceMinRequiredFieldsForUpload;
 extern const base::Feature kAutofillGetPaymentsIdentityFromSync;
 extern const base::Feature kAutofillImportNonFocusableCreditCardForms;
 extern const base::Feature kAutofillKeyboardAccessory;
-extern const base::Feature kAutofillManualFallback;
-extern const base::Feature kAutofillManualFallbackPhaseTwo;
 extern const base::Feature kAutofillPruneSuggestions;
 extern const base::Feature kAutofillMetadataUploads;
 extern const base::Feature kAutofillOffNoServerData;
@@ -65,6 +63,7 @@ extern const base::Feature kAutomaticPasswordGeneration;
 #if defined(OS_ANDROID)
 extern const base::Feature kAutofillManualFallbackAndroid;
 extern const base::Feature kAutofillRefreshStyleAndroid;
+extern const base::Feature kTouchToFillAndroid;
 #endif  // OS_ANDROID
 
 #if defined(OS_ANDROID) || defined(OS_IOS)
@@ -82,13 +81,6 @@ bool IsAutofillCreditCardAssistEnabled();
 // we're using the views browser.
 bool IsMacViewsAutofillPopupExperimentEnabled();
 #endif  // defined(OS_MACOSX)
-
-// Returns whether the UI for passwords in manual fallback is enabled.
-bool IsPasswordManualFallbackEnabled();
-
-// Returns whether the UI for addresses and credit cards in manual fallback is
-// enabled.
-bool IsAutofillManualFallbackEnabled();
 
 }  // namespace features
 }  // namespace autofill

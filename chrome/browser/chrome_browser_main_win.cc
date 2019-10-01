@@ -199,12 +199,11 @@ void DetectFaultTolerantHeap() {
 // Initializes the ModuleDatabase on its owning sequence. Also starts the
 // enumeration of registered modules in the Windows Registry.
 void InitializeModuleDatabase(
-    std::unique_ptr<service_manager::Connector> connector,
     bool is_third_party_blocking_policy_enabled) {
   DCHECK(ModuleDatabase::GetTaskRunner()->RunsTasksInCurrentSequence());
 
-  ModuleDatabase::SetInstance(std::make_unique<ModuleDatabase>(
-      std::move(connector), is_third_party_blocking_policy_enabled));
+  ModuleDatabase::SetInstance(
+      std::make_unique<ModuleDatabase>(is_third_party_blocking_policy_enabled));
 
   auto* module_database = ModuleDatabase::GetInstance();
   module_database->StartDrainingModuleLoadAttemptsLog();
@@ -416,12 +415,8 @@ void SetupModuleDatabase(std::unique_ptr<ModuleWatcher>* module_watcher) {
 #endif
 
   ModuleDatabase::GetTaskRunner()->PostTask(
-      FROM_HERE,
-      base::BindOnce(&InitializeModuleDatabase,
-                     content::ServiceManagerConnection::GetForProcess()
-                         ->GetConnector()
-                         ->Clone(),
-                     third_party_blocking_policy_enabled));
+      FROM_HERE, base::BindOnce(&InitializeModuleDatabase,
+                                third_party_blocking_policy_enabled));
 
   *module_watcher = ModuleWatcher::Create(base::BindRepeating(&OnModuleEvent));
 }
@@ -434,10 +429,9 @@ void ShowCloseBrowserFirstMessageBox() {
 
 void MaybePostSettingsResetPrompt() {
   if (base::FeatureList::IsEnabled(safe_browsing::kSettingsResetPrompt)) {
-    content::BrowserThread::PostAfterStartupTask(
+    base::PostTaskWithTraits(
         FROM_HERE,
-        base::CreateSingleThreadTaskRunnerWithTraits(
-            {content::BrowserThread::UI}),
+        {content::BrowserThread::UI, base::TaskPriority::BEST_EFFORT},
         base::Bind(safe_browsing::MaybeShowSettingsResetPromptWithDelay));
   }
 }

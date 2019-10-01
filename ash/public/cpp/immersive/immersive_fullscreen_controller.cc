@@ -280,9 +280,14 @@ void ImmersiveFullscreenController::UnlockRevealedState() {
 // static
 void ImmersiveFullscreenController::EnableForWidget(views::Widget* widget,
                                                     bool enabled) {
-  auto* window = widget->GetNativeWindow();
-  if (window->GetProperty(kImmersiveIsActive) != enabled)
-    widget->GetNativeWindow()->SetProperty(kImmersiveIsActive, enabled);
+  widget->GetNativeWindow()->SetProperty(kImmersiveIsActive, enabled);
+}
+
+// static
+ImmersiveFullscreenController* ImmersiveFullscreenController::GetForTest(
+    views::Widget* widget) {
+  return widget->GetNativeWindow()->GetProperty(
+      kImmersiveFullscreenControllerKey);
 }
 
 // static
@@ -715,8 +720,13 @@ void ImmersiveFullscreenController::UpdateEnabled() {
   const bool enabled =
       widget_->GetNativeWindow()->GetProperty(kImmersiveIsActive);
 
-  if (enabled_ == enabled)
+  if (enabled_ == enabled) {
+    // Frame layout depends on the window's state and size,
+    // which can happen asynchronously and/or independently,
+    // from the timing when the immersive state change.
+    delegate_->Relayout();
     return;
+  }
   enabled_ = enabled;
 
   EnableEventObservers(enabled_);

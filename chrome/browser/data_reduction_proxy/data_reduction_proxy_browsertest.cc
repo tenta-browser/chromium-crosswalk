@@ -42,8 +42,8 @@
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/network_service_instance.h"
 #include "content/public/browser/storage_partition.h"
+#include "content/public/browser/system_connector.h"
 #include "content/public/common/network_service_util.h"
-#include "content/public/common/service_manager_connection.h"
 #include "content/public/common/service_names.mojom.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
@@ -115,13 +115,10 @@ std::string GetDestinationHost(const net::test_server::HttpRequest& request) {
 }
 
 void SimulateNetworkChange(network::mojom::ConnectionType type) {
-  if (base::FeatureList::IsEnabled(network::features::kNetworkService) &&
-      !content::IsInProcessNetworkService()) {
+  if (!content::IsInProcessNetworkService()) {
     network::mojom::NetworkServiceTestPtr network_service_test;
-    content::ServiceManagerConnection::GetForProcess()
-        ->GetConnector()
-        ->BindInterface(content::mojom::kNetworkServiceName,
-                        &network_service_test);
+    content::GetSystemConnector()->BindInterface(
+        content::mojom::kNetworkServiceName, &network_service_test);
     base::RunLoop run_loop;
     network_service_test->SimulateNetworkChange(type, run_loop.QuitClosure());
     run_loop.Run();
@@ -192,18 +189,12 @@ class DataReductionProxyBrowsertestBase : public InProcessBrowserTest {
 
     EnableDataSaver(true);
     // Make sure initial config has been loaded. Config is fetched only if
-    // network service is not enabled, or if both network service and
     // kDataReductionProxyEnabledWithNetworkService are enabled.
-    if (!IsNetworkServiceEnabled() ||
-        base::FeatureList::IsEnabled(
+    if (base::FeatureList::IsEnabled(
             data_reduction_proxy::features::
                 kDataReductionProxyEnabledWithNetworkService)) {
       WaitForConfig();
     }
-  }
-
-  bool IsNetworkServiceEnabled() const {
-    return base::FeatureList::IsEnabled(network::features::kNetworkService);
   }
 
   // Verifies that the |request| has the Chrome-Proxy headers, and caches the
@@ -301,7 +292,18 @@ class DataReductionProxyBrowsertestBase : public InProcessBrowserTest {
     config_ = config;
   }
 
-  void WaitForConfig() { config_run_loop_->Run(); }
+  void WaitForConfig() {
+    // Config is not fetched in the holdback group. So, return early.
+    if (data_reduction_proxy::params::IsIncludedInHoldbackFieldTrial())
+      return;
+    config_run_loop_->Run();
+  }
+
+  std::string expect_exp_value_in_request_header_;
+
+  size_t count_proxy_server_requests_received_ = 0u;
+
+  base::test::ScopedFeatureList scoped_feature_list_;
 
   std::string expect_exp_value_in_request_header_;
 
@@ -312,6 +314,10 @@ class DataReductionProxyBrowsertestBase : public InProcessBrowserTest {
  private:
   std::unique_ptr<net::test_server::HttpResponse> GetConfigResponse(
       const net::test_server::HttpRequest& request) {
+    // Config should not be fetched when in holdback.
+    EXPECT_FALSE(
+        data_reduction_proxy::params::IsIncludedInHoldbackFieldTrial());
+
     auto response = std::make_unique<net::test_server::BasicHttpResponse>();
     response->set_content(config_.SerializeAsString());
     response->set_content_type("text/plain");
@@ -647,12 +653,17 @@ IN_PROC_BROWSER_TEST_F(DataReductionProxyBrowsertest, UMAMetricsRecorded) {
 }
 
 // Test that enabling the holdback disables the proxy.
+// Parameter is true if the data reduction proxy holdback should be enabled.
 class DataReductionProxyWithHoldbackBrowsertest
     : public ::testing::WithParamInterface<bool>,
       public DataReductionProxyBrowsertest {
  public:
+  DataReductionProxyWithHoldbackBrowsertest()
+      : DataReductionProxyBrowsertest(),
+        data_reduction_proxy_holdback_enabled_(GetParam()) {}
+
   void SetUp() override {
-    if (GetParam()) {
+    if (data_reduction_proxy_holdback_enabled_) {
       scoped_feature_list_.InitWithFeatures(
           {features::kDataReductionProxyEnabledWithNetworkService,
            data_reduction_proxy::features::kDataReductionProxyHoldback},
@@ -664,6 +675,8 @@ class DataReductionProxyWithHoldbackBrowsertest
 
     InProcessBrowserTest::SetUp();
   }
+
+  const bool data_reduction_proxy_holdback_enabled_;
 
  private:
   base::test::ScopedFeatureList scoped_feature_list_;
@@ -682,8 +695,13 @@ IN_PROC_BROWSER_TEST_P(DataReductionProxyWithHoldbackBrowsertest,
   SetConfig(CreateConfigForServer(proxy_server));
   // A network change forces the config to be fetched.
   SimulateNetworkChange(network::mojom::ConnectionType::CONNECTION_3G);
+
   WaitForConfig();
 
+  // Load a webpage in holdback group as well. This ensures that while in
+  // holdback group, Chrome does not fetch the client config. If Chrome were to
+  // fetch the client config, the DHCECKs and other conditionals that check that
+  // holdback is not enabled would trigger and cause the test to fail.
   ui_test_utils::NavigateToURL(browser(), GURL("http://does.not.resolve/foo"));
 
   if (GetParam()) {
@@ -772,19 +790,7 @@ IN_PROC_BROWSER_TEST_F(DataReductionProxyExpFeatureBrowsertest,
   EXPECT_LE(1u, count_proxy_server_requests_received_);
 }
 
-class DataReductionProxyBrowsertestWithNetworkService
-    : public DataReductionProxyBrowsertest {
- public:
-  void SetUp() override {
-    scoped_feature_list_.InitAndEnableFeature(
-        network::features::kNetworkService);
-    DataReductionProxyBrowsertest::SetUp();
-  }
-  base::test::ScopedFeatureList scoped_feature_list_;
-};
-
-IN_PROC_BROWSER_TEST_F(DataReductionProxyBrowsertestWithNetworkService,
-                       DataUsePrefsRecorded) {
+IN_PROC_BROWSER_TEST_F(DataReductionProxyBrowsertest, DataUsePrefsRecorded) {
   PrefService* prefs = browser()->profile()->GetPrefs();
 
   // Make sure we wait for timing information.
@@ -871,9 +877,7 @@ class DataReductionProxyFallbackBrowsertest
   }
 
   void TearDown() override {
-    if (IsNetworkServiceEnabled()) {
-      EXPECT_LE(1u, count_proxy_server_requests_received_);
-    }
+    EXPECT_LE(1u, count_proxy_server_requests_received_);
   }
 
  private:
@@ -996,28 +1000,6 @@ IN_PROC_BROWSER_TEST_F(DataReductionProxyBrowsertest, PingbackSent) {
 
   EXPECT_NE(0u, request_page_id);
   EXPECT_EQ(pingback_client->received_page_id(), request_page_id);
-}
-
-IN_PROC_BROWSER_TEST_F(DataReductionProxyFallbackBrowsertest,
-                       FallbackProxyUsedOnNetError) {
-  SetResponseHook(
-      base::BindRepeating([](net::test_server::BasicHttpResponse* response) {
-        response->AddCustomHeader("Content-Disposition", "inline");
-        response->AddCustomHeader("Content-Disposition", "form-data");
-      }));
-  base::HistogramTester histogram_tester;
-  ui_test_utils::NavigateToURL(
-      browser(), GURL("http://does.not.resolve/echoheader?Chrome-Proxy"));
-  EXPECT_THAT(GetBody(), kSecondaryResponse);
-  histogram_tester.ExpectUniqueSample(
-      "DataReductionProxy.InvalidResponseHeadersReceived.NetError",
-      -net::ERR_RESPONSE_HEADERS_MULTIPLE_CONTENT_DISPOSITION, 1);
-
-  // Bad proxy should still be bypassed.
-  SetResponseHook(ResponseHook());
-  ui_test_utils::NavigateToURL(
-      browser(), GURL("http://does.not.resolve/echoheader?Chrome-Proxy"));
-  EXPECT_THAT(GetBody(), kSecondaryResponse);
 }
 
 IN_PROC_BROWSER_TEST_F(DataReductionProxyFallbackBrowsertest,
@@ -1197,8 +1179,6 @@ IN_PROC_BROWSER_TEST_F(DataReductionProxyFallbackBrowsertest,
 
 IN_PROC_BROWSER_TEST_F(DataReductionProxyFallbackBrowsertest,
                        DISABLE_ON_WIN_MAC_CHROMEOS(ProxyBlockedOnAuthError)) {
-  if (!IsNetworkServiceEnabled())
-    return;
   base::HistogramTester histogram_tester;
   net::EmbeddedTestServer test_server;
   test_server.RegisterRequestHandler(
@@ -1218,8 +1198,6 @@ IN_PROC_BROWSER_TEST_F(DataReductionProxyFallbackBrowsertest,
 // the proxy is bypassed, and the request is fetched directly.
 IN_PROC_BROWSER_TEST_F(DataReductionProxyFallbackBrowsertest,
                        DISABLE_ON_WIN_MAC_CHROMEOS(RedirectCycle)) {
-  if (!IsNetworkServiceEnabled())
-    return;
   base::HistogramTester histogram_tester;
   net::EmbeddedTestServer test_server;
   test_server.RegisterRequestHandler(
@@ -1454,8 +1432,6 @@ class DataReductionProxyWarmupURLBrowsertest
 IN_PROC_BROWSER_TEST_P(
     DataReductionProxyWarmupURLBrowsertest,
     DISABLE_ON_WIN_MAC_CHROMEOS(WarmupURLsFetchedForEachProxy)) {
-  if (!IsNetworkServiceEnabled())
-    return;
   net::EmbeddedTestServer test_server;
   test_server.RegisterRequestHandler(
       base::BindRepeating(&BasicResponse, kDummyBody));
@@ -1560,9 +1536,6 @@ std::unique_ptr<net::test_server::HttpResponse> RespondWithRequestPathHandler(
 // Verify that requests initiated by SimpleURLLoader use the proxy only if
 // render frame ID is set.
 IN_PROC_BROWSER_TEST_F(DataReductionProxyBrowsertest, SimpleURLLoader) {
-  if (!IsNetworkServiceEnabled())
-    return;
-
   net::EmbeddedTestServer origin_server;
   origin_server.RegisterRequestHandler(
       base::BindRepeating(&BasicResponse, kDummyBody));
@@ -1816,18 +1789,14 @@ class DataReductionProxyEnabledWithNetworkServiceHoldbackBrowserTest
  public:
   void SetUp() override {
     if (GetParam()) {
-      // Enable NetworkService, and disable
-      // kDataReductionProxyEnabledWithNetworkService.
+      // Disable kDataReductionProxyEnabledWithNetworkService.
       scoped_feature_list_.InitWithFeatures(
-          {network::features::kNetworkService},
-          {data_reduction_proxy::features::
-               kDataReductionProxyEnabledWithNetworkService});
+          {}, {data_reduction_proxy::features::
+                   kDataReductionProxyEnabledWithNetworkService});
     } else {
-      // Enable both NetworkService and
-      // kDataReductionProxyEnabledWithNetworkService.
+      // Enable kDataReductionProxyEnabledWithNetworkService.
       scoped_feature_list_.InitWithFeatures(
-          {network::features::kNetworkService,
-           data_reduction_proxy::features::
+          {data_reduction_proxy::features::
                kDataReductionProxyEnabledWithNetworkService},
           {});
     }

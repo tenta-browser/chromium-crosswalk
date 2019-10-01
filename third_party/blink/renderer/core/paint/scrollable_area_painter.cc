@@ -130,28 +130,10 @@ void ScrollableAreaPainter::PaintOverflowControls(
   if (!GetScrollableArea().GetLayoutBox()->HasOverflowClip())
     return;
 
-  IntPoint adjusted_paint_offset = paint_offset;
-  if (painting_overlay_controls)
-    adjusted_paint_offset = GetScrollableArea().CachedOverlayScrollbarOffset();
-
-  CullRect adjusted_cull_rect = paint_info.GetCullRect();
-  adjusted_cull_rect.MoveBy(-adjusted_paint_offset);
-  // Overlay scrollbars paint in a second pass through the layer tree so that
-  // they will paint on top of everything else. If this is the normal painting
-  // pass, paintingOverlayControls will be false, and we should just tell the
-  // root layer that there are overlay scrollbars that need to be painted. That
-  // will cause the second pass through the layer tree to run, and we'll paint
-  // the scrollbars then. In the meantime, cache tx and ty so that the second
-  // pass doesn't need to re-enter the LayoutTree to get it right.
-  if (GetScrollableArea().HasOverlayScrollbars() &&
-      !painting_overlay_controls) {
-    GetScrollableArea().SetCachedOverlayScrollbarOffset(paint_offset);
-    // It's not necessary to do the second pass if the scrollbars paint into
-    // layers.
-    if ((GetScrollableArea().HorizontalScrollbar() &&
-         GetScrollableArea().LayerForHorizontalScrollbar()) ||
-        (GetScrollableArea().VerticalScrollbar() &&
-         GetScrollableArea().LayerForVerticalScrollbar()))
+  // Overlay scrollbars are painted in the dedicated paint phase, and normal
+  // scrollbars are painted in the background paint phase.
+  if (GetScrollableArea().HasOverlayScrollbars()) {
+    if (paint_info.phase != PaintPhase::kOverlayScrollbars)
       return;
     if (!OverflowControlsIntersectRect(adjusted_cull_rect))
       return;
@@ -190,6 +172,9 @@ void ScrollableAreaPainter::PaintOverflowControls(
                                             DisplayItem::kOverflowControls);
     }
   }
+
+  CullRect adjusted_cull_rect = paint_info.GetCullRect();
+  adjusted_cull_rect.MoveBy(-paint_offset);
 
   if (GetScrollableArea().HorizontalScrollbar() &&
       !GetScrollableArea().LayerForHorizontalScrollbar()) {

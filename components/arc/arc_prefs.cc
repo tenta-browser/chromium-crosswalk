@@ -126,23 +126,23 @@ const char kVoiceInteractionContextEnabled[] =
     "settings.voice_interaction.context.enabled";
 // A preference that indicates the user has enabled voice interaction services.
 const char kVoiceInteractionEnabled[] = "settings.voice_interaction.enabled";
-// A preference that indicates the user has chosen to always keep hotword
-// listening on even withough DSP support.
-const char kVoiceInteractionHotwordAlwaysOn[] =
-    "settings.voice_interaction.hotword.always_on";
 // A preference that indicates the user has allowed voice interaction services
 // to use hotword listening. This preference can be overridden by the
 // VoiceInteractionHotwordEnabled administrator policy.
 const char kVoiceInteractionHotwordEnabled[] =
     "settings.voice_interaction.hotword.enabled";
-// A preference that indicates whether microphone should be open when the voice
-// interaction launches.
-const char kVoiceInteractionLaunchWithMicOpen[] =
-    "settings.voice_interaction.launch_with_mic_open";
-// A preference that indicates the user has allowed voice interaction services
-// to send notification.
-const char kVoiceInteractionNotificationEnabled[] =
-    "settings.voice_interaction.notification.enabled";
+
+// ======== LOCAL STATE PREFS ========
+
+// A dictionary preference that keeps track of stability metric values, which is
+// maintained by StabilityMetricsManager. Persisting values in local state is
+// required to include these metrics in the initial stability log in case of a
+// crash.
+const char kStabilityMetrics[] = "arc.metrics.stability";
+
+void RegisterLocalStatePrefs(PrefRegistrySimple* registry) {
+  registry->RegisterDictionaryPref(kStabilityMetrics);
+}
 
 // ======== LOCAL STATE PREFS ========
 
@@ -201,10 +201,7 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
   registry->RegisterTimeDeltaPref(kEngagementTimeTotal, base::TimeDelta());
   registry->RegisterBooleanPref(kVoiceInteractionContextEnabled, false);
   registry->RegisterBooleanPref(kVoiceInteractionEnabled, false);
-  registry->RegisterBooleanPref(kVoiceInteractionHotwordAlwaysOn, false);
   registry->RegisterBooleanPref(kVoiceInteractionHotwordEnabled, false);
-  registry->RegisterBooleanPref(kVoiceInteractionNotificationEnabled, true);
-  registry->RegisterBooleanPref(kVoiceInteractionLaunchWithMicOpen, false);
 }
 
 }  // namespace prefs

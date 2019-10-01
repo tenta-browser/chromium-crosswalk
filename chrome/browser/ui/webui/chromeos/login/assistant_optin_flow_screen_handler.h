@@ -124,7 +124,6 @@ class AssistantOptInFlowScreenHandler
   void HandleVoiceMatchScreenShown();
   void HandleGetMoreScreenShown();
   void HandleLoadingTimeout();
-  void HandleHotwordResult(bool enable_hotword);
   void HandleFlowFinished();
   void HandleFlowInitialized(const int flow_type);
 
@@ -147,8 +146,11 @@ class AssistantOptInFlowScreenHandler
   // Whether email optin is needed for user.
   bool email_optin_needed_ = false;
 
-  // Whether user chose to enable hotword.
-  bool enable_hotword_ = true;
+  // Whether the use has completed voice match enrollment.
+  bool voice_match_enrollment_done_ = false;
+
+  // Assistant optin flow type.
+  ash::FlowType flow_type_ = ash::FlowType::kConsentFlow;
 
   // Whether the use has completed voice match enrollment.
   bool voice_match_enrollment_done_ = false;

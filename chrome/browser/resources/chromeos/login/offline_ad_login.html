@@ -4,7 +4,7 @@
 
 <link rel="import" href="chrome://resources/html/polymer.html">
 <link rel="import" href="chrome://resources/html/i18n_behavior.html">
-<link rel="import" href="chrome://resources/html/md_select_css.html">
+<link rel="import" href="chrome://resources/cr_elements/md_select_css.html">
 <link rel="import" href="chrome://resources/cr_elements/icons.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/iron-flex-layout/iron-flex-layout-classes.html">
 
@@ -135,9 +135,8 @@
               error-message="[[i18nDynamic(locale, 'adLoginInvalidPassword')]]">
           </cr-input>
           <div class="flex layout horizontal start-justified">
-            <gaia-button id="moreOptionsBtn" type="link"
-                on-tap="onMoreOptionsClicked_" hidden="[[!isDomainJoin]]"
-                disabled="[[disabled]]">
+            <gaia-button id="moreOptionsBtn" on-click="onMoreOptionsClicked_"
+                hidden="[[!isDomainJoin]]" disabled="[[disabled]]" link>
               [[i18nDynamic(locale, 'adJoinMoreOptions')]]
             </gaia-button>
           </div>

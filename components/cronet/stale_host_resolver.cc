@@ -169,7 +169,7 @@ class StaleHostResolver::RequestImpl
   // Current HostCache size at the time the cache was checked.
   size_t current_size_;
 
-  base::WeakPtrFactory<RequestImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<RequestImpl> weak_ptr_factory_{this};
 };
 
 StaleHostResolver::RequestImpl::RequestImpl(
@@ -185,8 +185,7 @@ StaleHostResolver::RequestImpl::RequestImpl(
       cache_error_(net::ERR_DNS_CACHE_MISS),
       stale_timer_(tick_clock),
       restore_size_(0),
-      current_size_(0),
-      weak_ptr_factory_(this) {
+      current_size_(0) {
   DCHECK(resolver_);
 }
 

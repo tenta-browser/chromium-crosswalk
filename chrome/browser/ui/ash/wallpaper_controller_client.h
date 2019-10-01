@@ -28,6 +28,10 @@ class WallpaperControllerClient : public ash::WallpaperControllerClient {
   // Tests can provide a mock interface for the ash controller.
   void InitForTesting(ash::WallpaperController* controller);
 
+  // Sets the initial wallpaper. Should be called after the session manager has
+  // been initialized.
+  void SetInitialWallpaper();
+
   static WallpaperControllerClient* Get();
 
   // Returns files identifier for the |account_id|.
@@ -100,8 +104,13 @@ class WallpaperControllerClient : public ash::WallpaperControllerClient {
 
   // ash::WallpaperControllerClient:
   void OpenWallpaperPicker() override;
-  void OnReadyToSetWallpaper() override;
-  void OnFirstWallpaperAnimationFinished() override;
+
+  void DeviceWallpaperImageFilePathChanged();
+
+  // Returns true if user names should be shown on the login screen.
+  bool ShouldShowUserNamesOnLogin() const;
+
+  base::FilePath GetDeviceWallpaperImageFilePath();
 
   void DeviceWallpaperImageFilePathChanged();
 

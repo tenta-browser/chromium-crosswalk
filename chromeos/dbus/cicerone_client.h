@@ -210,11 +210,19 @@ class COMPONENT_EXPORT(CHROMEOS_DBUS) CiceroneClient : public DBusClient {
       DBusMethodCallback<vm_tools::cicerone::SetUpLxdContainerUserResponse>
           callback) = 0;
 
-  // Searches for not installed Linux packages in a container.
-  // |callback| is called after the method call finishes.
-  virtual void SearchApp(
-      const vm_tools::cicerone::AppSearchRequest& request,
-      DBusMethodCallback<vm_tools::cicerone::AppSearchResponse> callback) = 0;
+  // Exports the Lxd container.
+  // |callback| is called when the method completes.
+  virtual void ExportLxdContainer(
+      const vm_tools::cicerone::ExportLxdContainerRequest& request,
+      DBusMethodCallback<vm_tools::cicerone::ExportLxdContainerResponse>
+          callback) = 0;
+
+  // Imports the Lxd container.
+  // |callback| is called when the method completes.
+  virtual void ImportLxdContainer(
+      const vm_tools::cicerone::ImportLxdContainerRequest& request,
+      DBusMethodCallback<vm_tools::cicerone::ImportLxdContainerResponse>
+          callback) = 0;
 
   // Exports the Lxd container.
   // |callback| is called when the method completes.

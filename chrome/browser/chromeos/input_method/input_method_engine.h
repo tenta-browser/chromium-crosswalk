@@ -142,6 +142,15 @@ class InputMethodEngine : public ::input_method::InputMethodEngineBase {
   void DeleteSurroundingTextToInputContext(int offset,
                                            size_t number_of_chars) override;
   bool SendKeyEvent(ui::KeyEvent* event, const std::string& code) override;
+  void ConfirmCompositionText() override;
+
+  // Enables overriding input view page to Virtual Keyboard window.
+  void EnableInputView();
+
+  // Converts MenuItem to InputMethodMenuItem.
+  void MenuItemToProperty(
+      const input_method::InputMethodManager::MenuItem& item,
+      ui::ime::InputMethodMenuItem* property);
 
   // Enables overriding input view page to Virtual Keyboard window.
   void EnableInputView();

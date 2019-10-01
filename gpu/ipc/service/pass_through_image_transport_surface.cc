@@ -40,8 +40,7 @@ PassThroughImageTransportSurface::PassThroughImageTransportSurface(
       is_gpu_vsync_disabled_(HasSwitch(switches::kDisableGpuVsync)),
       is_multi_window_swap_vsync_override_enabled_(
           override_vsync_for_multi_window_swap),
-      delegate_(delegate),
-      weak_ptr_factory_(this) {}
+      delegate_(delegate) {}
 
 PassThroughImageTransportSurface::~PassThroughImageTransportSurface() {
 }
@@ -216,13 +215,20 @@ void PassThroughImageTransportSurface::StartSwapBuffers(
   // client.
   response->swap_id = 0;
 
-  response->swap_start = base::TimeTicks::Now();
+  response->timings.swap_start = base::TimeTicks::Now();
 }
 
 void PassThroughImageTransportSurface::FinishSwapBuffers(
     gfx::SwapResponse response,
     uint64_t local_swap_id) {
-  response.swap_end = base::TimeTicks::Now();
+  response.timings.swap_end = base::TimeTicks::Now();
+
+#if DCHECK_IS_ON()
+  // After the swap is completed, the local swap id is removed from the queue,
+  // and the presentation callback for this swap can be run at any time later.
+  DCHECK_EQ(pending_local_swap_ids_.front(), local_swap_id);
+  pending_local_swap_ids_.pop();
+#endif
 
 #if DCHECK_IS_ON()
   // After the swap is completed, the local swap id is removed from the queue,

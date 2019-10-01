@@ -8,6 +8,7 @@
 #include "base/compiler_specific.h"
 #include "base/memory/ref_counted.h"
 #include "build/build_config.h"
+#include "cc/paint/node_id.h"
 #include "cc/paint/paint_export.h"
 #include "cc/paint/paint_image.h"
 #include "third_party/skia/include/core/SkCanvas.h"
@@ -165,8 +166,8 @@ class CC_PAINT_EXPORT PaintCanvas {
   virtual void drawTextBlob(sk_sp<SkTextBlob> blob,
                             SkScalar x,
                             SkScalar y,
-                            const PaintFlags& flags,
-                            const NodeHolder& holder) = 0;
+                            NodeId node_id,
+                            const PaintFlags& flags) = 0;
 
   // Unlike SkCanvas::drawPicture, this only plays back the PaintRecord and does
   // not add an additional clip.  This is closer to SkPicture::playback.

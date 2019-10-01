@@ -76,9 +76,6 @@ class WizardController {
   // If true zero delays have been enabled (for browser tests).
   static bool IsZeroDelayEnabled();
 
-  // Checks whether screen show time should be tracked with UMA.
-  static bool IsOOBEStepToTrack(OobeScreenId screen_id);
-
   // Skips any screens that may normally be shown after login (registration,
   // Terms of Service, user image selection).
   static void SkipPostLoginScreensForTesting();
@@ -227,7 +224,6 @@ class WizardController {
   void OnMultiDeviceSetupScreenExit();
   void OnResetScreenExit();
   void OnDeviceModificationCanceled();
-  void OnSupervisionOnboardingScreenExit();
   void OnSupervisionTransitionScreenExit();
   void OnOobeFlowFinished();
 

@@ -294,9 +294,13 @@ GURL GaiaUrls::ListAccountsURLWithSource(const std::string& source) {
 }
 
 GURL GaiaUrls::LogOutURLWithSource(const std::string& source) {
-  return source.empty() ? service_logout_url_
-                        : service_logout_url_.Resolve(
-                              base::StringPrintf("?source=%s", source.c_str()));
+  std::string params =
+      source.empty()
+          ? base::StringPrintf("?continue=%s",
+                               continue_url_for_logout_.spec().c_str())
+          : base::StringPrintf("?source=%s&continue=%s", source.c_str(),
+                               continue_url_for_logout_.spec().c_str());
+  return service_logout_url_.Resolve(params);
 }
 
 GURL GaiaUrls::LogOutURLWithSourceAndContinueURL(const std::string& source) {

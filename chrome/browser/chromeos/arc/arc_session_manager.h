@@ -12,6 +12,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/timer/timer.h"
+#include "chrome/browser/chromeos/arc/arc_app_id_provider_impl.h"
 #include "chrome/browser/chromeos/arc/arc_support_host.h"
 #include "chrome/browser/chromeos/policy/android_management_client.h"
 #include "chromeos/dbus/session_manager/session_manager_client.h"
@@ -386,12 +387,7 @@ class ArcSessionManager : public ArcSessionRunner::Observer,
   base::Time arc_start_time_;
   base::Closure attempt_user_exit_callback_;
 
-  // ARC state depends on |profile_| and |enable_requested_| which is reset in
-  // Shutdown(). Since UMA recording happens after Shutdown() on browser
-  // shutdown, here we persist relevant state for UMA recording purposes.
-  // TODO(crbug.com/929583): Remove this temporary fix.
-  bool should_record_legacy_enabled_state_ = false;
-  bool enabled_state_uma_ = false;
+  ArcAppIdProviderImpl app_id_provider_;
 
   // Must be the last member.
   base::WeakPtrFactory<ArcSessionManager> weak_ptr_factory_;

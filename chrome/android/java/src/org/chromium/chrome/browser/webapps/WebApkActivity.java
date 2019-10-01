@@ -65,18 +65,6 @@ public class WebApkActivity extends WebappActivity {
     }
 
     @Override
-    public boolean shouldPreferLightweightFre(Intent intent) {
-        // We cannot use getWebApkPackageName() because {@link WebappActivity#preInflationStartup()}
-        // may not have been called yet.
-        String webApkPackageName =
-                IntentUtils.safeGetStringExtra(intent, WebApkConstants.EXTRA_WEBAPK_PACKAGE_NAME);
-
-        // Use the lightweight FRE for unbound WebAPKs.
-        return webApkPackageName != null
-                && !webApkPackageName.startsWith(WebApkConstants.WEBAPK_PACKAGE_PREFIX);
-    }
-
-    @Override
     public String getWebApkPackageName() {
         return getWebappInfo().webApkPackageName();
     }

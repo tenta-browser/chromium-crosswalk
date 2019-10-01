@@ -98,7 +98,8 @@ class WorkerTest : public ContentBrowserTest {
     RunTest(shell(), url, expect_failure);
   }
 
-  static void QuitUIMessageLoop(base::OnceClosure callback) {
+  static void QuitUIMessageLoop(base::OnceClosure callback,
+                                bool is_main_frame /* unused */) {
     base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
                              std::move(callback));
   }
@@ -276,12 +277,7 @@ IN_PROC_BROWSER_TEST_F(WorkerTest,
 
 // Tests the value of |request_initiator| for shared worker resources.
 IN_PROC_BROWSER_TEST_F(WorkerTest, VerifyInitiatorSharedWorker) {
-  // TODO(cammie): Remove the condition that network service must be
-  // enabled once it is enabled on all platforms?
-  // The main body of the test won't currently work unless network service
-  // is enabled (e.g. not on cast-shell-linux as of 2019/04).
-  if (!SupportsSharedWorker() ||
-      !base::FeatureList::IsEnabled(network::features::kNetworkService))
+  if (!SupportsSharedWorker())
     return;
 
   const GURL start_url(embedded_test_server()->GetURL("/frame_tree/top.html"));

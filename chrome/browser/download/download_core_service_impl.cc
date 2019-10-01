@@ -10,9 +10,9 @@
 #include "chrome/browser/download/chrome_download_manager_delegate.h"
 #include "chrome/browser/download/download_history.h"
 #include "chrome/browser/download/download_offline_content_provider.h"
+#include "chrome/browser/download/download_offline_content_provider_factory.h"
 #include "chrome/browser/download/download_status_updater.h"
 #include "chrome/browser/download/download_ui_controller.h"
-#include "chrome/browser/download/offline_item_utils.h"
 #include "chrome/browser/download/simple_download_manager_coordinator_factory.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/offline_items_collection/offline_content_aggregator_factory.h"
@@ -74,7 +74,9 @@ DownloadCoreServiceImpl::GetDownloadManagerDelegate() {
                      new DownloadHistory::HistoryAdapter(history))));
   }
 
-  auto* download_provider = CreateDownloadOfflineContentProvider();
+  DownloadOfflineContentProvider* download_provider =
+      DownloadOfflineContentProviderFactory::GetForKey(
+          profile_->GetProfileKey());
   download_provider->SetSimpleDownloadManagerCoordinator(coordinator);
 
   // Pass an empty delegate when constructing the DownloadUIController. The

@@ -36,6 +36,9 @@ class VULKAN_EXPORT VulkanInstance {
   // VkApplicationInfo.apiVersion value used to initialize the instance.
   uint32_t api_version() const { return api_version_; }
 
+  // VkApplicationInfo.apiVersion value used to initialize the instance.
+  uint32_t api_version() const { return api_version_; }
+
   const gfx::ExtensionSet& enabled_extensions() const {
     return enabled_extensions_;
   }

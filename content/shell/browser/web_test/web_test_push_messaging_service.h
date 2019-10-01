@@ -12,12 +12,11 @@
 
 #include "base/macros.h"
 #include "content/public/browser/push_messaging_service.h"
+#include "third_party/blink/public/mojom/push_messaging/push_messaging.mojom.h"
 
 namespace blink {
 struct WebPushSubscriptionOptions;
 }  // namespace blink
-
-namespace content {
 
 class WebTestPushMessagingService : public PushMessagingService {
  public:
@@ -25,17 +24,16 @@ class WebTestPushMessagingService : public PushMessagingService {
   ~WebTestPushMessagingService() override;
 
   // PushMessagingService implementation:
-  GURL GetEndpoint(bool standard_protocol) const override;
   void SubscribeFromDocument(const GURL& requesting_origin,
                              int64_t service_worker_registration_id,
                              int renderer_id,
                              int render_frame_id,
-                             const blink::WebPushSubscriptionOptions& options,
+                             blink::mojom::PushSubscriptionOptionsPtr options,
                              bool user_gesture,
                              RegisterCallback callback) override;
   void SubscribeFromWorker(const GURL& requesting_origin,
                            int64_t service_worker_registration_id,
-                           const blink::WebPushSubscriptionOptions& options,
+                           blink::mojom::PushSubscriptionOptionsPtr options,
                            RegisterCallback callback) override;
   void GetSubscriptionInfo(const GURL& origin,
                            int64_t service_worker_registration_id,
@@ -54,6 +52,8 @@ class WebTestPushMessagingService : public PushMessagingService {
   void DidDeleteServiceWorkerDatabase() override;
 
  private:
+  GURL CreateEndpoint(const std::string& subscription_id) const;
+
   int64_t subscribed_service_worker_registration_;
 
   DISALLOW_COPY_AND_ASSIGN(WebTestPushMessagingService);

@@ -79,23 +79,11 @@ enum PasswordGenerationEvent {
   EVENT_ENUM_COUNT
 };
 
-// These values are used for metrics. Entries should not be renumbered and
-// numeric values should never be reused.
-// Metric: PasswordGeneration.UserEvent
-enum class PasswordGenerationUserEvent {
-  // The generated password was accepted by the user.
-  kPasswordAccepted = 0,
-  // The generated password was edited by the user in the field in which
-  // it was filled after being accepted.
-  kPasswordEdited = 1,
-  // The generated password was deleted by the user from the field
-  // in which it was filled after being accepted.
-  kPasswordDeleted = 2,
-  // The generated password was rejected by the user from the modal
-  // dialog, either by pressing "Cancel" in the dialog or by dismissing it.
-  // Only used on Android.
-  kPasswordRejectedInDialog = 3,
-  kMaxValue = kPasswordRejectedInDialog
+enum class PasswordGenerationType {
+  // The user was automatically shown the possibility to generate a password.
+  kAutomatic,
+  // The user had to manually request password generation.
+  kManual
 };
 
 // Wrapper to store the user interactions with the password generation bubble.
@@ -120,9 +108,14 @@ struct PasswordGenerationUIData {
   PasswordGenerationUIData(const gfx::RectF& bounds,
                            int max_length,
                            const base::string16& generation_element,
+                           uint32_t generation_element_id,
                            base::i18n::TextDirection text_direction,
                            const autofill::PasswordForm& password_form);
   PasswordGenerationUIData();
+  PasswordGenerationUIData(const PasswordGenerationUIData& rhs);
+  PasswordGenerationUIData(PasswordGenerationUIData&& rhs);
+  PasswordGenerationUIData& operator=(const PasswordGenerationUIData& rhs);
+  PasswordGenerationUIData& operator=(PasswordGenerationUIData&& rhs);
   ~PasswordGenerationUIData();
 
   // Location at which to display a popup if needed. This location is specified
@@ -135,6 +128,9 @@ struct PasswordGenerationUIData {
 
   // Name of the password field to which the generation popup is attached.
   base::string16 generation_element;
+
+  // Renderer ID of the generation element.
+  uint32_t generation_element_id;
 
   // Direction of the text for |generation_element|.
   base::i18n::TextDirection text_direction;

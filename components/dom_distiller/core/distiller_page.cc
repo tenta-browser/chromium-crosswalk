@@ -34,7 +34,9 @@ const char* kStringifyPlaceholder = "$$STRINGIFY";
 std::string GetDistillerScriptWithOptions(
     const dom_distiller::proto::DomDistillerOptions& options,
     bool stringify_output) {
-  std::string script = GetResourceFromIdAsString(IDR_DISTILLER_JS);
+  std::string script =
+      ui::ResourceBundle::GetSharedInstance().DecompressDataResource(
+          IDR_DISTILLER_JS);
   if (script.empty()) {
     return "";
   }

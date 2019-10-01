@@ -8,7 +8,7 @@
 #include <utility>
 
 #include "ash/public/cpp/ash_pref_names.h"
-#include "ash/public/interfaces/constants.mojom.h"
+#include "ash/public/cpp/voice_interaction_controller.h"
 #include "base/bind.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
@@ -38,7 +38,6 @@ VoiceInteractionControllerClient*
 
 VoiceInteractionControllerClient::VoiceInteractionControllerClient() {
   DCHECK(!g_voice_interaction_controller_client_instance);
-  ConnectToVoiceInteractionController();
 
   notification_registrar_.Add(this,
                               chrome::NOTIFICATION_LOGIN_USER_PROFILE_PREPARED,
@@ -78,72 +77,43 @@ VoiceInteractionControllerClient* VoiceInteractionControllerClient::Get() {
 void VoiceInteractionControllerClient::NotifyStatusChanged(
     ash::mojom::VoiceInteractionState state) {
   voice_interaction_state_ = state;
-  voice_interaction_controller_->NotifyStatusChanged(state);
+  ash::VoiceInteractionController::Get()->NotifyStatusChanged(state);
   for (auto& observer : observers_)
     observer.OnStateChanged(state);
 }
 
 void VoiceInteractionControllerClient::NotifyLockedFullScreenStateChanged(
     bool enabled) {
-  voice_interaction_controller_->NotifyLockedFullScreenStateChanged(enabled);
-}
-
-void VoiceInteractionControllerClient::SetControllerForTesting(
-    ash::mojom::VoiceInteractionControllerPtr controller) {
-  voice_interaction_controller_ = std::move(controller);
-}
-
-void VoiceInteractionControllerClient::FlushMojoForTesting() {
-  voice_interaction_controller_.FlushForTesting();
+  ash::VoiceInteractionController::Get()->NotifyLockedFullScreenStateChanged(
+      enabled);
 }
 
 void VoiceInteractionControllerClient::NotifySettingsEnabled() {
   DCHECK(profile_);
   PrefService* prefs = profile_->GetPrefs();
   bool enabled = prefs->GetBoolean(prefs::kVoiceInteractionEnabled);
-  voice_interaction_controller_->NotifySettingsEnabled(enabled);
+  ash::VoiceInteractionController::Get()->NotifySettingsEnabled(enabled);
 }
 
 void VoiceInteractionControllerClient::NotifyContextEnabled() {
   DCHECK(profile_);
   PrefService* prefs = profile_->GetPrefs();
   bool enabled = prefs->GetBoolean(prefs::kVoiceInteractionContextEnabled);
-  voice_interaction_controller_->NotifyContextEnabled(enabled);
+  ash::VoiceInteractionController::Get()->NotifyContextEnabled(enabled);
 }
 
 void VoiceInteractionControllerClient::NotifyHotwordEnabled() {
   DCHECK(profile_);
   PrefService* prefs = profile_->GetPrefs();
   bool enabled = prefs->GetBoolean(prefs::kVoiceInteractionHotwordEnabled);
-  voice_interaction_controller_->NotifyHotwordEnabled(enabled);
-}
-
-void VoiceInteractionControllerClient::NotifyHotwordAlwaysOn() {
-  DCHECK(profile_);
-  PrefService* prefs = profile_->GetPrefs();
-  bool always_on = prefs->GetBoolean(prefs::kVoiceInteractionHotwordAlwaysOn);
-  voice_interaction_controller_->NotifyHotwordAlwaysOn(always_on);
-}
-
-void VoiceInteractionControllerClient::NotifyConsentStatus() {
-  DCHECK(profile_);
-  PrefService* prefs = profile_->GetPrefs();
-  voice_interaction_controller_->NotifyConsentStatus(
-      assistant::prefs::GetConsentStatus(prefs));
+  ash::VoiceInteractionController::Get()->NotifyHotwordEnabled(enabled);
 }
 
 void VoiceInteractionControllerClient::NotifyFeatureAllowed() {
   DCHECK(profile_);
   ash::mojom::AssistantAllowedState state =
       assistant::IsAssistantAllowedForProfile(profile_);
-  voice_interaction_controller_->NotifyFeatureAllowed(state);
-}
-
-void VoiceInteractionControllerClient::NotifyNotificationEnabled() {
-  DCHECK(profile_);
-  PrefService* prefs = profile_->GetPrefs();
-  bool enabled = prefs->GetBoolean(prefs::kVoiceInteractionNotificationEnabled);
-  voice_interaction_controller_->NotifyNotificationEnabled(enabled);
+  ash::VoiceInteractionController::Get()->NotifyFeatureAllowed(state);
 }
 
 void VoiceInteractionControllerClient::NotifyLocaleChanged() {
@@ -154,15 +124,7 @@ void VoiceInteractionControllerClient::NotifyLocaleChanged() {
   std::string out_locale =
       profile_->GetPrefs()->GetString(language::prefs::kApplicationLocale);
 
-  voice_interaction_controller_->NotifyLocaleChanged(out_locale);
-}
-
-void VoiceInteractionControllerClient::NotifyLaunchWithMicOpen() {
-  DCHECK(profile_);
-  PrefService* prefs = profile_->GetPrefs();
-  bool voice_preferred =
-      prefs->GetBoolean(prefs::kVoiceInteractionLaunchWithMicOpen);
-  voice_interaction_controller_->NotifyLaunchWithMicOpen(voice_preferred);
+  ash::VoiceInteractionController::Get()->NotifyLocaleChanged(out_locale);
 }
 
 void VoiceInteractionControllerClient::ActiveUserChanged(
@@ -214,30 +176,11 @@ void VoiceInteractionControllerClient::SetProfile(Profile* profile) {
       base::BindRepeating(
           &VoiceInteractionControllerClient::NotifyHotwordEnabled,
           base::Unretained(this)));
-  pref_change_registrar_->Add(
-      prefs::kVoiceInteractionHotwordAlwaysOn,
-      base::BindRepeating(
-          &VoiceInteractionControllerClient::NotifyHotwordAlwaysOn,
-          base::Unretained(this)));
-  pref_change_registrar_->Add(
-      prefs::kVoiceInteractionNotificationEnabled,
-      base::BindRepeating(
-          &VoiceInteractionControllerClient::NotifyNotificationEnabled,
-          base::Unretained(this)));
-  pref_change_registrar_->Add(
-      prefs::kVoiceInteractionLaunchWithMicOpen,
-      base::BindRepeating(
-          &VoiceInteractionControllerClient::NotifyLaunchWithMicOpen,
-          base::Unretained(this)));
 
-  NotifyConsentStatus();
   NotifySettingsEnabled();
   NotifyContextEnabled();
   NotifyLocaleChanged();
-  NotifyNotificationEnabled();
-  NotifyLaunchWithMicOpen();
   NotifyHotwordEnabled();
-  NotifyHotwordAlwaysOn();
   OnArcPlayStoreEnabledChanged(IsArcPlayStoreEnabledForProfile(profile_));
 }
 
@@ -266,13 +209,10 @@ void VoiceInteractionControllerClient::Observe(
   }
 }
 
-void VoiceInteractionControllerClient::ConnectToVoiceInteractionController() {
-  content::ServiceManagerConnection* connection =
-      content::ServiceManagerConnection::GetForProcess();
-  // Tests may bind to their own VoiceInteractionController later.
-  if (connection)
-    connection->GetConnector()->BindInterface(ash::mojom::kServiceName,
-                                              &voice_interaction_controller_);
+void VoiceInteractionControllerClient::OnArcPlayStoreEnabledChanged(
+    bool enabled) {
+  ash::VoiceInteractionController::Get()->NotifyArcPlayStoreEnabledChanged(
+      enabled);
 }
 
 void VoiceInteractionControllerClient::OnArcPlayStoreEnabledChanged(

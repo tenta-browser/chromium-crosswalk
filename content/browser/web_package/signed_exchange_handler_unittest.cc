@@ -37,6 +37,7 @@
 #include "services/network/public/cpp/network_switches.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/web_package/signed_exchange_request_matcher.h"
 
 using testing::_;
 using testing::DoAll;
@@ -68,7 +69,7 @@ constexpr base::StringPiece kDummySCTList(kDummySCTBytes,
                                           sizeof(kDummySCTBytes));
 
 class TestBrowserClient : public ContentBrowserClient {
-  bool CanIgnoreCertificateErrorIfNeeded() override { return true; }
+  bool CanAcceptUntrustedExchangesIfNeeded() override { return true; }
 };
 
 std::string GetTestFileContents(base::StringPiece name) {
@@ -331,7 +332,7 @@ class SignedExchangeHandlerTest
         base::BindOnce(&SignedExchangeHandlerTest::OnHeaderFound,
                        base::Unretained(this)),
         std::move(cert_fetcher_factory_), net::LOAD_NORMAL,
-        std::make_unique<SignedExchangeRequestMatcher>(
+        std::make_unique<blink::SignedExchangeRequestMatcher>(
             net::HttpRequestHeaders(), std::string() /* accept_langs */),
         nullptr /* devtools_proxy */, nullptr /* reporter */,
         base::RepeatingCallback<int(void)>());

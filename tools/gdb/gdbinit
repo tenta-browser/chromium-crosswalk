@@ -80,6 +80,8 @@ def newobj_handler(event):
 
   load_gdb_chrome(src_dir)
 
+  load_gdb_chrome(src_dir)
+
 
 lsb_release = subprocess.Popen(['lsb_release', '-sc'],
                                stdout=subprocess.PIPE,

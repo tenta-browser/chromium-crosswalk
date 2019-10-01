@@ -20,9 +20,7 @@ class StubPrefetchService : public PrefetchService {
       SuggestionsProvider* suggestions_provider) override;
   void NewSuggestionsAvailable() override;
   void RemoveSuggestion(GURL url) override;
-  void SetCachedGCMToken(const std::string& gcm_token) override;
-  const std::string& GetCachedGCMToken() const override;
-  void GetGCMToken(GCMTokenCallback callback) override;
+  std::string GetCachedGCMToken() const override;
   void ForceRefreshSuggestions() override;
   PrefetchGCMHandler* GetPrefetchGCMHandler() override;
   OfflineEventLogger* GetLogger() override;

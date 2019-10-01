@@ -43,8 +43,6 @@ class AssistantSetup : public ash::AssistantSetup,
 
   base::WeakPtrFactory<AssistantSetup> weak_factory_;
 
-  base::WeakPtrFactory<AssistantSetup> weak_factory_;
-
   DISALLOW_COPY_AND_ASSIGN(AssistantSetup);
 };
 

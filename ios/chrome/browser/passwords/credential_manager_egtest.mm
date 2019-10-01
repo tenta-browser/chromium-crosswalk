@@ -99,9 +99,8 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
 - (void)loadSimplePageAndStoreACredential {
   // Loads simple page. It is on localhost so it is considered a secure context.
   const GURL URL = self.testServer->GetURL("/example");
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:URL]);
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:"You are here."]);
+  [ChromeEarlGrey loadURL:URL];
+  [ChromeEarlGrey waitForWebStateContainingText:"You are here."];
 
   // Obtain a PasswordStore.
   scoped_refptr<password_manager::PasswordStore> passwordStore =

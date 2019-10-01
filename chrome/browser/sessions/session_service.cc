@@ -16,6 +16,7 @@
 #include "base/command_line.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/pickle.h"
+#include "base/stl_util.h"
 #include "base/threading/thread.h"
 #include "build/build_config.h"
 #include "chrome/browser/background/background_mode_manager.h"
@@ -37,6 +38,7 @@
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
+#include "chrome/browser/ui/tabs/tab_group_id.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/web_applications/components/web_app_helpers.h"
 #include "components/sessions/content/content_serialized_navigation_builder.h"
@@ -90,8 +92,7 @@ SessionService::SessionService(Profile* profile)
       has_open_trackable_browsers_(false),
       move_on_new_browser_(false),
       force_browser_not_alive_with_no_windows_(false),
-      rebuild_on_next_save_(false),
-      weak_factory_(this) {
+      rebuild_on_next_save_(false) {
   // We should never be created when incognito.
   DCHECK(!profile->IsOffTheRecord());
   Init();
@@ -107,8 +108,7 @@ SessionService::SessionService(const base::FilePath& save_path)
       has_open_trackable_browsers_(false),
       move_on_new_browser_(false),
       force_browser_not_alive_with_no_windows_(false),
-      rebuild_on_next_save_(false),
-      weak_factory_(this) {
+      rebuild_on_next_save_(false) {
   Init();
 }
 
@@ -196,6 +196,21 @@ void SessionService::SetTabIndexInWindow(const SessionID& window_id,
 
   ScheduleCommand(
       sessions::CreateSetTabIndexInWindowCommand(tab_id, new_index));
+}
+
+void SessionService::SetTabGroup(const SessionID& window_id,
+                                 const SessionID& tab_id,
+                                 base::Optional<base::Token> group) {
+  if (!ShouldTrackChangesToWindow(window_id))
+    return;
+
+  // Tabs get ungrouped as they close. However, if the whole window is closing
+  // tabs should stay in their groups. So, ignore this call in that case.
+  if (base::Contains(pending_window_close_ids_, window_id) ||
+      base::Contains(window_closing_ids_, window_id))
+    return;
+
+  ScheduleCommand(sessions::CreateTabGroupCommand(tab_id, group));
 }
 
 void SessionService::SetPinnedState(const SessionID& window_id,
@@ -464,7 +479,9 @@ void SessionService::TabRestored(WebContents* tab, bool pinned) {
   if (!ShouldTrackChangesToWindow(session_tab_helper->window_id()))
     return;
 
-  BuildCommandsForTab(session_tab_helper->window_id(), tab, -1, pinned, NULL);
+  // TODO(crbug.com/930991): handle tab groups here.
+  BuildCommandsForTab(session_tab_helper->window_id(), tab, -1, base::nullopt,
+                      pinned, NULL);
   base_session_service_->StartSaveTimer();
 }
 
@@ -642,6 +659,7 @@ void SessionService::OnGotSessionCommands(
 void SessionService::BuildCommandsForTab(const SessionID& window_id,
                                          WebContents* tab,
                                          int index_in_window,
+                                         base::Optional<base::Token> group,
                                          bool is_pinned,
                                          IdToRange* tab_to_available_range) {
   DCHECK(tab);
@@ -710,6 +728,11 @@ void SessionService::BuildCommandsForTab(const SessionID& window_id,
                                                    index_in_window));
   }
 
+  if (group.has_value()) {
+    base_session_service_->AppendRebuildCommand(
+        sessions::CreateTabGroupCommand(session_id, group));
+  }
+
   // Record the association between the sessionStorage namespace and the tab.
   content::SessionStorageNamespace* session_storage_namespace =
       tab->GetController().GetDefaultSessionStorageNamespace();
@@ -750,11 +773,12 @@ void SessionService::BuildCommandsForBrowser(
   for (int i = 0; i < tab_strip->count(); ++i) {
     WebContents* tab = tab_strip->GetWebContentsAt(i);
     DCHECK(tab);
-    BuildCommandsForTab(browser->session_id(),
-                        tab,
-                        i,
-                        tab_strip->IsTabPinned(i),
-                        tab_to_available_range);
+    const base::Optional<TabGroupId> group_id = tab_strip->GetTabGroupForTab(i);
+    const base::Optional<base::Token> raw_group_id =
+        group_id.has_value() ? base::make_optional(group_id.value().token())
+                             : base::nullopt;
+    BuildCommandsForTab(browser->session_id(), tab, i, raw_group_id,
+                        tab_strip->IsTabPinned(i), tab_to_available_range);
   }
 
   base_session_service_->AppendRebuildCommand(

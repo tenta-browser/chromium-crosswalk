@@ -1998,21 +1998,21 @@ TEST_F(ViewTest, TextfieldCutCopyPaste) {
   normal->SelectAll(false);
   normal->ExecuteCommand(IDS_APP_CUT, 0);
   base::string16 result;
-  clipboard->ReadText(ui::CLIPBOARD_TYPE_COPY_PASTE, &result);
+  clipboard->ReadText(ui::ClipboardType::kCopyPaste, &result);
   EXPECT_EQ(kNormalText, result);
   normal->SetText(kNormalText);  // Let's revert to the original content.
 
   read_only->SelectAll(false);
   read_only->ExecuteCommand(IDS_APP_CUT, 0);
   result.clear();
-  clipboard->ReadText(ui::CLIPBOARD_TYPE_COPY_PASTE, &result);
+  clipboard->ReadText(ui::ClipboardType::kCopyPaste, &result);
   // Cut should have failed, so the clipboard content should not have changed.
   EXPECT_EQ(kNormalText, result);
 
   password->SelectAll(false);
   password->ExecuteCommand(IDS_APP_CUT, 0);
   result.clear();
-  clipboard->ReadText(ui::CLIPBOARD_TYPE_COPY_PASTE, &result);
+  clipboard->ReadText(ui::ClipboardType::kCopyPaste, &result);
   // Cut should have failed, so the clipboard content should not have changed.
   EXPECT_EQ(kNormalText, result);
 
@@ -2024,19 +2024,19 @@ TEST_F(ViewTest, TextfieldCutCopyPaste) {
   read_only->SelectAll(false);
   read_only->ExecuteCommand(IDS_APP_COPY, 0);
   result.clear();
-  clipboard->ReadText(ui::CLIPBOARD_TYPE_COPY_PASTE, &result);
+  clipboard->ReadText(ui::ClipboardType::kCopyPaste, &result);
   EXPECT_EQ(kReadOnlyText, result);
 
   normal->SelectAll(false);
   normal->ExecuteCommand(IDS_APP_COPY, 0);
   result.clear();
-  clipboard->ReadText(ui::CLIPBOARD_TYPE_COPY_PASTE, &result);
+  clipboard->ReadText(ui::ClipboardType::kCopyPaste, &result);
   EXPECT_EQ(kNormalText, result);
 
   password->SelectAll(false);
   password->ExecuteCommand(IDS_APP_COPY, 0);
   result.clear();
-  clipboard->ReadText(ui::CLIPBOARD_TYPE_COPY_PASTE, &result);
+  clipboard->ReadText(ui::ClipboardType::kCopyPaste, &result);
   // Text cannot be copied from an obscured field; the clipboard won't change.
   EXPECT_EQ(kNormalText, result);
 
@@ -3648,8 +3648,8 @@ TEST_F(ViewTest, GetViewByID) {
   View::Views views;
   v1.GetViewsInGroup(kGroup, &views);
   EXPECT_EQ(2U, views.size());
-  EXPECT_TRUE(base::ContainsValue(views, &v3));
-  EXPECT_TRUE(base::ContainsValue(views, &v4));
+  EXPECT_TRUE(base::Contains(views, &v3));
+  EXPECT_TRUE(base::Contains(views, &v4));
 }
 
 TEST_F(ViewTest, AddExistingChild) {
@@ -3778,6 +3778,31 @@ void TestLayerAnimator::SetBounds(const gfx::Rect& bounds) {
   last_bounds_ = bounds;
 }
 
+class TestingLayerViewObserver : public ViewObserver {
+ public:
+  explicit TestingLayerViewObserver(View* view) : view_(view) {
+    view_->AddObserver(this);
+  }
+  ~TestingLayerViewObserver() override { view_->RemoveObserver(this); }
+
+  gfx::Rect GetLastLayerBoundsAndReset() {
+    gfx::Rect value = last_layer_bounds_;
+    last_layer_bounds_ = gfx::Rect();
+    return value;
+  }
+
+ private:
+  // ViewObserver:
+  void OnLayerTargetBoundsChanged(View* view) override {
+    last_layer_bounds_ = view->layer()->bounds();
+  }
+
+  gfx::Rect last_layer_bounds_;
+  View* view_;
+
+  DISALLOW_COPY_AND_ASSIGN(TestingLayerViewObserver);
+};
+
 }  // namespace
 
 class ViewLayerTest : public ViewsTestBase {
@@ -3905,6 +3930,7 @@ TEST_F(ViewLayerTest, LayerToggling) {
 
   // Create v2 as a child of v1 and do basic assertion testing.
   View* v2 = new View;
+  TestingLayerViewObserver v2_observer(v2);
   v1->AddChildView(v2);
   EXPECT_TRUE(v2->layer() == nullptr);
   v2->SetBoundsRect(gfx::Rect(10, 20, 30, 40));
@@ -3912,6 +3938,7 @@ TEST_F(ViewLayerTest, LayerToggling) {
   ASSERT_TRUE(v2->layer() != nullptr);
   EXPECT_EQ(v1->layer(), v2->layer()->parent());
   EXPECT_EQ(gfx::Rect(10, 20, 30, 40), v2->layer()->bounds());
+  EXPECT_EQ(v2->layer()->bounds(), v2_observer.GetLastLayerBoundsAndReset());
 
   // Turn off v1s layer. v2 should still have a layer but its parent should have
   // changed.
@@ -3924,6 +3951,7 @@ TEST_F(ViewLayerTest, LayerToggling) {
   // The bounds of the layer should have changed to be relative to the root view
   // now.
   EXPECT_EQ(gfx::Rect(30, 50, 30, 40), v2->layer()->bounds());
+  EXPECT_EQ(v2->layer()->bounds(), v2_observer.GetLastLayerBoundsAndReset());
 
   // Make v1 have a layer again and verify v2s layer is wired up correctly.
   gfx::Transform transform;
@@ -3938,6 +3966,7 @@ TEST_F(ViewLayerTest, LayerToggling) {
   ASSERT_EQ(1u, v1->layer()->children().size());
   EXPECT_EQ(v1->layer()->children()[0], v2->layer());
   EXPECT_EQ(gfx::Rect(10, 20, 30, 40), v2->layer()->bounds());
+  EXPECT_EQ(v2->layer()->bounds(), v2_observer.GetLastLayerBoundsAndReset());
 }
 
 // Verifies turning on a layer wires up children correctly.
@@ -3950,15 +3979,20 @@ TEST_F(ViewLayerTest, NestedLayerToggling) {
   v1->SetBoundsRect(gfx::Rect(20, 30, 140, 150));
 
   View* v2 = v1->AddChildView(std::make_unique<View>());
+  v2->SetBoundsRect(gfx::Rect(10, 10, 100, 100));
 
   View* v3 = v2->AddChildView(std::make_unique<View>());
+  TestingLayerViewObserver v3_observer(v3);
+  v3->SetBoundsRect(gfx::Rect(0, 0, 100, 100));
   v3->SetPaintToLayer();
   ASSERT_TRUE(v3->layer() != nullptr);
+  EXPECT_EQ(v3->layer()->bounds(), v3_observer.GetLastLayerBoundsAndReset());
 
   // At this point we have v1-v2-v3. v3 has a layer, v1 and v2 don't.
 
   v1->SetPaintToLayer();
   EXPECT_EQ(v1->layer(), v3->layer()->parent());
+  EXPECT_EQ(v3->layer()->bounds(), v3_observer.GetLastLayerBoundsAndReset());
 }
 
 TEST_F(ViewLayerTest, LayerAnimator) {
@@ -3989,25 +4023,31 @@ TEST_F(ViewLayerTest, BoundsChangeWithLayer) {
   v1->SetBoundsRect(gfx::Rect(20, 30, 140, 150));
 
   View* v2 = v1->AddChildView(std::make_unique<View>());
+  TestingLayerViewObserver v2_observer(v2);
   v2->SetBoundsRect(gfx::Rect(10, 11, 40, 50));
   v2->SetPaintToLayer();
   ASSERT_TRUE(v2->layer() != nullptr);
   EXPECT_EQ(gfx::Rect(30, 41, 40, 50), v2->layer()->bounds());
+  EXPECT_EQ(v2->layer()->bounds(), v2_observer.GetLastLayerBoundsAndReset());
 
   v1->SetPosition(gfx::Point(25, 36));
   EXPECT_EQ(gfx::Rect(35, 47, 40, 50), v2->layer()->bounds());
+  EXPECT_EQ(v2->layer()->bounds(), v2_observer.GetLastLayerBoundsAndReset());
 
   v2->SetPosition(gfx::Point(11, 12));
   EXPECT_EQ(gfx::Rect(36, 48, 40, 50), v2->layer()->bounds());
+  EXPECT_EQ(v2->layer()->bounds(), v2_observer.GetLastLayerBoundsAndReset());
 
   // Bounds of the layer should change even if the view is not invisible.
   v1->SetVisible(false);
   v1->SetPosition(gfx::Point(20, 30));
   EXPECT_EQ(gfx::Rect(31, 42, 40, 50), v2->layer()->bounds());
+  EXPECT_EQ(v2->layer()->bounds(), v2_observer.GetLastLayerBoundsAndReset());
 
   v2->SetVisible(false);
   v2->SetBoundsRect(gfx::Rect(10, 11, 20, 30));
   EXPECT_EQ(gfx::Rect(30, 41, 20, 30), v2->layer()->bounds());
+  EXPECT_EQ(v2->layer()->bounds(), v2_observer.GetLastLayerBoundsAndReset());
 }
 
 // Make sure layers are positioned correctly in RTL.
@@ -4523,31 +4563,280 @@ TEST_F(ViewLayerTest, SnapLayerToPixel) {
   v1->SetBoundsRect(gfx::Rect(1, 1, 10, 10));
   v11->SetPaintToLayer();
 
-  EXPECT_EQ("0.40 0.40", ToString(v11->layer()->subpixel_position_offset()));
+  EXPECT_EQ("0.40 0.40", ToString(v11->layer()->GetSubpixelOffset()));
 
   // Creating a layer in parent should update the child view's layer offset.
   v1->SetPaintToLayer();
-  EXPECT_EQ("-0.20 -0.20", ToString(v1->layer()->subpixel_position_offset()));
-  EXPECT_EQ("-0.20 -0.20", ToString(v11->layer()->subpixel_position_offset()));
+  EXPECT_EQ("-0.20 -0.20", ToString(v1->layer()->GetSubpixelOffset()));
+  EXPECT_EQ("-0.20 -0.20", ToString(v11->layer()->GetSubpixelOffset()));
 
   // DSF change should get propagated and update offsets.
   GetRootLayer()->GetCompositor()->SetScaleAndSize(
       1.5f, size, allocator.GetCurrentLocalSurfaceIdAllocation());
-  EXPECT_EQ("0.33 0.33", ToString(v1->layer()->subpixel_position_offset()));
-  EXPECT_EQ("0.33 0.33", ToString(v11->layer()->subpixel_position_offset()));
+  EXPECT_EQ("0.33 0.33", ToString(v1->layer()->GetSubpixelOffset()));
+  EXPECT_EQ("0.33 0.33", ToString(v11->layer()->GetSubpixelOffset()));
 
   // Deleting parent's layer should update the child view's layer's offset.
   v1->DestroyLayer();
-  EXPECT_EQ("0.00 0.00", ToString(v11->layer()->subpixel_position_offset()));
+  EXPECT_EQ("0.00 0.00", ToString(v11->layer()->GetSubpixelOffset()));
 
   // Setting parent view should update the child view's layer's offset.
   v1->SetBoundsRect(gfx::Rect(2, 2, 10, 10));
-  EXPECT_EQ("0.33 0.33", ToString(v11->layer()->subpixel_position_offset()));
+  EXPECT_EQ("0.33 0.33", ToString(v11->layer()->GetSubpixelOffset()));
 
   // Setting integral DSF should reset the offset.
   GetRootLayer()->GetCompositor()->SetScaleAndSize(
       2.0f, size, allocator.GetCurrentLocalSurfaceIdAllocation());
-  EXPECT_EQ("0.00 0.00", ToString(v11->layer()->subpixel_position_offset()));
+  EXPECT_EQ("0.00 0.00", ToString(v11->layer()->GetSubpixelOffset()));
+}
+
+TEST_F(ViewLayerTest, LayerBeneathTriggersPaintToLayer) {
+  View root;
+  root.SetPaintToLayer();
+
+  View* view = root.AddChildView(std::make_unique<View>());
+  EXPECT_EQ(nullptr, view->layer());
+
+  ui::Layer layer1;
+  ui::Layer layer2;
+  view->AddLayerBeneathView(&layer1);
+  EXPECT_NE(nullptr, view->layer());
+  view->AddLayerBeneathView(&layer2);
+  EXPECT_NE(nullptr, view->layer());
+
+  view->RemoveLayerBeneathView(&layer1);
+  EXPECT_NE(nullptr, view->layer());
+  view->RemoveLayerBeneathView(&layer2);
+  EXPECT_EQ(nullptr, view->layer());
+}
+
+TEST_F(ViewLayerTest, LayerBeneathAddedToTree) {
+  View root;
+  root.SetPaintToLayer();
+
+  ui::Layer layer;
+  View* view = root.AddChildView(std::make_unique<View>());
+
+  view->AddLayerBeneathView(&layer);
+  ASSERT_NE(nullptr, view->layer());
+  EXPECT_TRUE(view->layer()->parent()->Contains(&layer));
+
+  view->RemoveLayerBeneathView(&layer);
+  EXPECT_EQ(nullptr, layer.parent());
+}
+
+TEST_F(ViewLayerTest, LayerBeneathAtFractionalScale) {
+  constexpr float device_scale = 1.5f;
+
+  viz::ParentLocalSurfaceIdAllocator allocator;
+  allocator.GenerateId();
+  const gfx::Size& size = GetRootLayer()->GetCompositor()->size();
+  GetRootLayer()->GetCompositor()->SetScaleAndSize(
+      device_scale, size, allocator.GetCurrentLocalSurfaceIdAllocation());
+
+  View* view = new View;
+  widget()->SetContentsView(view);
+
+  ui::Layer layer;
+  view->AddLayerBeneathView(&layer);
+
+  view->SetBoundsRect(gfx::Rect(1, 1, 10, 10));
+  EXPECT_NE(gfx::Vector2dF(), view->layer()->GetSubpixelOffset());
+  EXPECT_EQ(view->layer()->GetSubpixelOffset(), layer.GetSubpixelOffset());
+
+  view->RemoveLayerBeneathView(&layer);
+}
+
+TEST_F(ViewLayerTest, LayerBeneathRemovedOnDestruction) {
+  View root;
+  root.SetPaintToLayer();
+
+  auto layer = std::make_unique<ui::Layer>();
+  View* view = root.AddChildView(std::make_unique<View>());
+
+  // No assertions, just get coverage of deleting the layer while it is added.
+  view->AddLayerBeneathView(layer.get());
+  layer.reset();
+  root.RemoveChildView(view);
+  delete view;
+}
+
+TEST_F(ViewLayerTest, LayerBeneathVisibilityUpdated) {
+  View root;
+  root.SetPaintToLayer();
+
+  ui::Layer layer;
+
+  // Make a parent view that has no layer, and a child view that has a layer.
+  View* parent = root.AddChildView(std::make_unique<View>());
+  View* child = parent->AddChildView(std::make_unique<View>());
+  child->AddLayerBeneathView(&layer);
+
+  EXPECT_EQ(nullptr, parent->layer());
+  EXPECT_NE(nullptr, child->layer());
+
+  // Test setting the views' visbilities in various orders.
+  EXPECT_TRUE(layer.visible());
+  child->SetVisible(false);
+  EXPECT_FALSE(layer.visible());
+  child->SetVisible(true);
+  EXPECT_TRUE(layer.visible());
+
+  parent->SetVisible(false);
+  EXPECT_FALSE(layer.visible());
+  parent->SetVisible(true);
+  EXPECT_TRUE(layer.visible());
+
+  parent->SetVisible(false);
+  EXPECT_FALSE(layer.visible());
+  child->SetVisible(false);
+  EXPECT_FALSE(layer.visible());
+  parent->SetVisible(true);
+  EXPECT_FALSE(layer.visible());
+  child->SetVisible(true);
+  EXPECT_TRUE(layer.visible());
+
+  child->RemoveLayerBeneathView(&layer);
+
+  // Now check the visibility upon adding.
+  child->SetVisible(false);
+  child->AddLayerBeneathView(&layer);
+  EXPECT_FALSE(layer.visible());
+  child->SetVisible(true);
+  EXPECT_TRUE(layer.visible());
+
+  child->RemoveLayerBeneathView(&layer);
+}
+
+TEST_F(ViewLayerTest, LayerBeneathHasCorrectBounds) {
+  View root;
+  root.SetBoundsRect(gfx::Rect(100, 100));
+  root.SetPaintToLayer();
+
+  View* view = root.AddChildView(std::make_unique<View>());
+  view->SetBoundsRect(gfx::Rect(25, 25, 50, 50));
+
+  // The layer's position will be changed, but its size should be respected.
+  ui::Layer layer;
+  layer.SetBounds(gfx::Rect(25, 25));
+
+  // First check when |view| is already painting to a layer.
+  view->SetPaintToLayer();
+  view->AddLayerBeneathView(&layer);
+  EXPECT_NE(nullptr, layer.parent());
+  EXPECT_EQ(gfx::Rect(25, 25, 25, 25), layer.bounds());
+
+  view->RemoveLayerBeneathView(&layer);
+  EXPECT_EQ(nullptr, layer.parent());
+  layer.SetBounds(gfx::Rect(25, 25));
+
+  // Next check when |view| wasn't painting to a layer.
+  view->DestroyLayer();
+  EXPECT_EQ(nullptr, view->layer());
+  view->AddLayerBeneathView(&layer);
+  EXPECT_NE(nullptr, view->layer());
+  EXPECT_NE(nullptr, layer.parent());
+  EXPECT_EQ(gfx::Rect(25, 25, 25, 25), layer.bounds());
+
+  // Finally check that moving |view| also moves the layer.
+  view->SetBoundsRect(gfx::Rect(50, 50, 50, 50));
+  EXPECT_EQ(gfx::Rect(50, 50, 25, 25), layer.bounds());
+
+  view->RemoveLayerBeneathView(&layer);
+}
+
+TEST_F(ViewLayerTest, LayerBeneathTransformed) {
+  View root;
+  root.SetPaintToLayer();
+
+  ui::Layer layer;
+  View* view = root.AddChildView(std::make_unique<View>());
+  view->SetPaintToLayer();
+  view->AddLayerBeneathView(&layer);
+  EXPECT_TRUE(layer.transform().IsIdentity());
+
+  gfx::Transform transform;
+  transform.Rotate(90);
+  view->SetTransform(transform);
+  EXPECT_EQ(transform, layer.transform());
+  view->SetTransform(gfx::Transform());
+  EXPECT_TRUE(layer.transform().IsIdentity());
+}
+
+TEST_F(ViewLayerTest, LayerBeneathStackedCorrectly) {
+  using ui::test::ChildLayerNamesAsString;
+
+  View root;
+  root.SetPaintToLayer();
+
+  ui::Layer layer;
+  layer.set_name("layer");
+
+  View* v1 = root.AddChildView(std::make_unique<View>());
+  View* v2 = root.AddChildView(std::make_unique<View>());
+  View* v3 = root.AddChildView(std::make_unique<View>());
+
+  // Check that |layer| is stacked correctly as we add more layers to the tree.
+  v2->AddLayerBeneathView(&layer);
+  v2->layer()->set_name("v2");
+  EXPECT_EQ(ChildLayerNamesAsString(*root.layer()), "layer v2");
+  v3->SetPaintToLayer();
+  v3->layer()->set_name("v3");
+  EXPECT_EQ(ChildLayerNamesAsString(*root.layer()), "layer v2 v3");
+  v1->SetPaintToLayer();
+  v1->layer()->set_name("v1");
+  EXPECT_EQ(ChildLayerNamesAsString(*root.layer()), "v1 layer v2 v3");
+
+  v2->RemoveLayerBeneathView(&layer);
+}
+
+TEST_F(ViewLayerTest, LayerBeneathOrphanedOnRemoval) {
+  View root;
+  root.SetPaintToLayer();
+
+  ui::Layer layer;
+  View* view = root.AddChildView(std::make_unique<View>());
+  view->AddLayerBeneathView(&layer);
+  EXPECT_EQ(layer.parent(), root.layer());
+
+  // Ensure that the layer beneath is orphaned and re-parented appropriately.
+  root.RemoveChildView(view);
+  EXPECT_EQ(layer.parent(), nullptr);
+  root.AddChildView(view);
+  EXPECT_EQ(layer.parent(), root.layer());
+
+  view->RemoveLayerBeneathView(&layer);
+}
+
+TEST_F(ViewLayerTest, LayerBeneathMovedWithView) {
+  using ui::test::ChildLayerNamesAsString;
+
+  View root;
+  root.SetPaintToLayer();
+  root.layer()->set_name("root");
+
+  ui::Layer layer;
+  layer.set_name("layer");
+
+  View* v1 = root.AddChildView(std::make_unique<View>());
+  View* v2 = root.AddChildView(std::make_unique<View>());
+  View* v3 = v1->AddChildView(std::make_unique<View>());
+
+  v1->SetPaintToLayer();
+  v1->layer()->set_name("v1");
+  v2->SetPaintToLayer();
+  v2->layer()->set_name("v2");
+  v3->SetPaintToLayer();
+  v3->layer()->set_name("v3");
+
+  // Verify that |layer| is stacked correctly.
+  v3->AddLayerBeneathView(&layer);
+  EXPECT_EQ(ChildLayerNamesAsString(*v1->layer()), "layer v3");
+
+  // Move |v3| to under |v2| and check |layer|'s stacking.
+  v1->RemoveChildView(v3);
+  v2->AddChildView(std::unique_ptr<View>(v3));
+  EXPECT_EQ(ChildLayerNamesAsString(*v2->layer()), "layer v3");
 }
 
 TEST_F(ViewLayerTest, LayerBeneathTriggersPaintToLayer) {
@@ -4873,19 +5162,19 @@ TEST_F(ViewLayerPixelCanvasTest, SnapLayerToPixel) {
   v1->SetBoundsRect(gfx::Rect(9, 9, 100, 100));
 
   PaintRecordingSizeTest(v3, gfx::Size(21, 8));  // Enclosing Rect = (21, 8)
-  EXPECT_EQ("-0.63 -0.25", ToString(v3->layer()->subpixel_position_offset()));
+  EXPECT_EQ("-0.63 -0.25", ToString(v3->layer()->GetSubpixelOffset()));
 
   // Creating a layer in parent should update the child view's layer offset.
   v1->SetPaintToLayer();
-  EXPECT_EQ("-0.25 -0.25", ToString(v1->layer()->subpixel_position_offset()));
-  EXPECT_EQ("-0.37 -0.00", ToString(v3->layer()->subpixel_position_offset()));
+  EXPECT_EQ("-0.25 -0.25", ToString(v1->layer()->GetSubpixelOffset()));
+  EXPECT_EQ("-0.37 -0.00", ToString(v3->layer()->GetSubpixelOffset()));
 
   // DSF change should get propagated and update offsets.
   GetRootLayer()->GetCompositor()->SetScaleAndSize(
       1.5f, size, allocator.GetCurrentLocalSurfaceIdAllocation());
 
-  EXPECT_EQ("0.33 0.33", ToString(v1->layer()->subpixel_position_offset()));
-  EXPECT_EQ("0.33 0.67", ToString(v3->layer()->subpixel_position_offset()));
+  EXPECT_EQ("0.33 0.33", ToString(v1->layer()->GetSubpixelOffset()));
+  EXPECT_EQ("0.33 0.67", ToString(v3->layer()->GetSubpixelOffset()));
 
   v1->DestroyLayer();
   PaintRecordingSizeTest(v3, gfx::Size(20, 7));  // Enclosing Rect = (20, 8)
@@ -4894,23 +5183,45 @@ TEST_F(ViewLayerPixelCanvasTest, SnapLayerToPixel) {
   GetRootLayer()->GetCompositor()->SetScaleAndSize(
       1.33f, size, allocator.GetCurrentLocalSurfaceIdAllocation());
 
-  EXPECT_EQ("0.02 0.02", ToString(v1->layer()->subpixel_position_offset()));
-  EXPECT_EQ("0.05 -0.45", ToString(v3->layer()->subpixel_position_offset()));
+  EXPECT_EQ("0.02 0.02", ToString(v1->layer()->GetSubpixelOffset()));
+  EXPECT_EQ("0.05 -0.45", ToString(v3->layer()->GetSubpixelOffset()));
 
   v1->DestroyLayer();
   PaintRecordingSizeTest(v3, gfx::Size(17, 7));  // Enclosing Rect = (18, 7)
 
   // Deleting parent's layer should update the child view's layer's offset.
-  EXPECT_EQ("0.08 -0.43", ToString(v3->layer()->subpixel_position_offset()));
+  EXPECT_EQ("0.08 -0.43", ToString(v3->layer()->GetSubpixelOffset()));
 
   // Setting parent view should update the child view's layer's offset.
   v1->SetBoundsRect(gfx::Rect(3, 3, 10, 10));
-  EXPECT_EQ("0.06 -0.44", ToString(v3->layer()->subpixel_position_offset()));
+  EXPECT_EQ("0.06 -0.44", ToString(v3->layer()->GetSubpixelOffset()));
 
   // Setting integral DSF should reset the offset.
   GetRootLayer()->GetCompositor()->SetScaleAndSize(
       2.0f, size, allocator.GetCurrentLocalSurfaceIdAllocation());
-  EXPECT_EQ("0.00 0.00", ToString(v3->layer()->subpixel_position_offset()));
+  EXPECT_EQ("0.00 0.00", ToString(v3->layer()->GetSubpixelOffset()));
+}
+
+TEST_F(ViewLayerPixelCanvasTest, LayerBeneathOnPixelCanvas) {
+  constexpr float device_scale = 1.5f;
+
+  viz::ParentLocalSurfaceIdAllocator allocator;
+  allocator.GenerateId();
+  const gfx::Size& size = GetRootLayer()->GetCompositor()->size();
+  GetRootLayer()->GetCompositor()->SetScaleAndSize(
+      device_scale, size, allocator.GetCurrentLocalSurfaceIdAllocation());
+
+  View* view = new View;
+  widget()->SetContentsView(view);
+
+  ui::Layer layer;
+  view->AddLayerBeneathView(&layer);
+
+  view->SetBoundsRect(gfx::Rect(1, 1, 10, 10));
+  EXPECT_NE(gfx::Vector2dF(), view->layer()->GetSubpixelOffset());
+  EXPECT_EQ(view->layer()->GetSubpixelOffset(), layer.GetSubpixelOffset());
+
+  view->RemoveLayerBeneathView(&layer);
 }
 
 TEST_F(ViewLayerPixelCanvasTest, LayerBeneathOnPixelCanvas) {

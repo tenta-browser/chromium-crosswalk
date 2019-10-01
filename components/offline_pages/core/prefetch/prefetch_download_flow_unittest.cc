@@ -44,6 +44,8 @@ class PrefetchDownloadFlowTest : public PrefetchTaskTestBase {
     prefetch_service_taco_->SetPrefService(std::move(prefs_));
     prefetch_prefs::SetEnabledByServer(prefetch_service_taco_->pref_service(),
                                        true);
+    prefetch_prefs::SetCachedPrefetchGCMToken(
+        prefetch_service_taco_->pref_service(), "dummy_gcm_token");
 
     auto downloader = std::make_unique<PrefetchDownloaderImpl>(
         &download_service_, kTestChannel,

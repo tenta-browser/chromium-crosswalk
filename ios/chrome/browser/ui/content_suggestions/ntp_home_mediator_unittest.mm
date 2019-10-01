@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "ios/chrome/browser/browser_state/test_chrome_browser_state.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
 #include "ios/chrome/browser/ntp_snippets/ios_chrome_content_suggestions_service_factory.h"
@@ -138,7 +139,7 @@ class NTPHomeMediatorTest : public PlatformTest {
   FakeWebStateListDelegate web_state_list_delegate_;
   TestUrlLoadingService* url_loader_;
   AuthenticationServiceFake* auth_service_;
-  identity::IdentityManager* identity_manager_;
+  signin::IdentityManager* identity_manager_;
 
  private:
   std::unique_ptr<web::TestWebState> test_web_state_;

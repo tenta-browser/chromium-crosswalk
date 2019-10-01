@@ -72,6 +72,8 @@ TEST_F(LSQPredictorTest, ConstantTimeStampNotCrash) {
                                       FromMilliseconds(t[i])};
     predictor_->Update(data);
   }
+  // Expect false because the matrix is singular
+  // and the predictor cannot compute a prediction
   ui::InputPredictor::InputData result;
   EXPECT_FALSE(predictor_->GeneratePrediction(
       FromMilliseconds(42), false /* is_resampling */, &result));
@@ -84,8 +86,7 @@ TEST_F(LSQPredictorTest, ConstantTimeStampNotCrash) {
                                       FromMilliseconds(t[i])};
     predictor_->Update(data);
   }
-  EXPECT_FALSE(predictor_->GeneratePrediction(
-      FromMilliseconds(42), false /* is_resampling */, &result));
+  EXPECT_TRUE(predictor_->GeneratePrediction(FromMilliseconds(142), &result));
 }
 
 }  // namespace test

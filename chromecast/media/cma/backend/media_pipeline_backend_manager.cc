@@ -15,6 +15,7 @@
 #include "chromecast/chromecast_buildflags.h"
 #include "chromecast/media/cma/backend/audio_decoder_wrapper.h"
 #include "chromecast/media/cma/backend/cma_backend.h"
+#include "chromecast/media/cma/backend/extra_audio_stream.h"
 #include "chromecast/media/cma/backend/media_pipeline_backend_wrapper.h"
 #include "chromecast/public/volume_control.h"
 
@@ -94,6 +95,19 @@ void MediaPipelineBackendManager::BackendDestroyed(
   if (backend_wrapper_using_video_decoder_ == backend_wrapper) {
     backend_wrapper_using_video_decoder_ = nullptr;
   }
+}
+
+void MediaPipelineBackendManager::BackendUseVideoDecoder(
+    MediaPipelineBackendWrapper* backend_wrapper) {
+  DCHECK(media_task_runner_->BelongsToCurrentThread());
+  DCHECK(backend_wrapper);
+  if (backend_wrapper_using_video_decoder_ &&
+      backend_wrapper_using_video_decoder_ != backend_wrapper) {
+    LOG(INFO) << __func__ << " revoke old backend : "
+              << backend_wrapper_using_video_decoder_;
+    backend_wrapper_using_video_decoder_->Revoke();
+  }
+  backend_wrapper_using_video_decoder_ = backend_wrapper;
 }
 
 void MediaPipelineBackendManager::BackendUseVideoDecoder(
@@ -209,16 +223,23 @@ void MediaPipelineBackendManager::RemoveAllowVolumeFeedbackObserver(
 
 void MediaPipelineBackendManager::AddExtraPlayingStream(
     bool sfx,
-    const AudioContentType type) {
-  MAKE_SURE_MEDIA_THREAD(AddExtraPlayingStream, sfx, type);
+    const AudioContentType type,
+    ExtraAudioStream* extra_audio_stream) {
+  MAKE_SURE_MEDIA_THREAD(AddExtraPlayingStream, sfx, type, extra_audio_stream);
   UpdatePlayingAudioCount(sfx, type, 1);
+  if (extra_audio_stream)
+    extra_audio_streams_[type].emplace(extra_audio_stream);
 }
 
 void MediaPipelineBackendManager::RemoveExtraPlayingStream(
     bool sfx,
-    const AudioContentType type) {
-  MAKE_SURE_MEDIA_THREAD(RemoveExtraPlayingStream, sfx, type);
+    const AudioContentType type,
+    ExtraAudioStream* extra_audio_stream) {
+  MAKE_SURE_MEDIA_THREAD(RemoveExtraPlayingStream, sfx, type,
+                         extra_audio_stream);
   UpdatePlayingAudioCount(sfx, type, -1);
+  if (extra_audio_stream)
+    extra_audio_streams_[type].erase(extra_audio_stream);
 }
 
 void MediaPipelineBackendManager::SetGlobalVolumeMultiplier(
@@ -231,6 +252,9 @@ void MediaPipelineBackendManager::SetGlobalVolumeMultiplier(
     if (a->content_type() == type) {
       a->SetGlobalVolumeMultiplier(multiplier);
     }
+  }
+  for (auto* extra_audio_stream : extra_audio_streams_[type]) {
+    extra_audio_stream->SetGlobalVolumeMultiplier(multiplier);
   }
 }
 

@@ -60,6 +60,7 @@ class BrowserNonClientFrameViewAsh
       const views::View* tabstrip) const override;
   int GetTopInset(bool restored) const override;
   int GetThemeBackgroundXInset() const override;
+  void UpdateFrameColor() override;
   void UpdateThrobber(bool running) override;
   void UpdateMinimumSize() override;
   bool CanUserExitFullscreen() const override;
@@ -131,7 +132,9 @@ class BrowserNonClientFrameViewAsh
   FRIEND_TEST_ALL_PREFIXES(BrowserNonClientFrameViewAshTest,
                            AvatarDisplayOnTeleportedWindow);
   FRIEND_TEST_ALL_PREFIXES(BrowserNonClientFrameViewAshTest,
-                           HeaderVisibilityInOverviewAndSplitview);
+                           BrowserHeaderVisibilityInTabletModeTest);
+  FRIEND_TEST_ALL_PREFIXES(BrowserNonClientFrameViewAshTest,
+                           AppHeaderVisibilityInTabletModeTest);
   FRIEND_TEST_ALL_PREFIXES(BrowserNonClientFrameViewAshTest,
                            ImmersiveModeTopViewInset);
   FRIEND_TEST_ALL_PREFIXES(BrowserNonClientFrameViewAshBackButtonTest,
@@ -178,9 +181,6 @@ class BrowserNonClientFrameViewAsh
   // Triggers the hosted app origin and icon animations, assumes the hosted
   // app UI elements exist.
   void StartHostedAppAnimation();
-
-  // To be called after the frame's colors may have changed.
-  void UpdateFrameColors();
 
   // Updates the kTopViewInset window property after a layout.
   void UpdateTopViewInset();

@@ -10,6 +10,7 @@
 #include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/task/promise/abstract_promise.h"
+#include "base/task/promise/helpers.h"
 #include "base/threading/post_task_and_reply_impl.h"
 
 namespace base {
@@ -88,10 +89,10 @@ bool TaskRunner::PostTaskAndReply(const Location& from_here,
 bool TaskRunner::PostPromiseInternal(
     const scoped_refptr<internal::AbstractPromise>& promise,
     base::TimeDelta delay) {
-  return PostDelayedTask(
-      promise->from_here(),
-      BindOnce(&internal::AbstractPromise::Execute, PromiseHolder(promise)),
-      delay);
+  return PostDelayedTask(promise->from_here(),
+                         BindOnce(&internal::AbstractPromise::Execute,
+                                  internal::PromiseHolder(promise)),
+                         delay);
 }
 
 TaskRunner::TaskRunner() = default;

@@ -128,13 +128,6 @@ class ContentTranslateDriver : public TranslateDriver,
   // this origin as |request_initiator| of http requests.
   network::mojom::URLLoaderFactoryPtr CreateURLLoaderFactory();
 
-  // Creates a URLLoaderFactory that may be used by the translate scripts that
-  // get injected into isolated worlds within the page to be translated.  Such
-  // scripts (or rather, their isolated worlds) are associated with a
-  // translate-specific origin like https://translate.googleapis.com and use
-  // this origin as |request_initiator| of http requests.
-  network::mojom::URLLoaderFactoryPtr CreateURLLoaderFactory();
-
   // The navigation controller of the tab we are associated with.
   content::NavigationController* navigation_controller_;
 
@@ -161,7 +154,7 @@ class ContentTranslateDriver : public TranslateDriver,
   // other end of this binding in the form of a ContentTranslateDriverPtr.
   mojo::BindingSet<translate::mojom::ContentTranslateDriver> bindings_;
 
-  base::WeakPtrFactory<ContentTranslateDriver> weak_pointer_factory_;
+  base::WeakPtrFactory<ContentTranslateDriver> weak_pointer_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ContentTranslateDriver);
 };

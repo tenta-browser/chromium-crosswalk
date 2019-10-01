@@ -258,13 +258,11 @@ class RasterImplementation::PaintOpSerializer {
       }
 
       if (!size) {
-        RecordPaintOpSize(0u);
         LOG(ERROR) << "Failed to serialize op in " << block_size << " bytes.";
         return 0u;
       }
     }
 
-    RecordPaintOpSize(size);
     DCHECK_LE(size, free_bytes_);
     DCHECK(base::CheckAdd<uint32_t>(written_bytes_, size).IsValid());
 

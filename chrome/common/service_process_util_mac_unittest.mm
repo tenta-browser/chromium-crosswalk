@@ -54,8 +54,7 @@ class ServiceProcessStateFileManipulationTest : public ::testing::Test {
     bool as_service =
         base::FeatureList::IsEnabled(mojo::features::kMojoChannelMac);
     mock_launchd_.reset(new MockLaunchd(executable_path_, loop_.task_runner(),
-                                        run_loop_.QuitClosure(), false,
-                                        as_service));
+                                        run_loop_.QuitClosure(), true));
     scoped_launchd_instance_.reset(
         new Launchd::ScopedInstance(mock_launchd_.get()));
     ASSERT_TRUE(service_process_state_.Initialize());

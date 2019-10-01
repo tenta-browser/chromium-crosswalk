@@ -214,8 +214,7 @@ PreviewsLitePageDecider::MaybeCreateThrottleFor(
   if (!handle->IsInMainFrame())
     return nullptr;
 
-  if (base::FeatureList::IsEnabled(network::features::kNetworkService) &&
-      base::FeatureList::IsEnabled(
+  if (base::FeatureList::IsEnabled(
           previews::features::kHTTPSServerPreviewsUsingURLLoader)) {
     return nullptr;
   }

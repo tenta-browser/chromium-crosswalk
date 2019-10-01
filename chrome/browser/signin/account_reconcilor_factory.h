@@ -15,6 +15,10 @@ class IdentityManager;
 }
 
 namespace signin {
+class IdentityManager;
+}
+
+namespace signin {
 class AccountReconcilorDelegate;
 class ConsistencyCookieManagerBase;
 }
@@ -51,7 +55,7 @@ class AccountReconcilorFactory : public BrowserContextKeyedServiceFactory {
       content::BrowserContext* profile) const override;
 
   std::unique_ptr<signin::ConsistencyCookieManagerBase>
-  CreateConsistencyCookieManager(identity::IdentityManager* identity_manager,
+  CreateConsistencyCookieManager(signin::IdentityManager* identity_manager,
                                  SigninClient* signin_client,
                                  AccountReconcilor* account_reconcilor) const;
 };

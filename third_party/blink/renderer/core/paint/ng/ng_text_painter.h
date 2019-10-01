@@ -9,6 +9,7 @@
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/paint/ng/ng_paint_fragment.h"
 #include "third_party/blink/renderer/core/paint/text_painter_base.h"
+#include "third_party/blink/renderer/platform/graphics/dom_node_id.h"
 
 namespace blink {
 
@@ -43,7 +44,7 @@ class CORE_EXPORT NGTextPainter : public TextPainterBase {
              unsigned end_offset,
              unsigned length,
              const TextPaintStyle&,
-             const NodeHolder&);
+             DOMNodeId);
 
   static TextPaintStyle TextPaintingStyle(const NGPhysicalTextFragment*,
                                           const ComputedStyle&,
@@ -59,13 +60,13 @@ class CORE_EXPORT NGTextPainter : public TextPainterBase {
   void PaintInternalFragment(NGTextFragmentPaintInfo&,
                              unsigned from,
                              unsigned to,
-                             const NodeHolder& node_holder);
+                             DOMNodeId node_id);
 
   template <PaintInternalStep step>
   void PaintInternal(unsigned start_offset,
                      unsigned end_offset,
                      unsigned truncation_point,
-                     const NodeHolder& node_holder);
+                     DOMNodeId node_id);
 
   void PaintEmphasisMarkForCombinedText();
 

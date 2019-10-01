@@ -373,9 +373,7 @@ class NET_EXPORT ProxyResolutionService
   std::unique_ptr<ProxyConfigService> config_service_;
   std::unique_ptr<ProxyResolverFactory> resolver_factory_;
 
-  // If non-null, the initialized ProxyResolver to use for requests, and a
-  // boolean indicating whether it was initialized using an auto-detected
-  // script.
+  // If non-null, the initialized ProxyResolver to use for requests.
   std::unique_ptr<ProxyResolver> resolver_;
   bool resolver_using_auto_detected_script_;
 
@@ -443,7 +441,7 @@ class NET_EXPORT ProxyResolutionService
 
   // Flag used by |SetReady()| to check if |this| has been deleted by a
   // synchronous callback.
-  base::WeakPtrFactory<ProxyResolutionService> weak_ptr_factory_;
+  base::WeakPtrFactory<ProxyResolutionService> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ProxyResolutionService);
 };

@@ -314,10 +314,9 @@ class ProxyResolverFactoryForPacResult : public ProxyResolverFactory {
 };
 
 // Returns NetLog parameters describing a proxy configuration change.
-base::Value NetLogProxyConfigChangedCallback(
+base::Value NetLogProxyConfigChangedParams(
     const base::Optional<ProxyConfigWithAnnotation>* old_config,
-    const ProxyConfigWithAnnotation* new_config,
-    NetLogCaptureMode /* capture_mode */) {
+    const ProxyConfigWithAnnotation* new_config) {
   base::Value dict(base::Value::Type::DICTIONARY);
   // The "old_config" is optional -- the first notification will not have
   // any "previous" configuration.
@@ -327,8 +326,7 @@ base::Value NetLogProxyConfigChangedCallback(
   return dict;
 }
 
-base::Value NetLogBadProxyListCallback(const ProxyRetryInfoMap* retry_info,
-                                       NetLogCaptureMode /* capture_mode */) {
+base::Value NetLogBadProxyListParams(const ProxyRetryInfoMap* retry_info) {
   base::Value dict(base::Value::Type::DICTIONARY);
   base::Value list(base::Value::Type::LIST);
 
@@ -339,9 +337,7 @@ base::Value NetLogBadProxyListCallback(const ProxyRetryInfoMap* retry_info,
 }
 
 // Returns NetLog parameters on a successfuly proxy resolution.
-base::Value NetLogFinishedResolvingProxyCallback(
-    const ProxyInfo* result,
-    NetLogCaptureMode /* capture_mode */) {
+base::Value NetLogFinishedResolvingProxyParams(const ProxyInfo* result) {
   base::Value dict(base::Value::Type::DICTIONARY);
   dict.SetStringKey("pac_string", result->ToPacString());
   return dict;
@@ -441,7 +437,6 @@ class ProxyResolutionService::InitProxyResolver {
   InitProxyResolver()
       : proxy_resolver_factory_(nullptr),
         proxy_resolver_(nullptr),
-        resolver_using_auto_detected_script_(nullptr),
         next_state_(STATE_NONE),
         quick_check_enabled_(true) {}
 
@@ -453,9 +448,6 @@ class ProxyResolutionService::InitProxyResolver {
   // Begins initializing the proxy resolver; calls |callback| when done. A
   // ProxyResolver instance will be created using |proxy_resolver_factory| and
   // assigned to |*proxy_resolver| if the final result is OK.
-  // |*resolver_using_auto_detected_script| will be set to true if
-  // |proxy_resolver| was initialized using script data that originates from
-  // proxy auto-detection.
   int Start(std::unique_ptr<ProxyResolver>* proxy_resolver,
             bool* resolver_using_auto_detected_script,
             ProxyResolverFactory* proxy_resolver_factory,
@@ -486,9 +478,6 @@ class ProxyResolutionService::InitProxyResolver {
   // inputs for initializing the ProxyResolver. A ProxyResolver instance will
   // be created using |proxy_resolver_factory| and assigned to
   // |*proxy_resolver| if the final result is OK.
-  // |*resolver_using_auto_detected_script| will be set to true if
-  // |proxy_resolver| was initialized using script data that originates from
-  // proxy auto-detection.
   int StartSkipDecider(std::unique_ptr<ProxyResolver>* proxy_resolver,
                        bool* resolver_using_auto_detected_script,
                        ProxyResolverFactory* proxy_resolver_factory,
@@ -691,8 +680,7 @@ class ProxyResolutionService::PacFileDeciderPoller {
         dhcp_pac_file_fetcher_(dhcp_pac_file_fetcher),
         last_error_(init_net_error),
         last_script_data_(init_script_data),
-        last_poll_time_(TimeTicks::Now()),
-        weak_factory_(this) {
+        last_poll_time_(TimeTicks::Now()) {
     // Set the initial poll delay.
     next_poll_mode_ = poll_policy()->GetNextDelay(
         last_error_, TimeDelta::FromSeconds(-1), &next_poll_delay_);
@@ -846,7 +834,7 @@ class ProxyResolutionService::PacFileDeciderPoller {
 
   bool quick_check_enabled_;
 
-  base::WeakPtrFactory<PacFileDeciderPoller> weak_factory_;
+  base::WeakPtrFactory<PacFileDeciderPoller> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PacFileDeciderPoller);
 };
@@ -1066,8 +1054,7 @@ ProxyResolutionService::ProxyResolutionService(
       net_log_(net_log),
       stall_proxy_auto_config_delay_(
           TimeDelta::FromMilliseconds(kDelayAfterNetworkChangesMs)),
-      quick_check_enabled_(true),
-      weak_ptr_factory_(this) {
+      quick_check_enabled_(true) {
   NetworkChangeNotifier::AddIPAddressObserver(this);
   NetworkChangeNotifier::AddDNSObserver(this);
   config_service_->AddObserver(this);
@@ -1411,9 +1398,9 @@ void ProxyResolutionService::ReportSuccess(const ProxyInfo& result) {
       existing->second.bad_until = iter->second.bad_until;
   }
   if (net_log_) {
-    net_log_->AddGlobalEntry(
-        NetLogEventType::BAD_PROXY_LIST_REPORTED,
-        base::Bind(&NetLogBadProxyListCallback, &new_retry_info));
+    net_log_->AddGlobalEntry(NetLogEventType::BAD_PROXY_LIST_REPORTED, [&] {
+      return NetLogBadProxyListParams(&new_retry_info);
+    });
   }
 }
 
@@ -1443,7 +1430,7 @@ int ProxyResolutionService::DidFinishResolvingProxy(
 
     net_log.AddEvent(
         NetLogEventType::PROXY_RESOLUTION_SERVICE_RESOLVED_PROXY_LIST,
-        base::Bind(&NetLogFinishedResolvingProxyCallback, result));
+        [&] { return NetLogFinishedResolvingProxyParams(result); });
 
     // This check is done to only log the NetLog event when necessary, it's
     // not a performance optimization.
@@ -1451,7 +1438,7 @@ int ProxyResolutionService::DidFinishResolvingProxy(
       result->DeprioritizeBadProxies(proxy_retry_info_);
       net_log.AddEvent(
           NetLogEventType::PROXY_RESOLUTION_SERVICE_DEPRIORITIZED_BAD_PROXIES,
-          base::Bind(&NetLogFinishedResolvingProxyCallback, result));
+          [&] { return NetLogFinishedResolvingProxyParams(result); });
     }
   } else {
     net_log.AddEventWithNetErrorCode(
@@ -1638,9 +1625,10 @@ void ProxyResolutionService::OnProxyConfigChanged(
 
   // Emit the proxy settings change to the NetLog stream.
   if (net_log_) {
-    net_log_->AddGlobalEntry(NetLogEventType::PROXY_CONFIG_CHANGED,
-                             base::Bind(&NetLogProxyConfigChangedCallback,
-                                        &fetched_config_, &effective_config));
+    net_log_->AddGlobalEntry(NetLogEventType::PROXY_CONFIG_CHANGED, [&] {
+      return NetLogProxyConfigChangedParams(&fetched_config_,
+                                            &effective_config);
+    });
   }
 
   if (config.value().has_pac_url()) {

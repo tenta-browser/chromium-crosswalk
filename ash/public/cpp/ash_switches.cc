@@ -9,6 +9,12 @@
 namespace ash {
 namespace switches {
 
+// Indicates the current color mode of ash.
+const char kAshColorMode[] = "ash-color-mode";
+const char kAshColorModeDark[] = "dark";
+const char kAshColorModeDefault[] = "default";
+const char kAshColorModeLight[] = "light";
+
 // Force the pointer (cursor) position to be kept inside root windows.
 const char kAshConstrainPointerToRoot[] = "ash-constrain-pointer-to-root";
 
@@ -78,7 +84,6 @@ const char kAshPowerButtonPosition[] = "ash-power-button-position";
 const char kAshUiMode[] = "force-tablet-mode";
 
 // Values for the kAshUiMode flag.
-const char kAshUiModeAuto[] = "auto";
 const char kAshUiModeClamshell[] = "clamshell";
 const char kAshUiModeTablet[] = "touch_view";
 

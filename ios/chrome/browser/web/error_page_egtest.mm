@@ -53,32 +53,26 @@ std::string GetErrorMessage() {
 - (void)testReloadErrorPage {
   // No response leads to ERR_CONNECTION_CLOSED error.
   self.serverRespondsWithContent = NO;
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey loadURL:self.testServer->GetURL("/echo-query?foo")]);
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:GetErrorMessage()]);
+  [ChromeEarlGrey loadURL:self.testServer->GetURL("/echo-query?foo")];
+  [ChromeEarlGrey waitForWebStateContainingText:GetErrorMessage()];
 
   // Reload the page, which should load without errors.
   self.serverRespondsWithContent = YES;
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey reload]);
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:"foo"]);
+  [ChromeEarlGrey reload];
+  [ChromeEarlGrey waitForWebStateContainingText:"foo"];
 }
 
 // Sucessfully loads the page, stops the server and reloads the page.
 - (void)testReloadPageAfterServerIsDown {
   // Sucessfully load the page.
   self.serverRespondsWithContent = YES;
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey loadURL:self.testServer->GetURL("/echo-query?foo")]);
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:"foo"]);
+  [ChromeEarlGrey loadURL:self.testServer->GetURL("/echo-query?foo")];
+  [ChromeEarlGrey waitForWebStateContainingText:"foo"];
 
   // Reload the page, no response leads to ERR_CONNECTION_CLOSED error.
   self.serverRespondsWithContent = NO;
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey reload]);
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:GetErrorMessage()]);
+  [ChromeEarlGrey reload];
+  [ChromeEarlGrey waitForWebStateContainingText:GetErrorMessage()];
 }
 
 @end

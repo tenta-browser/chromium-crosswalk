@@ -20,6 +20,7 @@
 #import "ios/chrome/browser/ui/util/uikit_ui_util.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
 #import "ios/chrome/test/app/histogram_test_util.h"
+#import "ios/chrome/test/app/tab_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_actions.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
@@ -79,12 +80,10 @@ void Wait(id<GREYMatcher> matcher, NSString* name) {
 // page.
 void NewMainTabWithURL(const GURL& url, const std::string& word) {
   int number_of_tabs = [ChromeEarlGrey mainTabCount];
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey openNewTab]);
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:url]);
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:word]);
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForMainTabCount:(number_of_tabs + 1)]);
+  [ChromeEarlGrey openNewTab];
+  [ChromeEarlGrey loadURL:url];
+  [ChromeEarlGrey waitForWebStateContainingText:word];
+  [ChromeEarlGrey waitForMainTabCount:(number_of_tabs + 1)];
 }
 
 // Opens 2 new tabs with different URLs.
@@ -145,16 +144,16 @@ void CloseTabAtIndexAndSync(NSUInteger i) {
       kSelectedTabHistogramName, TabUsageRecorder::IN_MEMORY, 1, failureBlock);
 
   // Evict the tab.
-  CHROME_EG_ASSERT_NO_ERROR(OpenNewIncognitoTabUsingUIAndEvictMainTabs());
+  GREYAssertTrue(OpenNewIncognitoTabUsingUIAndEvictMainTabs(),
+                 @"Failed to open Incognito Tab");
 
   GREYAssertTrue([ChromeEarlGrey isIncognitoMode],
                  @"Failed to switch to incognito mode");
 
   // Switch back to the normal tabs. Should be on tab one.
-  CHROME_EG_ASSERT_NO_ERROR(SwitchToNormalMode());
+  SwitchToNormalMode();
 
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:kURL1FirstWord]);
+  [ChromeEarlGrey waitForWebStateContainingText:kURL1FirstWord];
 
   histogramTester.ExpectTotalCount(kSelectedTabHistogramName, 2, failureBlock);
   histogramTester.ExpectBucketCount(kSelectedTabHistogramName,
@@ -178,11 +177,10 @@ void CloseTabAtIndexAndSync(NSUInteger i) {
 
   // Open three tabs with http:// urls.
   for (NSUInteger i = 0; i < numberOfTabs; i++) {
-    CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey openNewTab]);
-    CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:url1]);
-    CHROME_EG_ASSERT_NO_ERROR(
-        [ChromeEarlGrey waitForWebStateContainingText:kURL1FirstWord]);
-    CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey waitForMainTabCount:(i + 1)]);
+    [ChromeEarlGrey openNewTab];
+    [ChromeEarlGrey loadURL:url1];
+    [ChromeEarlGrey waitForWebStateContainingText:kURL1FirstWord];
+    [ChromeEarlGrey waitForMainTabCount:(i + 1)];
   }
 
   // Switch between the tabs. They are currently in memory.
@@ -209,22 +207,21 @@ void CloseTabAtIndexAndSync(NSUInteger i) {
                                                             }),
                @"JavaScript to reload each tab did not finish");
     [ChromeEarlGreyUI reload];
-    CHROME_EG_ASSERT_NO_ERROR(
-        [ChromeEarlGrey waitForWebStateContainingText:kURL1FirstWord]);
+    [ChromeEarlGrey waitForWebStateContainingText:kURL1FirstWord];
   }
 
   // Evict the tab. Create a dummy tab so that switching back to normal mode
   // does not trigger a reload immediately.
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey openNewTab]);
-  CHROME_EG_ASSERT_NO_ERROR(OpenNewIncognitoTabUsingUIAndEvictMainTabs());
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey waitForIncognitoTabCount:1]);
+  [ChromeEarlGrey openNewTab];
+  GREYAssertTrue(OpenNewIncognitoTabUsingUIAndEvictMainTabs(),
+                 @"Failed to open Incognito Tab");
+  [ChromeEarlGrey waitForIncognitoTabCount:1];
 
   // Switch back to the normal tabs. Should be on tab one.
-  CHROME_EG_ASSERT_NO_ERROR(SwitchToNormalMode());
+  SwitchToNormalMode();
 
   [ChromeEarlGrey selectTabAtIndex:0];
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:kURL1FirstWord]);
+  [ChromeEarlGrey waitForWebStateContainingText:kURL1FirstWord];
 
   // Verify that one page-load count has been recorded. It should contain two
   // page loads for each tab created.
@@ -255,21 +252,21 @@ void CloseTabAtIndexAndSync(NSUInteger i) {
   [ChromeEarlGrey setCurrentTabsToBeColdStartTabs];
 
   // Open two incognito tabs with urls, clearing normal tabs from memory.
-  CHROME_EG_ASSERT_NO_ERROR(OpenNewIncognitoTabUsingUIAndEvictMainTabs());
-  CHROME_EG_ASSERT_NO_ERROR(OpenNewIncognitoTabUsingUIAndEvictMainTabs());
+  GREYAssertTrue(OpenNewIncognitoTabUsingUIAndEvictMainTabs(),
+                 @"Failed to open first Incognito Tab");
+  GREYAssertTrue(OpenNewIncognitoTabUsingUIAndEvictMainTabs(),
+                 @"Failed to open second Incognito Tab");
 
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey waitForIncognitoTabCount:2]);
+  [ChromeEarlGrey waitForIncognitoTabCount:2];
 
   // Switch back to the normal tabs.
-  CHROME_EG_ASSERT_NO_ERROR(SwitchToNormalMode());
+  SwitchToNormalMode();
 
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:kURL2FirstWord]);
+  [ChromeEarlGrey waitForWebStateContainingText:kURL2FirstWord];
 
   // Select the other one so it also reloads.
   [ChromeEarlGrey selectTabAtIndex:0];
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:kURL1FirstWord]);
+  [ChromeEarlGrey waitForWebStateContainingText:kURL1FirstWord];
   FailureBlock failureBlock = ^(NSString* error) {
     GREYFail(error);
   };
@@ -285,8 +282,7 @@ void CloseTabAtIndexAndSync(NSUInteger i) {
   [ChromeEarlGrey selectTabAtIndex:1];
   [ChromeEarlGrey selectTabAtIndex:0];
 
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:kURL1FirstWord]);
+  [ChromeEarlGrey waitForWebStateContainingText:kURL1FirstWord];
   histogramTester.ExpectBucketCount(kSelectedTabHistogramName,
                                     TabUsageRecorder::EVICTED_DUE_TO_COLD_START,
                                     1, failureBlock);
@@ -313,16 +309,16 @@ void CloseTabAtIndexAndSync(NSUInteger i) {
   [ChromeEarlGrey simulateTabsBackgrounding];
 
   // Open incognito and clear normal tabs from memory.
-  CHROME_EG_ASSERT_NO_ERROR(OpenNewIncognitoTabUsingUIAndEvictMainTabs());
+  GREYAssertTrue(OpenNewIncognitoTabUsingUIAndEvictMainTabs(),
+                 @"Failed to open Incognito Tab");
   GREYAssertTrue([ChromeEarlGrey isIncognitoMode],
                  @"Failed to switch to incognito mode");
   histogramTester.ExpectTotalCount(kEvictedTabReloadTime, 0, failureBlock);
 
   // Switch back to the normal tabs.
-  CHROME_EG_ASSERT_NO_ERROR(SwitchToNormalMode());
+  SwitchToNormalMode();
 
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:kURL2FirstWord]);
+  [ChromeEarlGrey waitForWebStateContainingText:kURL2FirstWord];
 
   const GURL url1 = web::test::HttpServer::MakeUrl(kTestUrl1);
   const GURL url2 = web::test::HttpServer::MakeUrl(kTestUrl2);
@@ -332,8 +328,7 @@ void CloseTabAtIndexAndSync(NSUInteger i) {
   histogramTester.ExpectTotalCount(kEvictedTabReloadTime, 1, failureBlock);
 
   [ChromeEarlGrey selectTabAtIndex:0];
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:kURL1FirstWord]);
+  [ChromeEarlGrey waitForWebStateContainingText:kURL1FirstWord];
   [[EarlGrey
       selectElementWithMatcher:chrome_test_util::OmniboxText(url1.GetContent())]
       assertWithMatcher:grey_notNil()];
@@ -353,12 +348,12 @@ void CloseTabAtIndexAndSync(NSUInteger i) {
   [ChromeEarlGrey closeAllTabsInCurrentMode];
   GURL URL = web::test::HttpServer::MakeUrl(kTestUrl1);
   NewMainTabWithURL(URL, kURL1FirstWord);
-  CHROME_EG_ASSERT_NO_ERROR(OpenNewIncognitoTabUsingUIAndEvictMainTabs());
-  CHROME_EG_ASSERT_NO_ERROR(SwitchToNormalMode());
+  GREYAssertTrue(OpenNewIncognitoTabUsingUIAndEvictMainTabs(),
+                 @"Failed to open Incognito Tab");
+  SwitchToNormalMode();
 
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:kURL1FirstWord]);
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey waitForMainTabCount:1]);
+  [ChromeEarlGrey waitForWebStateContainingText:kURL1FirstWord];
+  [ChromeEarlGrey waitForMainTabCount:1];
 
   histogramTester.ExpectUniqueSample(kEvictedTabReloadSuccessRate,
                                      TabUsageRecorder::LOAD_SUCCESS, 1,
@@ -385,11 +380,11 @@ void CloseTabAtIndexAndSync(NSUInteger i) {
   };
 
   // A blank tab needed to switch to it after reloading.
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey openNewTab]);
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey openNewTab]);
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:slowURL
-                                  waitForCompletion:NO]);
-  CHROME_EG_ASSERT_NO_ERROR(OpenNewIncognitoTabUsingUIAndEvictMainTabs());
+  [ChromeEarlGrey openNewTab];
+  [ChromeEarlGrey openNewTab];
+  [ChromeEarlGrey loadURL:slowURL waitForCompletion:NO];
+  GREYAssertTrue(OpenNewIncognitoTabUsingUIAndEvictMainTabs(),
+                 @"Failed to open Incognito Tab");
 
   web::test::SetUpHttpServer(std::make_unique<web::DelayedResponseProvider>(
       std::make_unique<HtmlResponseProvider>(responses), kSlowURLDelay));
@@ -441,7 +436,9 @@ void CloseTabAtIndexAndSync(NSUInteger i) {
 
   NewMainTabWithURL(slowURL, "Slow");
 
-  CHROME_EG_ASSERT_NO_ERROR(OpenNewIncognitoTabUsingUIAndEvictMainTabs());
+  GREYAssertTrue(OpenNewIncognitoTabUsingUIAndEvictMainTabs(),
+                 @"Failed to open Incognito Tab");
+
   web::test::SetUpHttpServer(std::make_unique<web::DelayedResponseProvider>(
       std::make_unique<HtmlResponseProvider>(responses), kSlowURLDelay));
 
@@ -491,15 +488,16 @@ void CloseTabAtIndexAndSync(NSUInteger i) {
   };
 
   NewMainTabWithURL(slowURL, responses[slowURL]);
-  CHROME_EG_ASSERT_NO_ERROR(OpenNewIncognitoTabUsingUIAndEvictMainTabs());
-  CHROME_EG_ASSERT_NO_ERROR(SwitchToNormalMode());
+  GREYAssertTrue(OpenNewIncognitoTabUsingUIAndEvictMainTabs(),
+                 @"Failed to open Incognito Tab");
+
+  SwitchToNormalMode();
 
   [ChromeEarlGreyUI openSettingsMenu];
   [ChromeEarlGreyUI tapSettingsMenuButton:SettingsMenuPrivacyButton()];
   [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
       performAction:grey_tap()];
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:responses[slowURL]]);
+  [ChromeEarlGrey waitForWebStateContainingText:responses[slowURL]];
 
   histogramTester.ExpectBucketCount(kDidUserWaitForEvictedTabReload,
                                     TabUsageRecorder::USER_DID_NOT_WAIT, 0,
@@ -519,10 +517,10 @@ void CloseTabAtIndexAndSync(NSUInteger i) {
   web::test::SetUpHttpServer(std::make_unique<HtmlResponseProvider>(responses));
 
   chrome_test_util::HistogramTester histogramTester;
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey openNewTab]);
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:slowURL
-                                  waitForCompletion:NO]);
-  CHROME_EG_ASSERT_NO_ERROR(OpenNewIncognitoTabUsingUIAndEvictMainTabs());
+  [ChromeEarlGrey openNewTab];
+  [ChromeEarlGrey loadURL:slowURL waitForCompletion:NO];
+  GREYAssertTrue(OpenNewIncognitoTabUsingUIAndEvictMainTabs(),
+                 @"Failed to open Incognito Tab");
 
   web::test::SetUpHttpServer(std::make_unique<web::DelayedResponseProvider>(
       std::make_unique<HtmlResponseProvider>(responses), kSlowURLDelay));
@@ -576,8 +574,7 @@ void CloseTabAtIndexAndSync(NSUInteger i) {
   [[GREYConfiguration sharedInstance]
           setValue:@(NO)
       forConfigKey:kGREYConfigKeySynchronizationEnabled];
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:slowURL
-                                  waitForCompletion:NO]);
+  [ChromeEarlGrey loadURL:slowURL waitForCompletion:NO];
 
   // Ensure loading starts but is not finished.
   base::test::ios::SpinRunLoopWithMaxDelay(base::TimeDelta::FromSeconds(1));
@@ -611,13 +608,14 @@ void CloseTabAtIndexAndSync(NSUInteger i) {
       assertWithMatcher:grey_notNil()];
 
   NSUInteger tabIndex = [ChromeEarlGrey mainTabCount] - 1;
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey openNewTab]);
-  CHROME_EG_ASSERT_NO_ERROR(OpenNewIncognitoTabUsingUIAndEvictMainTabs());
-  CHROME_EG_ASSERT_NO_ERROR(SwitchToNormalMode());
+  [ChromeEarlGrey openNewTab];
+  GREYAssertTrue(OpenNewIncognitoTabUsingUIAndEvictMainTabs(),
+                 @"Failed to open Incognito Tab");
+
+  SwitchToNormalMode();
 
   [ChromeEarlGrey selectTabAtIndex:tabIndex];
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:"arrived"]);
+  [ChromeEarlGrey waitForWebStateContainingText:"arrived"];
 
   FailureBlock failureBlock = ^(NSString* error) {
     GREYFail(error);
@@ -655,18 +653,17 @@ void CloseTabAtIndexAndSync(NSUInteger i) {
   // Open a tab with a link to click.
   NewMainTabWithURL(initialURL, "link");
   // Click the link.
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey tapWebStateElementWithID:@"link"]);
+  [ChromeEarlGrey tapWebStateElementWithID:@"link"];
 
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:"Whee"]);
+  [ChromeEarlGrey waitForWebStateContainingText:"Whee"];
   NSUInteger tabIndex = [ChromeEarlGrey mainTabCount] - 1;
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey openNewTab]);
-  CHROME_EG_ASSERT_NO_ERROR(OpenNewIncognitoTabUsingUIAndEvictMainTabs());
-  CHROME_EG_ASSERT_NO_ERROR(SwitchToNormalMode());
+  [ChromeEarlGrey openNewTab];
+  GREYAssertTrue(OpenNewIncognitoTabUsingUIAndEvictMainTabs(),
+                 @"Failed to open Incognito Tab");
+  SwitchToNormalMode();
 
   [ChromeEarlGrey selectTabAtIndex:tabIndex];
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:"Whee"]);
+  [ChromeEarlGrey waitForWebStateContainingText:"Whee"];
 
   // Verify that the page-load count has been recorded.  It should contain a
   // sum of 2 - one sample with 2 page loads.
@@ -725,8 +722,7 @@ void CloseTabAtIndexAndSync(NSUInteger i) {
   [ChromeEarlGrey selectTabAtIndex:numberOfTabs];
 
   [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:"Whee"]);
+  [ChromeEarlGrey waitForWebStateContainingText:"Whee"];
 
   FailureBlock failureBlock = ^(NSString* error) {
     GREYFail(error);

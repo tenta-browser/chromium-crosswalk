@@ -39,7 +39,6 @@ class DeletePageTask : public Task {
 
   static std::unique_ptr<DeletePageTask> CreateTaskWithCriteria(
       OfflinePageMetadataStore* store,
-      const ClientPolicyController& policy_controller,
       const PageCriteria& criteria,
       DeletePageTask::DeletePageTaskCallback callback);
 
@@ -99,7 +98,7 @@ class DeletePageTask : public Task {
   DeleteFunction func_;
   DeletePageTaskCallback callback_;
 
-  base::WeakPtrFactory<DeletePageTask> weak_ptr_factory_;
+  base::WeakPtrFactory<DeletePageTask> weak_ptr_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(DeletePageTask);
 };
 

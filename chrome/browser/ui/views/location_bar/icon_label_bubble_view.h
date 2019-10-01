@@ -25,6 +25,10 @@
 namespace gfx {
 class FontList;
 class ImageSkia;
+}  // namespace gfx
+
+namespace ui {
+struct AXNodeData;
 }
 
 namespace ui {
@@ -122,9 +126,6 @@ class IconLabelBubbleView : public views::InkDropObserver,
   // prevent the bubble from reshowing on a mouse release.
   virtual bool IsBubbleShowing() const;
 
-  // Sets the border padding around this view.
-  virtual void UpdateBorder();
-
   // views::LabelButton:
   gfx::Size CalculatePreferredSize() const override;
   void Layout() override;
@@ -216,6 +217,9 @@ class IconLabelBubbleView : public views::InkDropObserver,
   // Updates the highlight path for ink drops and focus rings using the current
   // bounds and the separator visibility.
   void UpdateHighlightPath();
+
+  // Sets the border padding around this view.
+  void UpdateBorder();
 
   // The contents of the bubble.
   SeparatorView* separator_view_;

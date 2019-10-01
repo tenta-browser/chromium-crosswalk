@@ -398,7 +398,7 @@ class CastMediaSinkServiceImpl : public MediaSinkServiceBase,
   base::Clock* clock_;
 
   SEQUENCE_CHECKER(sequence_checker_);
-  base::WeakPtrFactory<CastMediaSinkServiceImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<CastMediaSinkServiceImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(CastMediaSinkServiceImpl);
 };

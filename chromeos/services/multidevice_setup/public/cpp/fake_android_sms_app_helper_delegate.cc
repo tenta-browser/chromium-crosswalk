@@ -35,13 +35,8 @@ void FakeAndroidSmsAppHelperDelegate::TearDownAndroidSmsApp() {
   is_default_to_persist_cookie_set_ = false;
 }
 
-bool FakeAndroidSmsAppHelperDelegate::LaunchAndroidSmsApp() {
-  has_launched_ = true;
-  return true;
-}
-
-bool FakeAndroidSmsAppHelperDelegate::HasLaunchedApp() {
-  return has_launched_;
+bool FakeAndroidSmsAppHelperDelegate::HasAppBeenManuallyUninstalledByUser() {
+  return has_app_been_manually_uninstalled_;
 }
 
 }  // namespace multidevice_setup

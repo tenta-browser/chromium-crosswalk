@@ -27,6 +27,8 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/dwrite_rasterizer_support/dwrite_rasterizer_support.h"
 #include "third_party/blink/public/common/font_unique_name_lookup/font_table_matcher.h"
+#include "third_party/icu/source/common/unicode/umachine.h"
+#include "ui/gfx/test/font_fallback_test_data.h"
 
 namespace content {
 
@@ -252,6 +254,34 @@ TEST_F(DWriteFontProxyImplUnitTest, TestCustomFontFiles) {
   }
 }
 
+TEST_F(DWriteFontProxyImplUnitTest, FallbackFamily) {
+  const bool on_win10 = base::win::GetVersion() >= base::win::Version::WIN10;
+
+  for (auto& fallback_request : gfx::kGetFontFallbackTests) {
+    if (fallback_request.is_win10 && !on_win10)
+      continue;
+
+    std::string family_name;
+    UChar32 codepoint;
+    U16_GET(fallback_request.text.c_str(), 0, 0, fallback_request.text.size(),
+            codepoint);
+    dwrite_font_proxy().FallbackFamilyNameForCodepoint(
+        "Times New Roman", fallback_request.language_tag, codepoint,
+        &family_name);
+
+    auto find_result_it =
+        std::find(fallback_request.fallback_fonts.begin(),
+                  fallback_request.fallback_fonts.end(), family_name);
+
+    EXPECT_TRUE(find_result_it != fallback_request.fallback_fonts.end())
+        << "Did not find expected fallback font for language: "
+        << fallback_request.language_tag << ", codepoint U+" << std::hex
+        << codepoint << " DWrite returned font name: \"" << family_name << "\""
+        << ", expected: "
+        << base::JoinString(fallback_request.fallback_fonts, ", ");
+  }
+}
+
 namespace {
 void TestWhenLookupTableReady(
     bool* did_test_fonts,
@@ -298,6 +328,44 @@ TEST_F(DWriteFontProxyLocalMatchingTest, TestSingleLookup) {
     ASSERT_GT(unique_font_file.GetLength(), 0);
     ASSERT_EQ(test_font_name_index.ttc_index, ttc_index);
   }
+}
+
+TEST_F(DWriteFontProxyLocalMatchingTest, TestSingleLookupUnavailable) {
+  // Do not run this test on unsupported Windows versions.
+  if (!SupportsSingleLookups())
+    return;
+  base::FilePath result_path;
+  uint32_t ttc_index;
+  std::string unavailable_font_name =
+      "Unavailable_Font_Name_56E7EA7E-2C69-4E23-99DC-750BC19B250E";
+  dwrite_font_proxy().MatchUniqueFont(base::UTF8ToUTF16(unavailable_font_name),
+                                      &result_path, &ttc_index);
+  ASSERT_EQ(result_path.value().size(), 0u);
+  ASSERT_EQ(ttc_index, 0u);
+}
+
+TEST_F(DWriteFontProxyLocalMatchingTest, TestLookupMode) {
+  std::unique_ptr<FileVersionInfo> dwrite_version_info =
+      FileVersionInfo::CreateFileVersionInfo(
+          base::FilePath(FILE_PATH_LITERAL("DWrite.dll")));
+
+  std::string dwrite_version =
+      base::WideToUTF8(dwrite_version_info->product_version());
+
+  int dwrite_major_version_number =
+      std::stoi(dwrite_version.substr(0, dwrite_version.find(".")));
+
+  blink::mojom::UniqueFontLookupMode expected_lookup_mode;
+  if (dwrite_major_version_number >=
+      kDWriteMajorVersionSupportingSingleLookups) {
+    expected_lookup_mode = blink::mojom::UniqueFontLookupMode::kSingleLookups;
+  } else {
+    expected_lookup_mode = blink::mojom::UniqueFontLookupMode::kRetrieveTable;
+  }
+
+  blink::mojom::UniqueFontLookupMode lookup_mode;
+  dwrite_font_proxy().GetUniqueFontLookupMode(&lookup_mode);
+  ASSERT_EQ(lookup_mode, expected_lookup_mode);
 }
 
 TEST_F(DWriteFontProxyLocalMatchingTest, TestSingleLookupUnavailable) {

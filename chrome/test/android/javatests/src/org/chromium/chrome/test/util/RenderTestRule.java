@@ -427,24 +427,21 @@ public class RenderTestRule extends TestWatcher {
         int[] testPixels =
                 writeBitmapToArray(testImage, startWidth, startHeight, diffWidth, diffHeight);
 
-        for (int y = 0; y < diffHeight; ++y) {
-            int rowOffset = y * diffWidth;
-            for (int x = 0; x < diffWidth; ++x) {
-                int index = x + rowOffset;
-                if (goldenPixels[index] == testPixels[index]) continue;
-                int goldenColor = goldenPixels[index];
-                int testColor = testPixels[index];
+        int diffArea = diffHeight * diffWidth;
+        for (int i = 0; i < diffArea; ++i) {
+            if (goldenPixels[i] == testPixels[i]) continue;
+            int goldenColor = goldenPixels[i];
+            int testColor = testPixels[i];
 
-                int redDiff = Math.abs(Color.red(goldenColor) - Color.red(testColor));
-                int greenDiff = Math.abs(Color.green(goldenColor) - Color.green(testColor));
-                int blueDiff = Math.abs(Color.blue(goldenColor) - Color.blue(testColor));
-                int alphaDiff = Math.abs(Color.alpha(goldenColor) - Color.alpha(testColor));
+            int redDiff = Math.abs(Color.red(goldenColor) - Color.red(testColor));
+            int greenDiff = Math.abs(Color.green(goldenColor) - Color.green(testColor));
+            int blueDiff = Math.abs(Color.blue(goldenColor) - Color.blue(testColor));
+            int alphaDiff = Math.abs(Color.alpha(goldenColor) - Color.alpha(testColor));
 
-                if (redDiff > diffThreshold || blueDiff > diffThreshold || greenDiff > diffThreshold
-                        || alphaDiff > diffThreshold) {
-                    diffPixels++;
-                    diffImage.setPixel(x, y, Color.RED);
-                }
+            if (redDiff > diffThreshold || blueDiff > diffThreshold || greenDiff > diffThreshold
+                    || alphaDiff > diffThreshold) {
+                diffPixels++;
+                diffImage.setPixel(i % diffWidth, i / diffWidth, Color.RED);
             }
         }
         int diffArea = diffHeight * diffWidth;
@@ -488,6 +485,7 @@ public class RenderTestRule extends TestWatcher {
     private static int compareSizes(
             Bitmap diffImage, int minWidth, int maxWidth, int minHeight, int maxHeight) {
         int diffPixels = 0;
+
         if (maxWidth > minWidth) {
             int diffWidth = maxWidth - minWidth;
             int totalPixels = diffWidth * maxHeight;
@@ -501,11 +499,12 @@ public class RenderTestRule extends TestWatcher {
         }
         if (maxHeight > minHeight) {
             int diffHeight = maxHeight - minHeight;
-            int totalPixels = diffHeight * minHeight;
+            int totalPixels = diffHeight * minWidth;
             int[] pixels = new int[totalPixels];
             Arrays.fill(pixels, 0, totalPixels, Color.RED);
             diffImage.setPixels(pixels, 0 /* offset */, minWidth /* stride */, 0 /* x */,
                     minHeight /* y */, minWidth /* width */, diffHeight /* height */);
+            diffPixels += totalPixels;
         }
         return diffPixels;
     }

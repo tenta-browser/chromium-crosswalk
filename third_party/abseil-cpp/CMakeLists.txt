@@ -30,7 +30,15 @@ cmake_policy(SET CMP0057 NEW)
 # Project version variables are the empty std::string if version is unspecified
 cmake_policy(SET CMP0048 NEW)
 
-project(absl)
+project(absl CXX)
+
+# when absl is included as subproject (i.e. using add_subdirectory(abseil-cpp))
+# in the source tree of a project that uses it, install rules are disabled.
+if(NOT "^${CMAKE_SOURCE_DIR}$" STREQUAL "^${PROJECT_SOURCE_DIR}$")
+  set(ABSL_ENABLE_INSTALL FALSE)
+else()
+  set(ABSL_ENABLE_INSTALL TRUE)
+endif()
 
 # when absl is included as subproject (i.e. using add_subdirectory(abseil-cpp))
 # in the source tree of a project that uses it, install rules are disabled.

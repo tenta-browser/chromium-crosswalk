@@ -119,7 +119,7 @@ class ProtocolPerfTest
     encode_thread_.Start();
     decode_thread_.Start();
 
-    network_change_notifier_.reset(net::NetworkChangeNotifier::Create());
+    network_change_notifier_ = net::NetworkChangeNotifier::Create();
 
     desktop_environment_factory_.reset(
         new FakeDesktopEnvironmentFactory(capture_thread_.task_runner()));
@@ -285,9 +285,9 @@ class ProtocolPerfTest
     port_allocator_factory->socket_factory()->set_out_of_order_rate(
         GetParam().out_of_order_rate);
     scoped_refptr<protocol::TransportContext> transport_context(
-        new protocol::TransportContext(
-            host_signaling_.get(), std::move(port_allocator_factory), nullptr,
-            network_settings, protocol::TransportRole::SERVER));
+        new protocol::TransportContext(std::move(port_allocator_factory),
+                                       nullptr, network_settings,
+                                       protocol::TransportRole::SERVER));
     std::unique_ptr<protocol::SessionManager> session_manager(
         new protocol::JingleSessionManager(host_signaling_.get()));
     session_manager->set_protocol_config(protocol_config_->Clone());
@@ -352,9 +352,9 @@ class ProtocolPerfTest
     port_allocator_factory->socket_factory()->set_out_of_order_rate(
         GetParam().out_of_order_rate);
     scoped_refptr<protocol::TransportContext> transport_context(
-        new protocol::TransportContext(
-            host_signaling_.get(), std::move(port_allocator_factory), nullptr,
-            network_settings, protocol::TransportRole::CLIENT));
+        new protocol::TransportContext(std::move(port_allocator_factory),
+                                       nullptr, network_settings,
+                                       protocol::TransportRole::CLIENT));
 
     protocol::ClientAuthenticationConfig client_auth_config;
     client_auth_config.host_id = kHostId;

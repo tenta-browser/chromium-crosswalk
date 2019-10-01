@@ -68,72 +68,18 @@ static OriginSet& TrustworthyOriginSafelist() {
   return safelist;
 }
 
-static void AddOriginAccessEntry(const SecurityOrigin& source_origin,
-                                 const String& destination_protocol,
-                                 const String& destination_domain,
-                                 bool allow_destination_subdomains,
-                                 OriginAccessMap& access_map) {
-  DCHECK(IsMainThread());
-  DCHECK(!source_origin.IsUnique());
-  if (source_origin.IsUnique())
-    return;
-
-  String source_string = source_origin.ToString();
-  OriginAccessMap::AddResult result = access_map.insert(source_string, nullptr);
-  if (result.is_new_entry)
-    result.stored_value->value = std::make_unique<OriginAccessList>();
-
-  OriginAccessList* list = result.stored_value->value.get();
-  list->push_back(OriginAccessEntry(
-      destination_protocol, destination_domain,
-      allow_destination_subdomains ? OriginAccessEntry::kAllowSubdomains
-                                   : OriginAccessEntry::kDisallowSubdomains));
-}
-
-static void RemoveOriginAccessEntry(const SecurityOrigin& source_origin,
-                                    const String& destination_protocol,
-                                    const String& destination_domain,
-                                    bool allow_destination_subdomains,
-                                    OriginAccessMap& access_map) {
-  DCHECK(IsMainThread());
-  DCHECK(!source_origin.IsUnique());
-  if (source_origin.IsUnique())
-    return;
-
-  String source_string = source_origin.ToString();
-  OriginAccessMap::iterator it = access_map.find(source_string);
-  if (it == access_map.end())
-    return;
-
-  OriginAccessList* list = it->value.get();
-  size_t index = list->Find(OriginAccessEntry(
-      destination_protocol, destination_domain,
-      allow_destination_subdomains ? OriginAccessEntry::kAllowSubdomains
-                                   : OriginAccessEntry::kDisallowSubdomains));
-
-  if (index == kNotFound)
-    return;
-
-  list->EraseAt(index);
-
-  if (list->IsEmpty())
-    access_map.erase(it);
-}
-
-static bool IsOriginPairInAccessMap(const SecurityOrigin* active_origin,
-                                    const SecurityOrigin* target_origin,
-                                    const OriginAccessMap& access_map) {
-  if (access_map.IsEmpty())
-    return false;
-
-  if (OriginAccessList* list = access_map.at(active_origin->ToString())) {
-    for (size_t i = 0; i < list->size(); ++i) {
-      if (list->at(i).MatchesOrigin(*target_origin) !=
-          OriginAccessEntry::kDoesNotMatchOrigin)
-        return true;
+network::mojom::ReferrerPolicy ReferrerPolicyResolveDefault(
+    network::mojom::ReferrerPolicy referrer_policy) {
+  if (referrer_policy == network::mojom::ReferrerPolicy::kDefault) {
+    if (RuntimeEnabledFeatures::ReducedReferrerGranularityEnabled()) {
+      return network::mojom::ReferrerPolicy::
+          kNoReferrerWhenDowngradeOriginWhenCrossOrigin;
+    } else {
+      return network::mojom::ReferrerPolicy::kNoReferrerWhenDowngrade;
     }
   }
-  return false;
+
+  return referrer_policy;
 }
 
 void SecurityPolicy::Init() {
@@ -161,16 +107,8 @@ Referrer SecurityPolicy::GenerateReferrer(
     network::mojom::ReferrerPolicy referrer_policy,
     const KURL& url,
     const String& referrer) {
-  network::mojom::ReferrerPolicy referrer_policy_no_default = referrer_policy;
-  if (referrer_policy_no_default == network::mojom::ReferrerPolicy::kDefault) {
-    if (RuntimeEnabledFeatures::ReducedReferrerGranularityEnabled()) {
-      referrer_policy_no_default = network::mojom::ReferrerPolicy::
-          kNoReferrerWhenDowngradeOriginWhenCrossOrigin;
-    } else {
-      referrer_policy_no_default =
-          network::mojom::ReferrerPolicy::kNoReferrerWhenDowngrade;
-    }
-  }
+  network::mojom::ReferrerPolicy referrer_policy_no_default =
+      ReferrerPolicyResolveDefault(referrer_policy);
   if (referrer == Referrer::NoReferrer())
     return Referrer(Referrer::NoReferrer(), referrer_policy_no_default);
   DCHECK(!referrer.IsEmpty());
@@ -321,9 +259,9 @@ void SecurityPolicy::AddOriginAccessAllowListEntry(
     const network::mojom::CorsOriginAccessMatchPriority priority) {
   MutexLocker lock(GetMutex());
   GetOriginAccessList().AddAllowListEntryForOrigin(
-      source_origin.ToUrlOrigin(), WebString(destination_protocol).Utf8(),
-      WebString(destination_domain).Utf8(), port, domain_match_mode,
-      port_match_mode, priority);
+      source_origin.ToUrlOrigin(), destination_protocol.Utf8(),
+      destination_domain.Utf8(), port, domain_match_mode, port_match_mode,
+      priority);
 }
 
 void SecurityPolicy::AddOriginAccessBlockListEntry(
@@ -336,9 +274,9 @@ void SecurityPolicy::AddOriginAccessBlockListEntry(
     const network::mojom::CorsOriginAccessMatchPriority priority) {
   MutexLocker lock(GetMutex());
   GetOriginAccessList().AddBlockListEntryForOrigin(
-      source_origin.ToUrlOrigin(), WebString(destination_protocol).Utf8(),
-      WebString(destination_domain).Utf8(), port, domain_match_mode,
-      port_match_mode, priority);
+      source_origin.ToUrlOrigin(), destination_protocol.Utf8(),
+      destination_domain.Utf8(), port, domain_match_mode, port_match_mode,
+      priority);
 }
 
 void SecurityPolicy::ClearOriginAccessListForOrigin(

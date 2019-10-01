@@ -158,7 +158,55 @@ TEST_F(ServiceWorkerContextCoreTest, FailureInfo) {
   context()->UpdateVersionFailureCount(kVersionId,
                                        blink::ServiceWorkerStatusCode::kOk);
   EXPECT_EQ(0, context()->GetVersionFailureCount(kVersionId));
-  EXPECT_FALSE(base::ContainsKey(context()->failure_counts_, kVersionId));
+  EXPECT_FALSE(base::Contains(context()->failure_counts_, kVersionId));
+}
+
+TEST_F(ServiceWorkerContextCoreTest, DeleteForOrigin) {
+  const GURL script("https://www.example.com/a/sw.js");
+  const GURL scope("https://www.example.com/a");
+  const GURL origin("https://www.example.com");
+
+  // Register a service worker.
+  blink::mojom::ServiceWorkerRegistrationOptions options;
+  options.scope = scope;
+  RegisterServiceWorker(scope, options);
+
+  // Delete for origin.
+  EXPECT_EQ(blink::ServiceWorkerStatusCode::kOk, DeleteForOrigin(origin));
+
+  // The registration should be deleted.
+  EXPECT_EQ(blink::ServiceWorkerStatusCode::kErrorNotFound,
+            FindRegistrationForScope(scope));
+}
+
+// Tests that DeleteForOrigin() doesn't get stuck forever even upon an error
+// when trying to unregister.
+TEST_F(ServiceWorkerContextCoreTest, DeleteForOrigin_UnregisterFail) {
+  const GURL script("https://www.example.com/a/sw.js");
+  const GURL scope("https://www.example.com/a");
+  const GURL origin("https://www.example.com");
+
+  // Register a service worker.
+  blink::mojom::ServiceWorkerRegistrationOptions options;
+  options.scope = scope;
+  RegisterServiceWorker(scope, options);
+
+  // Start DeleteForOrigin().
+  base::RunLoop loop;
+  blink::ServiceWorkerStatusCode status;
+  context()->DeleteForOrigin(
+      origin, base::BindLambdaForTesting(
+                  [&](blink::ServiceWorkerStatusCode result_status) {
+                    status = result_status;
+                    loop.Quit();
+                  }));
+  // Disable storage before it finishes. This causes the Unregister job to
+  // complete with an error.
+  context()->storage()->Disable();
+  loop.Run();
+
+  // The operation should still complete.
+  EXPECT_EQ(blink::ServiceWorkerStatusCode::kErrorFailed, status);
 }
 
 TEST_F(ServiceWorkerContextCoreTest, DeleteForOrigin) {

@@ -457,8 +457,8 @@ scoped_refptr<gfx::NativePixmap> ProtectedBufferManager::ImportDummyFd(
   ui::SurfaceFactoryOzone* factory = platform->GetSurfaceFactoryOzone();
   scoped_refptr<gfx::NativePixmap> pixmap =
       factory->CreateNativePixmapForProtectedBufferHandle(
-          gfx::kNullAcceleratedWidget, kDummyBufferSize, gfx::BufferFormat::R_8,
-          std::move(pixmap_handle));
+          gfx::kNullAcceleratedWidget, kDummyBufferSize,
+          gfx::BufferFormat::RGBA_8888, std::move(pixmap_handle));
   if (!pixmap) {
     VLOGF(1) << "Failed importing dummy handle";
     return nullptr;

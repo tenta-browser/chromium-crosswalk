@@ -202,8 +202,25 @@ struct Serializer<InterfaceRequestDataView<Base>, InterfaceRequest<T>> {
   static bool Deserialize(Handle_Data* input,
                           InterfaceRequest<T>* output,
                           SerializationContext* context) {
-    *output =
-        InterfaceRequest<T>(context->TakeHandleAs<MessagePipeHandle>(*input));
+    context->TakeHandleAsReceiver(*input, output->internal_state());
+    return true;
+  }
+};
+
+template <typename Base, typename T>
+struct Serializer<InterfaceRequestDataView<Base>, PendingReceiver<T>> {
+  static_assert(std::is_base_of<Base, T>::value, "Interface type mismatch.");
+
+  static void Serialize(PendingReceiver<T>& input,
+                        Handle_Data* output,
+                        SerializationContext* context) {
+    context->AddHandle(ScopedHandle::From(input.PassPipe()), output);
+  }
+
+  static bool Deserialize(Handle_Data* input,
+                          PendingReceiver<T>* output,
+                          SerializationContext* context) {
+    context->TakeHandleAsReceiver(*input, output->internal_state());
     return true;
   }
 };

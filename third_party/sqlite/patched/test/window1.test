@@ -1167,16 +1167,6 @@ do_execsql_test 29.2 {
   11 K cc 'xyz' K |
 }
 
-do_execsql_test 16.2 {
-  SELECT rowid, sum(a) OVER w1 FROM t7
-  WINDOW w1 AS (PARTITION BY b IN (SELECT rowid FROM t7));
-} {
-  2 10
-  1 101
-  3 101
-}
-
-
 finish_test
 
 

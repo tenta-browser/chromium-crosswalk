@@ -19,14 +19,8 @@ class SyncService;
 
 namespace autofill {
 
+class LogManager;
 class PersonalDataManager;
-
-#if defined(OS_LINUX) || defined(OS_MACOSX) || defined(OS_WIN)
-extern const base::Feature kAutofillPrimaryInfoStyleExperiment;
-extern const char kAutofillForcedFontWeightParameterName[];
-extern const char kAutofillForcedFontWeightParameterMedium[];
-extern const char kAutofillForcedFontWeightParameterBold[];
-#endif  // defined(OS_LINUX) || defined(OS_MACOSX) || defined(OS_WIN)
 
 // Returns true if uploading credit cards to Wallet servers is enabled. This
 // requires the appropriate flags and user settings to be true and the user to
@@ -34,13 +28,15 @@ extern const char kAutofillForcedFontWeightParameterBold[];
 bool IsCreditCardUploadEnabled(const PrefService* pref_service,
                                const syncer::SyncService* sync_service,
                                const std::string& user_email,
-                               const AutofillSyncSigninState sync_state);
+                               const AutofillSyncSigninState sync_state,
+                               LogManager* log_manager);
 
 // Returns true if autofill local card migration flow is enabled.
 bool IsCreditCardMigrationEnabled(PersonalDataManager* personal_data_manager,
                                   PrefService* pref_service,
                                   syncer::SyncService* sync_service,
-                                  bool is_test_mode);
+                                  bool is_test_mode,
+                                  LogManager* log_manager);
 
 // Returns true if autofill suggestions are disabled via experiment. The
 // disabled experiment isn't the same as disabling autofill completely since we

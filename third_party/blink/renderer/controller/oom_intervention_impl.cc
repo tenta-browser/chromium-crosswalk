@@ -112,6 +112,9 @@ void OomInterventionImpl::Check(MemoryUsage usage) {
   OomInterventionMetrics current_memory =
       CrashMemoryMetricsReporterImpl::MemoryUsageToMetrics(usage);
 
+  OomInterventionMetrics current_memory =
+      CrashMemoryMetricsReporterImpl::MemoryUsageToMetrics(usage);
+
   bool oom_detected = false;
 
   oom_detected |= detection_args_->blink_workload_threshold > 0 &&
@@ -170,7 +173,8 @@ void OomInterventionImpl::Check(MemoryUsage usage) {
     // Report the memory impact of intervention after 10, 20, 30 seconds.
     metrics_at_intervention_ = current_memory;
     number_of_report_needed_ = 3;
-    delayed_report_timer_.StartRepeating(TimeDelta::FromSeconds(10), FROM_HERE);
+    delayed_report_timer_.StartRepeating(base::TimeDelta::FromSeconds(10),
+                                         FROM_HERE);
   }
 }
 

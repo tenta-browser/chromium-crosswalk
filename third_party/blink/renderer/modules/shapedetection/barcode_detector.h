@@ -47,12 +47,11 @@ class MODULES_EXPORT BarcodeDetector final : public ShapeDetector {
       ScriptPromiseResolver*,
       Vector<shape_detection::mojom::blink::BarcodeDetectionResultPtr>);
 
-  void OnBarcodeServiceConnectionError();
+  void OnConnectionError();
 
-  shape_detection::mojom::blink::BarcodeDetectionPtr barcode_service_;
-  shape_detection::mojom::blink::BarcodeDetectionProviderPtr barcode_provider_;
+  shape_detection::mojom::blink::BarcodeDetectionPtr service_;
 
-  HeapHashSet<Member<ScriptPromiseResolver>> barcode_service_requests_;
+  HeapHashSet<Member<ScriptPromiseResolver>> detect_requests_;
 };
 
 }  // namespace blink

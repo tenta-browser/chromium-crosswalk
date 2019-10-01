@@ -49,7 +49,7 @@ using web::test::HttpServer;
 
   // Clear history and verify that the tile does not exist.
   [ChromeEarlGrey clearBrowsingHistory];
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey openNewTab]);
+  [ChromeEarlGrey openNewTab];
 
   [[EarlGrey selectElementWithMatcher:
                  chrome_test_util::StaticTextWithAccessibilityLabel(@"title1")]
@@ -59,7 +59,8 @@ using web::test::HttpServer;
 
   // After loading URL, need to do another action before opening a new tab
   // with the icon present.
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey goBack]);
+  [ChromeEarlGrey goBack];
+  [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
 
   CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey openNewTab]);
 
@@ -93,20 +94,21 @@ using web::test::HttpServer;
 
   // Clear history and verify that the tile does not exist.
   [ChromeEarlGrey clearBrowsingHistory];
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey openNewTab]);
+  [ChromeEarlGrey openNewTab];
   [[EarlGrey selectElementWithMatcher:
                  chrome_test_util::StaticTextWithAccessibilityLabel(@"title2")]
       assertWithMatcher:grey_nil()];
 
   // Load first URL and expect redirect to destination URL.
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:firstRedirectURL]);
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:"redirect complete"]);
+  [ChromeEarlGrey loadURL:firstRedirectURL];
+  [ChromeEarlGrey waitForWebStateContainingText:"redirect complete"];
 
   // After loading URL, need to do another action before opening a new tab
   // with the icon present.
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey goBack]);
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey openNewTab]);
+  [ChromeEarlGrey goBack];
+  [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
+
+  [ChromeEarlGrey openNewTab];
 
   // Which of the two tiles that is displayed is an implementation detail, and
   // this test helps document it. The purpose of the test is to verify that only
@@ -125,12 +127,6 @@ using web::test::HttpServer;
   [ChromeEarlGreyUI tapClearBrowsingDataMenuButton:ClearBrowsingDataButton()];
   [[EarlGrey selectElementWithMatcher:ConfirmClearBrowsingDataButton()]
       performAction:grey_tap()];
-
-  // Before returning, make sure that the top of the Clear Browsing Data
-  // settings screen is visible to match the state at the start of the method.
-  [[EarlGrey selectElementWithMatcher:ClearBrowsingDataView()]
-      performAction:grey_scrollToContentEdge(kGREYContentEdgeTop)];
-
   [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
       performAction:grey_tap()];
 

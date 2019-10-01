@@ -2042,7 +2042,8 @@ TEST_F(SurfaceSynchronizationTest, ActiveFrameIndex) {
   child_support2().SubmitCompositorFrame(child_id2.local_surface_id(),
                                          MakeDefaultCompositorFrame());
   EXPECT_TRUE(parent_surface()->HasActiveFrame());
-  EXPECT_EQ(3u, parent_surface()->GetActiveFrameIndex());
+  uint64_t expected_index = CompositorFrameSinkSupport::kFrameIndexStart;
+  EXPECT_EQ(expected_index, parent_surface()->GetActiveFrameIndex());
 }
 
 // This test verifies that SurfaceManager::GetLatestInFlightSurface returns
@@ -2126,9 +2127,7 @@ TEST_F(SurfaceSynchronizationTest, LatestInFlightSurface) {
   // Verify that there is a temporary reference for child_id3.
   EXPECT_TRUE(HasTemporaryReference(child_id3));
 
-  // The surface corresponding to |child_id3| will not be activated until
-  // a parent embeds it because it's a child initiated synchronization.
-  EXPECT_EQ(GetSurfaceForId(child_id2),
+  EXPECT_EQ(GetSurfaceForId(child_id3),
             GetLatestInFlightSurface(SurfaceRange(child_id1, child_id4)));
 
   parent_support().SubmitCompositorFrame(
@@ -2136,8 +2135,6 @@ TEST_F(SurfaceSynchronizationTest, LatestInFlightSurface) {
       MakeCompositorFrame({child_id3}, {SurfaceRange(base::nullopt, child_id3)},
                           std::vector<TransferableResource>()));
 
-  EXPECT_EQ(GetSurfaceForId(child_id3),
-            GetLatestInFlightSurface(SurfaceRange(child_id1, child_id4)));
   EXPECT_THAT(GetChildReferences(parent_id), UnorderedElementsAre(child_id3));
 
   // If the primary surface is active, we return it.
@@ -2831,291 +2828,6 @@ TEST_F(SurfaceSynchronizationTest,
   EXPECT_EQ(parent_id, parent_support().last_activated_surface_id());
 }
 
-// If a parent CompositorFrame embeds a child Surface newer than the throttled
-// child then the throttled child surface is immediately unthrottled. This
-// unblocks the child to make progress to catch up with the parent.
-TEST_F(SurfaceSynchronizationTest,
-       ParentEmbeddingFutureChildUnblocksCurrentChildSurface) {
-  const SurfaceId parent_id = MakeSurfaceId(kParentFrameSink, 1);
-  const SurfaceId child_id1 = MakeSurfaceId(kChildFrameSink1, 1, 1);
-  const SurfaceId child_id2 = MakeSurfaceId(kChildFrameSink1, 1, 2);
-  const SurfaceId child_id3 = MakeSurfaceId(kChildFrameSink1, 1, 3);
-
-  // |child_id1| Surface should immediately activate.
-  child_support1().SubmitCompositorFrame(child_id1.local_surface_id(),
-                                         MakeDefaultCompositorFrame());
-  Surface* child_surface1 = GetSurfaceForId(child_id1);
-  ASSERT_NE(nullptr, child_surface1);
-  EXPECT_FALSE(child_surface1->HasPendingFrame());
-  EXPECT_TRUE(child_surface1->HasActiveFrame());
-
-  // |child_id2| Surface should not activate because |child_id1| was never
-  // added as a dependency by a parent.
-  child_support1().SubmitCompositorFrame(
-      child_id2.local_surface_id(),
-      MakeCompositorFrame(empty_surface_ids(), empty_surface_ranges(),
-                          std::vector<TransferableResource>(),
-                          MakeDeadline(1u)));
-  Surface* child_surface2 = GetSurfaceForId(child_id2);
-  ASSERT_NE(nullptr, child_surface2);
-  EXPECT_TRUE(child_surface2->HasPendingFrame());
-  EXPECT_FALSE(child_surface2->HasActiveFrame());
-  EXPECT_TRUE(child_surface2->has_deadline());
-
-  FrameDeadline deadline = MakeDefaultDeadline();
-  base::TimeTicks deadline_wall_time = deadline.ToWallTime();
-  EXPECT_EQ(deadline_wall_time, child_surface2->deadline_for_testing());
-
-  // The parent finally embeds a child surface that hasn't arrived which
-  // activates |child_id2|'s Surface in order for the child to make forward
-  // progress.
-  parent_support().SubmitCompositorFrame(
-      parent_id.local_surface_id(),
-      MakeCompositorFrame({child_id3}, {SurfaceRange(base::nullopt, child_id3)},
-                          std::vector<TransferableResource>(),
-                          MakeDefaultDeadline()));
-
-  EXPECT_FALSE(child_surface2->HasPendingFrame());
-  EXPECT_TRUE(child_surface2->HasActiveFrame());
-}
-
-// A child surface can be blocked on its own activation dependencies and on a
-// parent embedding it as an activation dependency. Even if a child's activation
-// dependencies arrive, it may not activate until it is embedded.
-TEST_F(SurfaceSynchronizationTest, ChildBlockedOnDependenciesAndParent) {
-  const SurfaceId parent_id = MakeSurfaceId(kParentFrameSink, 1);
-  const SurfaceId child_id1 = MakeSurfaceId(kChildFrameSink1, 1, 1);
-  const SurfaceId child_id2 = MakeSurfaceId(kChildFrameSink1, 1, 2);
-  const SurfaceId child_id3 = MakeSurfaceId(kChildFrameSink2, 1);
-
-  // |child_id1| Surface should immediately activate.
-  child_support1().SubmitCompositorFrame(child_id1.local_surface_id(),
-                                         MakeDefaultCompositorFrame());
-  Surface* child_surface1 = GetSurfaceForId(child_id1);
-  ASSERT_NE(nullptr, child_surface1);
-  EXPECT_FALSE(child_surface1->HasPendingFrame());
-  EXPECT_TRUE(child_surface1->HasActiveFrame());
-
-  // |child_id2| Surface should not activate because |child_id1| was never
-  // added as a dependency by a parent AND it depends on |child_id3| which has
-  // not yet arrived.
-  child_support1().SubmitCompositorFrame(
-      child_id2.local_surface_id(),
-      MakeCompositorFrame({child_id3}, {SurfaceRange(base::nullopt, child_id3)},
-                          std::vector<TransferableResource>(),
-                          MakeDefaultDeadline()));
-  Surface* child_surface2 = GetSurfaceForId(child_id2);
-  ASSERT_NE(nullptr, child_surface2);
-  EXPECT_TRUE(child_surface2->HasPendingFrame());
-  EXPECT_FALSE(child_surface2->HasActiveFrame());
-  EXPECT_THAT(child_surface2->activation_dependencies(),
-              UnorderedElementsAre(child_id3));
-
-  // |child_id2|'s dependency has arrived but |child_id2| Surface has not
-  // activated because it is still throttled by its parent. It will not
-  // activate until its parent arrives.
-  child_support2().SubmitCompositorFrame(child_id3.local_surface_id(),
-                                         MakeDefaultCompositorFrame());
-  EXPECT_THAT(child_surface2->activation_dependencies(), IsEmpty());
-  EXPECT_TRUE(child_surface2->HasPendingFrame());
-  EXPECT_FALSE(child_surface2->HasActiveFrame());
-
-  // The parent finally embeds a |child_id2| which activates |child_id2|'s
-  // Surface.
-  parent_support().SubmitCompositorFrame(
-      parent_id.local_surface_id(),
-      MakeCompositorFrame({child_id2}, {SurfaceRange(base::nullopt, child_id2)},
-                          std::vector<TransferableResource>(),
-                          MakeDefaultDeadline()));
-
-  EXPECT_FALSE(child_surface2->HasPendingFrame());
-  EXPECT_TRUE(child_surface2->HasActiveFrame());
-}
-
-// Similar to the previous test, a child surface can be blocked on its own
-// activation dependencies and on a parent embedding it as an activation
-// dependency. In this case, the parent CompositorFrame arrives first, and then
-// the activation dependency.
-TEST_F(SurfaceSynchronizationTest, ChildBlockedOnDependenciesAndParent2) {
-  const SurfaceId parent_id = MakeSurfaceId(kParentFrameSink, 1);
-  const SurfaceId child_id1 = MakeSurfaceId(kChildFrameSink1, 1, 1);
-  const SurfaceId child_id2 = MakeSurfaceId(kChildFrameSink1, 1, 2);
-  const SurfaceId child_id3 = MakeSurfaceId(kChildFrameSink2, 1);
-
-  // |child_id1| Surface should immediately activate.
-  child_support1().SubmitCompositorFrame(child_id1.local_surface_id(),
-                                         MakeDefaultCompositorFrame());
-  Surface* child_surface1 = GetSurfaceForId(child_id1);
-  ASSERT_NE(nullptr, child_surface1);
-  EXPECT_FALSE(child_surface1->HasPendingFrame());
-  EXPECT_TRUE(child_surface1->HasActiveFrame());
-
-  // |child_id2| Surface should not activate because |child_id1| was never
-  // added as a dependency by a parent AND it depends on |child_id3| which has
-  // not yet arrived.
-  child_support1().SubmitCompositorFrame(
-      child_id2.local_surface_id(),
-      MakeCompositorFrame({child_id3}, {SurfaceRange(base::nullopt, child_id3)},
-                          std::vector<TransferableResource>(),
-                          MakeDefaultDeadline()));
-  Surface* child_surface2 = GetSurfaceForId(child_id2);
-  ASSERT_NE(nullptr, child_surface2);
-  EXPECT_TRUE(child_surface2->HasPendingFrame());
-  EXPECT_FALSE(child_surface2->HasActiveFrame());
-  EXPECT_THAT(child_surface2->activation_dependencies(),
-              UnorderedElementsAre(child_id3));
-  EXPECT_FALSE(child_surface2->HasDependentFrame());
-
-  // The parent embeds |child_id2| but |child_id2|'s Surface cannot activate
-  // until its dependencies arrive.
-  parent_support().SubmitCompositorFrame(
-      parent_id.local_surface_id(),
-      MakeCompositorFrame({child_id2}, {SurfaceRange(base::nullopt, child_id2)},
-                          std::vector<TransferableResource>(),
-                          MakeDefaultDeadline()));
-  EXPECT_TRUE(child_surface2->HasPendingFrame());
-  EXPECT_FALSE(child_surface2->HasActiveFrame());
-  EXPECT_THAT(child_surface2->activation_dependencies(),
-              UnorderedElementsAre(child_id3));
-  EXPECT_TRUE(child_surface2->HasDependentFrame());
-
-  // |child_id2|'s dependency has arrived and |child_id2|'s Surface finally
-  // activates.
-  child_support2().SubmitCompositorFrame(child_id3.local_surface_id(),
-                                         MakeDefaultCompositorFrame());
-  EXPECT_THAT(child_surface2->activation_dependencies(), IsEmpty());
-  EXPECT_FALSE(child_surface2->HasPendingFrame());
-  EXPECT_TRUE(child_surface2->HasActiveFrame());
-}
-
-// This test verifies that if a child-initiated synchronization is blocked
-// on a parent, then the frame will still activate after a deadline passes.
-TEST_F(SurfaceSynchronizationTest, ChildBlockedOnParentActivatesAfterDeadline) {
-  const SurfaceId child_id1 = MakeSurfaceId(kChildFrameSink1, 1, 1);
-  const SurfaceId child_id2 = MakeSurfaceId(kChildFrameSink1, 1, 2);
-
-  // |child_id1| Surface should immediately activate.
-  child_support1().SubmitCompositorFrame(child_id1.local_surface_id(),
-                                         MakeDefaultCompositorFrame());
-  Surface* child_surface1 = GetSurfaceForId(child_id1);
-  ASSERT_NE(nullptr, child_surface1);
-  EXPECT_FALSE(child_surface1->HasPendingFrame());
-  EXPECT_TRUE(child_surface1->HasActiveFrame());
-  EXPECT_FALSE(child_surface1->HasDependentFrame());
-  EXPECT_FALSE(child_surface1->has_deadline());
-
-  // |child_id2| Surface should not activate because |child_id1| was never
-  // added as a dependency by a parent.
-  child_support1().SubmitCompositorFrame(
-      child_id2.local_surface_id(),
-      MakeCompositorFrame(empty_surface_ids(), empty_surface_ranges(),
-                          std::vector<TransferableResource>(),
-                          MakeDefaultDeadline()));
-  Surface* child_surface2 = GetSurfaceForId(child_id2);
-  ASSERT_NE(nullptr, child_surface2);
-  EXPECT_TRUE(child_surface2->HasPendingFrame());
-  EXPECT_FALSE(child_surface2->HasActiveFrame());
-  EXPECT_FALSE(child_surface2->HasDependentFrame());
-  EXPECT_TRUE(child_surface2->has_deadline());
-
-  for (int i = 0; i < 3; ++i) {
-    SendNextBeginFrame();
-    // There is still a looming deadline! Eeek!
-    EXPECT_TRUE(child_surface2->HasPendingFrame());
-    EXPECT_FALSE(child_surface2->HasActiveFrame());
-    EXPECT_FALSE(child_surface2->HasDependentFrame());
-    EXPECT_TRUE(child_surface2->has_deadline());
-  }
-
-  SendNextBeginFrame();
-
-  EXPECT_FALSE(child_surface2->HasPendingFrame());
-  EXPECT_TRUE(child_surface2->HasActiveFrame());
-  // We pretend this is true so that subsequent CompositorFrames to the same
-  // surface do not block on the parent again.
-  EXPECT_TRUE(child_surface2->HasDependentFrame());
-  EXPECT_FALSE(child_surface2->has_deadline());
-}
-
-// This test verifies that if a child-initiated synchronization is initiated
-// with a deadline in the past, then the frame will immediately activate and
-// be marked as having a dependent frame so that it does not block again in
-// the future.
-TEST_F(SurfaceSynchronizationTest, ChildBlockedOnParentDeadlineInPast) {
-  const SurfaceId child_id1 = MakeSurfaceId(kChildFrameSink1, 1, 1);
-  const SurfaceId child_id2 = MakeSurfaceId(kChildFrameSink1, 1, 2);
-
-  // |child_id1| Surface should immediately activate.
-  child_support1().SubmitCompositorFrame(child_id1.local_surface_id(),
-                                         MakeDefaultCompositorFrame());
-  Surface* child_surface1 = GetSurfaceForId(child_id1);
-  ASSERT_NE(nullptr, child_surface1);
-  EXPECT_FALSE(child_surface1->HasPendingFrame());
-  EXPECT_TRUE(child_surface1->HasActiveFrame());
-  EXPECT_FALSE(child_surface1->HasDependentFrame());
-  EXPECT_FALSE(child_surface1->has_deadline());
-
-  // Pick a deadline in the near future.
-  FrameDeadline deadline = MakeDeadline(1u);
-
-  // Advance time beyond the |deadline| above.
-  SendLateBeginFrame();
-
-  // |child_id2| Surface should activate because it was submitted with a
-  // deadline in the past.
-  child_support1().SubmitCompositorFrame(
-      child_id2.local_surface_id(),
-      MakeCompositorFrame(empty_surface_ids(), empty_surface_ranges(),
-                          std::vector<TransferableResource>(), deadline));
-  Surface* child_surface2 = GetSurfaceForId(child_id2);
-  ASSERT_NE(nullptr, child_surface2);
-  EXPECT_FALSE(child_surface2->HasPendingFrame());
-  EXPECT_TRUE(child_surface2->HasActiveFrame());
-  EXPECT_FALSE(child_surface2->has_deadline());
-
-  EXPECT_TRUE(child_surface2->HasDependentFrame());
-}
-
-// A child may submit CompositorFrame corresponding to a child-initiated
-// synchronization event followed by a CompositorFrame corresponding to a
-// parent-initiated synchronization event.
-TEST_F(SurfaceSynchronizationTest,
-       ParentInitiatedAfterChildInitiatedSynchronization) {
-  const SurfaceId child_id1 = MakeSurfaceId(kChildFrameSink1, 1, 1);
-  // Child-initiated synchronization event:
-  const SurfaceId child_id2 = MakeSurfaceId(kChildFrameSink1, 1, 2);
-  // Parent-initiated synchronizaton event:
-  const SurfaceId child_id3 = MakeSurfaceId(kChildFrameSink1, 2, 2);
-
-  // |child_id1| Surface should immediately activate.
-  child_support1().SubmitCompositorFrame(child_id1.local_surface_id(),
-                                         MakeDefaultCompositorFrame());
-  Surface* child_surface1 = GetSurfaceForId(child_id1);
-  ASSERT_NE(nullptr, child_surface1);
-  EXPECT_FALSE(child_surface1->HasPendingFrame());
-  EXPECT_TRUE(child_surface1->HasActiveFrame());
-
-  // |child_id2| Surface should not activate because |child_id1| was never
-  // added as a dependency by a parent.
-  child_support1().SubmitCompositorFrame(child_id2.local_surface_id(),
-                                         MakeDefaultCompositorFrame());
-  Surface* child_surface2 = GetSurfaceForId(child_id2);
-  ASSERT_NE(nullptr, child_surface2);
-  EXPECT_TRUE(child_surface2->HasPendingFrame());
-  EXPECT_FALSE(child_surface2->HasActiveFrame());
-  EXPECT_TRUE(child_surface2->has_deadline());
-
-  // |child_id3| Surface should activate immediately because it corresponds to a
-  // parent-initiated synchronization event.
-  child_support1().SubmitCompositorFrame(child_id3.local_surface_id(),
-                                         MakeDefaultCompositorFrame());
-  Surface* child_surface3 = GetSurfaceForId(child_id3);
-  ASSERT_NE(nullptr, child_surface3);
-  EXPECT_FALSE(child_surface3->HasPendingFrame());
-  EXPECT_TRUE(child_surface3->HasActiveFrame());
-  EXPECT_FALSE(IsMarkedForDestruction(child_id3));
-}
-
 TEST_F(SurfaceSynchronizationTest, EvictSurface) {
   const SurfaceId child_id1 = MakeSurfaceId(kChildFrameSink1, 1, 1);
   // Child-initiated synchronization event:
@@ -3144,6 +2856,221 @@ TEST_F(SurfaceSynchronizationTest, EvictSurface) {
                                          MakeDefaultCompositorFrame());
   ASSERT_NE(nullptr, GetSurfaceForId(child_id3));
   EXPECT_FALSE(IsMarkedForDestruction(child_id3));
+}
+
+// Tests that in cases where a pending-deletion surface (surface A) is
+// activated during anothother surface (surface B)'s deletion, we don't attempt
+// to delete surface A twice.
+TEST_F(SurfaceSynchronizationTest, SurfaceActivationDuringDeletion) {
+  const SurfaceId child_id1 = MakeSurfaceId(kChildFrameSink1, 1, 1);
+  // Child-initiated synchronization event:
+  const SurfaceId child_id2 = MakeSurfaceId(kChildFrameSink1, 1, 2);
+  const SurfaceId arbitrary_id = MakeSurfaceId(kArbitraryFrameSink, 1);
+
+  // Submit a CompositorFrame to |child_id1|.
+  child_support1().SubmitCompositorFrame(child_id1.local_surface_id(),
+                                         MakeDefaultCompositorFrame());
+
+  // Child 1 should not yet be active.
+  Surface* child_surface1 = GetSurfaceForId(child_id1);
+  ASSERT_NE(nullptr, child_surface1);
+  EXPECT_FALSE(child_surface1->HasPendingFrame());
+  EXPECT_TRUE(child_surface1->HasActiveFrame());
+
+  // Submit a CompositorFrame to |child_id2|.
+  child_support1().SubmitCompositorFrame(
+      child_id2.local_surface_id(),
+      MakeCompositorFrame({arbitrary_id}, empty_surface_ranges(),
+                          std::vector<TransferableResource>()));
+
+  // Child 2 should not yet be active.
+  Surface* child_surface2 = GetSurfaceForId(child_id2);
+  ASSERT_NE(nullptr, child_surface2);
+  EXPECT_TRUE(child_surface2->HasPendingFrame());
+  EXPECT_FALSE(child_surface2->HasActiveFrame());
+
+  // Evict |child_id2|. both surfaces should be marked for deletion.
+  child_support1().EvictSurface(child_id1.local_surface_id());
+  EXPECT_TRUE(IsMarkedForDestruction(child_id1));
+  EXPECT_TRUE(IsMarkedForDestruction(child_id2));
+
+  // Garbage collect to delete the above surfaces. This will activate
+  // |child_id2|, which will cause it to attempt re-deletion.
+  ExpireAllTemporaryReferencesAndGarbageCollect();
+
+  // Neither should still be marked for deletion.
+  EXPECT_FALSE(IsMarkedForDestruction(child_id1));
+  EXPECT_FALSE(IsMarkedForDestruction(child_id2));
+}
+
+// This test verifies that if a surface is created with new embed token, a new
+// allocation group is created, and once that surface is destroyed, the
+// allocation group is destroyed as well.
+TEST_F(SurfaceSynchronizationTest,
+       AllocationGroupCreationInitiatedBySubmitter) {
+  const SurfaceId surface_id = MakeSurfaceId(kChildFrameSink1, 1, 1);
+
+  // The allocation group should not exist yet.
+  EXPECT_FALSE(surface_manager()->GetAllocationGroupForSurfaceId(surface_id));
+
+  // Submit a CompositorFrame to |child_id1|.
+  child_support1().SubmitCompositorFrame(surface_id.local_surface_id(),
+                                         MakeDefaultCompositorFrame());
+
+  // The allocation group should now exist.
+  EXPECT_TRUE(surface_manager()->GetAllocationGroupForSurfaceId(surface_id));
+
+  // Mark the surface for destruction. The allocation group should continue to
+  // exist because the surface won't be actually destroyed until garbage
+  // collection time.
+  child_support1().EvictSurface(surface_id.local_surface_id());
+  EXPECT_TRUE(surface_manager()->GetSurfaceForId(surface_id));
+  EXPECT_TRUE(surface_manager()->GetAllocationGroupForSurfaceId(surface_id));
+
+  // Now garbage-collect. Both allocation group and the surface itself will be
+  // destroyed.
+  surface_manager()->GarbageCollectSurfaces();
+  EXPECT_FALSE(surface_manager()->GetSurfaceForId(surface_id));
+  EXPECT_FALSE(surface_manager()->GetAllocationGroupForSurfaceId(surface_id));
+}
+
+// This test verifies that if a surface references another surface that has an
+// embed token that was never seen before, an allocation group will be created
+// for the embedded surface.
+TEST_F(SurfaceSynchronizationTest, AllocationGroupCreationInitiatedByEmbedder) {
+  const SurfaceId parent_id = MakeSurfaceId(kParentFrameSink, 1, 1);
+  const SurfaceId child_id = MakeSurfaceId(kChildFrameSink1, 1, 1);
+
+  // The allocation group should not exist yet.
+  EXPECT_FALSE(surface_manager()->GetAllocationGroupForSurfaceId(child_id));
+
+  // Now submit a CompositorFrame that references |child_id|. An allocation
+  // group will be created for it.
+  CompositorFrame frame =
+      MakeCompositorFrame({}, {SurfaceRange(base::nullopt, child_id)}, {});
+  parent_support().SubmitCompositorFrame(parent_id.local_surface_id(),
+                                         std::move(frame));
+  EXPECT_TRUE(surface_manager()->GetAllocationGroupForSurfaceId(child_id));
+
+  // Now the parent unembeds the child surface. The allocation group for child
+  // surface should be marked for destruction. However, it won't get actually
+  // destroyed until garbage collection time.
+  parent_support().SubmitCompositorFrame(parent_id.local_surface_id(),
+                                         MakeDefaultCompositorFrame());
+  ASSERT_TRUE(surface_manager()->GetAllocationGroupForSurfaceId(child_id));
+  EXPECT_TRUE(surface_manager()
+                  ->GetAllocationGroupForSurfaceId(child_id)
+                  ->IsReadyToDestroy());
+  EXPECT_TRUE(allocation_groups_need_garbage_collection());
+
+  // Now start garbage-collection. Note that no surface has been deleted
+  // recently, but the allocation group is ready to destroy and must be
+  // garbage-collected.
+  surface_manager()->GarbageCollectSurfaces();
+  EXPECT_FALSE(surface_manager()->GetAllocationGroupForSurfaceId(child_id));
+  EXPECT_FALSE(allocation_groups_need_garbage_collection());
+}
+
+// This test verifies that if the parent embeds a SurfaceRange that has
+// different embed tokens at start and end, then initially both allocation
+// groups are created, but once the primary becomes available, the allocation
+// group for the fallback gets destroyed.
+TEST_F(SurfaceSynchronizationTest,
+       FallbackAllocationGroupDestroyedAfterPrimaryAvailable) {
+  const SurfaceId parent_id = MakeSurfaceId(kParentFrameSink, 1, 1);
+  const SurfaceId child_id1 = MakeSurfaceId(kChildFrameSink1, 1, 1);
+  const SurfaceId child_id2 = MakeSurfaceId(kChildFrameSink2, 1, 1);
+
+  // The allocation group should not exist yet.
+  EXPECT_FALSE(surface_manager()->GetAllocationGroupForSurfaceId(child_id1));
+  EXPECT_FALSE(surface_manager()->GetAllocationGroupForSurfaceId(child_id2));
+
+  // Now submit a CompositorFrame that references |child_id2| as primary and
+  // |child_id1| as the fallback. An allocation group will be created for both
+  // of them.
+  CompositorFrame frame =
+      MakeCompositorFrame({}, {SurfaceRange(child_id1, child_id2)}, {});
+  parent_support().SubmitCompositorFrame(parent_id.local_surface_id(),
+                                         std::move(frame));
+  EXPECT_TRUE(surface_manager()->GetAllocationGroupForSurfaceId(child_id1));
+  EXPECT_TRUE(surface_manager()->GetAllocationGroupForSurfaceId(child_id2));
+
+  // Make |child_id2| available. The allocation group for |child_id1| should be
+  // marked for destruction.
+  EXPECT_FALSE(allocation_groups_need_garbage_collection());
+  child_support2().SubmitCompositorFrame(child_id2.local_surface_id(),
+                                         MakeDefaultCompositorFrame());
+  ASSERT_TRUE(surface_manager()->GetAllocationGroupForSurfaceId(child_id1));
+  EXPECT_TRUE(surface_manager()
+                  ->GetAllocationGroupForSurfaceId(child_id1)
+                  ->IsReadyToDestroy());
+  ASSERT_TRUE(surface_manager()->GetAllocationGroupForSurfaceId(child_id2));
+  EXPECT_FALSE(surface_manager()
+                   ->GetAllocationGroupForSurfaceId(child_id2)
+                   ->IsReadyToDestroy());
+  EXPECT_TRUE(allocation_groups_need_garbage_collection());
+
+  // Initiate garbage-collection. The allocation group for |child_id1| should be
+  // destroyed but the one for |child_id2| should stay alive.
+  surface_manager()->GarbageCollectSurfaces();
+  EXPECT_FALSE(surface_manager()->GetAllocationGroupForSurfaceId(child_id1));
+  EXPECT_TRUE(surface_manager()->GetAllocationGroupForSurfaceId(child_id2));
+  EXPECT_FALSE(allocation_groups_need_garbage_collection());
+}
+
+// This test verifies that if the parent embeds a SurfaceRange that has
+// different embed tokens for primary and fallback and a surface already exists
+// in the primary's allocation group, we don't create an allocation group for
+// the fallback at all.
+TEST_F(SurfaceSynchronizationTest,
+       FallbackAllocationGroupNotCreatedIfPrimaryAvailable) {
+  const SurfaceId parent_id = MakeSurfaceId(kParentFrameSink, 1, 1);
+  const SurfaceId child_id1 = MakeSurfaceId(kChildFrameSink1, 1, 1);
+  const SurfaceId child_id2 = MakeSurfaceId(kChildFrameSink2, 1, 1);
+
+  // The allocation group should not exist yet.
+  EXPECT_FALSE(surface_manager()->GetAllocationGroupForSurfaceId(child_id1));
+  EXPECT_FALSE(surface_manager()->GetAllocationGroupForSurfaceId(child_id2));
+
+  // Make |child_id2| available. An allocation group should be created for it.
+  child_support2().SubmitCompositorFrame(child_id2.local_surface_id(),
+                                         MakeDefaultCompositorFrame());
+  EXPECT_FALSE(surface_manager()->GetAllocationGroupForSurfaceId(child_id1));
+  EXPECT_TRUE(surface_manager()->GetAllocationGroupForSurfaceId(child_id2));
+
+  // Now submit a CompositorFrame that references |child_id2| as primary and
+  // |child_id1| as the fallback. An allocation group should not be created for
+  // the fallback because if the primary is available, we don't need the
+  // fallback.
+  CompositorFrame frame =
+      MakeCompositorFrame({}, {SurfaceRange(child_id1, child_id2)}, {});
+  parent_support().SubmitCompositorFrame(parent_id.local_surface_id(),
+                                         std::move(frame));
+  EXPECT_FALSE(surface_manager()->GetAllocationGroupForSurfaceId(child_id1));
+  EXPECT_TRUE(surface_manager()->GetAllocationGroupForSurfaceId(child_id2));
+}
+
+// Verifies that the value of last active surface is correct after embed token
+// changes. https://crbug.com/967012
+TEST_F(SurfaceSynchronizationTest,
+       CheckLastActiveSurfaceAfterEmbedTokenChange) {
+  const SurfaceId parent_id1 = MakeSurfaceId(kParentFrameSink, 2);
+  const SurfaceId parent_id2(
+      kParentFrameSink, LocalSurfaceId(1, base::UnguessableToken::Create()));
+  parent_support().SubmitCompositorFrame(parent_id1.local_surface_id(),
+                                         MakeDefaultCompositorFrame());
+  Surface* parent_surface1 = GetSurfaceForId(parent_id1);
+  EXPECT_TRUE(parent_surface1->HasActiveFrame());
+  EXPECT_FALSE(parent_surface1->HasPendingFrame());
+  parent_support().SubmitCompositorFrame(parent_id2.local_surface_id(),
+                                         MakeDefaultCompositorFrame());
+  Surface* parent_surface2 = GetSurfaceForId(parent_id2);
+  EXPECT_TRUE(parent_surface2->HasActiveFrame());
+  EXPECT_FALSE(parent_surface2->HasPendingFrame());
+
+  // Even though |parent_id1| has a larger sequence number, the value of
+  // |last_activated_surface_id| should be |parent_id2|.
+  EXPECT_EQ(parent_id2, parent_support().last_activated_surface_id());
 }
 
 // If a parent CompositorFrame is blocked on the child, don't throttle child's

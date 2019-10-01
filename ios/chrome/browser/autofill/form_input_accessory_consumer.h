@@ -7,6 +7,8 @@
 
 #import <Foundation/Foundation.h>
 
+#import "ios/chrome/browser/ui/util/keyboard_observer_helper.h"
+
 @class FormSuggestion;
 @protocol FormInputAccessoryViewDelegate;
 @protocol FormSuggestionClient;
@@ -57,10 +59,11 @@
 
 // Replace the keyboard accessory view with one showing the passed suggestions.
 // And form navigation buttons if not an iPad (which already includes those).
-// |isHardwareKeyboard| is true if a hardware keyboard is in use.
 - (void)showAccessorySuggestions:(NSArray<FormSuggestion*>*)suggestions
-                suggestionClient:(id<FormSuggestionClient>)suggestionClient
-              isHardwareKeyboard:(BOOL)hardwareKeyboard;
+                suggestionClient:(id<FormSuggestionClient>)suggestionClient;
+
+// Indicates that the keyboard state changed.
+- (void)keyboardWillChangeToState:(KeyboardState)keyboardState;
 
 @end
 

@@ -38,7 +38,6 @@
 #include "content/shell/browser/shell_browser_context.h"
 #include "content/shell/browser/shell_browser_main_parts.h"
 #include "content/shell/browser/shell_devtools_manager_delegate.h"
-#include "content/shell/browser/shell_net_log.h"
 #include "content/shell/browser/shell_quota_permission_context.h"
 #include "content/shell/browser/shell_url_request_context_getter.h"
 #include "content/shell/browser/shell_web_contents_view_delegate_creator.h"
@@ -58,8 +57,6 @@
 #include "services/network/public/mojom/network_service.mojom.h"
 #include "services/service_manager/public/cpp/manifest.h"
 #include "services/service_manager/public/cpp/manifest_builder.h"
-#include "services/test/echo/public/cpp/manifest.h"
-#include "services/test/echo/public/mojom/echo.mojom.h"
 #include "storage/browser/quota/quota_settings.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/user_agent/user_agent_metadata.h"
@@ -76,9 +73,7 @@
 #endif
 
 #if defined(OS_CHROMEOS)
-// TODO(https://crbug.com/784179): Remove nogncheck.
 #include "content/public/browser/context_factory.h"
-#include "content/public/browser/gpu_interface_provider_factory.h"
 #endif
 
 #if defined(OS_LINUX) || defined(OS_ANDROID)
@@ -165,7 +160,6 @@ const service_manager::Manifest& GetContentBrowserOverlayManifest() {
                   mojom::FakeBluetoothChooserFactory,
                   mojom::WebTestBluetoothFakeAdapterSetter,
                   bluetooth::mojom::FakeBluetooth>())
-          .RequireCapability(echo::mojom::kServiceName, "echo")
           .ExposeInterfaceFilterCapability_Deprecated(
               "navigation:frame", "renderer",
               service_manager::Manifest::InterfaceList<
@@ -412,13 +406,14 @@ ShellContentBrowserClient::GetGeneratedCodeCacheSettings(
   return GeneratedCodeCacheSettings(true, 0, context->GetPath());
 }
 
-void ShellContentBrowserClient::SelectClientCertificate(
+base::OnceClosure ShellContentBrowserClient::SelectClientCertificate(
     WebContents* web_contents,
     net::SSLCertRequestInfo* cert_request_info,
     net::ClientCertIdentityList client_certs,
     std::unique_ptr<ClientCertificateDelegate> delegate) {
   if (select_client_certificate_callback_)
     std::move(select_client_certificate_callback_).Run();
+  return base::OnceClosure();
 }
 
 SpeechRecognitionManagerDelegate*
@@ -426,8 +421,15 @@ SpeechRecognitionManagerDelegate*
   return new ShellSpeechRecognitionManagerDelegate();
 }
 
-net::NetLog* ShellContentBrowserClient::GetNetLog() {
-  return shell_browser_main_parts_->net_log();
+void ShellContentBrowserClient::OverrideWebkitPrefs(
+    RenderViewHost* render_view_host,
+    WebPreferences* prefs) {
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kForceDarkMode)) {
+    prefs->preferred_color_scheme = blink::PreferredColorScheme::kDark;
+  } else {
+    prefs->preferred_color_scheme = blink::PreferredColorScheme::kLight;
+  }
 }
 
 void ShellContentBrowserClient::OverrideWebkitPrefs(
@@ -466,18 +468,16 @@ std::unique_ptr<LoginDelegate> ShellContentBrowserClient::CreateLoginDelegate(
     bool first_auth_attempt,
     LoginAuthRequiredCallback auth_required_callback) {
   if (!login_request_callback_.is_null()) {
-    std::move(login_request_callback_).Run();
+    std::move(login_request_callback_).Run(is_main_frame);
   }
-
   return nullptr;
 }
 
-std::string ShellContentBrowserClient::GetUserAgent() const {
+std::string ShellContentBrowserClient::GetUserAgent() {
   return GetShellUserAgent();
 }
 
-blink::UserAgentMetadata ShellContentBrowserClient::GetUserAgentMetadata()
-    const {
+blink::UserAgentMetadata ShellContentBrowserClient::GetUserAgentMetadata() {
   return GetShellUserAgentMetadata();
 }
 

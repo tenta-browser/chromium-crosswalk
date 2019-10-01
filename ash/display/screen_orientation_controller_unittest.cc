@@ -23,11 +23,11 @@
 #include "ash/test/ash_test_helper.h"
 #include "ash/test_shell_delegate.h"
 #include "ash/window_factory.h"
+#include "ash/wm/splitview/split_view_controller.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "ash/wm/window_state.h"
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/test/scoped_feature_list.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/window.h"
 #include "ui/compositor/layer_type.h"
@@ -53,7 +53,7 @@ display::ManagedDisplayInfo CreateDisplayInfo(int64_t id,
 }
 
 void EnableTabletMode(bool enable) {
-  Shell::Get()->tablet_mode_controller()->EnableTabletModeWindowManager(enable);
+  Shell::Get()->tablet_mode_controller()->SetEnabledForTest(enable);
 }
 
 bool RotationLocked() {
@@ -329,6 +329,30 @@ TEST_F(ScreenOrientationControllerTest, WindowDestructionRemovesLock) {
 
   activation_client->ActivateWindow(focus_window1.get());
   EXPECT_FALSE(RotationLocked());
+}
+
+TEST_F(ScreenOrientationControllerTest, SplitViewPreventsLock) {
+  EnableTabletMode(true);
+
+  std::unique_ptr<aura::Window> child_window1 = CreateControlWindow();
+  std::unique_ptr<aura::Window> child_window2 = CreateControlWindow();
+  std::unique_ptr<aura::Window> focus_window1(CreateAppWindowInShellWithId(0));
+  std::unique_ptr<aura::Window> focus_window2(CreateAppWindowInShellWithId(1));
+
+  AddWindowAndActivateParent(child_window1.get(), focus_window1.get());
+  AddWindowAndShow(child_window2.get(), focus_window2.get());
+  Lock(child_window1.get(), OrientationLockType::kLandscape);
+  Lock(child_window2.get(), OrientationLockType::kPortrait);
+  ASSERT_TRUE(RotationLocked());
+
+  Shell::Get()->split_view_controller()->SnapWindow(focus_window1.get(),
+                                                    SplitViewController::LEFT);
+  Shell::Get()->split_view_controller()->SnapWindow(focus_window1.get(),
+                                                    SplitViewController::RIGHT);
+  EXPECT_FALSE(RotationLocked());
+
+  Shell::Get()->split_view_controller()->EndSplitView();
+  EXPECT_TRUE(RotationLocked());
 }
 
 // Tests that accelerometer readings in each of the screen angles will trigger a

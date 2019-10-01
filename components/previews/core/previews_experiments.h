@@ -15,6 +15,8 @@
 
 namespace previews {
 
+// Types of previews. This enum must remain synchronized with the enum
+// |PreviewsType| in tools/metrics/histograms/enums.xml.
 enum class PreviewsType {
   // Used to indicate that there is no preview type.
   NONE = 0,
@@ -22,8 +24,8 @@ enum class PreviewsType {
   // The user is shown an offline page as a preview.
   OFFLINE = 1,
 
-  // Replace images with placeholders.
-  LOFI = 2,
+  // Replace images with placeholders. Deprecated, and should not be used.
+  DEPRECATED_LOFI = 2,
 
   // The user is shown a server lite page.
   LITE_PAGE = 3,
@@ -147,6 +149,12 @@ int LitePageRedirectPreviewMaxServerBlacklistByteSize();
 // a navigation.
 size_t LitePageRedirectPreviewMaxNavigationRestarts();
 
+// Whether we should preresolve the lite page redirect server.
+bool LitePageRedirectPreviewShouldPresolve();
+
+// The duration in between preresolving the lite page redirect server.
+base::TimeDelta LitePageRedirectPreviewPresolveInterval();
+
 // The maximum number of seconds to loadshed the Previews server for.
 int PreviewServerLoadshedMaxSeconds();
 
@@ -170,7 +178,6 @@ bool ArePreviewsAllowed();
 
 // Whether the preview type is enabled.
 bool IsOfflinePreviewsEnabled();
-bool IsClientLoFiEnabled();
 bool IsNoScriptPreviewsEnabled();
 bool IsResourceLoadingHintsEnabled();
 bool IsLitePageServerPreviewsEnabled();
@@ -178,17 +185,10 @@ bool IsDeferAllScriptPreviewsEnabled();
 
 // The blacklist version for each preview type.
 int OfflinePreviewsVersion();
-int ClientLoFiVersion();
 int LitePageServerPreviewsVersion();
 int NoScriptPreviewsVersion();
 int ResourceLoadingHintsVersion();
 int DeferAllScriptPreviewsVersion();
-
-// The maximum number of page hints that should be loaded to memory.
-size_t GetMaxPageHintsInMemoryThreshhold();
-
-// Whether server optimization hints are enabled.
-bool IsOptimizationHintsEnabled();
 
 // Returns true if the feature to fetch hints from the remote Optimization Guide
 // Service is enabled.
@@ -223,6 +223,10 @@ bool ShouldOverrideNavigationCoinFlipToAllowed();
 
 // Returns true if the given url matches an excluded media suffix.
 bool ShouldExcludeMediaSuffix(const GURL& url);
+
+// Returns true if the logic to detect redirect loops with defer all script
+// preview using a cache is enabled.
+bool DetectDeferRedirectLoopsUsingCache();
 
 }  // namespace params
 

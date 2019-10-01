@@ -58,7 +58,6 @@ class Me2MeHostAuthenticatorFactory : public AuthenticatorFactory {
  private:
   // Used for all host authenticators.
   bool use_service_account_;
-  std::string host_owner_;
   std::string canonical_host_owner_email_;
   std::string local_cert_;
   scoped_refptr<RsaKeyPair> key_pair_;

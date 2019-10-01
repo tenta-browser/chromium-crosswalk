@@ -20,7 +20,10 @@ declare_args() {
 
 shared_library("chromium_android_linker") {
   sources = [
+    "legacy_linker_jni.cc",
+    "legacy_linker_jni.h",
     "linker_jni.cc",
+    "linker_jni.h",
   ]
 
   # Disable GDB support for release builds, unless explicitly wanted.

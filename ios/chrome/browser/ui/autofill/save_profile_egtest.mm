@@ -57,10 +57,8 @@ const char kProfileForm[] =
 #pragma mark - Page interaction helper methods
 
 - (void)fillAndSubmitForm {
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey tapWebStateElementWithID:@"fill_profile_president"]);
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey tapWebStateElementWithID:@"submit_profile"]);
+  [ChromeEarlGrey tapWebStateElementWithID:@"fill_profile_president"];
+  [ChromeEarlGrey tapWebStateElementWithID:@"submit_profile"];
 }
 
 #pragma mark - Tests

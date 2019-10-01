@@ -156,8 +156,8 @@ LocalFrame* EmptyLocalFrameClient::CreateFrame(const AtomicString&,
 std::pair<RemoteFrame*, base::UnguessableToken>
 EmptyLocalFrameClient::CreatePortal(
     HTMLPortalElement*,
-    mojom::blink::PortalAssociatedRequest,
-    mojom::blink::PortalClientAssociatedPtrInfo) {
+    mojo::PendingAssociatedReceiver<mojom::blink::Portal>,
+    mojo::PendingAssociatedRemote<mojom::blink::PortalClient>) {
   return std::pair<RemoteFrame*, base::UnguessableToken>(
       nullptr, base::UnguessableToken());
 }
@@ -204,13 +204,6 @@ Frame* EmptyLocalFrameClient::FindFrame(const AtomicString& name) const {
 
 std::unique_ptr<WebServiceWorkerProvider>
 EmptyLocalFrameClient::CreateServiceWorkerProvider() {
-  return nullptr;
-}
-
-std::unique_ptr<WebApplicationCacheHost>
-EmptyLocalFrameClient::CreateApplicationCacheHost(
-    DocumentLoader*,
-    WebApplicationCacheHostClient*) {
   return nullptr;
 }
 

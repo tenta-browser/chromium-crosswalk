@@ -22,10 +22,8 @@
 
 // Verifies Internet connectivity by navigating to browsingtest.appspot.com.
 - (void)testNetworkConnection {
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey loadURL:GURL("http://browsingtest.appspot.com")]);
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:"Window1"]);
+  [ChromeEarlGrey loadURL:GURL("http://browsingtest.appspot.com")];
+  [ChromeEarlGrey waitForWebStateContainingText:"Window1"];
 }
 
 @end

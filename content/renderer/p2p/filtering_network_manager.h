@@ -124,9 +124,7 @@ class FilteringNetworkManager : public rtc::NetworkManagerBase,
 
   GURL requesting_origin_;
 
-  OnEnumerationPermissionCallback on_enumeration_permission_cb_;
-
-  base::WeakPtrFactory<FilteringNetworkManager> weak_ptr_factory_;
+  base::WeakPtrFactory<FilteringNetworkManager> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(FilteringNetworkManager);
 };

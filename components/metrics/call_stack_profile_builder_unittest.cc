@@ -436,8 +436,8 @@ TEST(CallStackProfileBuilderTest, WorkIds) {
 
 TEST(CallStackProfileBuilderTest, MetadataRecorder_NoItems) {
   base::MetadataRecorder metadata_recorder;
-  auto profile_builder = std::make_unique<TestingCallStackProfileBuilder>(
-      kProfileParams, nullptr, &metadata_recorder);
+  auto profile_builder =
+      std::make_unique<TestingCallStackProfileBuilder>(kProfileParams, nullptr);
 
   TestModule module;
   base::Frame frame = {0x10, &module};
@@ -460,16 +460,22 @@ TEST(CallStackProfileBuilderTest, MetadataRecorder_NoItems) {
 
 TEST(CallStackProfileBuilderTest, MetadataRecorder_RepeatItem) {
   base::MetadataRecorder metadata_recorder;
-  auto profile_builder = std::make_unique<TestingCallStackProfileBuilder>(
-      kProfileParams, nullptr, &metadata_recorder);
+  auto profile_builder =
+      std::make_unique<TestingCallStackProfileBuilder>(kProfileParams, nullptr);
 
   TestModule module;
   base::Frame frame = {0x10, &module};
 
   metadata_recorder.Set(100, 10);
-  profile_builder->RecordMetadata();
+  {
+    auto get_items = metadata_recorder.CreateMetadataProvider();
+    profile_builder->RecordMetadata(get_items.get());
+  }
   profile_builder->OnSampleCompleted({frame});
-  profile_builder->RecordMetadata();
+  {
+    auto get_items = metadata_recorder.CreateMetadataProvider();
+    profile_builder->RecordMetadata(get_items.get());
+  }
   profile_builder->OnSampleCompleted({frame});
 
   profile_builder->OnProfileCompleted(base::TimeDelta::FromMilliseconds(500),
@@ -496,17 +502,23 @@ TEST(CallStackProfileBuilderTest, MetadataRecorder_RepeatItem) {
 
 TEST(CallStackProfileBuilderTest, MetadataRecorder_ModifiedItem) {
   base::MetadataRecorder metadata_recorder;
-  auto profile_builder = std::make_unique<TestingCallStackProfileBuilder>(
-      kProfileParams, nullptr, &metadata_recorder);
+  auto profile_builder =
+      std::make_unique<TestingCallStackProfileBuilder>(kProfileParams, nullptr);
 
   TestModule module;
   base::Frame frame = {0x10, &module};
 
   metadata_recorder.Set(100, 10);
-  profile_builder->RecordMetadata();
+  {
+    auto get_items = metadata_recorder.CreateMetadataProvider();
+    profile_builder->RecordMetadata(get_items.get());
+  }
   profile_builder->OnSampleCompleted({frame});
   metadata_recorder.Set(100, 11);
-  profile_builder->RecordMetadata();
+  {
+    auto get_items = metadata_recorder.CreateMetadataProvider();
+    profile_builder->RecordMetadata(get_items.get());
+  }
   profile_builder->OnSampleCompleted({frame});
 
   profile_builder->OnProfileCompleted(base::TimeDelta::FromMilliseconds(500),
@@ -536,19 +548,25 @@ TEST(CallStackProfileBuilderTest, MetadataRecorder_ModifiedItem) {
 
 TEST(CallStackProfileBuilderTest, MetadataRecorder_NewItem) {
   base::MetadataRecorder metadata_recorder;
-  auto profile_builder = std::make_unique<TestingCallStackProfileBuilder>(
-      kProfileParams, nullptr, &metadata_recorder);
+  auto profile_builder =
+      std::make_unique<TestingCallStackProfileBuilder>(kProfileParams, nullptr);
 
   TestModule module;
   base::Frame frame = {0x10, &module};
 
   metadata_recorder.Set(100, 10);
-  profile_builder->RecordMetadata();
+  {
+    auto get_items = metadata_recorder.CreateMetadataProvider();
+    profile_builder->RecordMetadata(get_items.get());
+  }
   profile_builder->OnSampleCompleted({frame});
 
   metadata_recorder.Set(100, 11);
   metadata_recorder.Set(200, 20);
-  profile_builder->RecordMetadata();
+  {
+    auto get_items = metadata_recorder.CreateMetadataProvider();
+    profile_builder->RecordMetadata(get_items.get());
+  }
   profile_builder->OnSampleCompleted({frame});
 
   profile_builder->OnProfileCompleted(base::TimeDelta::FromMilliseconds(500),
@@ -582,17 +600,23 @@ TEST(CallStackProfileBuilderTest, MetadataRecorder_NewItem) {
 
 TEST(CallStackProfileBuilderTest, MetadataRecorder_RemovedItem) {
   base::MetadataRecorder metadata_recorder;
-  auto profile_builder = std::make_unique<TestingCallStackProfileBuilder>(
-      kProfileParams, nullptr, &metadata_recorder);
+  auto profile_builder =
+      std::make_unique<TestingCallStackProfileBuilder>(kProfileParams, nullptr);
 
   TestModule module;
   base::Frame frame = {0x10, &module};
 
   metadata_recorder.Set(100, 10);
-  profile_builder->RecordMetadata();
+  {
+    auto get_items = metadata_recorder.CreateMetadataProvider();
+    profile_builder->RecordMetadata(get_items.get());
+  }
   profile_builder->OnSampleCompleted({frame});
   metadata_recorder.Remove(100);
-  profile_builder->RecordMetadata();
+  {
+    auto get_items = metadata_recorder.CreateMetadataProvider();
+    profile_builder->RecordMetadata(get_items.get());
+  }
   profile_builder->OnSampleCompleted({frame});
 
   profile_builder->OnProfileCompleted(base::TimeDelta::FromMilliseconds(500),

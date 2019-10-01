@@ -111,7 +111,8 @@ class WorkerFetchContext final : public BaseFetchContext {
   // WorkerGlobalScope and owned by this WorkerFetchContext.
   const Member<ContentSecurityPolicy> content_security_policy_;
 
-  CrossThreadPersistent<WorkerResourceTimingNotifier> resource_timing_notifier_;
+  const CrossThreadPersistent<WorkerResourceTimingNotifier>
+      resource_timing_notifier_;
 
   // The value of |save_data_enabled_| is read once per frame from
   // NetworkStateNotifier, which is guarded by a mutex lock, and cached locally

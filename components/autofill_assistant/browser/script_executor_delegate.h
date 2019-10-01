@@ -10,15 +10,13 @@
 #include <string>
 #include <vector>
 
-#include "components/autofill_assistant/browser/chip.h"
 #include "components/autofill_assistant/browser/details.h"
 #include "components/autofill_assistant/browser/info_box.h"
 #include "components/autofill_assistant/browser/payment_request.h"
 #include "components/autofill_assistant/browser/state.h"
+#include "components/autofill_assistant/browser/user_action.h"
+#include "components/autofill_assistant/browser/viewport_mode.h"
 #include "url/gurl.h"
-
-#include "components/autofill_assistant/browser/details.h"
-#include "components/autofill_assistant/browser/state.h"
 
 namespace autofill {
 class PersonalDataManager;
@@ -31,11 +29,10 @@ class WebContents;
 namespace autofill_assistant {
 
 class Service;
-class UiController;
 class WebController;
 class ClientMemory;
 struct ClientSettings;
-struct TriggerContext;
+class TriggerContext;
 
 class ScriptExecutorDelegate {
  public:
@@ -50,7 +47,6 @@ class ScriptExecutorDelegate {
   virtual const GURL& GetCurrentURL() = 0;
   virtual const GURL& GetDeeplinkURL() = 0;
   virtual Service* GetService() = 0;
-  virtual UiController* GetUiController() = 0;
   virtual WebController* GetWebController() = 0;
   virtual ClientMemory* GetClientMemory() = 0;
   virtual const TriggerContext* GetTriggerContext() = 0;
@@ -58,13 +54,13 @@ class ScriptExecutorDelegate {
   virtual content::WebContents* GetWebContents() = 0;
   virtual void EnterState(AutofillAssistantState state) = 0;
 
-  virtual void EnterState(AutofillAssistantState state) = 0;
-
   // Make the area of the screen that correspond to the given elements
   // touchable.
   virtual void SetTouchableElementArea(const ElementAreaProto& element) = 0;
   virtual void SetStatusMessage(const std::string& message) = 0;
   virtual std::string GetStatusMessage() const = 0;
+  virtual void SetBubbleMessage(const std::string& message) = 0;
+  virtual std::string GetBubbleMessage() const = 0;
   virtual void SetDetails(std::unique_ptr<Details> details) = 0;
   virtual void SetInfoBox(const InfoBox& info_box) = 0;
   virtual void ClearInfoBox() = 0;
@@ -72,9 +68,10 @@ class ScriptExecutorDelegate {
       std::unique_ptr<PaymentRequestOptions> options) = 0;
   virtual void SetProgress(int progress) = 0;
   virtual void SetProgressVisible(bool visible) = 0;
-  virtual void SetChips(std::unique_ptr<std::vector<Chip>> chips) = 0;
-  virtual bool GetResizeViewport() = 0;
-  virtual void SetResizeViewport(bool resize_viewport) = 0;
+  virtual void SetUserActions(
+      std::unique_ptr<std::vector<UserAction>> user_action) = 0;
+  virtual ViewportMode GetViewportMode() = 0;
+  virtual void SetViewportMode(ViewportMode mode) = 0;
   virtual void SetPeekMode(ConfigureBottomSheetProto::PeekMode peek_mode) = 0;
   virtual ConfigureBottomSheetProto::PeekMode GetPeekMode() = 0;
   virtual bool SetForm(
@@ -108,6 +105,11 @@ class ScriptExecutorDelegate {
   //
   // Changes to this value is reported to Listener::OnNavigationStateChanged()
   virtual bool HasNavigationError() = 0;
+
+  // Force showing the UI, if necessary. This is useful when executing a direct
+  // action which realizes it needs to interact with the user. The UI stays up
+  // until the end of the flow.
+  virtual void RequireUI() = 0;
 
   // Register a listener that can be told about changes. Duplicate calls are
   // ignored.

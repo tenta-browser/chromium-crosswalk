@@ -19,7 +19,7 @@ Animator::Animator(v8::Isolate* isolate,
                    v8::Local<v8::Value> instance,
                    const String& name,
                    WorkletAnimationOptions options,
-                   const std::vector<base::Optional<TimeDelta>>& local_times,
+                   const Vector<base::Optional<base::TimeDelta>>& local_times,
                    const Vector<Timing>& timings)
     : definition_(definition),
       instance_(isolate, instance),
@@ -63,17 +63,38 @@ bool Animator::Animate(
     return false;
   }
 
-  output->local_times = GetLocalTimes();
+  GetLocalTimes(output->local_times);
   return true;
 }
 
-std::vector<base::Optional<TimeDelta>> Animator::GetLocalTimes() const {
-  std::vector<base::Optional<TimeDelta>> local_times;
-  local_times.reserve(group_effect_->getChildren().size());
+Vector<Timing> Animator::GetTimings() const {
+  Vector<Timing> timings;
+  timings.ReserveInitialCapacity(group_effect_->getChildren().size());
   for (const auto& effect : group_effect_->getChildren()) {
-    local_times.push_back(effect->local_time());
+    timings.push_back(effect->SpecifiedTiming());
   }
-  return local_times;
+  return timings;
+}
+
+bool Animator::IsStateful() const {
+  return definition_->IsStateful();
+}
+
+v8::Local<v8::Value> Animator::State(v8::Isolate* isolate,
+                                     ExceptionState& exception_state) {
+  if (!IsStateful())
+    return v8::Undefined(isolate);
+
+  v8::Local<v8::Value> instance = instance_.NewLocal(isolate);
+  DCHECK(!IsUndefinedOrNull(instance));
+
+  v8::TryCatch try_catch(isolate);
+  v8::Maybe<ScriptValue> state = definition_->StateFunction()->Invoke(instance);
+  if (try_catch.HasCaught()) {
+    exception_state.RethrowV8Exception(try_catch.Exception());
+    return v8::Undefined(isolate);
+  }
+  return state.ToChecked().V8Value();
 }
 
 Vector<Timing> Animator::GetTimings() const {

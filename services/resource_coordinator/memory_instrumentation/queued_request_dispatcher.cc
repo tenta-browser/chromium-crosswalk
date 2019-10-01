@@ -5,8 +5,8 @@
 #include "services/resource_coordinator/memory_instrumentation/queued_request_dispatcher.h"
 
 #include <inttypes.h>
+#include <utility>
 
-#include "base/android/library_loader/anchor_functions_buildflags.h"
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/format_macros.h"
@@ -17,8 +17,10 @@
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
+#include "services/resource_coordinator/memory_instrumentation/aggregate_metrics_processor.h"
 #include "services/resource_coordinator/memory_instrumentation/graph_processor.h"
 #include "services/resource_coordinator/memory_instrumentation/switches.h"
+#include "services/resource_coordinator/public/cpp/memory_instrumentation/global_memory_dump.h"
 
 #if defined(OS_MACOSX) && !defined(OS_IOS)
 #include "base/mac/mac_util.h"
@@ -630,6 +632,8 @@ void QueuedRequestDispatcher::Finalize(QueuedRequest* request,
 
     global_dump->process_dumps.push_back(std::move(pmd));
   }
+  global_dump->aggregated_metrics =
+      ComputeGlobalNativeCodeResidentMemoryKb(pid_to_os_dump);
 
 #if BUILDFLAG(SUPPORTS_CODE_ORDERING)
   size_t native_resident_kb =

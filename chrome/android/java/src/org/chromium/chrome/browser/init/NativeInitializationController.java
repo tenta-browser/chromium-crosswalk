@@ -106,12 +106,8 @@ class NativeInitializationController {
             assert !mHasSignaledLibraryLoaded;
             mHasSignaledLibraryLoaded = true;
 
-            // Allow the UI thread to continue its initialization - so that this call back
-            // doesn't block priority work on the UI thread until it's idle.
-            PostTask.postTask(UiThreadTaskTraits.DEFAULT, () -> {
-                if (mActivityDelegate.isActivityFinishingOrDestroyed()) return;
-                mActivityDelegate.onCreateWithNative();
-            });
+            if (mActivityDelegate.isActivityFinishingOrDestroyed()) return;
+            mActivityDelegate.onCreateWithNative();
         }
     }
 
@@ -141,7 +137,7 @@ class NativeInitializationController {
             onResume();
         }
 
-        LibraryLoader.getInstance().onNativeInitializationComplete();
+        LibraryLoader.getInstance().onBrowserNativeInitializationComplete();
     }
 
     /**

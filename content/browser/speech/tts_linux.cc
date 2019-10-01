@@ -97,7 +97,7 @@ class TtsPlatformImplLinux : public TtsPlatformImpl {
 
   friend struct base::DefaultSingletonTraits<TtsPlatformImplLinux>;
 
-  base::WeakPtrFactory<TtsPlatformImplLinux> weak_factory_;
+  base::WeakPtrFactory<TtsPlatformImplLinux> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(TtsPlatformImplLinux);
 };

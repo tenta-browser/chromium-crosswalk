@@ -45,14 +45,13 @@ class FakePlatformWindow : public ui::PlatformWindow, public ui::WmDragHandler {
   void Minimize() override {}
   void Restore() override {}
   ui::PlatformWindowState GetPlatformWindowState() const override {
-    return ui::PlatformWindowState::PLATFORM_WINDOW_STATE_NORMAL;
+    return ui::PlatformWindowState::kNormal;
   }
+  void Activate() override {}
+  void Deactivate() override {}
   void SetCursor(ui::PlatformCursor cursor) override {}
   void MoveCursorTo(const gfx::Point& location) override {}
   void ConfineCursorToBounds(const gfx::Rect& bounds) override {}
-  ui::PlatformImeController* GetPlatformImeController() override {
-    return nullptr;
-  }
   void SetRestoredBoundsInPixels(const gfx::Rect& bounds) override {}
   gfx::Rect GetRestoredBoundsInPixels() const override { return gfx::Rect(); }
 
@@ -111,6 +110,54 @@ class FakePlatformWindow : public ui::PlatformWindow, public ui::WmDragHandler {
     OnDragLeave();
     CloseDrag(updated_operation);
   }
+
+  void OnDragDrop(std::unique_ptr<OSExchangeData> data) {
+    ui::WmDropHandler* drop_handler = ui::GetWmDropHandler(*this);
+    if (!drop_handler)
+      return;
+    drop_handler->OnDragDrop(std::move(data));
+  }
+
+  void OnDragLeave() {
+    ui::WmDropHandler* drop_handler = ui::GetWmDropHandler(*this);
+    if (!drop_handler)
+      return;
+    drop_handler->OnDragLeave();
+  }
+
+  void CloseDrag(uint32_t dnd_action) {
+    std::move(drag_closed_callback_).Run(dnd_action);
+  }
+
+  void ProcessDrag(std::unique_ptr<OSExchangeData> data, int operation) {
+    OnDragEnter(gfx::PointF(), std::move(data), operation);
+    int updated_operation = OnDragMotion(gfx::PointF(), operation);
+    OnDragDrop(nullptr);
+    OnDragLeave();
+    CloseDrag(updated_operation);
+  }
+
+ private:
+  base::OnceCallback<void(int)> drag_closed_callback_;
+  std::unique_ptr<ui::OSExchangeData> source_data_;
+
+  DISALLOW_COPY_AND_ASSIGN(FakePlatformWindow);
+};
+
+// DragDropDelegate which counts the number of each type of drag-drop event.
+class FakeDragDropDelegate : public aura::client::DragDropDelegate {
+ public:
+  FakeDragDropDelegate()
+      : num_enters_(0), num_updates_(0), num_exits_(0), num_drops_(0) {}
+  ~FakeDragDropDelegate() override = default;
+
+  int num_enters() const { return num_enters_; }
+  int num_updates() const { return num_updates_; }
+  int num_exits() const { return num_exits_; }
+  int num_drops() const { return num_drops_; }
+  ui::OSExchangeData* received_data() const { return received_data_.get(); }
+
+  void SetOperation(int operation) { destination_operation_ = operation; }
 
  private:
   base::OnceCallback<void(int)> drag_closed_callback_;

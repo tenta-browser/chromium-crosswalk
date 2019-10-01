@@ -27,7 +27,7 @@
 namespace {
 const int kTestConnectionId = 42;
 const int kInitialConnectTimeoutMs = 250;
-const int kConnectionTimeoutErrorDeltaMs = 100;
+const int kConnectionTimeoutErrorDeltaMs = 250;
 const int kLargeResponseTimeoutMs = 500;
 const int kLargeMessageSizeBytes = 256 * 1024;
 }  // namespace
@@ -465,8 +465,7 @@ TEST_F(SecurityKeyIpcServerTest, CleanupPendingConnection) {
   // exists. Creating the servers in a loop below will flakily fail because the
   // channel shutdown is a series of asynchronous tasks posted on the IO
   // thread, and there is not a way to synchronize it with the test main thread.
-  if (base::FeatureList::IsEnabled(mojo::features::kMojoChannelMac))
-    return;
+  return;
 #endif  // defined(OS_MACOSX)
 
   // Test that servers correctly close pending OS connections on

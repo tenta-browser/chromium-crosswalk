@@ -93,28 +93,16 @@ class CONTENT_EXPORT BrowserThread {
         ->ReleaseSoon(from_here, std::move(object));
   }
 
-  // For use with scheduling non-critical tasks for execution after startup.
-  // The order or execution of tasks posted here is unspecified even when
-  // posting to a SequencedTaskRunner and tasks are not guaranteed to be run
-  // prior to browser shutdown.
-  // When called after the browser startup is complete, will post |task|
-  // to |task_runner| immediately.
-  // Note: see related ContentBrowserClient::PostAfterStartupTask.
+  // Posts a |task| to run at BEST_EFFORT priority using an arbitrary
+  // |task_runner| for which we do not control the priority
   //
-  // TODO(crbug.com/887407): Replace callsites with PostTaskWithTraits and
-  // appropriate traits (TBD).
-  //
-  // DEPRECATED(carlscab): This method is deprecated and will go away soon,
-  // consider posting the task with priority BEST_EFFORT. For example:
-  // base::PostTaskWithTraits(
-  //   FROM_HERE, {content::BrowserThread::UI, base::TaskPriority::BEST_EFFORT},
-  //   base::BindOnce(...));
-  // Or if you need to run in a special TaskRunner by using the
-  // PostBestEffortTask function below
-  static void PostAfterStartupTask(
-      const base::Location& from_here,
-      const scoped_refptr<base::TaskRunner>& task_runner,
-      base::OnceClosure task);
+  // This is useful when a task needs to run on |task_runner| (for thread-safety
+  // reasons) but should be delayed until after critical phases (e.g. startup).
+  // TODO(crbug.com/793069): Add support for sequence-funneling and remove this
+  // method.
+  static void PostBestEffortTask(const base::Location& from_here,
+                                 scoped_refptr<base::TaskRunner> task_runner,
+                                 base::OnceClosure task);
 
   // Posts a |task| to run at BEST_EFFORT priority using an arbitrary
   // |task_runner| for which we do not control the priority

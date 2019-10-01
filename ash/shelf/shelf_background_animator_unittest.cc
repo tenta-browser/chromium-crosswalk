@@ -327,39 +327,4 @@ TEST_F(ShelfBackgroundTargetColorTest, ShelfBackgroundColorUpdatedFromOOBE) {
             SkColorSetA(kShelfDefaultBaseColor, kShelfTranslucentAlpha));
 }
 
-// Verify the target colors of the shelf and item backgrounds are updated based
-// on session state, starting from OOBE.
-// Note: the shelf is not supported for OOBE yet but it's good to check it here.
-// TODO(wzang|798869): The item backgrounds still keep the OOBE color if
-// directly transitioned from OOBE to LOGIN_PRIMARY. Revisit this when OOBE
-// shelf is supported.
-TEST_F(ShelfBackgroundTargetColorTest,
-       ShelfAndItemBackgroundColorUpdatedFromOOBE) {
-  ShelfBackgroundAnimatorTestApi test_api(
-      Shelf::ForWindow(Shell::Get()->GetPrimaryRootWindow())
-          ->shelf_widget()
-          ->background_animator_for_testing());
-
-  NotifySessionStateChanged(session_manager::SessionState::OOBE);
-  EXPECT_EQ(GetBaseColor(test_api.shelf_background_target_color()),
-            GetBaseColor(SK_ColorTRANSPARENT));
-  EXPECT_EQ(GetBaseColor(test_api.item_background_target_color()),
-            GetBaseColor(gfx::kGoogleGrey100));
-
-  SimulateUserLogin("user1@test.com");
-
-  NotifySessionStateChanged(
-      session_manager::SessionState::LOGGED_IN_NOT_ACTIVE);
-  EXPECT_EQ(GetBaseColor(test_api.shelf_background_target_color()),
-            GetBaseColor(SK_ColorTRANSPARENT));
-  EXPECT_EQ(GetBaseColor(test_api.item_background_target_color()),
-            GetBaseColor(SK_ColorTRANSPARENT));
-
-  NotifySessionStateChanged(session_manager::SessionState::ACTIVE);
-  EXPECT_EQ(GetBaseColor(test_api.shelf_background_target_color()),
-            GetBaseColor(kShelfDefaultBaseColor));
-  EXPECT_EQ(GetBaseColor(test_api.item_background_target_color()),
-            GetBaseColor(kShelfDefaultBaseColor));
-}
-
 }  // namespace ash

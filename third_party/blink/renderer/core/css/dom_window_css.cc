@@ -54,15 +54,15 @@ bool DOMWindowCSS::supports(const ExecutionContext* execution_context,
     const Document& document = To<Document>(*execution_context);
     const PropertyRegistry* registry = document.GetPropertyRegistry();
     return CSSParser::ParseValueForCustomProperty(
-               dummy_style, AtomicString(property), registry, value, false,
+               dummy_style, "--valid", value, false,
                execution_context->GetSecureContextMode(), nullptr,
                is_animation_tainted)
         .did_parse;
   }
 
 #if DCHECK_IS_ON()
-  DCHECK(
-      CSSProperty::Get(resolveCSSPropertyID(unresolved_property)).IsEnabled());
+  DCHECK(CSSProperty::Get(resolveCSSPropertyID(unresolved_property))
+             .IsWebExposed());
 #endif
 
   // This will return false when !important is present

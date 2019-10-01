@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/guid.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/post_task.h"
@@ -71,7 +72,7 @@ PrefetchURL SuggestionToPrefetchURL(PrefetchSuggestion suggestion) {
 }  // namespace
 
 PrefetchDispatcherImpl::PrefetchDispatcherImpl(PrefService* pref_service)
-    : pref_service_(pref_service), task_queue_(this), weak_factory_(this) {}
+    : pref_service_(pref_service), task_queue_(this) {}
 
 PrefetchDispatcherImpl::~PrefetchDispatcherImpl() = default;
 

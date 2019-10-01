@@ -418,9 +418,6 @@ int ChromeBrowserMainPartsMac::PreEarlyInitialization() {
     l10n_util::OverrideLocaleWithCocoaLocale();
   }
 
-  return ChromeBrowserMainPartsPosix::PreEarlyInitialization();
-}
-
 void ChromeBrowserMainPartsMac::PreMainMessageLoopStart() {
   MacStartupProfiler::GetInstance()->Profile(
       MacStartupProfiler::PRE_MAIN_MESSAGE_LOOP_START);

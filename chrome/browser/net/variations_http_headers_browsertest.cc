@@ -28,6 +28,7 @@
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/test/browser_test_utils.h"
+#include "content/public/test/network_connection_change_simulator.h"
 #include "content/public/test/simple_url_loader_test_helper.h"
 #include "net/base/escape.h"
 #include "net/dns/mock_host_resolver.h"
@@ -78,6 +79,9 @@ class VariationsHttpHeadersBrowserTest : public InProcessBrowserTest {
 
   void SetUpOnMainThread() override {
     InProcessBrowserTest::SetUpOnMainThread();
+
+    content::NetworkConnectionChangeSimulator().SetConnectionType(
+        network::mojom::ConnectionType::CONNECTION_ETHERNET);
 
     host_resolver()->AddRule("*", "127.0.0.1");
 
@@ -356,6 +360,7 @@ IN_PROC_BROWSER_TEST_F(
 
   // Wait for the response to complete.
   loader_helper.WaitForCallback();
+  EXPECT_EQ(net::OK, loader->NetError());
   EXPECT_TRUE(loader_helper.response_body());
 
   EXPECT_TRUE(HasReceivedHeader(GetGoogleRedirectUrl1(), "X-Client-Data"));
@@ -395,6 +400,7 @@ IN_PROC_BROWSER_TEST_F(
 
   // Wait for the response to complete.
   loader_helper.WaitForCallback();
+  EXPECT_EQ(net::OK, loader->NetError());
   EXPECT_TRUE(loader_helper.response_body());
 
   EXPECT_TRUE(HasReceivedHeader(GetGoogleRedirectUrl1(), "X-Client-Data"));

@@ -19,7 +19,6 @@
 
 class ChromeDownloadManagerDelegate;
 class DownloadHistory;
-class DownloadOfflineContentProvider;
 class DownloadUIController;
 class ExtensionDownloadsEventRouter;
 class Profile;

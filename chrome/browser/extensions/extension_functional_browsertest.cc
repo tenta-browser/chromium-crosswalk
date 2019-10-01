@@ -144,13 +144,6 @@ IN_PROC_BROWSER_TEST_F(ExtensionFunctionalTest,
 
   // Verify that |tab1_popup| can find unrelated frames from the same extension
   // (i.e. that it can find |tab2|.
-  // TODO(lukasza): https://crbug.com/786411: The verification below is helpful
-  // to 1) verify about:blank-handling, parent-hopping done by
-  // GetExtensionFromFrame in extension_frame_helper.cc and 2) verify the old
-  // behavior.  We want to change the old behavior - this would expectedly make
-  // the assestion below fail and in this case we would need to tweak the test
-  // to look-up another window (most likely a background page).
-  base::HistogramTester histogram_tester;
   std::string location_of_opened_window;
   EXPECT_TRUE(ExecuteScriptAndExtractString(
       tab1_popup,
@@ -158,24 +151,31 @@ IN_PROC_BROWSER_TEST_F(ExtensionFunctionalTest,
       "window.domAutomationController.send(w.location.href);",
       &location_of_opened_window));
   EXPECT_EQ(tab2->GetLastCommittedURL(), location_of_opened_window);
+}
 
-  // Verify UMA got recorded as expected.
-  SubprocessMetricsProvider::MergeHistogramDeltasForTesting();
-  EXPECT_THAT(histogram_tester.GetAllSamples(
-                  "Extensions.BrowsingInstanceViolation.ExtensionType"),
-              testing::ElementsAre(base::Bucket(Manifest::TYPE_EXTENSION, 1)));
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples(
-          "Extensions.BrowsingInstanceViolation.SourceExtensionViewType"),
-      testing::ElementsAre(base::Bucket(VIEW_TYPE_TAB_CONTENTS, 1)));
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples(
-          "Extensions.BrowsingInstanceViolation.TargetExtensionViewType"),
-      testing::ElementsAre(base::Bucket(VIEW_TYPE_TAB_CONTENTS, 1)));
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples(
-          "Extensions.BrowsingInstanceViolation.IsBackgroundSourceOrTarget"),
-      testing::ElementsAre(base::Bucket(false, 1)));
+IN_PROC_BROWSER_TEST_F(ExtensionFunctionalTest, DownloadExtensionResource) {
+  auto* download_manager =
+      content::BrowserContext::GetDownloadManager(profile());
+  content::DownloadTestObserverTerminal download_observer(
+      download_manager, 1,
+      content::DownloadTestObserver::ON_DANGEROUS_DOWNLOAD_ACCEPT);
+  ASSERT_TRUE(LoadExtension(test_data_dir_.AppendASCII("download")));
+  download_observer.WaitForFinished();
+
+  std::vector<download::DownloadItem*> download_items;
+  download_manager->GetAllDownloads(&download_items);
+
+  base::ScopedAllowBlockingForTesting allow_blocking;
+  auto file_path = download_items[0]->GetTargetFilePath();
+
+  base::FilePath expected_path = ui_test_utils::GetTestFilePath(
+      base::FilePath(),
+      base::FilePath().AppendASCII("extensions/download/download.dat"));
+
+  std::string actual_contents, expected_contents;
+  ASSERT_TRUE(base::ReadFileToString(file_path, &actual_contents));
+  ASSERT_TRUE(base::ReadFileToString(expected_path, &expected_contents));
+  ASSERT_EQ(expected_contents, actual_contents);
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionFunctionalTest, DownloadExtensionResource) {

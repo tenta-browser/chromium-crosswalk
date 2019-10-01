@@ -26,10 +26,6 @@
 #include "ui/file_manager/grit/file_manager_resources.h"
 #endif
 
-#if defined(KIOSK_NEXT) && defined(GOOGLE_CHROME_BUILD)
-#include "chrome/grit/kiosk_next_internal_resources_map.h"
-#endif
-
 namespace extensions {
 
 ChromeComponentExtensionResourceManager::
@@ -141,7 +137,7 @@ void ChromeComponentExtensionResourceManager::AddComponentResourceEntries(
         entries[i].name);
     resource_path = resource_path.NormalizePathSeparators();
 
-    DCHECK(!base::ContainsKey(path_to_resource_id_, resource_path));
+    DCHECK(!base::Contains(path_to_resource_id_, resource_path));
     path_to_resource_id_[resource_path] = entries[i].value;
   }
 }

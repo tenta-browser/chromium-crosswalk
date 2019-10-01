@@ -73,9 +73,6 @@ class COMPONENT_EXPORT(UI_BASE_IME) InputMethodBase
   InputMethodKeyboardController* GetInputMethodKeyboardController() override;
 
  protected:
-  // See InputMethodDelegate for details on this.
-  using ResultCallback = base::OnceCallback<void(bool, bool)>;
-
   explicit InputMethodBase(internal::InputMethodDelegate* delegate);
   InputMethodBase(internal::InputMethodDelegate* delegate,
                   std::unique_ptr<InputMethodKeyboardController> controller);
@@ -102,6 +99,7 @@ class COMPONENT_EXPORT(UI_BASE_IME) InputMethodBase
   SurroundingTextInfo GetSurroundingTextInfo() override;
   void SendKeyEvent(KeyEvent* event) override;
   InputMethod* GetInputMethod() override;
+  void ConfirmCompositionText() override;
 
   // Sends a fake key event for IME composing without physical key events.
   // Returns true if the faked key event is stopped propagation.
@@ -123,8 +121,7 @@ class COMPONENT_EXPORT(UI_BASE_IME) InputMethodBase
   // See InputMethodDelegate::DispatchKeyEventPostIME(() for details on
   // callback.
   virtual ui::EventDispatchDetails DispatchKeyEventPostIME(
-      ui::KeyEvent* event,
-      ResultCallback result_callback) const WARN_UNUSED_RESULT;
+      ui::KeyEvent* event) const WARN_UNUSED_RESULT;
 
   // Convenience method to notify all observers of TextInputClient changes.
   void NotifyTextInputStateChanged(const TextInputClient* client);

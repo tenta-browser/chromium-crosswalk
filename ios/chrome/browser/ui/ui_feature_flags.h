@@ -14,9 +14,6 @@ extern const base::Feature kClosingLastIncognitoTab;
 // Feature to retain the contentView in the browser container.
 extern const base::Feature kBrowserContainerKeepsContentView;
 
-// Feature to retain the contentView in the browser container.
-extern const base::Feature kBrowserContainerKeepsContentView;
-
 // Feature to show most visited sites and collection shortcuts in the omnibox
 // popup instead of ZeroSuggest.
 extern const base::Feature kOmniboxPopupShortcutIconsInZeroState;
@@ -32,9 +29,6 @@ extern const base::Feature kCopiedContentBehavior;
 // Feature to apply UI Refresh theme to the settings.
 extern const base::Feature kSettingsRefresh;
 
-// Feature to display search engine favicons in Settings.
-extern const base::Feature kDisplaySearchEngineFavicon;
-
 // Feature to display the new omnibox popup design with favicons, search engine
 // favicon in the omnibox, rich entities support, new layout.
 extern const base::Feature kNewOmniboxPopupLayout;
@@ -45,5 +39,8 @@ extern const base::Feature kOmniboxUseDefaultSearchEngineFavicon;
 
 // Feature flag for the language settings page.
 extern const base::Feature kLanguageSettings;
+
+// Feature flag for the optional article thumbnail.
+extern const base::Feature kOptionalArticleThumbnail;
 
 #endif  // IOS_CHROME_BROWSER_UI_UI_FEATURE_FLAGS_H_

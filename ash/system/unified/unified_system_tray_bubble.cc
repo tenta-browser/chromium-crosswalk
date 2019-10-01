@@ -322,18 +322,12 @@ void UnifiedSystemTrayBubble::CreateBlurLayerForAnimation() {
 
   bubble_widget_->client_view()->layer()->SetBackgroundBlur(0);
 
-  if (features::ShouldUseShaderRoundedCorner()) {
-    blur_layer_ = std::make_unique<ui::LayerOwner>(
-        std::make_unique<ui::Layer>(ui::LAYER_SOLID_COLOR));
-    blur_layer_->layer()->SetColor(SK_ColorTRANSPARENT);
-    blur_layer_->layer()->SetRoundedCornerRadius(
-        {kUnifiedTrayCornerRadius, kUnifiedTrayCornerRadius,
-         kUnifiedTrayCornerRadius, kUnifiedTrayCornerRadius});
-  } else {
-    blur_layer_ = views::Painter::CreatePaintedLayer(
-        views::Painter::CreateSolidRoundRectPainter(SK_ColorTRANSPARENT, 0));
-  }
-
+  blur_layer_ = std::make_unique<ui::LayerOwner>(
+      std::make_unique<ui::Layer>(ui::LAYER_SOLID_COLOR));
+  blur_layer_->layer()->SetColor(SK_ColorTRANSPARENT);
+  blur_layer_->layer()->SetRoundedCornerRadius(
+      {kUnifiedTrayCornerRadius, kUnifiedTrayCornerRadius,
+       kUnifiedTrayCornerRadius, kUnifiedTrayCornerRadius});
   blur_layer_->layer()->SetFillsBoundsOpaquely(false);
 
   bubble_widget_->GetLayer()->Add(blur_layer_->layer());

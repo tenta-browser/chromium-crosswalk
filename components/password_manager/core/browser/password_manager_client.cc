@@ -37,8 +37,11 @@ void PasswordManagerClient::GeneratePassword() {}
 void PasswordManagerClient::PasswordWasAutofilled(
     const std::map<base::string16, const autofill::PasswordForm*>& best_matches,
     const GURL& origin,
-    const std::vector<const autofill::PasswordForm*>* federated_matches) const {
-}
+    const std::vector<const autofill::PasswordForm*>* federated_matches) {}
+
+void PasswordManagerClient::AutofillHttpAuth(
+    const autofill::PasswordForm& preferred_match,
+    const PasswordFormManagerForUI* form_manager) {}
 
 void PasswordManagerClient::AutofillHttpAuth(
     const autofill::PasswordForm& preferred_match,
@@ -86,7 +89,7 @@ bool PasswordManagerClient::IsMainFrameSecure() const {
   return false;
 }
 
-const LogManager* PasswordManagerClient::GetLogManager() const {
+const autofill::LogManager* PasswordManagerClient::GetLogManager() const {
   return nullptr;
 }
 

@@ -30,7 +30,10 @@
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/shell.h"
 #include "ash/wm/window_util.h"
-#include "ui/base/ui_base_features.h"
+#endif
+
+#if DCHECK_IS_ON()
+#include "ui/accessibility/ax_tree_source_checker.h"
 #endif
 
 #if DCHECK_IS_ON()
@@ -61,14 +64,11 @@ void AutomationManagerAura::Enable() {
   cache_->SetDelegate(this);
 
 #if defined(OS_CHROMEOS)
-  // TODO(crbug.com/756054): Support MultiProcessMash.
-  if (!features::IsMultiProcessMash()) {
-    aura::Window* active_window = ash::wm::GetActiveWindow();
-    if (active_window) {
-      views::AXAuraObjWrapper* focus = cache_->GetOrCreate(active_window);
-      if (focus)
-        SendEvent(focus, ax::mojom::Event::kChildrenChanged);
-    }
+  aura::Window* active_window = ash::window_util::GetActiveWindow();
+  if (active_window) {
+    views::AXAuraObjWrapper* focus = cache_->GetOrCreate(active_window);
+    if (focus)
+      SendEvent(focus, ax::mojom::Event::kChildrenChanged);
   }
 #endif
 }

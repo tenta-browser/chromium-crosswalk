@@ -31,6 +31,7 @@
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
+#include "components/crash/android/jni_headers/PackagePaths_jni.h"
 #include "components/crash/content/app/crash_reporter_client.h"
 #include "content/public/common/content_descriptors.h"
 #include "jni/PackagePaths_jni.h"

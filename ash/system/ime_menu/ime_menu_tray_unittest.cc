@@ -4,10 +4,7 @@
 
 #include "ash/system/ime_menu/ime_menu_tray.h"
 
-#include <memory>
-
 #include "ash/accelerators/accelerator_controller_impl.h"
-#include "ash/accessibility/accessibility_controller.h"
 #include "ash/ime/ime_controller.h"
 #include "ash/ime/test_ime_controller_client.h"
 #include "ash/kiosk_next/kiosk_next_shell_test_util.h"
@@ -61,7 +58,7 @@ class ImeMenuTrayTest : public AshTestBase {
   bool IsVisible() { return GetTray()->GetVisible(); }
 
   // Returns the label text of the tray.
-  const base::string16& GetTrayText() { return GetTray()->label_->text(); }
+  const base::string16& GetTrayText() { return GetTray()->label_->GetText(); }
 
   // Returns true if the background color of the tray is active.
   bool IsTrayBackgroundActive() { return GetTray()->is_active(); }
@@ -96,7 +93,7 @@ class ImeMenuTrayTest : public AshTestBase {
     }
     for (const auto& ime : ime_map) {
       // Tests that all the IMEs on the view is in the list of selected IMEs.
-      EXPECT_TRUE(base::ContainsValue(expected_ime_ids, ime.second));
+      EXPECT_TRUE(base::Contains(expected_ime_ids, ime.second));
 
       // Tests that the checked IME is the current IME.
       ui::AXNodeData node_data;

@@ -56,10 +56,6 @@
 #include "base/win/win_util.h"
 #endif
 
-#if defined(OS_ANDROID)
-#include "gpu/ipc/service/stream_texture_android.h"
-#endif
-
 namespace gpu {
 
 GLES2CommandBufferStub::GLES2CommandBufferStub(
@@ -75,8 +71,7 @@ GLES2CommandBufferStub::GLES2CommandBufferStub(
                         sequence_id,
                         stream_id,
                         route_id),
-      gles2_decoder_(nullptr),
-      weak_ptr_factory_(this) {}
+      gles2_decoder_(nullptr) {}
 
 GLES2CommandBufferStub::~GLES2CommandBufferStub() {}
 
@@ -329,7 +324,11 @@ gpu::ContextResult GLES2CommandBufferStub::Initialize(
     return gpu::ContextResult::kTransientFailure;
   }
 
-  if (!context->GetGLStateRestorer()) {
+  // The GLStateRestorer is not used with the passthrough command decoder
+  // because not all state is tracked in the decoder. Virtualized contexts are
+  // also not used.
+  if (!context->GetGLStateRestorer() &&
+      !context_group_->use_passthrough_cmd_decoder()) {
     context->SetGLStateRestorer(
         new GLStateRestorerImpl(gles2_decoder_->AsWeakPtr()));
   }
@@ -420,12 +419,29 @@ void GLES2CommandBufferStub::BufferPresented(
                                                feedback));
 }
 
-void GLES2CommandBufferStub::AddFilter(IPC::MessageFilter* message_filter) {
-  return channel_->AddFilter(message_filter);
+viz::GpuVSyncCallback GLES2CommandBufferStub::GetGpuVSyncCallback() {
+  return viz::GpuVSyncCallback();
 }
 
-int32_t GLES2CommandBufferStub::GetRouteID() const {
-  return route_id_;
+MemoryTracker* GLES2CommandBufferStub::GetMemoryTracker() const {
+  return context_group_->memory_tracker();
+}
+
+bool GLES2CommandBufferStub::HandleMessage(const IPC::Message& message) {
+  bool handled = true;
+  IPC_BEGIN_MESSAGE_MAP(GLES2CommandBufferStub, message)
+    IPC_MESSAGE_HANDLER(GpuCommandBufferMsg_TakeFrontBuffer, OnTakeFrontBuffer);
+    IPC_MESSAGE_HANDLER(GpuCommandBufferMsg_ReturnFrontBuffer,
+                        OnReturnFrontBuffer);
+    IPC_MESSAGE_HANDLER(GpuCommandBufferMsg_CreateImage, OnCreateImage);
+    IPC_MESSAGE_HANDLER(GpuCommandBufferMsg_DestroyImage, OnDestroyImage);
+    IPC_MESSAGE_HANDLER(GpuCommandBufferMsg_CreateGpuFenceFromHandle,
+                        OnCreateGpuFenceFromHandle)
+    IPC_MESSAGE_HANDLER(GpuCommandBufferMsg_GetGpuFenceHandle,
+                        OnGetGpuFenceHandle)
+    IPC_MESSAGE_UNHANDLED(handled = false)
+  IPC_END_MESSAGE_MAP()
+  return handled;
 }
 
 viz::GpuVSyncCallback GLES2CommandBufferStub::GetGpuVSyncCallback() {
@@ -558,16 +574,6 @@ void GLES2CommandBufferStub::OnDestroyImage(int32_t id) {
   }
 
   image_manager->RemoveImage(id);
-}
-
-void GLES2CommandBufferStub::OnCreateStreamTexture(uint32_t texture_id,
-                                                   int32_t stream_id,
-                                                   bool* succeeded) {
-#if defined(OS_ANDROID)
-  *succeeded = StreamTexture::Create(this, texture_id, stream_id);
-#else
-  *succeeded = false;
-#endif
 }
 
 void GLES2CommandBufferStub::OnSwapBuffers(uint64_t swap_id, uint32_t flags) {

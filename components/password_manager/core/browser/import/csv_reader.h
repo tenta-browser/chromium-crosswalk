@@ -33,7 +33,8 @@ class CSVTable {
   //   * Inconsistent number of fields within records is handled gracefully.
   //     Extra fields are ignored. Missing fields will have no corresponding
   //     key-value pair in the record.
-  //   * Seeing a row with more than |kMaxColumns| cells is a syntax error.
+  //   * Seeing a row with too many cells is a syntax error (see CSVFieldParser
+  //     for the actual limit).
   //   * Repeated columns of the same name are not supported (the last value
   //     will be preserved).
   // Returns false if parsing failed due to a syntax error.

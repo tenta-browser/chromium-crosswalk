@@ -204,9 +204,14 @@ AutocompleteProvider::FixupReturn AutocompleteProvider::FixupUserInput(
   // harm in making sure.
   const size_t last_input_nonslash =
       input_text.find_last_not_of(base::ASCIIToUTF16("/\\"));
-  const size_t num_input_slashes =
-      (last_input_nonslash == base::string16::npos) ?
-      input_text.length() : (input_text.length() - 1 - last_input_nonslash);
+  size_t num_input_slashes =
+      (last_input_nonslash == base::string16::npos)
+          ? input_text.length()
+          : (input_text.length() - 1 - last_input_nonslash);
+  // If we appended text, user slashes are irrelevant.
+  if (output.length() > input_text.length() &&
+      base::StartsWith(output, input_text, base::CompareCase::SENSITIVE))
+    num_input_slashes = 0;
   const size_t last_output_nonslash =
       output.find_last_not_of(base::ASCIIToUTF16("/\\"));
   const size_t num_output_slashes =

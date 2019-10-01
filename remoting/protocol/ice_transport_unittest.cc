@@ -115,8 +115,7 @@ class IceTransportTest : public testing::Test {
     jingle_glue::JingleThreadWrapper::EnsureForCurrentMessageLoop();
 
     host_transport_.reset(new IceTransport(
-        new TransportContext(nullptr,
-                             std::make_unique<ChromiumPortAllocatorFactory>(),
+        new TransportContext(std::make_unique<ChromiumPortAllocatorFactory>(),
                              nullptr, network_settings_, TransportRole::SERVER),
         &host_event_handler_, false));
     if (!host_authenticator_) {
@@ -125,8 +124,7 @@ class IceTransportTest : public testing::Test {
     }
 
     client_transport_.reset(new IceTransport(
-        new TransportContext(nullptr,
-                             std::make_unique<ChromiumPortAllocatorFactory>(),
+        new TransportContext(std::make_unique<ChromiumPortAllocatorFactory>(),
                              nullptr, network_settings_, TransportRole::CLIENT),
         &client_event_handler_, false));
     if (!client_authenticator_) {

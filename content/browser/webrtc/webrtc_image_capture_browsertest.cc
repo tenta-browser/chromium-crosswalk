@@ -39,6 +39,15 @@ namespace content {
 #define MAYBE_ManipulateExposureTime ManipulateExposureTime
 #endif
 
+#if defined(OS_LINUX)
+// See crbug/986470
+#define MAYBE_GetPhotoSettings DISABLED_GetPhotoSettings
+#define MAYBE_GetTrackSettings DISABLED_GetTrackSettings
+#else
+#define MAYBE_GetPhotoSettings GetPhotoSettings
+#define MAYBE_GetTrackSettings GetTrackSettings
+#endif
+
 namespace {
 
 static const char kImageCaptureHtmlFile[] = "/media/image_capture_test.html";

@@ -59,8 +59,7 @@ class ModuleDatabase : public ModuleDatabaseEventSource {
 
   // Creates the ModuleDatabase. Must be created and set on the sequence
   // returned by GetTaskRunner().
-  explicit ModuleDatabase(std::unique_ptr<service_manager::Connector> connector,
-                          bool third_party_blocking_policy_enabled);
+  explicit ModuleDatabase(bool third_party_blocking_policy_enabled);
   ~ModuleDatabase() override;
 
   // Returns the SequencedTaskRunner on which the ModuleDatabase lives. Can be

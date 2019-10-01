@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ash/public/cpp/login_screen_test_api.h"
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
@@ -111,7 +112,7 @@ IN_PROC_BROWSER_TEST_F(ProxyAuthOnUserBoardScreenTest,
   {
     OobeScreenWaiter screen_waiter(GaiaView::kScreenId);
     ProxyAuthDialogWaiter auth_dialog_waiter;
-    ASSERT_TRUE(test::LoginScreenTester().ClickAddUserButton());
+    ASSERT_TRUE(ash::LoginScreenTestApi::ClickAddUserButton());
     screen_waiter.Wait();
     auth_dialog_waiter.Wait();
     ASSERT_TRUE(auth_dialog_waiter.login_handler());

@@ -56,7 +56,7 @@ class InvertBubbleView : public views::BubbleDialogDelegateView,
 
  private:
   // Overridden from views::BubbleDialogDelegateView:
-  views::View* CreateExtraView() override;
+  std::unique_ptr<views::View> CreateExtraView() override;
   int GetDialogButtons() const override;
   base::string16 GetDialogButtonLabel(ui::DialogButton button) const override;
   void Init() override;
@@ -93,7 +93,7 @@ InvertBubbleView::InvertBubbleView(Browser* browser, views::View* anchor_view)
 InvertBubbleView::~InvertBubbleView() {
 }
 
-views::View* InvertBubbleView::CreateExtraView() {
+std::unique_ptr<views::View> InvertBubbleView::CreateExtraView() {
   auto learn_more = views::CreateVectorImageButton(this);
   views::SetImageFromVectorIcon(learn_more.get(),
                                 vector_icons::kHelpOutlineIcon);
@@ -126,8 +126,9 @@ void InvertBubbleView::Init() {
       l10n_util::GetStringUTF16(IDS_DARK_THEME), CONTEXT_BODY_TEXT_LARGE);
   dark_theme->set_listener(this);
 
-  views::BoxLayout* layout = SetLayoutManager(
-      std::make_unique<views::BoxLayout>(views::BoxLayout::kVertical));
+  views::BoxLayout* layout =
+      SetLayoutManager(std::make_unique<views::BoxLayout>(
+          views::BoxLayout::Orientation::kVertical));
   layout->set_cross_axis_alignment(
       views::BoxLayout::CrossAxisAlignment::kStart);
 

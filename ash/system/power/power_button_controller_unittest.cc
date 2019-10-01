@@ -4,11 +4,10 @@
 
 #include "ash/system/power/power_button_controller.h"
 
-#include "ash/accessibility/accessibility_controller.h"
 #include "ash/accessibility/test_accessibility_controller_client.h"
 #include "ash/display/screen_orientation_controller.h"
 #include "ash/display/screen_orientation_controller_test_api.h"
-#include "ash/media/media_controller.h"
+#include "ash/media/media_controller_impl.h"
 #include "ash/public/cpp/ash_switches.h"
 #include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
@@ -124,9 +123,7 @@ class PowerButtonControllerTest : public PowerButtonTestBase {
   // Press the power button to show the menu.
   void OpenPowerButtonMenu() {
     PressPowerButton();
-    if (Shell::Get()
-            ->tablet_mode_controller()
-            ->IsTabletModeWindowManagerEnabled()) {
+    if (Shell::Get()->tablet_mode_controller()->InTabletMode()) {
       EXPECT_TRUE(power_button_test_api_->PowerButtonMenuTimerIsRunning());
       ASSERT_TRUE(power_button_test_api_->TriggerPowerButtonMenuTimeout());
     }
@@ -708,7 +705,7 @@ TEST_F(PowerButtonControllerTest, SyncTouchscreenEnabled) {
 // sessions should be suspended.
 TEST_F(PowerButtonControllerTest, SuspendMediaSessions) {
   TestMediaClient client;
-  Shell::Get()->media_controller()->SetClient(client.CreateAssociatedPtrInfo());
+  Shell::Get()->media_controller()->SetClient(&client);
   ASSERT_FALSE(client.media_sessions_suspended());
 
   EnableTabletMode(true);
@@ -773,19 +770,17 @@ TEST_F(PowerButtonControllerTest, IgnoreForcingOffWhenDisplayIsTurningOn) {
 // Tests that a11y alert is sent on tablet power button induced screen state
 // change.
 TEST_F(PowerButtonControllerTest, A11yAlert) {
+  TestAccessibilityControllerClient a11y_client;
+
   EnableTabletMode(true);
   PressPowerButton();
   ReleasePowerButton();
   SendBrightnessChange(0, kUserCause);
-  a11y_controller_->FlushMojoForTest();
-  EXPECT_EQ(mojom::AccessibilityAlert::SCREEN_OFF,
-            a11y_client_.last_a11y_alert());
+  EXPECT_EQ(AccessibilityAlert::SCREEN_OFF, a11y_client.last_a11y_alert());
 
   PressPowerButton();
   SendBrightnessChange(kNonZeroBrightness, kUserCause);
-  a11y_controller_->FlushMojoForTest();
-  EXPECT_EQ(mojom::AccessibilityAlert::SCREEN_ON,
-            a11y_client_.last_a11y_alert());
+  EXPECT_EQ(AccessibilityAlert::SCREEN_ON, a11y_client.last_a11y_alert());
   ReleasePowerButton();
 }
 
@@ -808,9 +803,6 @@ TEST_F(PowerButtonControllerTest, MouseClickToDismissMenu) {
 
 // Tests the menu items according to the login and screen locked status.
 TEST_F(PowerButtonControllerTest, MenuItemsToLoginAndLockedStatus) {
-  base::test::ScopedFeatureList features;
-  features.InitAndEnableFeature(PowerButtonMenuView::kEnableFeedbackItem);
-
   // No sign out, lock screen and feedback items if user is not logged in.
   ClearLogin();
   Shell::Get()->UpdateAfterLoginStatusChange(LoginStatus::NOT_LOGGED_IN);
@@ -1008,9 +1000,6 @@ TEST_F(PowerButtonControllerTest, ESCDismissMenu) {
 
 // Tests the navigation of the menu.
 TEST_F(PowerButtonControllerTest, MenuNavigation) {
-  base::test::ScopedFeatureList features;
-  features.InitAndEnableFeature(PowerButtonMenuView::kEnableFeedbackItem);
-
   OpenPowerButtonMenu();
   ASSERT_TRUE(power_button_test_api_->MenuHasSignOutItem());
   ASSERT_TRUE(power_button_test_api_->MenuHasLockScreenItem());
@@ -1126,9 +1115,7 @@ class PowerButtonControllerWithPositionTest
 
   // Returns true if it is in tablet mode.
   bool IsTabletMode() const {
-    return Shell::Get()
-        ->tablet_mode_controller()
-        ->IsTabletModeWindowManagerEnabled();
+    return Shell::Get()->tablet_mode_controller()->InTabletMode();
   }
 
   // Returns true if the menu is at the center of the display.
@@ -1386,7 +1373,6 @@ TEST_F(PowerButtonControllerTest, LegacyPowerButtonIgnoreExtraPress) {
   EXPECT_EQ(menu_view_before, power_button_test_api_->GetPowerButtonMenuView());
   // This is needed to simulate the shutdown sound having been played,
   // which blocks the shutdown timer.
-  a11y_controller_->FlushMojoForTest();
   // Make sure that the second press did not trigger a shutdown.
   EXPECT_FALSE(lock_state_test_api_->real_shutdown_timer_is_running());
   // Make sure that power menu is still in partially shown state.

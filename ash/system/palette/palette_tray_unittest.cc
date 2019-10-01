@@ -17,6 +17,7 @@
 #include "ash/public/cpp/ash_pref_names.h"
 #include "ash/public/cpp/ash_switches.h"
 #include "ash/public/cpp/stylus_utils.h"
+#include "ash/public/cpp/voice_interaction_controller.h"
 #include "ash/public/interfaces/voice_interaction_controller.mojom.h"
 #include "ash/root_window_controller.h"
 #include "ash/session/session_controller_impl.h"
@@ -30,7 +31,6 @@
 #include "ash/test/ash_test_base.h"
 #include "ash/test/ash_test_helper.h"
 #include "ash/test_shell_delegate.h"
-#include "ash/voice_interaction/voice_interaction_controller.h"
 #include "base/command_line.h"
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
@@ -198,11 +198,6 @@ TEST_F(PaletteTrayTest, ModeToolDeactivatedAutomatically) {
   EXPECT_FALSE(palette_tray_->is_active());
 }
 
-TEST_F(PaletteTrayTest, NoMetalayerToolViewCreated) {
-  EXPECT_FALSE(
-      test_api_->palette_tool_manager()->HasTool(PaletteToolId::METALAYER));
-}
-
 TEST_F(PaletteTrayTest, EnableStylusPref) {
   local_state_pref_service()->SetBoolean(prefs::kHasSeenStylus, true);
 
@@ -243,9 +238,7 @@ TEST_F(PaletteTrayTest, WelcomeBubbleVisibility) {
 // Base class for tests that rely on Assistant enabled.
 class PaletteTrayTestWithVoiceInteraction : public PaletteTrayTest {
  public:
-  PaletteTrayTestWithVoiceInteraction() {
-    feature_list_.InitAndEnableFeature(chromeos::switches::kAssistantFeature);
-  }
+  PaletteTrayTestWithVoiceInteraction() = default;
   ~PaletteTrayTestWithVoiceInteraction() override = default;
 
   // PaletteTrayTest:
@@ -262,9 +255,6 @@ class PaletteTrayTestWithVoiceInteraction : public PaletteTrayTest {
 
     highlighter_test_api_ = std::make_unique<HighlighterControllerTestApi>(
         Shell::Get()->highlighter_controller());
-
-    Shell::Get()->assistant_controller()->SetAssistant(
-        assistant_.CreateInterfacePtrAndBind());
   }
 
   void TearDown() override {
@@ -330,9 +320,7 @@ class PaletteTrayTestWithVoiceInteraction : public PaletteTrayTest {
   std::unique_ptr<HighlighterControllerTestApi> highlighter_test_api_;
 
  private:
-  TestAssistantService assistant_;
   base::SimpleTestTickClock simulated_clock_;
-  base::test::ScopedFeatureList feature_list_;
 
   DISALLOW_COPY_AND_ASSIGN(PaletteTrayTestWithVoiceInteraction);
 };
@@ -345,11 +333,11 @@ TEST_F(PaletteTrayTestWithVoiceInteraction, MetalayerToolViewCreated) {
 TEST_F(PaletteTrayTestWithVoiceInteraction, MetalayerToolActivatesHighlighter) {
   ui::ScopedAnimationDurationScaleMode animation_duration_mode(
       ui::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION);
-  Shell::Get()->voice_interaction_controller()->NotifyStatusChanged(
+  VoiceInteractionController::Get()->NotifyStatusChanged(
       mojom::VoiceInteractionState::RUNNING);
-  Shell::Get()->voice_interaction_controller()->NotifySettingsEnabled(true);
-  Shell::Get()->voice_interaction_controller()->NotifyContextEnabled(true);
-  Shell::Get()->voice_interaction_controller()->FlushForTesting();
+  VoiceInteractionController::Get()->NotifySettingsEnabled(true);
+  VoiceInteractionController::Get()->NotifyContextEnabled(true);
+  VoiceInteractionController::Get()->FlushForTesting();
 
   ui::test::EventGenerator* generator = GetEventGenerator();
   generator->EnterPenPointerMode();
@@ -411,8 +399,8 @@ TEST_F(PaletteTrayTestWithVoiceInteraction, MetalayerToolActivatesHighlighter) {
   // Disabling metalayer support in the delegate should disable the palette
   // tool.
   test_api_->palette_tool_manager()->ActivateTool(PaletteToolId::METALAYER);
-  Shell::Get()->voice_interaction_controller()->NotifyContextEnabled(false);
-  Shell::Get()->voice_interaction_controller()->FlushForTesting();
+  VoiceInteractionController::Get()->NotifyContextEnabled(false);
+  VoiceInteractionController::Get()->FlushForTesting();
   EXPECT_FALSE(metalayer_enabled());
 
   // With the metalayer disabled again, press/drag does not activate the
@@ -426,11 +414,11 @@ TEST_F(PaletteTrayTestWithVoiceInteraction,
        StylusBarrelButtonActivatesHighlighter) {
   ui::ScopedAnimationDurationScaleMode animation_duration_mode(
       ui::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION);
-  Shell::Get()->voice_interaction_controller()->NotifyStatusChanged(
+  VoiceInteractionController::Get()->NotifyStatusChanged(
       mojom::VoiceInteractionState::NOT_READY);
-  Shell::Get()->voice_interaction_controller()->NotifySettingsEnabled(false);
-  Shell::Get()->voice_interaction_controller()->NotifyContextEnabled(false);
-  Shell::Get()->voice_interaction_controller()->FlushForTesting();
+  VoiceInteractionController::Get()->NotifySettingsEnabled(false);
+  VoiceInteractionController::Get()->NotifyContextEnabled(false);
+  VoiceInteractionController::Get()->FlushForTesting();
 
   ui::test::EventGenerator* generator = GetEventGenerator();
   generator->EnterPenPointerMode();
@@ -450,23 +438,23 @@ TEST_F(PaletteTrayTestWithVoiceInteraction,
                              false /* no highlighter on press */);
 
   // Enable one of the two user prefs, should not be sufficient.
-  Shell::Get()->voice_interaction_controller()->NotifyContextEnabled(true);
-  Shell::Get()->voice_interaction_controller()->FlushForTesting();
+  VoiceInteractionController::Get()->NotifyContextEnabled(true);
+  VoiceInteractionController::Get()->FlushForTesting();
   WaitDragAndAssertMetalayer("one pref enabled", origin,
                              ui::EF_LEFT_MOUSE_BUTTON, false /* no metalayer */,
                              false /* no highlighter on press */);
 
   // Enable the other user pref, still not sufficient.
-  Shell::Get()->voice_interaction_controller()->NotifySettingsEnabled(true);
-  Shell::Get()->voice_interaction_controller()->FlushForTesting();
+  VoiceInteractionController::Get()->NotifySettingsEnabled(true);
+  VoiceInteractionController::Get()->FlushForTesting();
   WaitDragAndAssertMetalayer("two prefs enabled", origin,
                              ui::EF_LEFT_MOUSE_BUTTON, false /* no metalayer */,
                              false /* no highlighter on press */);
 
   // Once the service is ready, the button should start working.
-  Shell::Get()->voice_interaction_controller()->NotifyStatusChanged(
+  VoiceInteractionController::Get()->NotifyStatusChanged(
       mojom::VoiceInteractionState::RUNNING);
-  Shell::Get()->voice_interaction_controller()->FlushForTesting();
+  VoiceInteractionController::Get()->FlushForTesting();
 
   // Press and drag with no button, still no highlighter.
   WaitDragAndAssertMetalayer("all enabled, no button ", origin, ui::EF_NONE,
@@ -530,8 +518,8 @@ TEST_F(PaletteTrayTestWithVoiceInteraction,
 
   // Disable the metalayer support.
   // This should deactivate both the palette tool and the highlighter.
-  Shell::Get()->voice_interaction_controller()->NotifyContextEnabled(false);
-  Shell::Get()->voice_interaction_controller()->FlushForTesting();
+  VoiceInteractionController::Get()->NotifyContextEnabled(false);
+  VoiceInteractionController::Get()->FlushForTesting();
   EXPECT_FALSE(test_api_->palette_tool_manager()->IsToolActive(
       PaletteToolId::METALAYER));
 

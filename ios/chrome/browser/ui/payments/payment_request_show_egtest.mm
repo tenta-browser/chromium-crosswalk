@@ -65,8 +65,7 @@ id<GREYMatcher> PriceCellMatcher(NSString* accessibilityLabel) {
   CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey
       loadURL:web::test::HttpServer::MakeUrl(kShowPromisePage)]);
 
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey tapWebStateElementWithID:@"buyWithNoPromise"]);
+  [ChromeEarlGrey tapWebStateElementWithID:@"buyWithNoPromise"];
 
   // Confirm that the Payment Request UI is showing.
   [[EarlGrey selectElementWithMatcher:chrome_test_util::PaymentRequestView()]
@@ -96,8 +95,7 @@ id<GREYMatcher> PriceCellMatcher(NSString* accessibilityLabel) {
           setValue:@NO
       forConfigKey:kGREYConfigKeySynchronizationEnabled];
 
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey tapWebStateElementWithID:@"buyWithResolvingPromise"]);
+  [ChromeEarlGrey tapWebStateElementWithID:@"buyWithResolvingPromise"];
 
   // Wait until the payment request view shows.
   ConditionBlock condition = ^{
@@ -150,8 +148,7 @@ id<GREYMatcher> PriceCellMatcher(NSString* accessibilityLabel) {
           setValue:@NO
       forConfigKey:kGREYConfigKeySynchronizationEnabled];
 
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey tapWebStateElementWithID:@"buyWithRejectingPromise"]);
+  [ChromeEarlGrey tapWebStateElementWithID:@"buyWithRejectingPromise"];
 
   // Wait until the payment request view shows.
   ConditionBlock condition = ^{

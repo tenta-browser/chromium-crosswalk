@@ -219,15 +219,6 @@ public class ToolbarButtonInProductHelpController implements Destroyable {
         }
     }
 
-    private static boolean shouldHighlightForIPH(String featureName) {
-        switch (featureName) {
-            case FeatureConstants.PREVIEWS_OMNIBOX_UI_FEATURE:
-                return false;
-            default:
-                return true;
-        }
-    }
-
     private static void maybeShowIPH(Tracker tracker, String featureName,
             Integer highlightMenuItemId, boolean circleHighlight, String contentString,
             String accessibilityString, View anchorView, AppMenuHandler appMenuHandler,

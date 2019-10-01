@@ -17,7 +17,6 @@
 #include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "media/base/bind_to_current_loop.h"
@@ -27,6 +26,20 @@
 #include "third_party/blink/public/web/modules/mediastream/video_track_adapter_settings.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/wtf/thread_safe_ref_counted.h"
+
+namespace WTF {
+
+// Template specializations of [1], needed to be able to pass WTF callbacks
+// that have VideoTrackAdapterSettings or gfx::Size parameters across threads.
+//
+// [1] third_party/blink/renderer/platform/wtf/cross_thread_copier.h.
+template <>
+struct CrossThreadCopier<blink::VideoTrackAdapterSettings>
+    : public CrossThreadCopierPassThrough<blink::VideoTrackAdapterSettings> {
+  STATIC_ONLY(CrossThreadCopier);
+};
+
+}  // namespace WTF
 
 namespace blink {
 
@@ -518,11 +531,12 @@ void VideoTrackAdapter::AddTrack(const MediaStreamVideoTrack* track,
   PostCrossThreadTask(
       *io_task_runner_, FROM_HERE,
       CrossThreadBindOnce(
-          &VideoTrackAdapter::AddTrackOnIO, CrossThreadUnretained(this),
-          CrossThreadUnretained(track),
-          WTF::Passed(CrossThreadBind(std::move(frame_callback))),
-          WTF::Passed(CrossThreadBind(std::move(settings_callback))),
-          WTF::Passed(CrossThreadBind(std::move(format_callback))), settings));
+          &VideoTrackAdapter::AddTrackOnIO, WTF::CrossThreadUnretained(this),
+          WTF::CrossThreadUnretained(track),
+          WTF::Passed(CrossThreadBindRepeating(std::move(frame_callback))),
+          WTF::Passed(CrossThreadBindRepeating(std::move(settings_callback))),
+          WTF::Passed(CrossThreadBindRepeating(std::move(format_callback))),
+          settings));
 }
 
 void VideoTrackAdapter::AddTrackOnIO(
@@ -582,7 +596,8 @@ void VideoTrackAdapter::StartFrameMonitoring(
       *io_task_runner_, FROM_HERE,
       CrossThreadBindOnce(
           &VideoTrackAdapter::StartFrameMonitoringOnIO, WrapRefCounted(this),
-          WTF::Passed(CrossThreadBind(std::move(bound_on_muted_callback))),
+          WTF::Passed(
+              CrossThreadBindRepeating(std::move(bound_on_muted_callback))),
           source_frame_rate));
 }
 
@@ -679,7 +694,7 @@ void VideoTrackAdapter::StartFrameMonitoringOnIO(
            << (kFirstFrameTimeoutInFrameIntervals / source_frame_rate_) << "s";
   PostDelayedCrossThreadTask(
       *io_task_runner_, FROM_HERE,
-      CrossThreadBind(
+      CrossThreadBindOnce(
           &VideoTrackAdapter::CheckFramesReceivedOnIO, WrapRefCounted(this),
           WTF::Passed(std::move(on_muted_callback)), frame_counter_),
       base::TimeDelta::FromSecondsD(kFirstFrameTimeoutInFrameIntervals /

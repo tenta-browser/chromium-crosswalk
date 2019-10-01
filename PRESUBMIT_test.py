@@ -1902,7 +1902,7 @@ class ServiceManifestOwnerTest(unittest.TestCase):
 
 class BannedFunctionCheckTest(unittest.TestCase):
 
-  def testBannedIosObcjFunctions(self):
+  def testBannedIosObjcFunctions(self):
     input_api = MockInputApi()
     input_api.files = [
       MockFile('some/ios/file.mm',
@@ -1913,6 +1913,10 @@ class BannedFunctionCheckTest(unittest.TestCase):
                 '}']),
       MockFile('another/ios_file.mm',
                ['class SomeTest : public testing::Test {};']),
+      MockFile('some/ios/file_egtest.mm',
+               ['- (void)testSomething { EXPECT_OCMOCK_VERIFY(aMock); }']),
+      MockFile('some/ios/file_unittest.mm',
+               ['TEST_F(SomeTest, TestThis) { EXPECT_OCMOCK_VERIFY(aMock); }']),
     ]
 
     errors = PRESUBMIT._CheckNoBannedFunctions(input_api, MockOutputApi())
@@ -1920,6 +1924,36 @@ class BannedFunctionCheckTest(unittest.TestCase):
     self.assertTrue('some/ios/file.mm' in errors[0].message)
     self.assertTrue('another/ios_file.mm' in errors[0].message)
     self.assertTrue('some/mac/file.mm' not in errors[0].message)
+    self.assertTrue('some/ios/file_egtest.mm' in errors[0].message)
+    self.assertTrue('some/ios/file_unittest.mm' not in errors[0].message)
+
+  def testBannedMojoFunctions(self):
+    input_api = MockInputApi()
+    input_api.files = [
+      MockFile('some/cpp/problematic/file.cc',
+               ['mojo::DataPipe();']),
+      MockFile('some/cpp/problematic/file2.cc',
+               ['mojo::ConvertTo<>']),
+      MockFile('some/cpp/ok/file.cc',
+               ['CreateDataPipe();']),
+      MockFile('some/cpp/ok/file2.cc',
+               ['mojo::DataPipeDrainer();']),
+      MockFile('third_party/blink/ok/file3.cc',
+               ['mojo::ConvertTo<>']),
+      MockFile('content/renderer/ok/file3.cc',
+               ['mojo::ConvertTo<>']),
+    ]
+
+    results = PRESUBMIT._CheckNoBannedFunctions(input_api, MockOutputApi())
+
+    # warnings are results[0], errors are results[1]
+    self.assertEqual(2, len(results))
+    self.assertTrue('some/cpp/problematic/file.cc' in results[1].message)
+    self.assertTrue('some/cpp/problematic/file2.cc' in results[0].message)
+    self.assertTrue('some/cpp/ok/file.cc' not in results[1].message)
+    self.assertTrue('some/cpp/ok/file2.cc' not in results[1].message)
+    self.assertTrue('third_party/blink/ok/file3.cc' not in results[0].message)
+    self.assertTrue('content/renderer/ok/file3.cc' not in results[0].message)
 
   def testBannedMojoFunctions(self):
     input_api = MockInputApi()

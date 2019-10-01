@@ -16,7 +16,6 @@
 #include "ash/shelf/shelf_observer.h"
 #include "base/macros.h"
 #include "ui/views/widget/widget.h"
-#include "ui/views/widget/widget_observer.h"
 
 namespace app_list {
 class ApplicationDragAndDropHost;
@@ -24,7 +23,7 @@ class ApplicationDragAndDropHost;
 
 namespace ash {
 enum class AnimationChangeType;
-class AppListButton;
+class HomeButton;
 class BackButton;
 class FocusCycler;
 class LoginShelfView;
@@ -37,7 +36,6 @@ class StatusAreaWidget;
 // the status area widget. There is one ShelfWidget per display. It is created
 // early during RootWindowController initialization.
 class ASH_EXPORT ShelfWidget : public views::Widget,
-                               public views::WidgetObserver,
                                public ShelfLayoutManagerObserver,
                                public ShelfObserver,
                                public SessionObserver,
@@ -89,7 +87,7 @@ class ASH_EXPORT ShelfWidget : public views::Widget,
   gfx::Rect GetScreenBoundsOfItemIconForWindow(aura::Window* window);
 
   // Returns the button that opens the app launcher.
-  AppListButton* GetAppListButton() const;
+  HomeButton* GetHomeButton() const;
 
   // Returns the browser back button.
   BackButton* GetBackButton() const;
@@ -106,10 +104,12 @@ class ASH_EXPORT ShelfWidget : public views::Widget,
   // and focuses it.
   void FocusFirstOrLastFocusableChild(bool last);
 
-  // Overridden from views::WidgetObserver:
-  void OnWidgetActivationChanged(views::Widget* widget, bool active) override;
+  // views::Widget:
+  void OnMouseEvent(ui::MouseEvent* event) override;
+  void OnGestureEvent(ui::GestureEvent* event) override;
+  bool OnNativeWidgetActivationChanged(bool active) override;
 
-  // ShelfLayoutManagerObserver overrides:
+  // ShelfLayoutManagerObserver:
   void WillDeleteShelfLayoutManager() override;
 
   // ShelfObserver:
@@ -119,9 +119,6 @@ class ASH_EXPORT ShelfWidget : public views::Widget,
   // SessionObserver overrides:
   void OnSessionStateChanged(session_manager::SessionState state) override;
   void OnUserSessionAdded(const AccountId& account_id) override;
-
-  // KioskNextShellObserver:
-  void OnKioskNextEnabled() override;
 
   SkColor GetShelfBackgroundColor() const;
   bool GetHitTestRects(aura::Window* target,
@@ -148,10 +145,6 @@ class ASH_EXPORT ShelfWidget : public views::Widget,
   // Shows shelf widget if IsVisible() returns false.
   void ShowIfHidden();
 
-  // views::Widget:
-  void OnMouseEvent(ui::MouseEvent* event) override;
-  void OnGestureEvent(ui::GestureEvent* event) override;
-
   Shelf* shelf_;
 
   ShelfBackgroundAnimator background_animator_;
@@ -176,7 +169,7 @@ class ASH_EXPORT ShelfWidget : public views::Widget,
   // Set to true when the widget is activated from another widget. Do not
   // focus the default element in this case. This should be set when
   // cycling focus from another widget to the shelf.
-  bool activated_from_other_widget_ = false;
+  bool activated_from_overflow_bubble_ = false;
 
   ScopedSessionObserver scoped_session_observer_;
 

@@ -72,14 +72,6 @@ class CONTENT_EXPORT FlingingRenderer : public media::Renderer,
   PlayState target_play_state_ = PlayState::UNKNOWN;
   bool reached_target_play_state_ = false;
 
-  void SetTargetPlayState(PlayState state);
-
-  // The state that we expect the remotely playing video to transition into.
-  // This is used to differentiate between state changes that originated from
-  // this device versus external devices.
-  PlayState target_play_state_ = PlayState::UNKNOWN;
-  bool reached_target_play_state_ = false;
-
   media::RendererClient* client_;
 
   ClientExtensionPtr client_extension_;

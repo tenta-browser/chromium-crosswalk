@@ -13,7 +13,7 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/values.h"
-#include "build/build_config.h"
+#include "build/branding_buildflags.h"
 #include "chrome/browser/metrics/chrome_metrics_service_accessor.h"
 #include "chrome/browser/policy/browser_signin_policy_handler.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
@@ -98,7 +98,7 @@ bool CanShowSigninModuleForTesting(const policy::PolicyMap& policies) {
   return CanShowSigninModule(policies);
 }
 
-#if defined(GOOGLE_CHROME_BUILD) && defined(OS_WIN)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING) && defined(OS_WIN)
 // These feature flags are used to tie our experiment to specific studies.
 // go/navi-app-variation for details.
 // TODO(hcarmona): find a solution that scales better.
@@ -110,7 +110,7 @@ const base::Feature kNaviNTPVariationEnabled = {
     "NaviNTPVariationEnabled", base::FEATURE_DISABLED_BY_DEFAULT};
 const base::Feature kNaviShortcutVariationEnabled = {
     "NaviShortcutVariationEnabled", base::FEATURE_DISABLED_BY_DEFAULT};
-#endif  // defined(GOOGLE_CHROME_BUILD) && defined(OS_WIN)
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING) && defined(OS_WIN)
 
 // This feature flag is used to force the feature to be turned on for non-win
 // and non-branded builds, like with tests or development on other platforms.
@@ -139,6 +139,12 @@ bool CanExperimentWithVariations(Profile* profile) {
 // Must match study name in configs.
 const char kNuxOnboardingStudyName[] = "NaviOnboarding";
 
+// Get the group for users who onboard in this experiment.
+// Groups are:
+//   - Specified by study
+//   - The same for all experiments in study
+//   - Incremented with each new version
+//   - Not reused
 std::string GetOnboardingGroup(Profile* profile) {
   if (!CanExperimentWithVariations(profile)) {
     // If we cannot run any variations, we bucket the users into a separate
@@ -153,35 +159,22 @@ std::string GetOnboardingGroup(Profile* profile) {
                                        "onboarding-group");
 }
 
-bool IsNuxOnboardingEnabled(Profile* profile) {
-  if (base::FeatureList::IsEnabled(nux::kNuxOnboardingForceEnabled)) {
-    return true;
-  }
-
-#if defined(GOOGLE_CHROME_BUILD)
-
-#if defined(OS_MACOSX)
-  return !base::IsMachineExternallyManaged();
-#endif  // defined(OS_MACOSX)
-
-#if defined(OS_WIN)
-  // To avoid diluting data collection, existing users should not be assigned
-  // an onboarding group. So, |prefs::kNaviOnboardGroup| is used to
-  // short-circuit the feature checks below.
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING) && defined(OS_WIN)
+void JoinOnboardingGroup(Profile* profile) {
   PrefService* prefs = profile->GetPrefs();
-  if (!prefs) {
-    return false;
-  }
 
-  std::string onboard_group = prefs->GetString(prefs::kNaviOnboardGroup);
+  std::string onboard_group;
+  if (prefs->GetBoolean(prefs::kHasSeenWelcomePage)) {
+    // Get user's original onboarding group.
+    onboard_group = prefs->GetString(prefs::kNaviOnboardGroup);
 
-  if (onboard_group.empty()) {
-    // Users who onboarded before Navi or are part of an enterprise.
-    return false;
-  }
-
-  if (!CanExperimentWithVariations(profile)) {
-    return true;  // Default Navi behavior.
+    // Users who onboarded before Navi won't have an onboarding group.
+    if (onboard_group.empty())
+      return;
+  } else {
+    // Join the latest group if onboarding for the first time!
+    onboard_group = GetOnboardingGroup(profile);
+    profile->GetPrefs()->SetString(prefs::kNaviOnboardGroup, onboard_group);
   }
 
   // User will be tied to their original onboarding group, even after
@@ -199,15 +192,75 @@ bool IsNuxOnboardingEnabled(Profile* profile) {
     base::FeatureList::IsEnabled(kNaviNTPVariationEnabled);
   else if (onboard_group.compare("ShortcutVariationSynthetic-008") == 0)
     base::FeatureList::IsEnabled(kNaviShortcutVariationEnabled);
+}
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING) && defined(OS_WIN)
 
-  if (base::FeatureList::IsEnabled(nux::kNuxOnboardingFeature)) {
-    return true;
+bool IsNuxOnboardingEnabled(Profile* profile) {
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+  return base::FeatureList::IsEnabled(nux::kNuxOnboardingFeature) ||
+         base::FeatureList::IsEnabled(nux::kNuxOnboardingForceEnabled);
+#else
+  // Allow enabling outside official builds for testing purposes.
+  return base::FeatureList::IsEnabled(nux::kNuxOnboardingForceEnabled);
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
+}
+
+bool IsAppVariationEnabled() {
+  return kNuxOnboardingForceEnabledShowGoogleApp.Get() ||
+         kNuxOnboardingShowGoogleApp.Get();
+}
+
+const policy::PolicyMap& GetPoliciesFromProfile(Profile* profile) {
+  policy::ProfilePolicyConnector* profile_connector =
+      profile->GetProfilePolicyConnector();
+  DCHECK(profile_connector);
+  return profile_connector->policy_service()->GetPolicies(
+      policy::PolicyNamespace(policy::POLICY_DOMAIN_CHROME, std::string()));
+}
+
+std::vector<std::string> GetAvailableModules(Profile* profile) {
+  const policy::PolicyMap& policies = GetPoliciesFromProfile(profile);
+  std::vector<std::string> available_modules;
+
+  if (CanShowGoogleAppModule(policies))
+    available_modules.push_back("nux-google-apps");
+  if (CanShowNTPBackgroundModule(policies, profile))
+    available_modules.push_back("nux-ntp-background");
+  if (CanShowSetDefaultModule(policies))
+    available_modules.push_back("nux-set-as-default");
+  if (CanShowSigninModule(policies))
+    available_modules.push_back("signin-view");
+
+  return available_modules;
+}
+
+bool DoesOnboardingHaveModulesToShow(Profile* profile) {
+  const base::Value* force_ephemeral_profiles_value =
+      GetPoliciesFromProfile(profile).GetValue(
+          policy::key::kForceEphemeralProfiles);
+  // Modules won't have a lasting effect if profile is ephemeral.
+  if (force_ephemeral_profiles_value &&
+      force_ephemeral_profiles_value->GetBool()) {
+    return false;
   }
-#endif  // defined(OS_WIN)
 
-#endif  // defined(GOOGLE_CHROME_BUILD)
+  return !GetAvailableModules(profile).empty();
+}
 
-  return false;
+std::string FilterModules(const std::string& requested_modules,
+                          const std::vector<std::string>& available_modules) {
+  std::vector<std::string> requested_list = base::SplitString(
+      requested_modules, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+  std::vector<std::string> filtered_modules;
+
+  std::copy_if(requested_list.begin(), requested_list.end(),
+               std::back_inserter(filtered_modules),
+               [available_modules](std::string module) {
+                 return !module.empty() &&
+                        base::Contains(available_modules, module);
+               });
+
+  return base::JoinString(filtered_modules, ",");
 }
 
 bool IsAppVariationEnabled() {

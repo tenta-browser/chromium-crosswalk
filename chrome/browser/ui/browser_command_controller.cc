@@ -15,6 +15,7 @@
 #include "base/macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/stl_util.h"
+#include "build/branding_buildflags.h"
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/browser_process.h"
@@ -52,7 +53,7 @@
 #include "components/feature_engagement/buildflags.h"
 #include "components/prefs/pref_service.h"
 #include "components/sessions/core/tab_restore_service.h"
-#include "components/signin/core/browser/signin_pref_names.h"
+#include "components/signin/public/base/signin_pref_names.h"
 #include "content/public/browser/native_web_keyboard_event.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
@@ -89,7 +90,7 @@
 #include "ui/base/ime/linux/text_edit_key_bindings_delegate_auralinux.h"
 #endif
 
-#if BUILDFLAG(ENABLE_DESKTOP_IN_PRODUCT_HELP)
+#if BUILDFLAG(ENABLE_LEGACY_DESKTOP_IN_PRODUCT_HELP)
 #include "chrome/browser/feature_engagement/bookmark/bookmark_tracker.h"
 #include "chrome/browser/feature_engagement/bookmark/bookmark_tracker_factory.h"
 #include "chrome/browser/feature_engagement/new_tab/new_tab_tracker.h"
@@ -302,6 +303,12 @@ void BrowserCommandController::LoadingStateChanged(bool is_loading,
   UpdateReloadStopState(is_loading, force);
 }
 
+void BrowserCommandController::FindBarVisibilityChanged() {
+  if (is_locked_fullscreen_)
+    return;
+  UpdateCloseFindOrStop();
+}
+
 void BrowserCommandController::ExtensionStateChanged() {
   // Extensions may disable the bookmark editing commands.
   UpdateCommandsForBookmarkEditing();
@@ -391,7 +398,7 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
       break;
     case IDC_NEW_TAB: {
       NewTab(browser_);
-#if BUILDFLAG(ENABLE_DESKTOP_IN_PRODUCT_HELP)
+#if BUILDFLAG(ENABLE_LEGACY_DESKTOP_IN_PRODUCT_HELP)
       // This is not in NewTab() to avoid tracking programmatic creation of new
       // tabs by extensions.
       auto* new_tab_tracker =
@@ -501,7 +508,7 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
       SavePage(browser_);
       break;
     case IDC_BOOKMARK_PAGE:
-#if BUILDFLAG(ENABLE_DESKTOP_IN_PRODUCT_HELP)
+#if BUILDFLAG(ENABLE_LEGACY_DESKTOP_IN_PRODUCT_HELP)
       feature_engagement::BookmarkTrackerFactory::GetInstance()
           ->GetForProfile(profile())
           ->OnBookmarkAdded();
@@ -509,7 +516,7 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
       BookmarkCurrentPageAllowingExtensionOverrides(browser_);
       break;
     case IDC_BOOKMARK_ALL_TABS:
-#if BUILDFLAG(ENABLE_DESKTOP_IN_PRODUCT_HELP)
+#if BUILDFLAG(ENABLE_LEGACY_DESKTOP_IN_PRODUCT_HELP)
       feature_engagement::BookmarkTrackerFactory::GetInstance()
           ->GetForProfile(profile())
           ->OnBookmarkAdded();
@@ -569,6 +576,12 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
     case IDC_FIND_PREVIOUS:
       FindPrevious(browser_);
       break;
+    case IDC_CLOSE_FIND_OR_STOP:
+      if (CanCloseFind(browser_))
+        CloseFind(browser_);
+      else if (IsCommandEnabled(IDC_STOP))
+        ExecuteCommand(IDC_STOP);
+      break;
 
     // Zoom
     case IDC_ZOOM_PLUS:
@@ -616,10 +629,12 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
       browser_->OpenFile();
       break;
     case IDC_CREATE_SHORTCUT:
+      base::RecordAction(base::UserMetricsAction("CreateShortcut"));
       CreateBookmarkAppFromCurrentWebContents(browser_,
                                               true /* force_shortcut_app */);
       break;
     case IDC_INSTALL_PWA:
+      base::RecordAction(base::UserMetricsAction("InstallWebAppFromMenu"));
       CreateBookmarkAppFromCurrentWebContents(browser_,
                                               false /* force_shortcut_app */);
       break;
@@ -646,7 +661,7 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
       TakeScreenshot();
       break;
 #endif
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
     case IDC_FEEDBACK:
       OpenFeedbackDialog(browser_, kFeedbackSourceBrowserCommand);
       break;
@@ -717,7 +732,7 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
       break;
 #endif
     case IDC_DISTILL_PAGE:
-      DistillCurrentPage(browser_);
+      ToggleDistilledView(browser_);
       break;
     case IDC_ROUTE_MEDIA:
       RouteMedia(browser_);
@@ -1236,7 +1251,7 @@ void BrowserCommandController::UpdateCommandsForFullscreenMode() {
 
   // Show various bits of UI
   command_updater_.UpdateCommandEnabled(IDC_DEVELOPER_MENU, show_main_ui);
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   command_updater_.UpdateCommandEnabled(
       IDC_FEEDBACK, show_main_ui || browser_->is_devtools());
 #endif
@@ -1295,7 +1310,7 @@ void NonWhitelistedCommandsAreDisabled(CommandUpdaterImpl* command_updater) {
 
   // Go through all the command ids, skip the whitelisted ones.
   for (int id : command_updater->GetAllIds()) {
-    if (base::ContainsValue(kWhitelistedIds, id)) {
+    if (base::Contains(kWhitelistedIds, id)) {
       continue;
     }
     DCHECK(!command_updater->IsCommandEnabled(id));
@@ -1441,6 +1456,7 @@ void BrowserCommandController::UpdateReloadStopState(bool is_loading,
 
   window()->UpdateReloadStopState(is_loading, force);
   command_updater_.UpdateCommandEnabled(IDC_STOP, is_loading);
+  UpdateCloseFindOrStop();
 }
 
 void BrowserCommandController::UpdateTabRestoreCommandState() {
@@ -1466,6 +1482,11 @@ void BrowserCommandController::UpdateCommandsForFind() {
   command_updater_.UpdateCommandEnabled(IDC_FIND, enabled);
   command_updater_.UpdateCommandEnabled(IDC_FIND_NEXT, enabled);
   command_updater_.UpdateCommandEnabled(IDC_FIND_PREVIOUS, enabled);
+}
+
+void BrowserCommandController::UpdateCloseFindOrStop() {
+  bool enabled = CanCloseFind(browser_) || IsCommandEnabled(IDC_STOP);
+  command_updater_.UpdateCommandEnabled(IDC_CLOSE_FIND_OR_STOP, enabled);
 }
 
 void BrowserCommandController::UpdateCommandsForMediaRouter() {

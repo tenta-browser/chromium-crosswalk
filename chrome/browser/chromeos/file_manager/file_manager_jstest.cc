@@ -163,6 +163,10 @@ IN_PROC_BROWSER_TEST_F(FileManagerJsTest, ProvidersModel) {
   RunGeneratedTest("/foreground/js/providers_model_unittest.html");
 }
 
+IN_PROC_BROWSER_TEST_F(FileManagerJsTest, FilesMessage) {
+  RunGeneratedTest("/foreground/elements/files_message_unittest.html");
+}
+
 IN_PROC_BROWSER_TEST_F(FileManagerJsTest, FilesToast) {
   RunGeneratedTest("/foreground/elements/files_toast_unittest.html");
 }
@@ -203,8 +207,12 @@ IN_PROC_BROWSER_TEST_F(FileManagerJsTest, Crostini) {
   RunGeneratedTest("/background/js/crostini_unittest.html");
 }
 
-IN_PROC_BROWSER_TEST_F(FileManagerJsTest, ListContainer) {
-  RunGeneratedTest("/foreground/js/ui/list_container_unittest.html");
+IN_PROC_BROWSER_TEST_F(FileManagerJsTest, FileTableList) {
+  RunGeneratedTest("/foreground/js/ui/file_table_list_unittest.html");
+}
+
+IN_PROC_BROWSER_TEST_F(FileManagerJsTest, FileTransferController) {
+  RunGeneratedTest("/foreground/js/file_transfer_controller_unittest.html");
 }
 
 IN_PROC_BROWSER_TEST_F(FileManagerJsTest, FileTableList) {

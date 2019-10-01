@@ -41,8 +41,8 @@ import org.chromium.chrome.browser.WarmupManager;
 import org.chromium.chrome.browser.firstrun.FirstRunFlowSequencer;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.chrome.browser.multiwindow.MultiWindowModeStateDispatcher;
+import org.chromium.chrome.browser.multiwindow.MultiWindowModeStateDispatcherImpl;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.content_public.browser.UiThreadTaskTraits;
 import org.chromium.ui.base.ActivityWindowAndroid;
 import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.base.WindowAndroid;
@@ -66,8 +66,8 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
 
     private final ActivityLifecycleDispatcherImpl mLifecycleDispatcher =
             new ActivityLifecycleDispatcherImpl();
-    private final MultiWindowModeStateDispatcher mMultiWindowModeStateDispatcher =
-            new MultiWindowModeStateDispatcher(this);
+    private final MultiWindowModeStateDispatcherImpl mMultiWindowModeStateDispatcher =
+            new MultiWindowModeStateDispatcherImpl(this);
 
     /** Time at which onCreate is called. This is realtime, counted in ms since device boot. */
     private long mOnCreateTimestampMs;
@@ -93,6 +93,7 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
     private boolean mFirstDrawComplete;
 
     private Runnable mOnInflationCompleteCallback;
+    private boolean mInitialLayoutInflationComplete;
 
     public AsyncInitializationActivity() {
         mHandler = new Handler();
@@ -189,21 +190,14 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
      */
     @CallSuper
     protected void performPostInflationStartup() {
-        final View firstDrawView = getViewToBeDrawnBeforeInitializingNative();
+        View firstDrawView = getViewToBeDrawnBeforeInitializingNative();
         assert firstDrawView != null;
-        ViewTreeObserver.OnPreDrawListener firstDrawListener =
-                new ViewTreeObserver.OnPreDrawListener() {
-                    @Override
-                    public boolean onPreDraw() {
-                        firstDrawView.getViewTreeObserver().removeOnPreDrawListener(this);
-                        mFirstDrawComplete = true;
-                        if (!mStartupDelayed) {
-                            onFirstDrawComplete();
-                        }
-                        return true;
-                    }
-                };
-        firstDrawView.getViewTreeObserver().addOnPreDrawListener(firstDrawListener);
+        FirstDrawDetector.waitForFirstDraw(firstDrawView, () -> {
+            mFirstDrawComplete = true;
+            if (!mStartupDelayed) {
+                onFirstDrawComplete();
+            }
+        });
     }
 
     /**
@@ -310,7 +304,7 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
         }
 
         // Some Samsung devices load fonts from disk, crbug.com/691706.
-        try (StrictModeContext unused = StrictModeContext.allowDiskReads()) {
+        try (StrictModeContext ignored = StrictModeContext.allowDiskReads()) {
             super.onCreate(transformSavedInstanceStateForOnCreate(savedInstanceState));
         }
         mOnCreateTimestampMs = SystemClock.elapsedRealtime();
@@ -504,6 +498,7 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
 
     @Override
     public final void onCreateWithNative() {
+        mLifecycleDispatcher.onCreateWithNative();
         try {
             ChromeBrowserInitializer.getInstance(this).handlePostNativeStartup(true, this);
         } catch (ProcessInitException e) {
@@ -547,6 +542,12 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
     }
 
     @Override
+    public void onMultiWindowModeChanged(boolean inMultiWindowMode) {
+        super.onMultiWindowModeChanged(inMultiWindowMode);
+        mMultiWindowModeStateDispatcher.dipatchMultiWindowModeChanged(inMultiWindowMode);
+    }
+
+    @Override
     public abstract boolean shouldStartGpuProcess();
 
     @CallSuper
@@ -558,13 +559,8 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
     private void onFirstDrawComplete() {
         assert mFirstDrawComplete;
         assert !mStartupDelayed;
-
-        PostTask.postTask(UiThreadTaskTraits.BOOTSTRAP, new Runnable() {
-            @Override
-            public void run() {
-                mNativeInitializationController.firstDrawComplete();
-            }
-        });
+        TraceEvent.instant("onFirstDrawComplete");
+        mNativeInitializationController.firstDrawComplete();
     }
 
     @Override
@@ -763,6 +759,14 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
         if (mOnInflationCompleteCallback == null) return;
         mOnInflationCompleteCallback.run();
         mOnInflationCompleteCallback = null;
+        mInitialLayoutInflationComplete = true;
+    }
+
+    /**
+     * Returns whether initial inflation is complete.
+     */
+    public boolean isInitialLayoutInflationComplete() {
+        return mInitialLayoutInflationComplete;
     }
 
     /**

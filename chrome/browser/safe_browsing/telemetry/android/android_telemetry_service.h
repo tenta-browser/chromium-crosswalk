@@ -109,10 +109,6 @@ class AndroidTelemetryService : public download::DownloadItem::Observer,
   // been captured. Sets |safety_net_id_on_ui_thread_| to the captured value.
   void SetSafetyNetIdOnUIThread(const std::string& safety_net_id);
 
-  // Gets called on the UI thread when the |safety_net_id| of the device has
-  // been captured. Sets |safety_net_id_on_ui_thread_| to the captured value.
-  void SetSafetyNetIdOnUIThread(const std::string& safety_net_id);
-
   // Helper method to get prefs from |profile_|.
   const PrefService* GetPrefs();
 

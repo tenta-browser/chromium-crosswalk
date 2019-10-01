@@ -295,7 +295,7 @@ void MakeCredentialRequestHandler::AuthenticatorRemoved(
       state_ = State::kFinished;
       std::move(completion_callback_)
           .Run(FidoReturnCode::kAuthenticatorRemovedDuringPINEntry,
-               base::nullopt, base::nullopt);
+               base::nullopt, nullptr);
     }
   }
 }
@@ -368,6 +368,18 @@ void MakeCredentialRequestHandler::HandleTouch(
   if (state_ != State::kWaitingForTouch) {
     return;
   }
+  if (response->retries == 0) {
+    state_ = State::kFinished;
+    std::move(completion_callback_)
+        .Run(FidoReturnCode::kHardPINBlock, base::nullopt, base::nullopt);
+    return;
+  }
+  state_ = State::kWaitingForPIN;
+  observer()->CollectPIN(
+      response->retries,
+      base::BindOnce(&MakeCredentialRequestHandler::OnHavePIN,
+                     weak_factory_.GetWeakPtr()));
+}
 
   DCHECK(base::FeatureList::IsEnabled(device::kWebAuthPINSupport));
 
@@ -411,8 +423,7 @@ void MakeCredentialRequestHandler::HandleInapplicableAuthenticator(
   const FidoReturnCode capability_error = IsCandidateAuthenticatorPostTouch(
       request_, authenticator, authenticator_selection_criteria_, observer());
   DCHECK_NE(capability_error, FidoReturnCode::kSuccess);
-  std::move(completion_callback_)
-      .Run(capability_error, base::nullopt, base::nullopt);
+  std::move(completion_callback_).Run(capability_error, base::nullopt, nullptr);
 }
 
 void MakeCredentialRequestHandler::OnHavePIN(std::string pin) {
@@ -448,13 +459,13 @@ void MakeCredentialRequestHandler::OnRetriesResponse(
     state_ = State::kFinished;
     std::move(completion_callback_)
         .Run(FidoReturnCode::kAuthenticatorResponseInvalid, base::nullopt,
-             base::nullopt);
+             nullptr);
     return;
   }
   if (response->retries == 0) {
     state_ = State::kFinished;
     std::move(completion_callback_)
-        .Run(FidoReturnCode::kHardPINBlock, base::nullopt, base::nullopt);
+        .Run(FidoReturnCode::kHardPINBlock, base::nullopt, nullptr);
     return;
   }
   state_ = State::kWaitingForPIN;
@@ -476,7 +487,7 @@ void MakeCredentialRequestHandler::OnHaveEphemeralKey(
     state_ = State::kFinished;
     std::move(completion_callback_)
         .Run(FidoReturnCode::kAuthenticatorResponseInvalid, base::nullopt,
-             base::nullopt);
+             nullptr);
     return;
   }
 
@@ -507,7 +518,7 @@ void MakeCredentialRequestHandler::OnHaveSetPIN(
     state_ = State::kFinished;
     std::move(completion_callback_)
         .Run(FidoReturnCode::kAuthenticatorResponseInvalid, base::nullopt,
-             base::nullopt);
+             nullptr);
     return;
   }
 
@@ -548,7 +559,7 @@ void MakeCredentialRequestHandler::OnHavePINToken(
         ret = FidoReturnCode::kAuthenticatorResponseInvalid;
         break;
     }
-    std::move(completion_callback_).Run(ret, base::nullopt, base::nullopt);
+    std::move(completion_callback_).Run(ret, base::nullopt, nullptr);
     return;
   }
 
@@ -571,29 +582,6 @@ void MakeCredentialRequestHandler::OnHavePINToken(
       std::move(request),
       base::BindOnce(&MakeCredentialRequestHandler::HandleResponse,
                      weak_factory_.GetWeakPtr(), authenticator_));
-}
-
-void MakeCredentialRequestHandler::SetPlatformAuthenticatorOrMarkUnavailable(
-    base::Optional<PlatformAuthenticatorInfo> platform_authenticator_info) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(my_sequence_checker_);
-
-  if (platform_authenticator_info) {
-    // TODO(crbug.com/873710): In the case of a request with
-    // AuthenticatorAttachment::kAny and when there is no embedder-provided
-    // transport selection UI, disable the platform authenticator to avoid the
-    // Touch ID fingerprint prompt competing with external devices.
-    const bool has_transport_selection_ui =
-        observer() && observer()->EmbedderControlsAuthenticatorDispatch(
-                          *platform_authenticator_info->authenticator);
-    if (authenticator_selection_criteria_.authenticator_attachment() ==
-            AuthenticatorAttachment::kAny &&
-        !has_transport_selection_ui) {
-      platform_authenticator_info = base::nullopt;
-    }
-  }
-
-  FidoRequestHandlerBase::SetPlatformAuthenticatorOrMarkUnavailable(
-      std::move(platform_authenticator_info));
 }
 
 }  // namespace device

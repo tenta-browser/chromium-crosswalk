@@ -74,14 +74,12 @@ class TestableInputMethodChromeOS : public InputMethodChromeOS {
   // Overridden from InputMethodChromeOS:
   ui::EventDispatchDetails ProcessKeyEventPostIME(
       ui::KeyEvent* key_event,
-      ResultCallback result_callback,
       bool skip_process_filtered,
       bool handled,
       bool stopped_propagation) override {
     ui::EventDispatchDetails details =
         InputMethodChromeOS::ProcessKeyEventPostIME(
-            key_event, std::move(result_callback), skip_process_filtered,
-            handled, stopped_propagation);
+            key_event, skip_process_filtered, handled, stopped_propagation);
     if (!skip_process_filtered) {
       process_key_event_post_ime_args_.event = *key_event;
       process_key_event_post_ime_args_.handled = handled;
@@ -175,7 +173,7 @@ class TestInputMethodManager
     bool is_jp_ime() const { return is_jp_ime_; }
 
    protected:
-    ~TestState() override {}
+    ~TestState() override = default;
 
    private:
     bool is_jp_kbd_ = false;
@@ -242,7 +240,7 @@ class InputMethodChromeOSTest : public internal::InputMethodDelegate,
     ResetFlags();
   }
 
-  ~InputMethodChromeOSTest() override {}
+  ~InputMethodChromeOSTest() override = default;
 
   void SetUp() override {
     IMEBridge::Initialize();
@@ -257,13 +255,7 @@ class InputMethodChromeOSTest : public internal::InputMethodDelegate,
     IMEBridge::Get()->SetCandidateWindowHandler(
         mock_ime_candidate_window_handler_.get());
 
-    internal::InputMethodDelegate* ime_delegate = this;
-    if (ShouldCreateCachingInputMethodDelegate()) {
-      caching_input_method_delegate_ =
-          std::make_unique<CachingInputMethodDelegate>();
-      ime_delegate = caching_input_method_delegate_.get();
-    }
-    ime_ = std::make_unique<TestableInputMethodChromeOS>(ime_delegate);
+    ime_ = std::make_unique<TestableInputMethodChromeOS>(this);
     ime_->SetFocusedTextInputClient(this);
 
     // InputMethodManager owns and delete it in InputMethodManager::Shutdown().
@@ -274,10 +266,10 @@ class InputMethodChromeOSTest : public internal::InputMethodDelegate,
 
   void TearDown() override {
     if (ime_.get())
-      ime_->SetFocusedTextInputClient(NULL);
+      ime_->SetFocusedTextInputClient(nullptr);
     ime_.reset();
-    IMEBridge::Get()->SetCurrentEngineHandler(NULL);
-    IMEBridge::Get()->SetCandidateWindowHandler(NULL);
+    IMEBridge::Get()->SetCurrentEngineHandler(nullptr);
+    IMEBridge::Get()->SetCandidateWindowHandler(nullptr);
     mock_ime_engine_handler_.reset();
     mock_ime_candidate_window_handler_.reset();
     IMEBridge::Shutdown();
@@ -288,12 +280,10 @@ class InputMethodChromeOSTest : public internal::InputMethodDelegate,
 
   // Overridden from ui::internal::InputMethodDelegate:
   ui::EventDispatchDetails DispatchKeyEventPostIME(
-      ui::KeyEvent* event,
-      DispatchKeyEventPostIMECallback callback) override {
+      ui::KeyEvent* event) override {
     dispatched_key_event_ = *event;
     if (stop_propagation_post_ime_)
       event->StopPropagation();
-    RunDispatchKeyEventPostIMECallback(event, std::move(callback));
     return ui::EventDispatchDetails();
   }
 
@@ -338,6 +328,13 @@ class InputMethodChromeOSTest : public internal::InputMethodDelegate,
   void OnInputMethodChanged() override {
     ++on_input_method_changed_call_count_;
   }
+  bool SetCompositionFromExistingText(
+      const gfx::Range& range,
+      const std::vector<ui::ImeTextSpan>& ui_ime_text_spans) override {
+    composition_text_ = CompositionText();
+    GetTextFromRange(range, &composition_text_.text);
+    return true;
+  }
 
   bool HasNativeEvent() const {
     return dispatched_key_event_.HasNativeEvent();
@@ -361,8 +358,6 @@ class InputMethodChromeOSTest : public internal::InputMethodDelegate,
   }
 
  protected:
-  virtual bool ShouldCreateCachingInputMethodDelegate() { return false; }
-
   std::unique_ptr<TestableInputMethodChromeOS> ime_;
 
   std::unique_ptr<CachingInputMethodDelegate> caching_input_method_delegate_;
@@ -422,13 +417,13 @@ TEST_F(InputMethodChromeOSTest, CanComposeInline) {
 
 TEST_F(InputMethodChromeOSTest, GetTextInputClient) {
   EXPECT_EQ(this, ime_->GetTextInputClient());
-  ime_->SetFocusedTextInputClient(NULL);
-  EXPECT_EQ(NULL, ime_->GetTextInputClient());
+  ime_->SetFocusedTextInputClient(nullptr);
+  EXPECT_EQ(nullptr, ime_->GetTextInputClient());
 }
 
 TEST_F(InputMethodChromeOSTest, GetInputTextType_WithoutFocusedClient) {
   EXPECT_EQ(TEXT_INPUT_TYPE_NONE, ime_->GetTextInputType());
-  ime_->SetFocusedTextInputClient(NULL);
+  ime_->SetFocusedTextInputClient(nullptr);
   input_type_ = TEXT_INPUT_TYPE_PASSWORD;
   ime_->OnTextInputTypeChanged(this);
   // The OnTextInputTypeChanged() call above should be ignored since |this| is
@@ -538,7 +533,7 @@ TEST_F(InputMethodChromeOSTest, Focus_Scenario) {
             mock_ime_engine_handler_->last_text_input_context().mode);
 
   // Confirm that FocusOut is called when set focus to NULL client.
-  ime_->SetFocusedTextInputClient(NULL);
+  ime_->SetFocusedTextInputClient(nullptr);
   EXPECT_EQ(3, mock_ime_engine_handler_->focus_in_call_count());
   EXPECT_EQ(3, mock_ime_engine_handler_->focus_out_call_count());
   // Confirm that FocusIn is called when set focus to this client.
@@ -921,10 +916,66 @@ TEST_F(InputMethodChromeOSTest, SurroundingText_EventOrder) {
   IMEBridge::Get()->SetCurrentEngineHandler(nullptr);
 }
 
+TEST_F(InputMethodChromeOSTest, SetCompositionRange_InvalidRange) {
+  // Focus on a text field.
+  input_type_ = TEXT_INPUT_TYPE_TEXT;
+  ime_->OnTextInputTypeChanged(this);
+
+  // Insert some text and place the cursor.
+  surrounding_text_ = UTF8ToUTF16("abc");
+  text_range_ = gfx::Range(0, 3);
+  selection_range_ = gfx::Range(1, 1);
+
+  EXPECT_FALSE(ime_->SetCompositionRange(0, 4, {}));
+  EXPECT_EQ(0U, composition_text_.text.length());
+}
+
+TEST_F(InputMethodChromeOSTest, ConfirmCompositionText_NoComposition) {
+  // Focus on a text field.
+  input_type_ = TEXT_INPUT_TYPE_TEXT;
+  ime_->OnTextInputTypeChanged(this);
+
+  ime_->ConfirmCompositionText();
+
+  EXPECT_TRUE(confirmed_text_.text.empty());
+  EXPECT_TRUE(composition_text_.text.empty());
+}
+
+TEST_F(InputMethodChromeOSTest, ConfirmCompositionText_SetComposition) {
+  // Focus on a text field.
+  input_type_ = TEXT_INPUT_TYPE_TEXT;
+  ime_->OnTextInputTypeChanged(this);
+
+  CompositionText composition_text;
+  composition_text.text = base::UTF8ToUTF16("hello");
+  SetCompositionText(composition_text);
+  ime_->ConfirmCompositionText();
+
+  EXPECT_EQ(base::ASCIIToUTF16("hello"), confirmed_text_.text);
+  EXPECT_TRUE(composition_text_.text.empty());
+}
+
+TEST_F(InputMethodChromeOSTest, ConfirmCompositionText_SetCompositionRange) {
+  // Focus on a text field.
+  input_type_ = TEXT_INPUT_TYPE_TEXT;
+  ime_->OnTextInputTypeChanged(this);
+
+  // Place some text.
+  surrounding_text_ = UTF8ToUTF16("abc");
+  text_range_ = gfx::Range(0, 3);
+
+  // "abc" is in composition. Put the two characters in composition.
+  ime_->SetCompositionRange(0, 2, {});
+  ime_->ConfirmCompositionText();
+
+  EXPECT_EQ(base::ASCIIToUTF16("ab"), confirmed_text_.text);
+  EXPECT_TRUE(composition_text_.text.empty());
+}
+
 class InputMethodChromeOSKeyEventTest : public InputMethodChromeOSTest {
  public:
-  InputMethodChromeOSKeyEventTest() {}
-  ~InputMethodChromeOSKeyEventTest() override {}
+  InputMethodChromeOSKeyEventTest() = default;
+  ~InputMethodChromeOSKeyEventTest() override = default;
 
   DISALLOW_COPY_AND_ASSIGN(InputMethodChromeOSKeyEventTest);
 };
@@ -946,8 +997,7 @@ TEST_F(InputMethodChromeOSKeyEventTest, KeyEventDelayResponseTest) {
   EXPECT_EQ(kFlags, key_event->flags());
   EXPECT_EQ(0, ime_->process_key_event_post_ime_call_count());
 
-  (static_cast<IMEInputContextHandlerInterface*>(ime_.get()))
-      ->CommitText("A");
+  static_cast<IMEInputContextHandlerInterface*>(ime_.get())->CommitText("A");
 
   EXPECT_EQ(0, inserted_char_);
 
@@ -1068,9 +1118,7 @@ TEST_F(InputMethodChromeOSKeyEventTest, DeadKeyPressTest) {
                       0,
                       DomKey::DeadKeyFromCombiningCharacter('^'),
                       EventTimeForNow());
-  ime_->ProcessKeyEventPostIME(
-      &eventA, InputMethodDelegate::DispatchKeyEventPostIMECallback(), false,
-      true, true);
+  ime_->ProcessKeyEventPostIME(&eventA, false, true, true);
 
   const ui::KeyEvent& key_event = dispatched_key_event_;
 

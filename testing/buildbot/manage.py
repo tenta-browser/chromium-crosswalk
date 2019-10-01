@@ -92,7 +92,6 @@ SKIP_GN_ISOLATE_MAP_TARGETS = {
   'cronet_unittests_ios',
   'ios_chrome_bookmarks_egtests',
   'ios_chrome_integration_egtests',
-  'ios_chrome_manual_fill_egtests',
   'ios_chrome_reading_list_egtests',
   'ios_chrome_settings_egtests',
   'ios_chrome_smoke_egtests',
@@ -101,7 +100,10 @@ SKIP_GN_ISOLATE_MAP_TARGETS = {
   'ios_chrome_unified_consent_egtests',
   'ios_chrome_unittests',
   'ios_chrome_web_egtests',
-  'ios_chrome_smoke_eg2tests',
+  'ios_chrome_smoke_eg2tests_module',
+  'ios_chrome_ui_eg2tests_module',
+  'ios_chrome_web_eg2tests_module',
+  'ios_web_shell_eg2tests_module',
   'ios_components_unittests',
   'ios_net_unittests',
   "ios_remoting_unittests",
@@ -120,7 +122,6 @@ SKIP_GN_ISOLATE_MAP_TARGETS = {
   'components_invalidation_impl_junit_tests',
   'components_policy_junit_tests',
   'components_variations_junit_tests',
-  'components_web_restrictions_junit_tests',
   'content_junit_tests',
   'content_junit_tests',
   'device_junit_tests',
@@ -180,6 +181,10 @@ SKIP_GN_ISOLATE_MAP_TARGETS = {
 
   # These are defined by an android internal gn_isolate_map.pyl file.
   'chrome_apk',
+  'resource_sizes_chrome_apk',
+  'resource_sizes_chrome_modern_minimal_apks',
+  'resource_sizes_monochrome_minimal_apks',
+  'resource_sizes_system_webview_google_apk',
 
   # These are used by https://www.chromium.org/developers/cluster-telemetry.
   'ct_telemetry_perf_tests_without_chrome',

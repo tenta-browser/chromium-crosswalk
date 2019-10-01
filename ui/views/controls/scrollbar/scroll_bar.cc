@@ -455,4 +455,83 @@ base::Optional<int> ScrollBar::GetDesiredScrollOffset(ScrollAmount amount) {
       return base::nullopt;
   }
 }
+
+BEGIN_METADATA(ScrollBar)
+METADATA_PARENT_CLASS(View)
+ADD_READONLY_PROPERTY_METADATA(ScrollBar, int, MaxPosition)
+ADD_READONLY_PROPERTY_METADATA(ScrollBar, int, MinPosition)
+ADD_READONLY_PROPERTY_METADATA(ScrollBar, int, Position)
+END_METADATA()
+
+int ScrollBar::CalculateThumbPosition(int contents_scroll_offset) const {
+  // In some combination of viewport_size and contents_size_, the result of
+  // simple division can be rounded and there could be 1 pixel gap even when the
+  // contents scroll down to the bottom. See crbug.com/244671.
+  int thumb_max = GetTrackSize() - thumb_->GetSize();
+  if (contents_scroll_offset + viewport_size_ == contents_size_)
+    return thumb_max;
+  return (contents_scroll_offset * thumb_max) /
+         (contents_size_ - viewport_size_);
+}
+
+int ScrollBar::CalculateContentsOffset(float thumb_position,
+                                       bool scroll_to_middle) const {
+  float thumb_size = static_cast<float>(thumb_->GetSize());
+  int track_size = GetTrackSize();
+  if (track_size == thumb_size)
+    return 0;
+  if (scroll_to_middle)
+    thumb_position = thumb_position - (thumb_size / 2);
+  float result = (thumb_position * (contents_size_ - viewport_size_)) /
+                 (track_size - thumb_size);
+  return gfx::ToRoundedInt(result);
+}
+
+void ScrollBar::SetContentsScrollOffset(int contents_scroll_offset) {
+  contents_scroll_offset_ = base::ClampToRange(
+      contents_scroll_offset, GetMinPosition(), GetMaxPosition());
+}
+
+ScrollBar::ScrollAmount ScrollBar::DetermineScrollAmountByKeyCode(
+    const ui::KeyboardCode& keycode) const {
+  // Reject arrows that don't match the scrollbar orientation.
+  if (IsHorizontal() ? (keycode == ui::VKEY_UP || keycode == ui::VKEY_DOWN)
+                     : (keycode == ui::VKEY_LEFT || keycode == ui::VKEY_RIGHT))
+    return ScrollAmount::kNone;
+
+  static const base::NoDestructor<
+      base::flat_map<ui::KeyboardCode, ScrollAmount>>
+      kMap({
+          {ui::VKEY_LEFT, ScrollAmount::kPrevLine},
+          {ui::VKEY_RIGHT, ScrollAmount::kNextLine},
+          {ui::VKEY_UP, ScrollAmount::kPrevLine},
+          {ui::VKEY_DOWN, ScrollAmount::kNextLine},
+          {ui::VKEY_PRIOR, ScrollAmount::kPrevPage},
+          {ui::VKEY_NEXT, ScrollAmount::kNextPage},
+          {ui::VKEY_HOME, ScrollAmount::kStart},
+          {ui::VKEY_END, ScrollAmount::kEnd},
+      });
+
+  const auto i = kMap->find(keycode);
+  return (i == kMap->end()) ? ScrollAmount::kNone : i->second;
+}
+
+base::Optional<int> ScrollBar::GetDesiredScrollOffset(ScrollAmount amount) {
+  switch (amount) {
+    case ScrollAmount::kStart:
+      return GetMinPosition();
+    case ScrollAmount::kEnd:
+      return GetMaxPosition();
+    case ScrollAmount::kPrevLine:
+      return contents_scroll_offset_ - GetScrollIncrement(false, false);
+    case ScrollAmount::kNextLine:
+      return contents_scroll_offset_ + GetScrollIncrement(false, true);
+    case ScrollAmount::kPrevPage:
+      return contents_scroll_offset_ - GetScrollIncrement(true, false);
+    case ScrollAmount::kNextPage:
+      return contents_scroll_offset_ + GetScrollIncrement(true, true);
+    default:
+      return base::nullopt;
+  }
+}
 }  // namespace views

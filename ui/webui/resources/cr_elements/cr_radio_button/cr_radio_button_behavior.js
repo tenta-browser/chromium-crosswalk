@@ -35,22 +35,45 @@ const CrRadioButtonBehaviorImpl = {
   },
 
   listeners: {
-    blur: 'cancelRipple_',
+    blur: 'hideRipple_',
     focus: 'onFocus_',
-    pointerup: 'cancelRipple_',
+    up: 'hideRipple_',
   },
 
   /** @private */
   onFocus_: function() {
-    this.ensureRipple();
-    this.$$('paper-ripple').holdDown = true;
+    this.getRipple().showAndHoldDown();
     this.$.button.focus();
   },
 
   /** @private */
-  cancelRipple_: function() {
-    this.ensureRipple();
-    this.$$('paper-ripple').holdDown = false;
+  hideRipple_: function() {
+    this.getRipple().clear();
+  },
+
+  /** @private */
+  getAriaChecked_: function() {
+    return this.checked ? 'true' : 'false';
+  },
+
+  /** @private */
+  getAriaDisabled_: function() {
+    return this.disabled ? 'true' : 'false';
+  },
+
+  /**
+   * When shift-tab is pressed, first bring the focus to the host element.
+   * This accomplishes 2 things:
+   * 1) Host doesn't get focused when the browser moves the focus backward.
+   * 2) focus now escaped the shadow-dom of this element, so that it'll
+   *    correctly obey non-zero tabindex ordering of the containing document.
+   * @param {!Event} e
+   * @private
+   */
+  onInputKeydown_: function(e) {
+    if (e.shiftKey && e.key === 'Tab') {
+      this.focus();
+    }
   },
 
   /** @private */

@@ -17,7 +17,6 @@
 #include "chrome/browser/metrics/chrome_metrics_service_accessor.h"
 #include "chrome/browser/metrics/chrome_metrics_service_client.h"
 #include "chrome/browser/metrics/chrome_metrics_services_manager_client.h"
-#include "chrome/browser/search/local_ntp_first_run_field_trial_handler.h"
 #include "chrome/common/channel_info.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
@@ -27,7 +26,7 @@
 #include "components/version_info/version_info.h"
 
 #if defined(OS_ANDROID)
-#include "base/android/reached_code_profiler.h"
+#include "chrome/browser/android/feature_utilities.h"
 #include "chrome/browser/chrome_browser_field_trials_mobile.h"
 #else
 #include "chrome/browser/chrome_browser_field_trials_desktop.h"
@@ -111,6 +110,19 @@ void ChromeBrowserFieldTrials::RegisterSyntheticTrials() {
   } else {
     ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial(
         kReachedCodeProfilerTrial, kDisabledGroup);
+  }
+#endif  // defined(OS_ANDROID)
+}
+
+void ChromeBrowserFieldTrials::RegisterSyntheticTrials() {
+#if defined(OS_ANDROID)
+  static constexpr char kReachedCodeProfilerTrial[] =
+      "ReachedCodeProfilerSynthetic2";
+  std::string reached_code_profiler_group =
+      chrome::android::GetReachedCodeProfilerTrialGroup();
+  if (!reached_code_profiler_group.empty()) {
+    ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial(
+        kReachedCodeProfilerTrial, reached_code_profiler_group);
   }
 #endif  // defined(OS_ANDROID)
 }

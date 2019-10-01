@@ -123,7 +123,52 @@ class Adapter : public AlsReader::Observer,
     kImmediateDarkeningThresholdExceeded = 2,
     kBrightneningThresholdExceeded = 3,
     kDarkeningThresholdExceeded = 4,
-    kMaxValue = kDarkeningThresholdExceeded
+    kUpdateAfterLidReopen = 5,
+    kMaxValue = kUpdateAfterLidReopen
+  };
+
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
+  enum class NoBrightnessChangeCause {
+    kWaitingForInitialAls = 0,
+    kWaitingForAvgHorizon = 1,
+    // |log_als_values_| is empty.
+    kMissingAlsData = 2,
+    // User manually changed brightness before and it stopped adapter from
+    // changing brightness.
+    kDisabledByUser = 3,
+    kBrightnessSetByPolicy = 4,
+    // ALS increased beyond the brightening threshold, but ALS data has been
+    // fluctuating above the stabilization threshold.
+    kFluctuatingAlsIncrease = 5,
+    // ALS decreased beyond the darkening threshold, but ALS data has been
+    // fluctuating above the stabilization threshold.
+    kFluctuatingAlsDecrease = 6,
+    // ALS change is within darkening and brightening thresholds.
+    kMinimalAlsChange = 7,
+    // Adapter should only use personal curves but none is available.
+    kMissingPersonalCurve = 8,
+    // Adapter should only use a personal curve that has been trained for a min
+    // number of iterations.
+    kWaitingForTrainedPersonalCurve = 9,
+    kWaitingForReopenAls = 10,
+    kMaxValue = kWaitingForReopenAls
+  };
+
+  struct AdapterDecision {
+    AdapterDecision();
+    AdapterDecision(const AdapterDecision& decision);
+    // If |no_brightness_change_cause| is not nullopt, then brightness
+    // should not be changed.
+    // If |brightness_change_cause| is not nullopt, then brightness should be
+    // changed. In this case |log_als_avg_stddev| should not be nullopt.
+    // Exactly one of |no_brightness_change_cause| and
+    // |brightness_change_cause| should be non-nullopt.
+    // |log_als_avg_stddev| may be set even when brightness should not be
+    // changed. It is only nullopt if there is no ALS data in the data cache.
+    base::Optional<NoBrightnessChangeCause> no_brightness_change_cause;
+    base::Optional<BrightnessChangeCause> brightness_change_cause;
+    base::Optional<AlsAvgStdDev> log_als_avg_stddev;
   };
 
   // These values are persisted to logs. Entries should not be renumbered and
@@ -200,6 +245,8 @@ class Adapter : public AlsReader::Observer,
   // chromeos::PowerManagerClient::Observer overrides:
   void PowerManagerBecameAvailable(bool service_is_ready) override;
   void SuspendDone(const base::TimeDelta& sleep_duration) override;
+  void LidEventReceived(chromeos::PowerManagerClient::LidState state,
+                        const base::TimeTicks& timestamp) override;
 
   Status GetStatusForTesting() const;
 
@@ -395,6 +442,19 @@ class Adapter : public AlsReader::Observer,
 
   // Used to record number of model-triggered brightness changes.
   int model_brightness_change_counter_ = 1;
+
+  // If lid is closed then we do not record any ambient light. If a device
+  // has no lid, it is considered as open.
+  base::Optional<bool> is_lid_closed_;
+
+  // Recent lid reopen time following a lid-closed event. Unset after the first
+  // brightness change after a recent lid-open event.
+  base::TimeTicks lid_reopen_time_;
+
+  // ALS data that arrives soon after lid is reopened tends to be inaccurate.
+  // Hence we do not store any ALS data that arrives less than
+  // |lid_open_delay_time_| from |lid_reopen_time_|.
+  base::TimeDelta lid_open_delay_time_ = base::TimeDelta::FromSeconds(2);
 
   DISALLOW_COPY_AND_ASSIGN(Adapter);
 };

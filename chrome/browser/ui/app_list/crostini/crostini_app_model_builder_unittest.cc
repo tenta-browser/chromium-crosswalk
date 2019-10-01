@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "base/run_loop.h"
-#include "chrome/browser/apps/app_service/app_service_proxy_impl.h"
+#include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/chromeos/crostini/crostini_registry_service.h"
 #include "chrome/browser/chromeos/crostini/crostini_registry_service_factory.h"
 #include "chrome/browser/chromeos/crostini/crostini_test_helper.h"
@@ -86,45 +86,7 @@ class CrostiniAppModelBuilderTest : public AppListTestBase {
     // user such that crostini::IsCrostiniUIAllowedForProfile() returns true.
     // Call this "LINE B" (see below).
     test_helper_ = std::make_unique<CrostiniTestHelper>(profile());
-
-    // Some tests add apps to the registry, which queues (asynchronous) icon
-    // loading requests, which depends on D-Bus. These requests are merely
-    // queued, not executed, so without further action, D-Bus can be ignored.
-    //
-    // Separately, the App Service is a Mojo IPC service, and explicit
-    // RunUntilIdle calls are required to pump the IPCs, not just during this
-    // SetUp method, but also during the actual test code below. Those calls
-    // have a side effect of executing those icon loading requests.
-    //
-    // It is simpler if those RunUntilIdle calls are unconditional, so we also
-    // initialize D-Bus (if it wasn't already initialized) regardless of
-    // whether the App Service is enabled.
-    initialized_dbus_ = !chromeos::DBusThreadManager::IsInitialized();
-    if (initialized_dbus_) {
-      chromeos::DBusThreadManager::Initialize();
-    }
-
-    if (base::FeatureList::IsEnabled(features::kAppServiceAsh)) {
-      // The two lines ("LINE A" and "LINE B") of code, above, happen in a
-      // specific order: the AppListTestBase superclass' SetUp should happen
-      // before CrostiniAppModelBuilderTest's subclass-specific set-up.
-      //
-      // However, the App Service is a browser-context KeyedService, so it is
-      // created and initialized during LINE A, before the fake Crostini user
-      // is configured during LINE B. Without further action, in these tests
-      // (but not in production which looks at real users, not fakes), the App
-      // Service serves no Crostini apps, as at the time it looked, the
-      // profile/user doesn't have Crostini enabled.
-      //
-      // We therefore manually have the App Service re-examine whether Crostini
-      // is enabled for this profile, to pick up the side effects of LINE B.
-      apps::AppServiceProxyImpl::GetImplForTesting(profile())
-          ->ReInitializeCrostiniForTesting(profile());
-
-      // As mentioned above, explicit RunUntilIdle calls pump the Mojo IPCs.
-      base::RunLoop().RunUntilIdle();
-    }
-
+    test_helper_->ReInitializeAppServiceIntegration();
     CreateBuilder();
   }
 
@@ -197,8 +159,6 @@ class CrostiniAppModelBuilderTest : public AppListTestBase {
   std::unique_ptr<
       app_list::AppListSyncableService::ScopedModelUpdaterFactoryForTest>
       model_updater_factory_scope_;
-
-  bool initialized_dbus_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(CrostiniAppModelBuilderTest);
 };

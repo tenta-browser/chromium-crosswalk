@@ -18,7 +18,6 @@
 #include "ui/aura/window.h"
 
 namespace ash {
-namespace wm {
 
 BaseState::BaseState(WindowStateType initial_state_type)
     : state_type_(initial_state_type) {}
@@ -110,8 +109,8 @@ void BaseState::CenterWindow(WindowState* window_state) {
     gfx::Rect center_in_parent =
         screen_util::GetDisplayWorkAreaBoundsInParent(window);
     center_in_parent.ClampToCenteredSize(window->bounds().size());
-    const wm::SetBoundsEvent event(center_in_parent,
-                                   /*animate=*/true);
+    const SetBoundsWMEvent event(center_in_parent,
+                                 /*animate=*/true);
     window_state->OnWMEvent(&event);
   }
   // Centering window is treated as if a user moved and resized the window.
@@ -126,9 +125,9 @@ void BaseState::CycleSnap(WindowState* window_state, WMEventType event) {
 
   if (window_state->CanSnap() &&
       window_state->GetStateType() != desired_snap_state) {
-    const wm::WMEvent event(desired_snap_state == WindowStateType::kLeftSnapped
-                                ? wm::WM_EVENT_SNAP_LEFT
-                                : wm::WM_EVENT_SNAP_RIGHT);
+    const WMEvent event(desired_snap_state == WindowStateType::kLeftSnapped
+                            ? WM_EVENT_SNAP_LEFT
+                            : WM_EVENT_SNAP_RIGHT);
     window_state->OnWMEvent(&event);
     return;
   }
@@ -201,5 +200,4 @@ gfx::Rect BaseState::GetSnappedWindowBoundsInParent(
   return bounds_in_parent;
 }
 
-}  // namespace wm
 }  // namespace ash

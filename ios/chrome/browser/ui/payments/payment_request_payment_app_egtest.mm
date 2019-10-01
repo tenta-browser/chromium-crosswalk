@@ -45,7 +45,7 @@ const char kBobPayPage[] =
   CHROME_EG_ASSERT_NO_ERROR(
       [ChromeEarlGrey loadURL:web::test::HttpServer::MakeUrl(kBobPayPage)]);
 
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey tapWebStateElementWithID:@"buy"]);
+  [ChromeEarlGrey tapWebStateElementWithID:@"buy"];
 
   [self waitForWebViewContainingTexts:{"NotSupportedError",
                                        "The payment method is not supported"}];
@@ -57,8 +57,7 @@ const char kBobPayPage[] =
   CHROME_EG_ASSERT_NO_ERROR(
       [ChromeEarlGrey loadURL:web::test::HttpServer::MakeUrl(kBobPayPage)]);
 
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey tapWebStateElementWithID:@"canMakePayment"]);
+  [ChromeEarlGrey tapWebStateElementWithID:@"canMakePayment"];
 
   [self waitForWebViewContainingTexts:{"false"}];
 }

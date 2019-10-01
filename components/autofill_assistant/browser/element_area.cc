@@ -29,19 +29,8 @@ void ElementArea::Clear() {
 
 void ElementArea::SetFromProto(const ElementAreaProto& proto) {
   rectangles_.clear();
-  for (const auto& rectangle_proto : proto.rectangles()) {
-    rectangles_.emplace_back();
-    Rectangle& rectangle = rectangles_.back();
-    rectangle.full_width = rectangle_proto.full_width();
-    DVLOG(3) << "Touchable Rectangle"
-             << (rectangle.full_width ? " (full_width)" : "") << ":";
-    for (const auto& element_proto : rectangle_proto.elements()) {
-      rectangle.positions.emplace_back();
-      ElementPosition& position = rectangle.positions.back();
-      position.selector = Selector(element_proto).MustBeVisible();
-      DVLOG(3) << "  " << position.selector;
-    }
-  }
+  AddRectangles(proto.touchable(), /* restricted= */ false);
+  AddRectangles(proto.restricted(), /* restricted= */ true);
 
   if (rectangles_.empty()) {
     timer_.Stop();
@@ -60,14 +49,48 @@ void ElementArea::SetFromProto(const ElementAreaProto& proto) {
   }
 }
 
+void ElementArea::AddRectangles(
+    const ::google::protobuf::RepeatedPtrField<ElementAreaProto::Rectangle>&
+        rectangles_proto,
+    bool restricted) {
+  for (const auto& rectangle_proto : rectangles_proto) {
+    rectangles_.emplace_back();
+    Rectangle& rectangle = rectangles_.back();
+    rectangle.full_width = rectangle_proto.full_width();
+    rectangle.restricted = restricted;
+    DVLOG(3) << "Rectangle (full_width="
+             << (rectangle.full_width ? "true" : "false")
+             << ", restricted=" << (restricted ? "true" : "false") << "):";
+    for (const auto& element_proto : rectangle_proto.elements()) {
+      rectangle.positions.emplace_back();
+      ElementPosition& position = rectangle.positions.back();
+      position.selector = Selector(element_proto).MustBeVisible();
+      DVLOG(3) << "  " << position.selector;
+    }
+  }
+}
+
 void ElementArea::Update() {
   if (rectangles_.empty())
+    return;
+  }
+
+  // If anything is still pending, skip the update.
+  if (visual_viewport_pending_update_)
     return;
 
   // If anything is still pending, skip the update.
   if (visual_viewport_pending_update_)
     return;
 
+  for (auto& rectangle : rectangles_) {
+    if (rectangle.IsPending())
+      return;
+  }
+
+  // Mark everything as pending at the same time, to avoid reporting partial
+  // results.
+  visual_viewport_pending_update_ = true;
   for (auto& rectangle : rectangles_) {
     if (rectangle.IsPending())
       return;
@@ -102,10 +125,21 @@ void ElementArea::Update() {
   }
 }
 
-void ElementArea::GetRectangles(std::vector<RectF>* area) {
+void ElementArea::GetTouchableRectangles(std::vector<RectF>* area) {
   for (auto& rectangle : rectangles_) {
-    area->emplace_back();
-    rectangle.FillRect(&area->back(), visual_viewport_);
+    if (!rectangle.restricted) {
+      area->emplace_back();
+      rectangle.FillRect(&area->back(), visual_viewport_);
+    }
+  }
+}
+
+void ElementArea::GetRestrictedRectangles(std::vector<RectF>* area) {
+  for (auto& rectangle : rectangles_) {
+    if (rectangle.restricted) {
+      area->emplace_back();
+      rectangle.FillRect(&area->back(), visual_viewport_);
+    }
   }
 }
 
@@ -192,7 +226,7 @@ void ElementArea::ReportUpdate() {
   if (rectangles_.empty()) {
     // Reporting of visual viewport is best effort when reporting empty
     // rectangles. It might also be empty.
-    on_update_.Run(visual_viewport_, {});
+    on_update_.Run(visual_viewport_, {}, {});
     return;
   }
 
@@ -209,10 +243,12 @@ void ElementArea::ReportUpdate() {
     }
   }
 
-  std::vector<RectF> area;
-  GetRectangles(&area);
+  std::vector<RectF> touchable_area;
+  std::vector<RectF> restricted_area;
+  GetTouchableRectangles(&touchable_area);
+  GetRestrictedRectangles(&restricted_area);
 
-  on_update_.Run(visual_viewport_, area);
+  on_update_.Run(visual_viewport_, touchable_area, restricted_area);
 }
 
 }  // namespace autofill_assistant

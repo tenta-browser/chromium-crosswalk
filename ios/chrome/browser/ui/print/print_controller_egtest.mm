@@ -57,9 +57,8 @@ const char kHTMLURL[] = "http://test";
   responses[url] = response;
   web::test::SetUpSimpleHttpServer(responses);
 
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:url]);
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:response]);
+  [ChromeEarlGrey loadURL:url];
+  [ChromeEarlGrey waitForWebStateContainingText:response];
 
   [self printCurrentPage];
 }
@@ -71,7 +70,7 @@ const char kHTMLURL[] = "http://test";
 
   web::test::SetUpFileBasedHttpServer();
   GURL url = web::test::HttpServer::MakeUrl(kPDFURL);
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:url waitForCompletion:NO]);
+  [ChromeEarlGrey loadURL:url waitForCompletion:NO];
 
   [self printCurrentPage];
 }

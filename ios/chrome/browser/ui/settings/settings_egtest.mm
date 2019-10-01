@@ -17,7 +17,6 @@
 #include "components/prefs/pref_member.h"
 #include "components/prefs/pref_service.h"
 #include "components/strings/grit/components_strings.h"
-#include "components/ukm/ios/features.h"
 #include "components/unified_consent/feature.h"
 #import "ios/chrome/app/main_controller.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
@@ -28,7 +27,6 @@
 #include "ios/chrome/grit/ios_strings.h"
 #include "ios/chrome/grit/ios_theme_resources.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
-#include "ios/chrome/test/earl_grey/accessibility_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_error_util.h"
@@ -36,9 +34,9 @@
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
 #import "ios/web/public/test/http_server/http_server.h"
 #include "ios/web/public/test/http_server/http_server_util.h"
+#include "ios/web/public/thread/web_task_traits.h"
+#include "ios/web/public/thread/web_thread.h"
 #import "ios/web/public/web_state/web_state.h"
-#include "ios/web/public/web_task_traits.h"
-#include "ios/web/public/web_thread.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -174,8 +172,20 @@ id<GREYMatcher> BandwidthSettingsButton() {
 
   // Before returning, make sure that the top of the Clear Browsing Data
   // settings screen is visible to match the state at the start of the method.
+  // TODO(crbug.com/973708): On iOS 13 the settings menu appears as a card that
+  // can be dismissed with a downward swipe.  This make it difficult to use a
+  // gesture to return to the top of the Clear Browsing Data screen, so scroll
+  // programatically instead. Remove this custom action if we switch back to a
+  // fullscreen presentation.
+  GREYPerformBlock scrollToTopBlock =
+      ^BOOL(id element, __strong NSError** error) {
+        UIScrollView* view = base::mac::ObjCCastStrict<UIScrollView>(element);
+        view.contentOffset = CGPointZero;
+        return YES;
+      };
   [[EarlGrey selectElementWithMatcher:ClearBrowsingDataView()]
-      performAction:grey_scrollToContentEdge(kGREYContentEdgeTop)];
+      performAction:[GREYActionBlock actionWithName:@"Scroll to top"
+                                       performBlock:scrollToTopBlock]];
 }
 
 // From the NTP, clears the cookies and site data via the UI.
@@ -359,7 +369,7 @@ id<GREYMatcher> BandwidthSettingsButton() {
   // kMetricsReportingEnabled ON and kMetricsReportingWifiOnly OFF
   //  - Services record data and upload data.
 
-  if (base::FeatureList::IsEnabled(kUmaCellular)) {
+  if ([ChromeEarlGrey isUMACellularEnabled]) {
     // kMetricsReportingEnabled OFF
     [self setMetricsReportingEnabled:NO];
   } else {
@@ -370,7 +380,7 @@ id<GREYMatcher> BandwidthSettingsButton() {
   // I.e. no recording of data, and no uploading of what's been recorded.
   [self assertMetricsServiceDisabled:serviceType];
 
-  if (base::FeatureList::IsEnabled(kUmaCellular)) {
+  if ([ChromeEarlGrey isUMACellularEnabled]) {
     // kMetricsReportingEnabled OFF
     [self setMetricsReportingEnabled:NO];
   } else {
@@ -389,7 +399,7 @@ id<GREYMatcher> BandwidthSettingsButton() {
   // The values of the prefs and the wwan vs wifi state should be honored by
   // the services, turning on and off according to the rules laid out above.
 
-  if (!base::FeatureList::IsEnabled(kUmaCellular)) {
+  if (![ChromeEarlGrey isUMACellularEnabled]) {
     // kMetricsReportingEnabled ON and kMetricsReportingWifiOnly ON.
     [self setMetricsReportingEnabled:YES wifiOnly:YES];
     // Service should be enabled.
@@ -419,7 +429,7 @@ id<GREYMatcher> BandwidthSettingsButton() {
   // This tests that no matter the state change, pref or network connection,
   // services remain disabled.
 
-  if (!base::FeatureList::IsEnabled(kUmaCellular)) {
+  if (![ChromeEarlGrey isUMACellularEnabled]) {
     // kMetricsReportingEnabled ON and kMetricsReportingWifiOnly ON
     [self setMetricsReportingEnabled:YES wifiOnly:YES];
     // Service should remain disabled.
@@ -454,24 +464,18 @@ id<GREYMatcher> BandwidthSettingsButton() {
   web::test::SetUpSimpleHttpServerWithSetCookies(response);
 
   // Load |kUrl| and check that cookie is not set.
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey loadURL:web::test::HttpServer::MakeUrl(kUrl)]);
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:kResponse]);
+  [ChromeEarlGrey loadURL:web::test::HttpServer::MakeUrl(kUrl)];
+  [ChromeEarlGrey waitForWebStateContainingText:kResponse];
 
   NSDictionary* cookies = [ChromeEarlGrey cookies];
   GREYAssertEqual(0U, cookies.count, @"No cookie should be found.");
 
   // Visit |kUrlWithSetCookie| to set a cookie and then load |kUrl| to check it
   // is still set.
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey
-      loadURL:web::test::HttpServer::MakeUrl(kUrlWithSetCookie)]);
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:kResponseWithSetCookie]);
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey loadURL:web::test::HttpServer::MakeUrl(kUrl)]);
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:kResponse]);
+  [ChromeEarlGrey loadURL:web::test::HttpServer::MakeUrl(kUrlWithSetCookie)];
+  [ChromeEarlGrey waitForWebStateContainingText:kResponseWithSetCookie];
+  [ChromeEarlGrey loadURL:web::test::HttpServer::MakeUrl(kUrl)];
+  [ChromeEarlGrey waitForWebStateContainingText:kResponse];
 
   cookies = [ChromeEarlGrey cookies];
   GREYAssertEqualObjects(kCookieValue, cookies[kCookieName],
@@ -489,10 +493,8 @@ id<GREYMatcher> BandwidthSettingsButton() {
   [self clearCookiesAndSiteData];
 
   // Reload and test that there are no cookies left.
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey loadURL:web::test::HttpServer::MakeUrl(kUrl)]);
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey waitForWebStateContainingText:kResponse]);
+  [ChromeEarlGrey loadURL:web::test::HttpServer::MakeUrl(kUrl)];
+  [ChromeEarlGrey waitForWebStateContainingText:kResponse];
 
   cookies = [ChromeEarlGrey cookies];
   GREYAssertEqual(0U, cookies.count, @"No cookie should be found.");
@@ -551,7 +553,7 @@ id<GREYMatcher> BandwidthSettingsButton() {
 // Verifies the UI elements are accessible on the Settings page.
 - (void)testAccessibilityOnSettingsPage {
   [ChromeEarlGreyUI openSettingsMenu];
-  chrome_test_util::VerifyAccessibilityForCurrentScreen();
+  [ChromeEarlGrey verifyAccessibilityForCurrentScreen];
   [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
       performAction:grey_tap()];
 }
@@ -560,7 +562,7 @@ id<GREYMatcher> BandwidthSettingsButton() {
 - (void)testAccessibilityOnContentSettingsPage {
   [ChromeEarlGreyUI openSettingsMenu];
   [ChromeEarlGreyUI tapSettingsMenuButton:ContentSettingsButton()];
-  chrome_test_util::VerifyAccessibilityForCurrentScreen();
+  [ChromeEarlGrey verifyAccessibilityForCurrentScreen];
   [self closeSubSettingsMenu];
 }
 
@@ -571,7 +573,7 @@ id<GREYMatcher> BandwidthSettingsButton() {
   [ChromeEarlGreyUI tapSettingsMenuButton:ContentSettingsButton()];
   [[EarlGrey selectElementWithMatcher:BlockPopupsButton()]
       performAction:grey_tap()];
-  chrome_test_util::VerifyAccessibilityForCurrentScreen();
+  [ChromeEarlGrey verifyAccessibilityForCurrentScreen];
   [self closeSubSettingsMenu];
 }
 
@@ -579,7 +581,7 @@ id<GREYMatcher> BandwidthSettingsButton() {
 - (void)testAccessibilityOnPrivacySettingsPage {
   [ChromeEarlGreyUI openSettingsMenu];
   [ChromeEarlGreyUI tapSettingsMenuButton:SettingsMenuPrivacyButton()];
-  chrome_test_util::VerifyAccessibilityForCurrentScreen();
+  [ChromeEarlGrey verifyAccessibilityForCurrentScreen];
   [self closeSubSettingsMenu];
 }
 
@@ -590,7 +592,7 @@ id<GREYMatcher> BandwidthSettingsButton() {
   [ChromeEarlGreyUI tapSettingsMenuButton:SettingsMenuPrivacyButton()];
   [[EarlGrey selectElementWithMatcher:PrivacyHandoffButton()]
       performAction:grey_tap()];
-  chrome_test_util::VerifyAccessibilityForCurrentScreen();
+  [ChromeEarlGrey verifyAccessibilityForCurrentScreen];
   [self closeSubSettingsMenu];
 }
 
@@ -600,7 +602,7 @@ id<GREYMatcher> BandwidthSettingsButton() {
   [ChromeEarlGreyUI openSettingsMenu];
   [ChromeEarlGreyUI tapSettingsMenuButton:SettingsMenuPrivacyButton()];
   [ChromeEarlGreyUI tapPrivacyMenuButton:ClearBrowsingDataCell()];
-  chrome_test_util::VerifyAccessibilityForCurrentScreen();
+  [ChromeEarlGrey verifyAccessibilityForCurrentScreen];
   [self closeSubSettingsMenu];
 }
 
@@ -609,7 +611,7 @@ id<GREYMatcher> BandwidthSettingsButton() {
 - (void)testAccessibilityOnBandwidthManagementSettingsPage {
   [ChromeEarlGreyUI openSettingsMenu];
   [ChromeEarlGreyUI tapSettingsMenuButton:BandwidthSettingsButton()];
-  chrome_test_util::VerifyAccessibilityForCurrentScreen();
+  [ChromeEarlGrey verifyAccessibilityForCurrentScreen];
   [self closeSubSettingsMenu];
 }
 
@@ -620,7 +622,7 @@ id<GREYMatcher> BandwidthSettingsButton() {
   [ChromeEarlGreyUI tapSettingsMenuButton:BandwidthSettingsButton()];
   [[EarlGrey selectElementWithMatcher:BandwidthPreloadWebpagesButton()]
       performAction:grey_tap()];
-  chrome_test_util::VerifyAccessibilityForCurrentScreen();
+  [ChromeEarlGrey verifyAccessibilityForCurrentScreen];
   [self closeSubSettingsMenu];
 }
 
@@ -629,7 +631,7 @@ id<GREYMatcher> BandwidthSettingsButton() {
   [ChromeEarlGreyUI openSettingsMenu];
   [[EarlGrey selectElementWithMatcher:SearchEngineButton()]
       performAction:grey_tap()];
-  chrome_test_util::VerifyAccessibilityForCurrentScreen();
+  [ChromeEarlGrey verifyAccessibilityForCurrentScreen];
   [self closeSubSettingsMenu];
 }
 
@@ -637,7 +639,7 @@ id<GREYMatcher> BandwidthSettingsButton() {
 - (void)testAccessibilityOnPaymentMethods {
   [ChromeEarlGreyUI openSettingsMenu];
   [ChromeEarlGreyUI tapSettingsMenuButton:PaymentMethodsButton()];
-  chrome_test_util::VerifyAccessibilityForCurrentScreen();
+  [ChromeEarlGrey verifyAccessibilityForCurrentScreen];
   [self closeSubSettingsMenu];
 }
 
@@ -645,7 +647,7 @@ id<GREYMatcher> BandwidthSettingsButton() {
 - (void)testAccessibilityOnAddresses {
   [ChromeEarlGreyUI openSettingsMenu];
   [ChromeEarlGreyUI tapSettingsMenuButton:AddressesButton()];
-  chrome_test_util::VerifyAccessibilityForCurrentScreen();
+  [ChromeEarlGrey verifyAccessibilityForCurrentScreen];
   [self closeSubSettingsMenu];
 }
 
@@ -653,7 +655,7 @@ id<GREYMatcher> BandwidthSettingsButton() {
 - (void)testAccessibilityOnGoogleChrome {
   [ChromeEarlGreyUI openSettingsMenu];
   [ChromeEarlGreyUI tapSettingsMenuButton:GoogleChromeButton()];
-  chrome_test_util::VerifyAccessibilityForCurrentScreen();
+  [ChromeEarlGrey verifyAccessibilityForCurrentScreen];
   [self closeSubSettingsMenu];
 }
 
@@ -661,7 +663,7 @@ id<GREYMatcher> BandwidthSettingsButton() {
 - (void)testAccessibilityOnVoiceSearch {
   [ChromeEarlGreyUI openSettingsMenu];
   [ChromeEarlGreyUI tapSettingsMenuButton:VoiceSearchButton()];
-  chrome_test_util::VerifyAccessibilityForCurrentScreen();
+  [ChromeEarlGrey verifyAccessibilityForCurrentScreen];
   [self closeSubSettingsMenu];
 }
 
@@ -726,7 +728,7 @@ id<GREYMatcher> BandwidthSettingsButton() {
   [ChromeEarlGreyUI openSettingsMenu];
   [ChromeEarlGreyUI tapSettingsMenuButton:SettingsMenuPrivacyButton()];
   [ChromeEarlGreyUI tapPrivacyMenuButton:SendUsageDataButton()];
-  chrome_test_util::VerifyAccessibilityForCurrentScreen();
+  [ChromeEarlGrey verifyAccessibilityForCurrentScreen];
   [self closeSubSettingsMenu];
 }
 

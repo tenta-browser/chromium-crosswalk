@@ -38,6 +38,7 @@
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/fonts/font_cache.h"
 #include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/text/date_time_format.h"
 #include "third_party/blink/renderer/platform/text/platform_locale.h"
 #include "third_party/blink/renderer/platform/wtf/date_math.h"
@@ -548,8 +549,8 @@ void DateTimeEditElement::Trace(Visitor* visitor) {
 }
 
 inline Element* DateTimeEditElement::FieldsWrapperElement() const {
-  DCHECK(firstChild());
-  return ToElementOrDie(firstChild());
+  CHECK(!firstChild() || IsA<Element>(firstChild()));
+  return To<Element>(firstChild());
 }
 
 void DateTimeEditElement::AddField(DateTimeFieldElement* field) {
@@ -580,9 +581,9 @@ scoped_refptr<ComputedStyle> DateTimeEditElement::CustomStyleForLayoutObject() {
   float width = 0;
   for (Node* child = FieldsWrapperElement()->firstChild(); child;
        child = child->nextSibling()) {
-    if (!child->IsElementNode())
+    auto* child_element = DynamicTo<Element>(child);
+    if (!child_element)
       continue;
-    Element* child_element = ToElement(child);
     if (child_element->IsDateTimeFieldElement()) {
       // We need to pass the ComputedStyle of this element because child
       // elements can't resolve inherited style at this timing.

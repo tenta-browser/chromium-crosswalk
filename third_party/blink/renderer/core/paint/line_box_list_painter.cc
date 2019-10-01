@@ -19,7 +19,7 @@ namespace blink {
 static void AddPDFURLRectsForInlineChildrenRecursively(
     const LayoutObject& layout_object,
     const PaintInfo& paint_info,
-    const LayoutPoint& paint_offset) {
+    const PhysicalOffset& paint_offset) {
   for (LayoutObject* child = layout_object.SlowFirstChild(); child;
        child = child->NextSibling()) {
     if (!child->IsLayoutInline() ||
@@ -34,7 +34,7 @@ static void AddPDFURLRectsForInlineChildrenRecursively(
 
 void LineBoxListPainter::Paint(const LayoutBoxModelObject& layout_object,
                                const PaintInfo& paint_info,
-                               const LayoutPoint& paint_offset) const {
+                               const PhysicalOffset& paint_offset) const {
   DCHECK(!ShouldPaintSelfOutline(paint_info.phase) &&
          !ShouldPaintDescendantOutlines(paint_info.phase));
 
@@ -83,7 +83,8 @@ void LineBoxListPainter::Paint(const LayoutBoxModelObject& layout_object,
                 const_cast<LayoutBoxModelObject*>(&layout_object)),
             curr, paint_info.GetCullRect(), paint_offset)) {
       RootInlineBox& root = curr->Root();
-      curr->Paint(paint_info, paint_offset, root.LineTop(), root.LineBottom());
+      curr->Paint(paint_info, paint_offset.ToLayoutPoint(), root.LineTop(),
+                  root.LineBottom());
     }
   }
 }

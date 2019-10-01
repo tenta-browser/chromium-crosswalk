@@ -17,7 +17,7 @@ NS_ASSUME_NONNULL_BEGIN
 @class PasswordFormHelper;
 
 namespace autofill {
-struct PasswordForm;
+struct FormData;
 struct PasswordFormFillData;
 struct FormData;
 }  // namespace autofill
@@ -38,7 +38,7 @@ class WebState;
 @protocol PasswordFormHelperDelegate
 // Called when the password form is submitted.
 - (void)formHelper:(PasswordFormHelper*)formHelper
-     didSubmitForm:(const autofill::PasswordForm&)form
+     didSubmitForm:(const autofill::FormData&)form
        inMainFrame:(BOOL)inMainFrame;
 @end
 
@@ -58,7 +58,7 @@ class WebState;
 // extracted information used for matching and saving passwords. Calls
 // |completionHandler| with an empty vector if no password forms are found.
 - (void)findPasswordFormsWithCompletionHandler:
-    (nullable void (^)(const std::vector<autofill::PasswordForm>&))
+    (nullable void (^)(const std::vector<autofill::FormData>&))
         completionHandler;
 
 // Autofills credentials into the page. Credentials and input fields are
@@ -97,13 +97,6 @@ class WebState;
               completionHandler:
                   (void (^)(BOOL found,
                             const autofill::FormData& form))completionHandler;
-
-// Finds given field, identified by |fieldIdentifier| in the given |formName|
-// and focus it, which should trigger a form focus event. Invokes
-// |completionHandler| when finished with YES if successful and NO otherwise.
-- (void)focusOnForm:(NSString*)formName
-      fieldIdentifier:(NSString*)fieldIdentifier
-    completionHandler:(nullable void (^)(BOOL))completionHandler;
 
 // Creates a instance with the given WebState, observer and delegate.
 - (instancetype)initWithWebState:(web::WebState*)webState

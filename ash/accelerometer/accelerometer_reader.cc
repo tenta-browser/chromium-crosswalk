@@ -10,9 +10,9 @@
 #include <string>
 #include <vector>
 
+#include "ash/public/cpp/tablet_mode_observer.h"
 #include "ash/shell.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
-#include "ash/wm/tablet_mode/tablet_mode_observer.h"
 #include "base/bind.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
@@ -741,6 +741,14 @@ void AccelerometerReader::StartListenToTabletModeController() {
 void AccelerometerReader::StopListenToTabletModeController() {
   if (accelerometer_file_reader_)
     accelerometer_file_reader_->StopListenToTabletModeController();
+}
+
+void AccelerometerReader::StartListenToTabletModeController() {
+  accelerometer_file_reader_->StartListenToTabletModeController();
+}
+
+void AccelerometerReader::StopListenToTabletModeController() {
+  accelerometer_file_reader_->StopListenToTabletModeController();
 }
 
 AccelerometerReader::AccelerometerReader()

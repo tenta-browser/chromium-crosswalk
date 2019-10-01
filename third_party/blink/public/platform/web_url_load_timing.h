@@ -37,7 +37,7 @@
 
 #if INSIDE_BLINK
 #include "base/memory/scoped_refptr.h"
-#include "third_party/blink/renderer/platform/cross_thread_copier.h"  // nogncheck
+#include "third_party/blink/renderer/platform/wtf/cross_thread_copier.h"  // nogncheck
 #endif
 
 namespace blink {
@@ -138,5 +138,16 @@ struct CrossThreadCopier<WebURLLoadTiming> {
 #endif
 
 }  // namespace blink
+
+namespace WTF {
+#if INSIDE_BLINK
+template <>
+struct CrossThreadCopier<blink::WebURLLoadTiming> {
+  STATIC_ONLY(CrossThreadCopier);
+  typedef blink::WebURLLoadTiming Type;
+  PLATFORM_EXPORT static Type Copy(const blink::WebURLLoadTiming&);
+};
+#endif
+}  // namespace WTF
 
 #endif

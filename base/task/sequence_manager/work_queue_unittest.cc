@@ -31,11 +31,20 @@ class MockObserver : public WorkQueueSets::Observer {
 void NopTask() {}
 
 struct Cancelable {
-  Cancelable() : weak_ptr_factory(this) {}
+  Cancelable() {}
 
   void NopTask() {}
 
-  WeakPtrFactory<Cancelable> weak_ptr_factory;
+  WeakPtrFactory<Cancelable> weak_ptr_factory{this};
+};
+
+class RealTimeDomainFake : public RealTimeDomain {
+ public:
+  LazyNow CreateLazyNow() const override {
+    return LazyNow(DefaultTickClock::GetInstance());
+  }
+
+  TimeTicks Now() const override { return TimeTicks::Now(); }
 };
 
 class RealTimeDomainFake : public RealTimeDomain {

@@ -114,8 +114,8 @@ using chrome_test_util::SettingsDoneButton;
 // Tests that keyboard commands are not registered when the bookmark UI is
 // shown.
 - (void)testKeyboardCommandsNotRegistered_AddBookmarkPresented {
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey waitForBookmarksToFinishLoading]);
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey clearBookmarks]);
+  [ChromeEarlGrey waitForBookmarksToFinishLoading];
+  [ChromeEarlGrey clearBookmarks];
 
   // Load a webpage because the NTP is not always bookmarkable.
   web::test::SetUpFileBasedHttpServer();
@@ -124,7 +124,7 @@ using chrome_test_util::SettingsDoneButton;
   CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:URL]);
 
   // Bookmark page
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     id<GREYMatcher> bookmarkMatcher =
         chrome_test_util::ButtonWithAccessibilityLabelId(IDS_TOOLTIP_STAR);
     [[EarlGrey selectElementWithMatcher:bookmarkMatcher]

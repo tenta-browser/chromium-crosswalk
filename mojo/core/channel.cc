@@ -154,12 +154,7 @@ Channel::Message::Message(size_t capacity,
     mach_ports_header_->num_ports = 0;
     // Initialize all handles to invalid values.
     for (size_t i = 0; i < max_handles_; ++i) {
-      if (base::FeatureList::IsEnabled(features::kMojoChannelMac)) {
-        mach_ports_header_->entries[i].mach_entry.type = {0};
-      } else {
-        mach_ports_header_->entries[i].posix_entry = {
-            0, static_cast<uint32_t>(MACH_PORT_NULL)};
-      }
+      mach_ports_header_->entries[i] = {0};
     }
 #endif
   }
@@ -247,6 +242,11 @@ Channel::MessagePtr Channel::Message::Deserialize(
                 sizeof(MachPortsEntry);
 #else
   const uint32_t max_handles = 0;
+  // No extra header expected. Fail if this is detected.
+  if (extra_header_size > 0) {
+    DLOG(ERROR) << "Decoding invalid message: unexpected extra_header_size > 0";
+    return nullptr;
+  }
 #endif  // defined(OS_WIN)
 
   const uint16_t num_handles =
@@ -377,19 +377,6 @@ bool Channel::Message::has_handles() const {
                               : header()->num_handles) > 0;
 }
 
-#if defined(OS_MACOSX) && !defined(OS_IOS)
-bool Channel::Message::has_mach_ports() const {
-  if (!has_handles())
-    return false;
-
-  for (const auto& handle : handle_vector_) {
-    if (handle.is_mach_port_name() || handle.handle().is_mach_port())
-      return true;
-  }
-  return false;
-}
-#endif
-
 bool Channel::Message::is_legacy_message() const {
   return legacy_header()->message_type == MessageType::NORMAL_LEGACY;
 }
@@ -444,56 +431,20 @@ void Channel::Message::SetHandles(
 #endif  // defined(OS_WIN)
 
 #if defined(OS_MACOSX) && !defined(OS_IOS)
-  size_t mach_port_index = 0;
-  const bool use_channel_mac =
-      base::FeatureList::IsEnabled(features::kMojoChannelMac);
   if (mach_ports_header_) {
     for (size_t i = 0; i < max_handles_; ++i) {
-      if (use_channel_mac) {
-        mach_ports_header_->entries[i].mach_entry.type = {0};
-      } else {
-        mach_ports_header_->entries[i].posix_entry = {
-            0, static_cast<uint32_t>(MACH_PORT_NULL)};
-      }
+      mach_ports_header_->entries[i] = {0};
     }
     for (size_t i = 0; i < handle_vector_.size(); i++) {
-      if (use_channel_mac) {
-        mach_ports_header_->entries[i].mach_entry.type =
-            static_cast<uint8_t>(handle_vector_[i].handle().type());
-      } else {
-        if (!handle_vector_[i].is_mach_port_name() &&
-            !handle_vector_[i].handle().is_mach_port()) {
-          DCHECK(handle_vector_[i].handle().is_valid_fd());
-          continue;
-        }
-
-        mach_port_t port = handle_vector_[i].is_mach_port_name()
-                               ? handle_vector_[i].mach_port_name()
-                               : handle_vector_[i].handle().GetMachPort().get();
-        mach_ports_header_->entries[mach_port_index].posix_entry.index = i;
-        mach_ports_header_->entries[mach_port_index].posix_entry.mach_port =
-            port;
-        mach_port_index++;
-      }
+      mach_ports_header_->entries[i].type =
+          static_cast<uint8_t>(handle_vector_[i].handle().type());
     }
-    mach_ports_header_->num_ports =
-        use_channel_mac ? handle_vector_.size()
-                        : static_cast<uint16_t>(mach_port_index);
+    mach_ports_header_->num_ports = handle_vector_.size();
   }
 #endif
 }
 
 std::vector<PlatformHandleInTransit> Channel::Message::TakeHandles() {
-#if defined(OS_MACOSX) && !defined(OS_IOS)
-  if (mach_ports_header_ &&
-      !base::FeatureList::IsEnabled(features::kMojoChannelMac)) {
-    for (size_t i = 0; i < max_handles_; ++i) {
-      mach_ports_header_->entries[i].posix_entry = {
-          0, static_cast<uint32_t>(MACH_PORT_NULL)};
-    }
-    mach_ports_header_->num_ports = 0;
-  }
-#endif
   return std::move(handle_vector_);
 }
 
@@ -503,23 +454,6 @@ Channel::Message::TakeHandlesForTransport() {
   // Not necessary on Windows.
   NOTREACHED();
   return std::vector<PlatformHandleInTransit>();
-#elif defined(OS_MACOSX) && !defined(OS_IOS)
-  if (base::FeatureList::IsEnabled(features::kMojoChannelMac)) {
-    return std::move(handle_vector_);
-  } else {
-    std::vector<PlatformHandleInTransit> non_mach_handles;
-    for (auto& handle : handle_vector_) {
-      if (handle.is_mach_port_name() || handle.handle().is_mach_port()) {
-        // Ownership is effectively transferred to the receiving process
-        // out-of-band via MachPortRelay.
-        handle.CompleteTransit();
-      } else {
-        non_mach_handles.emplace_back(std::move(handle));
-      }
-    }
-    handle_vector_.clear();
-    return non_mach_handles;
-  }
 #else
   return std::move(handle_vector_);
 #endif
@@ -769,6 +703,20 @@ Channel::DispatchResult Channel::TryDispatchMessage(
                                 &deferred)) {
       return DispatchResult::kError;
     }
+    extra_header_size = header->num_header_bytes - sizeof(Message::Header);
+    extra_header = extra_header_size ? header + 1 : nullptr;
+    payload_size = header->num_bytes - header->num_header_bytes;
+    payload =
+        payload_size
+            ? reinterpret_cast<Message::Header*>(
+                  const_cast<char*>(buffer.data()) + header->num_header_bytes)
+            : nullptr;
+  } else {
+    payload_size = legacy_header->num_bytes - sizeof(Message::LegacyHeader);
+    payload = payload_size
+                  ? const_cast<Message::LegacyHeader*>(&legacy_header[1])
+                  : nullptr;
+  }
 
     if (handles.empty()) {
       // Not enough handles available for this message.

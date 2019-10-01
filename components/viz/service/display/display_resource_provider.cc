@@ -253,8 +253,17 @@ GLenum DisplayResourceProvider::GetResourceTextureTarget(ResourceId id) {
 }
 
 gfx::BufferFormat DisplayResourceProvider::GetBufferFormat(ResourceId id) {
+  return BufferFormat(GetResourceFormat(id));
+}
+
+ResourceFormat DisplayResourceProvider::GetResourceFormat(ResourceId id) {
   ChildResource* resource = GetResource(id);
-  return BufferFormat(resource->transferable.format);
+  return resource->transferable.format;
+}
+
+const gfx::ColorSpace& DisplayResourceProvider::GetColorSpace(ResourceId id) {
+  ChildResource* resource = GetResource(id);
+  return resource->transferable.color_space;
 }
 
 const gfx::ColorSpace& DisplayResourceProvider::GetColorSpace(ResourceId id) {
@@ -424,7 +433,7 @@ void DisplayResourceProvider::PopulateSkBitmapWithResource(
 
 void DisplayResourceProvider::DeleteResourceInternal(ResourceMap::iterator it,
                                                      DeleteStyle style) {
-  TRACE_EVENT0("viz", "DosplayResourceProvider::DeleteResourceInternal");
+  TRACE_EVENT0("viz", "DisplayResourceProvider::DeleteResourceInternal");
   ChildResource* resource = &it->second;
 
   if (resource->gl_id) {
@@ -936,7 +945,7 @@ DisplayResourceProvider::LockSetForExternalUse::~LockSetForExternalUse() {
 
 ResourceMetadata DisplayResourceProvider::LockSetForExternalUse::LockResource(
     ResourceId id) {
-  DCHECK(!base::ContainsValue(resources_, id));
+  DCHECK(!base::Contains(resources_, id));
   resources_.push_back(id);
   return resource_provider_->LockForExternalUse(id);
 }

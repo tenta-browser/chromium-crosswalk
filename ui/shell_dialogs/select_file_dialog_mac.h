@@ -5,22 +5,16 @@
 #ifndef UI_SHELL_DIALOGS_SELECT_FILE_DIALOG_MAC_H_
 #define UI_SHELL_DIALOGS_SELECT_FILE_DIALOG_MAC_H_
 
-#import <Cocoa/Cocoa.h>
-
 #include <list>
 #include <memory>
 #include <vector>
 
-#include "base/callback.h"
-#import "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "components/remote_cocoa/common/select_file_dialog.mojom.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
 #include "ui/shell_dialogs/shell_dialogs_export.h"
-
-@class ExtensionDropdownHandler;
-@class SelectFileDialogDelegate;
 
 namespace ui {
 
@@ -119,7 +113,7 @@ class SHELL_DIALOGS_EXPORT SelectFileDialogImpl : public ui::SelectFileDialog {
     void* params;
 
     // Bridge to the Cocoa NSSavePanel.
-    std::unique_ptr<SavePanelBridge> save_panel_bridge;
+    remote_cocoa::mojom::SelectFileDialogPtr select_file_dialog;
 
    private:
     DISALLOW_COPY_AND_ASSIGN(DialogData);

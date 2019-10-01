@@ -230,8 +230,7 @@ NaClProcessHost::NaClProcessHost(
       off_the_record_(off_the_record),
       process_type_(process_type),
       profile_directory_(profile_directory),
-      render_view_id_(render_view_id),
-      weak_factory_(this) {
+      render_view_id_(render_view_id) {
   process_.reset(content::BrowserChildProcessHost::Create(
       static_cast<content::ProcessType>(PROCESS_TYPE_NACL_LOADER), this,
       kNaClLoaderServiceName));
@@ -318,15 +317,6 @@ void NaClProcessHost::EarlyStartup() {
   NaClBrowser::GetInstance()->EnsureIrtAvailable();
 #endif
   base::CommandLine* cmd = base::CommandLine::ForCurrentProcess();
-  UMA_HISTOGRAM_BOOLEAN(
-      "NaCl.nacl-gdb",
-      !cmd->GetSwitchValuePath(switches::kNaClGdb).empty());
-  UMA_HISTOGRAM_BOOLEAN(
-      "NaCl.nacl-gdb-script",
-      !cmd->GetSwitchValuePath(switches::kNaClGdbScript).empty());
-  UMA_HISTOGRAM_BOOLEAN(
-      "NaCl.enable-nacl-debug",
-      cmd->HasSwitch(switches::kEnableNaClDebug));
   std::string nacl_debug_mask =
       cmd->GetSwitchValueASCII(switches::kNaClDebugMask);
   // By default, exclude debugging SSH and the PNaCl translator.
@@ -827,7 +817,10 @@ bool NaClProcessHost::StartNaClExecution() {
       // compromised renderer to pass an arbitrary fd that could get loaded
       // into the plugin process.
       base::PostTaskWithTraitsAndReplyWithResult(
-          FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+          FROM_HERE,
+          // USER_BLOCKING because it is on the critical path of displaying the
+          // official virtual keyboard on Chrome OS. https://crbug.com/976542
+          {base::MayBlock(), base::TaskPriority::USER_BLOCKING},
           base::BindOnce(OpenNaClReadExecImpl, file_path,
                          true /* is_executable */),
           base::BindOnce(&NaClProcessHost::StartNaClFileResolved,
@@ -1060,7 +1053,10 @@ void NaClProcessHost::OnResolveFileToken(uint64_t file_token_lo,
 
   // Open the file.
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+      FROM_HERE,
+      // USER_BLOCKING because it is on the critical path of displaying the
+      // official virtual keyboard on Chrome OS. https://crbug.com/976542
+      {base::MayBlock(), base::TaskPriority::USER_BLOCKING},
       base::Bind(OpenNaClReadExecImpl, file_path, true /* is_executable */),
       base::Bind(&NaClProcessHost::FileResolved, weak_factory_.GetWeakPtr(),
                  file_token_lo, file_token_hi, file_path));

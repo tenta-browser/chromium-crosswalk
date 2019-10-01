@@ -150,6 +150,7 @@ class InterceptedRequest : public network::mojom::URLLoader,
   DISALLOW_COPY_AND_ASSIGN(InterceptedRequest);
 };
 
+// A ResponseDelegate for responses returned by shouldInterceptRequest.
 class InterceptResponseDelegate
     : public AndroidStreamReaderURLLoader::ResponseDelegate {
  public:
@@ -203,6 +204,9 @@ class InterceptResponseDelegate
   base::WeakPtr<InterceptedRequest> request_;
 };
 
+// A ResponseDelegate based on top of AndroidProtocolHandler for special
+// protocols, such as content://, file:///android_asset, and file:///android_res
+// URLs.
 class ProtocolResponseDelegate
     : public AndroidStreamReaderURLLoader::ResponseDelegate {
  public:
@@ -711,18 +715,18 @@ AwProxyingURLLoaderFactory::AwProxyingURLLoaderFactory(
     int process_id,
     network::mojom::URLLoaderFactoryRequest loader_request,
     network::mojom::URLLoaderFactoryPtrInfo target_factory_info,
-    std::unique_ptr<AwInterceptedRequestHandler> request_handler,
     bool intercept_only)
     : process_id_(process_id),
-      request_handler_(std::move(request_handler)),
       intercept_only_(intercept_only),
       weak_factory_(this) {
-  // actual creation of the factory
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
-  target_factory_.Bind(std::move(target_factory_info));
-  target_factory_.set_connection_error_handler(
-      base::BindOnce(&AwProxyingURLLoaderFactory::OnTargetFactoryError,
-                     base::Unretained(this)));
+  DCHECK(!(intercept_only_ && target_factory_info));
+  if (target_factory_info) {
+    target_factory_.Bind(std::move(target_factory_info));
+    target_factory_.set_connection_error_handler(
+        base::BindOnce(&AwProxyingURLLoaderFactory::OnTargetFactoryError,
+                       base::Unretained(this)));
+  }
   proxy_bindings_.AddBinding(this, std::move(loader_request));
   proxy_bindings_.set_connection_error_handler(
       base::BindRepeating(&AwProxyingURLLoaderFactory::OnProxyBindingError,
@@ -735,14 +739,12 @@ AwProxyingURLLoaderFactory::~AwProxyingURLLoaderFactory() {}
 void AwProxyingURLLoaderFactory::CreateProxy(
     int process_id,
     network::mojom::URLLoaderFactoryRequest loader_request,
-    network::mojom::URLLoaderFactoryPtrInfo target_factory_info,
-    std::unique_ptr<AwInterceptedRequestHandler> request_handler) {
+    network::mojom::URLLoaderFactoryPtrInfo target_factory_info) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
 
   // will manage its own lifetime
   new AwProxyingURLLoaderFactory(process_id, std::move(loader_request),
-                                 std::move(target_factory_info),
-                                 std::move(request_handler), false);
+                                 std::move(target_factory_info), false);
 }
 
 void AwProxyingURLLoaderFactory::CreateLoaderAndStart(
@@ -753,20 +755,31 @@ void AwProxyingURLLoaderFactory::CreateLoaderAndStart(
     const network::ResourceRequest& request,
     network::mojom::URLLoaderClientPtr client,
     const net::MutableNetworkTrafficAnnotationTag& traffic_annotation) {
-  bool pass_through = false;
-  if (pass_through) {
-    // this is the so-called pass-through, no-op option.
-    target_factory_->CreateLoaderAndStart(
-        std::move(loader), routing_id, request_id, options, request,
-        std::move(client), traffic_annotation);
-    return;
-  }
-
   // TODO(timvolodine): handle interception, modification (headers for
   // webview), blocking, callbacks etc..
 
   network::mojom::URLLoaderFactoryPtr target_factory_clone;
-  target_factory_->Clone(MakeRequest(&target_factory_clone));
+  if (target_factory_)
+    target_factory_->Clone(MakeRequest(&target_factory_clone));
+
+  bool global_cookie_policy =
+      AwCookieAccessPolicy::GetInstance()->GetShouldAcceptCookies();
+  // process_id == 0 means the render_frame_id is actually a valid
+  // frame_tree_node_id, otherwise use it as a valid render_frame_id.
+  int frame_tree_node_id = process_id_
+                               ? content::RenderFrameHost::kNoFrameTreeNodeId
+                               : request.render_frame_id;
+  bool third_party_cookie_policy =
+      AwCookieAccessPolicy::GetInstance()->GetShouldAcceptThirdPartyCookies(
+          process_id_, request.render_frame_id, frame_tree_node_id);
+  if (!global_cookie_policy) {
+    options |= network::mojom::kURLLoadOptionBlockAllCookies;
+  } else if (!third_party_cookie_policy && !request.url.SchemeIsFile()) {
+    // Special case: if the application has asked that we allow file:// scheme
+    // URLs to set cookies, we need to avoid setting a cookie policy (as file://
+    // scheme URLs are third-party to everything).
+    options |= network::mojom::kURLLoadOptionBlockThirdPartyCookies;
+  }
 
   bool global_cookie_policy =
       AwCookieAccessPolicy::GetInstance()->GetShouldAcceptCookies();

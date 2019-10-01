@@ -38,9 +38,9 @@ using autofill::FormData;
 using autofill::FormFieldData;
 using autofill::FormSignature;
 using autofill::FormStructure;
-using autofill::NewPasswordFormGenerationData;
 using autofill::PasswordForm;
 using autofill::PasswordFormFillData;
+using autofill::PasswordFormGenerationData;
 using autofill::ServerFieldType;
 using base::ASCIIToUTF16;
 using base::TestMockTimeTaskRunner;
@@ -78,7 +78,7 @@ class MockPasswordManagerDriver : public StubPasswordManagerDriver {
   MOCK_METHOD1(FillPasswordForm, void(const PasswordFormFillData&));
   MOCK_METHOD1(AllowPasswordGenerationForForm, void(const PasswordForm&));
   MOCK_METHOD1(FormEligibleForGenerationFound,
-               void(const autofill::NewPasswordFormGenerationData&));
+               void(const autofill::PasswordFormGenerationData&));
 };
 
 class MockAutofillDownloadManager : public autofill::AutofillDownloadManager {
@@ -117,9 +117,8 @@ class MockPasswordManagerClient : public StubPasswordManagerClient {
 
   MOCK_METHOD0(UpdateFormManagers, void());
 
-  MOCK_CONST_METHOD2(AutofillHttpAuth,
-                     void(const PasswordForm&,
-                          const PasswordFormManagerForUI*));
+  MOCK_METHOD2(AutofillHttpAuth,
+               void(const PasswordForm&, const PasswordFormManagerForUI*));
 };
 
 void CheckPendingCredentials(const PasswordForm& expected,
@@ -375,7 +374,7 @@ class NewPasswordFormManagerTest : public testing::Test {
 
   // Creates NewPasswordFormManager and sets it to |form_manager_| for
   // |base_auth_observed_form|. Along the way a new |fetcher_| is created.
-  void CreateFormManagerForHttpAuthForm(
+  void CreateFormManagerForNonWebForm(
       const PasswordForm& base_auth_observed_form) {
     fetcher_.reset(new FakeFormFetcher());
     fetcher_->Fetch();
@@ -483,7 +482,7 @@ TEST_F(NewPasswordFormManagerTest, AutofillSignUpForm) {
   PasswordFormFillData fill_data;
   EXPECT_CALL(driver_, FillPasswordForm(_)).WillOnce(SaveArg<0>(&fill_data));
 
-  NewPasswordFormGenerationData generation_data;
+  PasswordFormGenerationData generation_data;
   EXPECT_CALL(driver_, FormEligibleForGenerationFound(_))
       .WillOnce(SaveArg<0>(&generation_data));
 
@@ -521,7 +520,7 @@ TEST_F(NewPasswordFormManagerTest, GenerationOnNewAndConfirmPasswordFields) {
   field.autocomplete_attribute = "new-password";
   observed_form_.fields.push_back(field);
 
-  NewPasswordFormGenerationData generation_data;
+  PasswordFormGenerationData generation_data;
   EXPECT_CALL(driver_, FormEligibleForGenerationFound(_))
       .WillOnce(SaveArg<0>(&generation_data));
 
@@ -956,7 +955,7 @@ TEST_F(NewPasswordFormManagerTest, OverridePassword) {
   EXPECT_TRUE(
       form_manager_->ProvisionallySave(submitted_form, &driver_, false));
   EXPECT_FALSE(form_manager_->IsNewLogin());
-  EXPECT_TRUE(form_manager_->IsPasswordOverridden());
+  EXPECT_TRUE(form_manager_->IsPasswordUpdate());
 
   MockFormSaver& form_saver = MockFormSaver::Get(form_manager_.get());
   PasswordForm updated_form;
@@ -992,7 +991,6 @@ TEST_F(NewPasswordFormManagerTest, UpdatePasswordOnChangePasswordForm) {
   EXPECT_TRUE(
       form_manager_->ProvisionallySave(submitted_form, &driver_, false));
   EXPECT_FALSE(form_manager_->IsNewLogin());
-  EXPECT_TRUE(form_manager_->IsPasswordOverridden());
   EXPECT_TRUE(form_manager_->IsPasswordUpdate());
 
   MockFormSaver& form_saver = MockFormSaver::Get(form_manager_.get());
@@ -1121,7 +1119,7 @@ TEST_F(NewPasswordFormManagerTest, UpdateUsernameToAlreadyExisting) {
 
   CheckPendingCredentials(expected, form_manager_->GetPendingCredentials());
   EXPECT_FALSE(form_manager_->IsNewLogin());
-  EXPECT_TRUE(form_manager_->IsPasswordOverridden());
+  EXPECT_TRUE(form_manager_->IsPasswordUpdate());
 }
 
 TEST_F(NewPasswordFormManagerTest, UpdatePasswordValueEmptyStore) {
@@ -1164,7 +1162,51 @@ TEST_F(NewPasswordFormManagerTest, UpdatePasswordValueToAlreadyExisting) {
 
   CheckPendingCredentials(saved_match_, form_manager_->GetPendingCredentials());
   EXPECT_FALSE(form_manager_->IsNewLogin());
-  EXPECT_FALSE(form_manager_->IsPasswordOverridden());
+  EXPECT_FALSE(form_manager_->IsPasswordUpdate());
+}
+
+TEST_F(NewPasswordFormManagerTest, UpdatePasswordValueMultiplePasswordFields) {
+  TestMockTimeTaskRunner::ScopedContext scoped_context(task_runner_.get());
+  FormData form = observed_form_only_password_fields_;
+
+  CreateFormManager(form);
+  fetcher_->NotifyFetchCompleted();
+  base::string16 password = ASCIIToUTF16("password1");
+  base::string16 pin = ASCIIToUTF16("pin");
+  form.fields[0].value = password;
+  form.fields[1].value = pin;
+  form_manager_->ProvisionallySave(form, &driver_, false);
+
+  // Check that a second password field is chosen for saving.
+  EXPECT_EQ(pin, form_manager_->GetPendingCredentials().password_value);
+
+  PasswordForm expected = form_manager_->GetPendingCredentials();
+  expected.password_value = password;
+  expected.password_element = form.fields[0].name;
+
+  // Simulate that the user updates value to save for the first password field.
+  form_manager_->UpdatePasswordValue(password);
+
+  // Check that newly created pending credentials are correct.
+  CheckPendingCredentials(expected, form_manager_->GetPendingCredentials());
+  EXPECT_TRUE(form_manager_->IsNewLogin());
+
+  // Check that a vote is sent for the field with the value which is chosen by
+  // the user.
+  std::map<base::string16, ServerFieldType> expected_types;
+  expected_types[expected.password_element] = autofill::PASSWORD;
+
+  EXPECT_CALL(mock_autofill_download_manager_,
+              StartUploadRequest(UploadedAutofillTypesAre(expected_types),
+                                 false, _, _, true, nullptr));
+
+  // Check that the password which was chosen by the user is saved.
+  MockFormSaver& form_saver = MockFormSaver::Get(form_manager_.get());
+  PasswordForm saved_form;
+  EXPECT_CALL(form_saver, Save(_, _, _)).WillOnce(SaveArg<0>(&saved_form));
+
+  form_manager_->Save();
+  CheckPendingCredentials(expected, saved_form);
 }
 
 TEST_F(NewPasswordFormManagerTest, UpdatePasswordValueMultiplePasswordFields) {
@@ -1873,7 +1915,7 @@ TEST_F(NewPasswordFormManagerTest, SaveHttpAuthNoHttpAuthStored) {
     EXPECT_CALL(driver_, FillPasswordForm(_)).Times(0);
     EXPECT_CALL(client_, AutofillHttpAuth(_, _)).Times(0);
 
-    CreateFormManagerForHttpAuthForm(http_auth_form);
+    CreateFormManagerForNonWebForm(http_auth_form);
     MockFormSaver& form_saver = MockFormSaver::Get(form_manager_.get());
 
     std::vector<const PasswordForm*> saved_matches;
@@ -1905,7 +1947,7 @@ TEST_F(NewPasswordFormManagerTest, HTTPAuthAlreadySaved) {
   PasswordForm http_auth_form = parsed_observed_form_;
   http_auth_form.scheme = PasswordForm::Scheme::kBasic;
 
-  CreateFormManagerForHttpAuthForm(http_auth_form);
+  CreateFormManagerForNonWebForm(http_auth_form);
 
   const base::string16 username = ASCIIToUTF16("user1");
   const base::string16 password = ASCIIToUTF16("pass1");
@@ -1918,7 +1960,7 @@ TEST_F(NewPasswordFormManagerTest, HTTPAuthAlreadySaved) {
   // in state new login nor password overridden.
   ASSERT_TRUE(form_manager_->ProvisionallySaveHttpAuthForm(http_auth_form));
   EXPECT_FALSE(form_manager_->IsNewLogin());
-  EXPECT_FALSE(form_manager_->IsPasswordOverridden());
+  EXPECT_FALSE(form_manager_->IsPasswordUpdate());
 }
 
 TEST_F(NewPasswordFormManagerTest, HTTPAuthPasswordOverridden) {
@@ -1926,7 +1968,7 @@ TEST_F(NewPasswordFormManagerTest, HTTPAuthPasswordOverridden) {
   PasswordForm http_auth_form = parsed_observed_form_;
   http_auth_form.scheme = PasswordForm::Scheme::kBasic;
 
-  CreateFormManagerForHttpAuthForm(http_auth_form);
+  CreateFormManagerForNonWebForm(http_auth_form);
   MockFormSaver& form_saver = MockFormSaver::Get(form_manager_.get());
 
   PasswordForm saved_http_auth_form = http_auth_form;
@@ -1945,7 +1987,7 @@ TEST_F(NewPasswordFormManagerTest, HTTPAuthPasswordOverridden) {
   ASSERT_TRUE(
       form_manager_->ProvisionallySaveHttpAuthForm(submitted_http_auth_form));
   EXPECT_FALSE(form_manager_->IsNewLogin());
-  EXPECT_TRUE(form_manager_->IsPasswordOverridden());
+  EXPECT_TRUE(form_manager_->IsPasswordUpdate());
 
   // Check that the password is updated in the stored credential.
   PasswordForm updated_form;
@@ -1965,7 +2007,7 @@ TEST_F(NewPasswordFormManagerTest, BlacklistHttpAuthCredentials) {
   http_auth_form.signon_realm += "my-auth-realm";
   http_auth_form.scheme = PasswordForm::Scheme::kBasic;
 
-  CreateFormManagerForHttpAuthForm(http_auth_form);
+  CreateFormManagerForNonWebForm(http_auth_form);
   MockFormSaver& form_saver = MockFormSaver::Get(form_manager_.get());
 
   // Simulate that the user submits http auth credentials.

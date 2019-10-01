@@ -33,6 +33,9 @@
 
 namespace views {
 
+// static
+bool BubbleDialogDelegateView::devtools_dismiss_override_ = false;
+
 namespace {
 
 // Override base functionality of Widget to give bubble dialogs access to the
@@ -116,10 +119,6 @@ Widget* CreateBubbleWidget(BubbleDialogDelegateView* bubble) {
 
 }  // namespace
 
-// static
-const char BubbleDialogDelegateView::kViewClassName[] =
-    "BubbleDialogDelegateView";
-
 BubbleDialogDelegateView::~BubbleDialogDelegateView() {
   if (GetWidget())
     GetWidget()->RemoveObserver(this);
@@ -181,8 +180,25 @@ NonClientFrameView* BubbleDialogDelegateView::CreateNonClientFrameView(
   return frame;
 }
 
-const char* BubbleDialogDelegateView::GetClassName() const {
-  return kViewClassName;
+bool BubbleDialogDelegateView::AcceleratorPressed(
+    const ui::Accelerator& accelerator) {
+  if (accelerator.key_code() == ui::VKEY_DOWN ||
+      accelerator.key_code() == ui::VKEY_UP) {
+    // Move the focus up or down.
+    GetFocusManager()->AdvanceFocus(accelerator.key_code() != ui::VKEY_DOWN);
+    return true;
+  }
+  return DialogDelegateView::AcceleratorPressed(accelerator);
+}
+
+void BubbleDialogDelegateView::OnWidgetClosing(Widget* widget) {
+  // To prevent keyboard focus traversal issues, the anchor view's
+  // kAnchoredDialogKey property is cleared immediately upon Close(). This
+  // avoids a bug that occured when a focused anchor view is made unfocusable
+  // right after the bubble is closed. Previously, focus would advance into the
+  // bubble then would be lost when the bubble was destroyed.
+  if (widget == GetWidget() && GetAnchorView())
+    GetAnchorView()->ClearProperty(kAnchoredDialogKey);
 }
 
 bool BubbleDialogDelegateView::AcceleratorPressed(
@@ -230,6 +246,9 @@ void BubbleDialogDelegateView::OnWidgetVisibilityChanged(Widget* widget,
 
 void BubbleDialogDelegateView::OnWidgetActivationChanged(Widget* widget,
                                                          bool active) {
+  if (devtools_dismiss_override_)
+    return;
+
 #if defined(OS_MACOSX)
   // Install |mac_bubble_closer_| the first time the widget becomes active.
   if (widget == GetWidget() && active && !mac_bubble_closer_) {
@@ -273,6 +292,15 @@ void BubbleDialogDelegateView::SetHighlightedButton(
 }
 
 void BubbleDialogDelegateView::SetArrow(BubbleBorder::Arrow arrow) {
+  SetArrowWithoutResizing(arrow);
+  // If SetArrow() is called before CreateWidget(), there's no need to update
+  // the BubbleFrameView.
+  if (GetBubbleFrameView())
+    SizeToContents();
+}
+
+void BubbleDialogDelegateView::SetArrowWithoutResizing(
+    BubbleBorder::Arrow arrow) {
   if (base::i18n::IsRTL())
     arrow = BubbleBorder::horizontal_mirror(arrow);
   if (arrow_ == arrow)
@@ -281,10 +309,8 @@ void BubbleDialogDelegateView::SetArrow(BubbleBorder::Arrow arrow) {
 
   // If SetArrow() is called before CreateWidget(), there's no need to update
   // the BubbleFrameView.
-  if (GetBubbleFrameView()) {
+  if (GetBubbleFrameView())
     GetBubbleFrameView()->SetArrow(arrow);
-    SizeToContents();
-  }
 }
 
 gfx::Rect BubbleDialogDelegateView::GetAnchorRect() const {
@@ -516,5 +542,9 @@ void BubbleDialogDelegateView::UpdateHighlightedButton(bool highlighted) {
   if (button && highlight_button_when_shown_)
     button->SetHighlighted(highlighted);
 }
+
+BEGIN_METADATA(BubbleDialogDelegateView)
+METADATA_PARENT_CLASS(DialogDelegateView)
+END_METADATA()
 
 }  // namespace views

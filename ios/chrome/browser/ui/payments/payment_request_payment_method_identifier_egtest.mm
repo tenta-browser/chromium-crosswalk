@@ -8,7 +8,7 @@
 
 #import "ios/chrome/browser/payments/payment_request_cache.h"
 #import "ios/chrome/browser/ui/payments/payment_request_egtest_base.h"
-#import "ios/chrome/test/app/chrome_test_util.h"
+#import "ios/chrome/test/app/tab_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_error_util.h"
 #import "ios/web/public/test/http_server/http_server.h"
@@ -46,7 +46,7 @@ const char kPaymentMethodIdentifierPage[] =
   CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey
       loadURL:web::test::HttpServer::MakeUrl(kPaymentMethodIdentifierPage)]);
 
-  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey tapWebStateElementWithID:@"buy"]);
+  [ChromeEarlGrey tapWebStateElementWithID:@"buy"];
 
   const payments::PaymentRequestCache::PaymentRequestSet& requests =
       [self paymentRequestsForWebState:GetCurrentWebState()];
@@ -67,8 +67,7 @@ const char kPaymentMethodIdentifierPage[] =
   CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey
       loadURL:web::test::HttpServer::MakeUrl(kPaymentMethodIdentifierPage)]);
 
-  CHROME_EG_ASSERT_NO_ERROR(
-      [ChromeEarlGrey tapWebStateElementWithID:@"buyBasicCard"]);
+  [ChromeEarlGrey tapWebStateElementWithID:@"buyBasicCard"];
 
   const payments::PaymentRequestCache::PaymentRequestSet& requests =
       [self paymentRequestsForWebState:GetCurrentWebState()];

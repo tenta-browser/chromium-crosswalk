@@ -182,15 +182,6 @@ SQLITE_NOINLINE int sqlite3RunVacuum(
   }else{
     zOut = "";
   }
-  if( pOut ){
-    if( sqlite3_value_type(pOut)!=SQLITE_TEXT ){
-      sqlite3SetString(pzErrMsg, db, "non-text filename");
-      return SQLITE_ERROR;
-    }
-    zOut = (const char*)sqlite3_value_text(pOut);
-  }else{
-    zOut = "";
-  }
 
   /* Save the current value of the database flags so that it can be
   ** restored before returning. Then set the writable-schema flag, and
