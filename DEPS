@@ -3555,18 +3555,6 @@ hooks = [
   }
 ]
 
-include_rules = [
-  '+base',
-  '+build',
-  '+ipc',
-  '+library_loaders',
-  '+testing',
-  '+third_party/icu/source/common/unicode',
-  '+third_party/icu/source/i18n/unicode',
-  '+url',
-  '-absl'
-]
-
 recursedeps = [
   # ANGLE manages DEPS that it also owns the build files for, such as dEQP.
   'src/third_party/angle',
