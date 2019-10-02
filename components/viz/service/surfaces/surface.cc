@@ -600,12 +600,6 @@ void Surface::DidPresentSurface(uint32_t presentation_token,
     surface_client_->OnSurfacePresented(presentation_token, feedback);
 }
 
-void Surface::DidPresentSurface(uint32_t presentation_token,
-                                const gfx::PresentationFeedback& feedback) {
-  if (surface_client_)
-    surface_client_->OnSurfacePresented(presentation_token, feedback);
-}
-
 void Surface::SendAckToClient() {
   if (!active_frame_data_ || active_frame_data_->frame_acked)
     return;

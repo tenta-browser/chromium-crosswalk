@@ -110,6 +110,7 @@ import org.chromium.chrome.browser.snackbar.undo.UndoBarController;
 import org.chromium.chrome.browser.suggestions.SuggestionsEventReporterBridge;
 import org.chromium.chrome.browser.suggestions.SuggestionsMetrics;
 import org.chromium.chrome.browser.survey.ChromeSurveyController;
+import org.chromium.chrome.browser.tab.BrowserControlsVisibilityDelegate;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabAssociatedApp;
 import org.chromium.chrome.browser.tab.TabDelegateFactory;
@@ -441,11 +442,10 @@ public class ChromeTabbedActivity
         }
 
         @Override
-        public void createBrowserControlsState(Tab tab) {
-            TabBrowserControlsState.create(tab,
-                    new ComposedBrowserControlsVisibilityDelegate(
-                            new TabbedModeBrowserControlsVisibilityDelegate(tab),
-                            getFullscreenManager().getBrowserVisibilityDelegate()));
+        public BrowserControlsVisibilityDelegate createBrowserControlsVisibilityDelegate(Tab tab) {
+            return new ComposedBrowserControlsVisibilityDelegate(
+                    new TabbedModeBrowserControlsVisibilityDelegate(tab),
+                    getFullscreenManager().getBrowserVisibilityDelegate());
         }
     }
 
@@ -950,8 +950,6 @@ public class ChromeTabbedActivity
         mLocaleManager.stopObservingPhoneChanges();
 
         mScreenshotMonitor.stopMonitoring();
-
-        removeOtherCTAStateObserver();
 
         super.onPauseWithNative();
     }
@@ -2284,25 +2282,6 @@ public class ChromeTabbedActivity
         // When the window size changes through multi-window, the popup windows position does not
         // change. Because of these problems, dismiss the popup window until a solution appears.
         if (mNavigationPopup != null) mNavigationPopup.dismiss();
-    }
-
-    private @Nullable ChromeTabbedActivity getOtherResumedCTA() {
-        Class<?> otherWindowActivityClass =
-                MultiWindowUtils.getInstance().getOpenInOtherWindowActivity(this);
-        for (Activity activity : ApplicationStatus.getRunningActivities()) {
-            if (activity.getClass().equals(otherWindowActivityClass)
-                    && ApplicationStatus.getStateForActivity(activity) == ActivityState.RESUMED) {
-                return (ChromeTabbedActivity) activity;
-            }
-        }
-        return null;
-    }
-
-    private void removeOtherCTAStateObserver() {
-        if (mOtherCTAStateObserver != null) {
-            ApplicationStatus.unregisterActivityStateListener(mOtherCTAStateObserver);
-            mOtherCTAStateObserver = null;
-        }
     }
 
     /**

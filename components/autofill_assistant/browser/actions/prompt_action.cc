@@ -32,7 +32,6 @@ void PromptAction::InternalProcessAction(ProcessActionCallback callback) {
     return;
   }
 
-  delegate_ = delegate;
   callback_ = std::move(callback);
   delegate_->SetStatusMessage(proto_.prompt().message());
 

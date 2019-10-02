@@ -46,9 +46,6 @@ constexpr uint32_t kNumberOfLowEntropyHashValues = 64;
 // Contains all special symbols considered for password-generation.
 constexpr char kSpecialSymbols[] = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
 
-// Contains all special symbols considered for password-generation.
-constexpr char kSpecialSymbols[] = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
-
 // Sets autofill types of password and new password fields in |field_types|.
 // |password_type| (the autofill type of new password field) should be equal to
 // NEW_PASSWORD, PROBABLY_NEW_PASSWORD or NOT_NEW_PASSWORD. These values

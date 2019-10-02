@@ -144,10 +144,8 @@ class ComponentsUnitTestEventListener : public testing::EmptyTestEventListener {
 
 base::RunTestSuiteCallback GetLaunchCallback(int argc, char** argv) {
 #if !defined(OS_IOS)
-  // components_unittests don't currently work with the Network Service enabled.
-  // https://crbug.com/966633.
   auto test_suite = std::make_unique<content::UnitTestTestSuite>(
-      new ComponentsTestSuite(argc, argv), "NetworkService");
+      new ComponentsTestSuite(argc, argv));
 #else
   auto test_suite = std::make_unique<ComponentsTestSuite>(argc, argv);
 #endif

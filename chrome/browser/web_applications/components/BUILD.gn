@@ -143,20 +143,3 @@ source_set("browser_tests") {
     "//net:test_support",
   ]
 }
-
-source_set("browser_tests") {
-  testonly = true
-
-  sources = [
-    "web_app_url_loader_browsertest.cc",
-  ]
-
-  defines = [ "HAS_OUT_OF_PROC_TEST_RUNNER" ]
-
-  deps = [
-    "//chrome/browser/web_applications/components",
-    "//chrome/test:test_support",
-    "//chrome/test:test_support_ui",
-    "//net:test_support",
-  ]
-}

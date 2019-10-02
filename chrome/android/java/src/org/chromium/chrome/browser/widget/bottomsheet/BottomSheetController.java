@@ -116,11 +116,6 @@ public class BottomSheetController implements Destroyable {
             public void onPageLoadStarted(Tab tab, String url) {
                 clearRequestsAndHide();
             }
-        };
-
-        final TabModelObserver tabSelectionObserver = new EmptyTabModelObserver() {
-            /** The currently active tab. */
-            private Tab mCurrentTab = tabModelSelector.getCurrentTab();
 
             @Override
             public void onCrash(Tab tab) {

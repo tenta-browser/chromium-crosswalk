@@ -107,16 +107,6 @@ class KeyboardAccessoryView extends LinearLayout {
         mBarItemsView.setAdapter(adapter);
     }
 
-    public void setTabDescription(int i, String description) {
-        TabLayout.Tab tab = mTabLayout.getTabAt(i);
-        if (tab != null) tab.setContentDescription(description);
-    }
-
-    public void setTabDescription(int i, @StringRes int messageId) {
-        TabLayout.Tab tab = mTabLayout.getTabAt(i);
-        if (tab != null) tab.setContentDescription(messageId);
-    }
-
     private void show() {
         bringToFront(); // Needs to overlay every component and the bottom sheet - like a keyboard.
         setVisibility(View.VISIBLE);

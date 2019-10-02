@@ -47,9 +47,5 @@ const char kLitePageRedirectOverridesPageHints[] =
 const char kEnableDeferAllScriptWithoutOptimizationHints[] =
     "enable-defer-all-script-without-optimization-hints";
 
-// Sets the trigger ordering of Lite Page Redirect to be higher than page hints.
-const char kLitePageRedirectOverridesPageHints[] =
-    "litepage_redirect_overrides_page_hints";
-
 }  // namespace switches
 }  // namespace previews

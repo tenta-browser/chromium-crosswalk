@@ -38,8 +38,6 @@ constexpr int kDefaultTileIconMinSizePx = 1;
 
 const char kImageFetcherUmaClient[] = "IconCacher";
 
-const char kImageFetcherUmaClient[] = "IconCacher";
-
 constexpr char kTileIconMinSizePxFieldParam[] = "min_size";
 
 favicon_base::IconType IconType(const PopularSites::Site& site) {

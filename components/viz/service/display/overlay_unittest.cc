@@ -416,19 +416,6 @@ VideoHoleDrawQuad* CreateVideoHoleDrawQuadAt(
   return overlay_quad;
 }
 
-// For Cast we use VideoHoleDrawQuad, and that's what overlay_processor_
-// expects.
-VideoHoleDrawQuad* CreateVideoHoleDrawQuadAt(
-    const SharedQuadState* shared_quad_state,
-    RenderPass* render_pass,
-    const gfx::Rect& rect) {
-  base::UnguessableToken overlay_plane_id = base::UnguessableToken::Create();
-  auto* overlay_quad =
-      render_pass->CreateAndAppendDrawQuad<VideoHoleDrawQuad>();
-  overlay_quad->SetNew(shared_quad_state, rect, rect, overlay_plane_id);
-  return overlay_quad;
-}
-
 TextureDrawQuad* CreateTransparentCandidateQuadAt(
     DisplayResourceProvider* parent_resource_provider,
     ClientResourceProvider* child_resource_provider,
@@ -1094,7 +1081,6 @@ TEST_F(SingleOverlayOnTopTest, AcceptBlackBackgroundColor) {
       resource_provider_.get(), child_resource_provider_.get(),
       child_provider_.get(), pass->shared_quad_state_list.back(), pass.get());
   quad->background_color = SK_ColorBLACK;
-  quad->needs_blending = true;
 
   OverlayCandidateList candidate_list;
   OverlayProcessor::FilterOperationsMap render_pass_filters;

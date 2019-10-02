@@ -9413,25 +9413,21 @@
       'name': 'KeyboardDefaultToFunctionKeys',
       'type': 'main',
       'schema': { 'type': 'boolean' },
-      'supported_on': ['chrome_os:76-'],
+      'supported_on': ['chrome_os:35-'],
       'features': {
         'can_be_recommended': True,
         'dynamic_refresh': True,
         'per_profile': True,
       },
       'example_value': True,
-      'id': 561,
-      'caption': '''Enable sticky keys''',
+      'id': 260,
+      'caption': '''Media keys default to function keys''',
       'tags': [],
-      'desc': '''Enable the sticky keys accessibility feature.
+      'desc': '''Changes the default behaviour of the top row keys to function keys.
 
-          If this policy is set to true, the sticky keys will always be enabled.
+          If this policy is set to true, the keyboard's top row of keys will produce function key commands per default. The search key has to be pressed to revert their behavior back to media keys.
 
-          If this policy is set to false, the sticky keys will always be disabled.
-
-          If you set this policy, users cannot change or override it.
-
-          If this policy is left unset, the sticky keys is disabled initially but can be enabled by the user anytime.'''
+          If this policy is set to false or left unset, the keyboard will produce media key commands per default and function key commands when the search key is held.'''
     },
     {
       'name': 'ScreenMagnifierType',
@@ -11675,8 +11671,6 @@
       See https://developers.google.com/safe-browsing for more info on Safe Browsing.''',
     },
     {
-      # TODO(nikitapodguzov): Move the ppd_resource properties description to
-      # the schema after adding display of schemas in the HTML page.
       'name': 'NativePrinters',
       'type': 'list',
       'schema': {
@@ -11740,10 +11734,6 @@
       their users.
 
       <ph name="PRINTER_DISPLAY_NAME">display_name</ph> and <ph name="PRINTER_DESCRIPTION">description</ph> are free-form strings that can be customized for ease of printer selection. <ph name="PRINTER_MANUFACTURER">manufacturer</ph> and <ph name="PRINTER_MODEL">model</ph> serve to ease printer identification by end users. They represent the manufacturer and model of the printer. <ph name="PRINTER_URI">uri</ph> should be an address reachable from a client computer including the <ph name="URI_SCHEME">scheme</ph>, <ph name="URI_PORT">port</ph>, and <ph name="URI_QUEUE">queue</ph>. <ph name="PRINTER_UUID">uuid</ph> is optional. If provided, it is used to help deduplicate <ph name="ZEROCONF_DISCOVERY">zeroconf</ph> printers.
-
-      Either <ph name="PRINTER_EFFECTIVE_MODEL">effective_model</ph> should contain the name of the printer or <ph name="PRINTER_AUTOCONF">autoconf</ph> should be set to true. The printers with both or without any properties will be ignored.
-
-      <ph name="PRINTER_AUTOCONF">autoconf</ph> is a boolean flag indicating whether IPP Everywhere should be used to setup the printer. This flag is supported on <ph name="PRODUCT_OS_NAME">$2<ex>Google Chrome OS</ex></ph> version 76 and higher.
 
       Either <ph name="PRINTER_EFFECTIVE_MODEL">effective_model</ph> should contain the name of the printer or <ph name="PRINTER_AUTOCONF">autoconf</ph> should be set to true. The printers with both or without any properties will be ignored.
 

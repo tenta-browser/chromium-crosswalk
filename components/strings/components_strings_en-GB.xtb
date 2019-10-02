@@ -212,7 +212,6 @@
 <translation id="2053111141626950936">Pages in <ph name="LANGUAGE" /> will not be translated.</translation>
 <translation id="2053553514270667976">ZIP code</translation>
 <translation id="2064691555167957331">{COUNT,plural, =1{1 suggestion}other{# suggestions}}</translation>
-<translation id="2068124040035837596">Your account is managed by <ph name="ENROLLMENT_DOMAIN" />. This means that your administrator may remotely configure your account.</translation>
 <translation id="2068663545051464999">Uploaded Crash Report ID <ph name="CRASH_ID" /> (Local Context: <ph name="CRASH_LOCAL_ID" />)</translation>
 <translation id="2079545284768500474">Undo</translation>
 <translation id="20817612488360358">System proxy settings are set to be used but an explicit proxy configuration is also specified.</translation>
@@ -349,11 +348,9 @@
 <translation id="277499241957683684">Missing device record</translation>
 <translation id="2781692009645368755">Google Pay</translation>
 <translation id="2784949926578158345">The connection was reset.</translation>
-<translation id="2785008241190445880">Bookmark replaced</translation>
 <translation id="2788784517760473862">Accepted credit cards</translation>
 <translation id="2792012897584536778">Administrators of this device have set up security certificates that may allow them to see the content of websites that you visit.</translation>
 <translation id="2794233252405721443">Site blocked</translation>
-<translation id="2795286477369100655">Do You Want to Leave This Site?</translation>
 <translation id="2799020568854403057">The site ahead contains harmful apps</translation>
 <translation id="2799223571221894425">Relaunch</translation>
 <translation id="2803306138276472711">Google Safe Browsing recently <ph name="BEGIN_LINK" />detected malware<ph name="END_LINK" /> on <ph name="SITE" />. Websites that are normally safe are sometimes infected with malware.</translation>
@@ -647,7 +644,6 @@
 <translation id="4377125064752653719">You attempted to reach <ph name="DOMAIN" />, but the certificate that the server presented has been revoked by its issuer. This means that the security credentials the server presented absolutely should not be trusted. You may be communicating with an attacker.</translation>
 <translation id="4378154925671717803">Phone</translation>
 <translation id="4406896451731180161">search results</translation>
-<translation id="4406972042435603828">Your administrators have installed extensions with powerful capabilities.</translation>
 <translation id="4408413947728134509">Cookies <ph name="NUM_COOKIES" /></translation>
 <translation id="4415426530740016218">Pickup Address</translation>
 <translation id="4424024547088906515">This server could not prove that it is <ph name="DOMAIN" />; its security certificate is not trusted by Chrome. This may be caused by a misconfiguration or an attacker intercepting your connection.</translation>
@@ -745,7 +741,6 @@
 <translation id="4984339528288761049">Prc5 (Envelope)</translation>
 <translation id="4989163558385430922">See all</translation>
 <translation id="4989809363548539747">This plug-in is not supported</translation>
-<translation id="4996230189582812866">Reporting</translation>
 <translation id="5002932099480077015">If enabled, Chrome will store a copy of your card on this device for faster form filling.</translation>
 <translation id="5015510746216210676">Machine Name:</translation>
 <translation id="5017554619425969104">Text that you copied</translation>
@@ -915,7 +910,6 @@
 <translation id="5869405914158311789">This site can’t be reached</translation>
 <translation id="5869522115854928033">Saved passwords</translation>
 <translation id="5887400589839399685">Card saved</translation>
-<translation id="5893718151540690985">report list of network interfaces with their types and hardware addresses</translation>
 <translation id="5893752035575986141">Credit cards are accepted.</translation>
 <translation id="5901630391730855834">Yellow</translation>
 <translation id="5908541034548427511"><ph name="TYPE_1" /> (synced)</translation>
@@ -940,10 +934,8 @@
 <translation id="6016158022840135739">{COUNT,plural, =1{Page 1}other{Page #}}</translation>
 <translation id="6017514345406065928">Green</translation>
 <translation id="6017850046339264347">Attackers on <ph name="BEGIN_BOLD" /><ph name="SITE" /><ph name="END_BOLD" /> could install deceptive apps that pretend to be something else or collect data that may be used to track you. <ph name="BEGIN_LEARN_MORE_LINK" />Learn more<ph name="END_LEARN_MORE_LINK" /></translation>
-<translation id="6022659036123304283">Make Chrome your own</translation>
 <translation id="6025416945513303461"><ph name="TYPE_1" />, <ph name="TYPE_2" />, <ph name="TYPE_3" /> (synced)</translation>
 <translation id="6027201098523975773">Enter a name</translation>
-<translation id="6033927989869462158">report hardware statistics such as CPU/RAM usage</translation>
 <translation id="6034000775414344507">Light grey</translation>
 <translation id="6034283069659657473">10x14 (Envelope)</translation>
 <translation id="6039846035001940113">If the problem continues, contact the site owner.</translation>
@@ -1196,7 +1188,6 @@ Additional details:
 <translation id="7442725080345379071">Light orange</translation>
 <translation id="7444046173054089907">This site is blocked</translation>
 <translation id="7445762425076701745">The identity of the server to which you are connected cannot be fully validated. You are connected to a server using a name valid only within your network, and an external certificate authority has no way to validate ownership. As some certificate authorities will issue certificates for these names regardless, there is no way to ensure that you are connected to the intended website and not to an attacker.</translation>
-<translation id="7449109375006139765">send system logs to the management server</translation>
 <translation id="7451311239929941790"><ph name="BEGIN_LINK" />Find out more<ph name="END_LINK" /> about this problem.</translation>
 <translation id="7455133967321480974">Use global default (Block)</translation>
 <translation id="7460618730930299168">The screening is different from what you selected. Continue?</translation>
@@ -1383,7 +1374,6 @@ Additional details:
 <translation id="8416694386774425977">The network configuration is invalid and couldn't be imported.
 Additional details:
 <ph name="DEBUG_INFO" /></translation>
-<translation id="8422642323886341533">Device managed by <ph name="ENROLLMENT_DOMAIN" /></translation>
 <translation id="8424582179843326029"><ph name="FIRST_LABEL" /> <ph name="SECOND_LABEL" /> <ph name="THIRD_LABEL" /></translation>
 <translation id="8425213833346101688">Change</translation>
 <translation id="8428213095426709021">Settings</translation>
@@ -1455,7 +1445,6 @@ Additional details:
 <translation id="8932102934695377596">Your clock is behind</translation>
 <translation id="893332455753468063">Add Name</translation>
 <translation id="8938939909778640821">Accepted credit and prepaid cards</translation>
-<translation id="894185898663964645">Your administrator has configured custom root certificates, which may allow the administrator to see the contents of websites that you visit.</translation>
 <translation id="8943282376843390568">Lime</translation>
 <translation id="8957210676456822347">Captive Portal Authorisation</translation>
 <translation id="8968766641738584599">Save card</translation>
@@ -1512,10 +1501,8 @@ Additional details:
 <translation id="9174917557437862841">Tab switch button, press Enter to switch to this tab</translation>
 <translation id="9183302530794969518">Google Docs</translation>
 <translation id="9183425211371246419"><ph name="HOST_NAME" /> uses an unsupported protocol.</translation>
-<translation id="9198587359415855350"><ph name="SITE" /> Says</translation>
 <translation id="9205078245616868884">Your data is encrypted with your sync passphrase. Enter it to start sync.</translation>
 <translation id="9207861905230894330">Failed to add article.</translation>
-<translation id="9209577707918422353">An Embedded Page at <ph name="SITE" /> Says</translation>
 <translation id="9215416866750762878">An application is stopping Chrome from safely connecting to this site</translation>
 <translation id="9219103736887031265">Images</translation>
 <translation id="933712198907837967">Diners Club</translation>

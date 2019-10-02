@@ -688,40 +688,6 @@ void ClientControlledShellSurface::OnSetFrameColors(SkColor active_color,
   }
 }
 
-void ClientControlledShellSurface::OnSetFrameColors(SkColor active_color,
-                                                    SkColor inactive_color) {
-  ShellSurfaceBase::OnSetFrameColors(active_color, inactive_color);
-  if (wide_frame_) {
-    aura::Window* window = wide_frame_->GetWidget()->GetNativeWindow();
-    window->SetProperty(ash::kFrameActiveColorKey, active_color);
-    window->SetProperty(ash::kFrameInactiveColorKey, inactive_color);
-  }
-
-  // Update surface scale.
-  if (pending_scale_ != scale_) {
-    gfx::Transform transform;
-    DCHECK_NE(pending_scale_, 0.0);
-    transform.Scale(1.0 / pending_scale_, 1.0 / pending_scale_);
-    host_window()->SetTransform(transform);
-    scale_ = pending_scale_;
-  }
-
-  orientation_ = pending_orientation_;
-  if (expected_orientation_ == orientation_)
-    orientation_compositor_lock_.reset();
-}
-
-bool ClientControlledShellSurface::IsTouchEnabled(Surface* surface) const {
-  // The target for input events is selected by recursively hit-testing surfaces
-  // in the surface tree. During client-driven dragging/resizing, capture is set
-  // on the root surface. When capture is reset to a different target, mouse
-  // events are redirected from the old to the new target, but touch/gesture
-  // events are cancelled. To avoid prematurely ending the drag/resize, ensure
-  // that the target and capture windows are the same by disabling touch input
-  // for all but the root surface.
-  return surface == root_surface();
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // aura::WindowObserver overrides:
 

@@ -25,8 +25,6 @@
 #include "components/ntp_tiles/switches.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
-#include "components/strings/grit/components_strings.h"
-#include "ui/base/l10n/l10n_util.h"
 
 using history::TopSites;
 using suggestions::ChromeSuggestion;
@@ -788,9 +786,6 @@ void MostVisitedSites::InitiateNotificationForNewTiles(
     // Don't wait for the homepage title from history but immediately serve a
     // copy of new tiles.
     new_tiles = InsertHomeTile(std::move(new_tiles), base::string16());
-  }
-  if (base::FeatureList::IsEnabled(ntp_tiles::kDefaultSearchShortcut)) {
-    new_tiles = InsertSearchTile(std::move(new_tiles));
   }
   MergeMostVisitedTiles(std::move(new_tiles));
 }

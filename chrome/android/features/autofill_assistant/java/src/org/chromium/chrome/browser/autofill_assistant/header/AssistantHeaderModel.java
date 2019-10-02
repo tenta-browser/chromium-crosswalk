@@ -15,8 +15,6 @@ import org.chromium.ui.modelutil.PropertyModel;
  */
 @JNINamespace("autofill_assistant")
 public class AssistantHeaderModel extends PropertyModel {
-    public static final WritableBooleanPropertyKey VISIBLE = new WritableBooleanPropertyKey();
-
     @VisibleForTesting
     public static final WritableObjectPropertyKey<String> STATUS_MESSAGE =
             new WritableObjectPropertyKey<>();
@@ -58,8 +56,8 @@ public class AssistantHeaderModel extends PropertyModel {
     }
 
     @CalledByNative
-    private void setProgressVisible(boolean visible) {
-        set(PROGRESS_VISIBLE, visible);
+    private void setProgress(int progress) {
+        set(PROGRESS, progress);
     }
 
     @CalledByNative

@@ -12,19 +12,14 @@ import android.support.annotation.CallSuper;
 import org.chromium.base.BuildInfo;
 import org.chromium.base.ObserverList.RewindableIterator;
 import org.chromium.base.annotations.CalledByNative;
-import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.blink_public.platform.WebDisplayMode;
 import org.chromium.chrome.browser.AppHooks;
 import org.chromium.chrome.browser.findinpage.FindMatchRectsDetails;
 import org.chromium.chrome.browser.findinpage.FindNotificationDetails;
-import org.chromium.chrome.browser.fullscreen.ChromeFullscreenManager;
-import org.chromium.chrome.browser.fullscreen.FullscreenManager;
 import org.chromium.chrome.browser.fullscreen.FullscreenOptions;
 import org.chromium.chrome.browser.media.MediaCaptureNotificationService;
-import org.chromium.chrome.browser.media.PictureInPicture;
 import org.chromium.chrome.browser.policy.PolicyAuditor;
 import org.chromium.chrome.browser.tabmodel.TabWindowManager;
-import org.chromium.chrome.browser.util.IntentUtils;
 import org.chromium.components.embedder_support.delegate.WebContentsDelegateAndroid;
 import org.chromium.content_public.browser.InvalidateTypes;
 import org.chromium.content_public.browser.WebContents;
@@ -302,44 +297,6 @@ public abstract class TabWebContentsDelegateAndroid extends WebContentsDelegateA
     @CalledByNative
     protected boolean isNightModeEnabled() {
         return false;
-    }
-
-    /**
-     * @return the Webapp manifest scope, which is used to allow frames within the scope to
-     *         autoplay media unmuted.
-     */
-    @CalledByNative
-    protected String getManifestScope() {
-        return null;
-    }
-
-    /**
-     * Provides info on web preferences for viewing downloaded media.
-     * @return enabled Whether embedded media experience should be enabled.
-     */
-    @CalledByNative
-    protected boolean shouldEnableEmbeddedMediaExperience() {
-        return false;
-    }
-
-    /**
-     * @return web preferences for enabling Picture-in-Picture.
-     */
-    @CalledByNative
-    protected boolean isPictureInPictureEnabled() {
-        ChromeActivity activity = mTab.getActivity();
-        return activity != null ? PictureInPicture.isEnabled(activity.getApplicationContext())
-                                : false;
-    }
-
-    /**
-     * @return Night mode enabled/disabled for this Tab. To be used to propagate
-     *         the preferred color scheme to the renderer.
-     */
-    @CalledByNative
-    protected boolean isNightModeEnabled() {
-        ChromeActivity activity = mTab.getActivity();
-        return activity != null ? activity.getNightModeStateProvider().isInNightMode() : false;
     }
 
     /**

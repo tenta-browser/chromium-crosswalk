@@ -43,10 +43,6 @@ void PasswordManagerClient::AutofillHttpAuth(
     const autofill::PasswordForm& preferred_match,
     const PasswordFormManagerForUI* form_manager) {}
 
-void PasswordManagerClient::AutofillHttpAuth(
-    const autofill::PasswordForm& preferred_match,
-    const PasswordFormManagerForUI* form_manager) const {}
-
 SyncState PasswordManagerClient::GetPasswordSyncState() const {
   return NOT_SYNCING;
 }

@@ -392,18 +392,6 @@ class SurfaceAggregatorTest : public testing::Test, public DisplayTimeSource {
                  1.0, 8);
   }
 
-  static void AddYUVVideoQuad(RenderPass* pass, const gfx::Rect& output_rect) {
-    auto* shared_state = pass->CreateAndAppendSharedQuadState();
-    shared_state->SetAll(gfx::Transform(), output_rect, output_rect,
-                         gfx::RRectF(), output_rect, false, false, 1,
-                         SkBlendMode::kSrcOver, 0);
-    auto* quad = pass->CreateAndAppendDrawQuad<YUVVideoDrawQuad>();
-    quad->SetNew(shared_state, output_rect, output_rect, false,
-                 gfx::RectF(output_rect), gfx::RectF(), output_rect.size(),
-                 gfx::Size(), 0, 0, 0, 0, gfx::ColorSpace::CreateREC709(), 0,
-                 1.0, 8);
-  }
-
  protected:
   ServerSharedBitmapManager shared_bitmap_manager_;
   FrameSinkManagerImpl manager_;

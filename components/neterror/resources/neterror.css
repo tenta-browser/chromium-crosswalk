@@ -759,7 +759,7 @@ html[subframe] body {
   vertical-align: middle;
 }
 
-.download-button:disabled {
+#download-button:disabled {
   background: rgb(180, 206, 249);
   color: rgb(255, 255, 255);
 }

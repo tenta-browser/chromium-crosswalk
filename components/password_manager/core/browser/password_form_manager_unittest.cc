@@ -3565,12 +3565,6 @@ TEST_F(PasswordFormManagerTest, UploadUsernameCorrectionVote) {
                   StartUploadRequest(_, false, field_types, std::string(), true,
                                      nullptr));
 
-      autofill::ServerFieldTypeSet field_types;
-      field_types.insert(autofill::PASSWORD);
-      EXPECT_CALL(
-          *client()->mock_driver()->mock_autofill_download_manager(),
-          StartUploadRequest(_, false, field_types, std::string(), true));
-
       EXPECT_CALL(
           *client()->mock_driver()->mock_autofill_download_manager(),
           StartUploadRequest(AllOf(SignatureIsSameAs(expected_username_vote),

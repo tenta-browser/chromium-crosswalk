@@ -122,11 +122,6 @@ class PaymentsClientTest : public testing::Test {
         features::kAutofillGetPaymentsIdentityFromSync);
   }
 
-  void EnableAutofillGetPaymentsIdentityFromSync() {
-    scoped_feature_list_.InitAndEnableFeature(
-        features::kAutofillGetPaymentsIdentityFromSync);
-  }
-
   void DisableAutofillSendExperimentIdsInPaymentsRPCs() {
     scoped_feature_list_.InitAndDisableFeature(
         features::kAutofillSendExperimentIdsInPaymentsRPCs);

@@ -17,7 +17,6 @@
 #include "ui/display/types/display_snapshot.h"
 #include "ui/gfx/gpu_memory_buffer.h"
 #include "ui/gfx/skia_util.h"
-#include "ui/gl/gl_enums.h"
 
 namespace viz {
 

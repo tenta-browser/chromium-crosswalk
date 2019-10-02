@@ -68,24 +68,6 @@ class WaitForDomAction : public Action {
   void OnSingleElementCheckDone(size_t condition_index, bool result);
   void OnAllElementChecksDone(base::OnceCallback<void(bool)> callback);
 
-  // Initializes |require_all_| and |conditions_| from |proto_|.
-  void AddConditionsFromProto();
-
-  // Adds a single condition to |conditions_|.
-  void AddCondition(const WaitForDomProto::ElementCondition& condition);
-
-  // Adds a single condition to |conditions_|.
-  void AddCondition(SelectorPredicate predicate,
-                    const ElementReferenceProto& selector_proto,
-                    const std::string& server_payload);
-
-  // Check all elements using the given BatchElementChecker and reports the
-  // result to |callback|.
-  void CheckElements(BatchElementChecker* checker,
-                     base::OnceCallback<void(bool)> callback);
-  void OnSingleElementCheckDone(size_t condition_index, bool result);
-  void OnAllElementChecksDone(base::OnceCallback<void(bool)> callback);
-
   void OnCheckDone(ProcessActionCallback callback,
                    ProcessedActionStatusProto status);
 

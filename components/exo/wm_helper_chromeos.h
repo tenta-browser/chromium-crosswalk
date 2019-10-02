@@ -110,10 +110,6 @@ class WMHelperChromeOS : public WMHelper, public VSyncTimingManager::Delegate {
   void AddVSyncParameterObserver(
       viz::mojom::VSyncParameterObserverPtr observer) override;
 
-  // Overridden from VSyncTimingManager::Delegate:
-  void AddVSyncParameterObserver(
-      viz::mojom::VSyncParameterObserverPtr observer) override;
-
  private:
   base::ObserverList<DragDropObserver>::Unchecked drag_drop_observers_;
   LifetimeManager lifetime_manager_;

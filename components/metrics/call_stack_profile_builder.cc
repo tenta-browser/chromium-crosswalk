@@ -102,10 +102,8 @@ std::map<uint64_t, int64_t> GetDeletedMetadataItems(
 CallStackProfileBuilder::CallStackProfileBuilder(
     const CallStackProfileParams& profile_params,
     const WorkIdRecorder* work_id_recorder,
-    const base::MetadataRecorder* metadata_recorder,
     base::OnceClosure completed_callback)
     : work_id_recorder_(work_id_recorder),
-      metadata_recorder_(metadata_recorder),
       profile_start_time_(base::TimeTicks::Now()) {
   completed_callback_ = std::move(completed_callback);
   sampled_profile_.set_process(

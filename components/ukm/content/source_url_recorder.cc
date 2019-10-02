@@ -232,7 +232,6 @@ void SourceUrlRecorderWebContentsObserver::HandleSameDocumentNavigation(
           max_same_document_sources_per_full_source) {
     MaybeRecordUrl(navigation_handle, GURL::EmptyGURL());
   }
-}
 
   last_committed_full_navigation_or_same_document_source_id_ =
       ukm::ConvertToSourceId(navigation_handle->GetNavigationId(),

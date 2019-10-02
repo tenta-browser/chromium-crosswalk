@@ -79,8 +79,6 @@ class ShellSurfaceBase : public SurfaceTreeHost,
   // Set title for the surface.
   void SetTitle(const base::string16& title);
 
-  const base::string16& frame_title() const { return frame_title_; }
-
   // Set icon for the surface.
   void SetIcon(const gfx::ImageSkia& icon);
 

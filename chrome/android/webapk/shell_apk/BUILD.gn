@@ -96,22 +96,6 @@ template("webapk_with_service_java") {
   }
 }
 
-template("webapk_with_service_java") {
-  android_library(target_name) {
-    forward_variables_from(invoker,
-                           [
-                             "android_manifest_for_lint",
-                             "deps",
-                           ])
-
-    java_files = [
-      "src/org/chromium/webapk/shell_apk/WebApkServiceFactory.java",
-      "src/org/chromium/webapk/shell_apk/WebApkServiceImplWrapper.java",
-    ]
-    deps += [ ":compiled_in_runtime_library_java" ]
-  }
-}
-
 template("webapk_tmpl") {
   _manifest_to_upload_dep = invoker.manifest_to_upload_dep
   _manifest_target_name = "${target_name}_generate_manifest"

@@ -261,13 +261,6 @@ class ClientControlledShellSurface : public ShellSurfaceBase,
 
   void UpdateCaptionButtonModel();
 
-  // Update frame status. This may create (or destroy) a wide frame
-  // that spans the full work area width if the surface didn't cover
-  // the work area.
-  void UpdateFrame();
-
-  void UpdateCaptionButtonModel();
-
   void UpdateBackdrop();
 
   void UpdateFrameWidth();

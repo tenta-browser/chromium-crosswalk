@@ -213,13 +213,6 @@ public class Preferences extends ChromeBaseAppCompatActivity
         if (sResumedInstance == this) sResumedInstance = null;
     }
 
-    /** See {@link #getMainFragment}. */
-    @VisibleForTesting
-    public Fragment getFragmentForTest() {
-        // TODO(bsazonov): Remove this method and use getMainFragment in tests.
-        return getMainFragment();
-    }
-
     /**
      * Returns the fragment showing as this activity's main content, typically a {@link
      * PreferenceFragmentCompat}. This does not include dialogs or other {@link Fragment}s shown on

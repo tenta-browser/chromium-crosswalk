@@ -9,43 +9,6 @@
 #include "components/ui_devtools/ui_devtools_unittest_utils.h"
 #include "ui/views/test/views_test_base.h"
 
-namespace {
-
-size_t GetPropertyIndex(ui_devtools::ViewElement* element,
-                        const std::string& property_name) {
-  auto props = element->GetCustomProperties();
-  for (size_t index = 0; index < props.size(); ++index) {
-    if (props[index].first == property_name)
-      return index;
-  }
-  DCHECK(false) << "Property " << property_name << " can not be found.";
-  return 0;
-}
-
-void TestBooleanCustomPropertySetting(ui_devtools::ViewElement* element,
-                                      const std::string& property_name,
-                                      bool init_value) {
-  size_t index = GetPropertyIndex(element, property_name);
-  std::string old_value(init_value ? "true" : "false");
-  auto props = element->GetCustomProperties();
-  EXPECT_EQ(props[index].second, old_value);
-
-  // Check the property can be set accordingly.
-  std::string new_value(init_value ? "false" : "true");
-  std::string separator(":");
-  element->SetPropertiesFromString(property_name + separator + new_value);
-  props = element->GetCustomProperties();
-  EXPECT_EQ(props[index].first, property_name);
-  EXPECT_EQ(props[index].second, new_value);
-
-  element->SetPropertiesFromString(property_name + separator + old_value);
-  props = element->GetCustomProperties();
-  EXPECT_EQ(props[index].first, property_name);
-  EXPECT_EQ(props[index].second, old_value);
-}
-
-}  // namespace
-
 namespace ui_devtools {
 
 namespace {

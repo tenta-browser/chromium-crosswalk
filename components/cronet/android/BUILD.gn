@@ -501,13 +501,6 @@ android_resource_sizes_test("resource_sizes_cronet_sample_apk") {
   ]
 }
 
-android_resource_sizes_test("resource_sizes_cronet_sample_apk") {
-  apk_name = "CronetSample"
-  data_deps = [
-    ":cronet_sample_apk",
-  ]
-}
-
 action("cronet_combine_proguard_flags") {
   script = "//components/cronet/tools/generate_proguard_file.py"
   sources = [

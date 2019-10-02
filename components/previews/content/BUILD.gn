@@ -10,7 +10,6 @@ static_library("content") {
     "previews_hints.h",
     "previews_optimization_guide.cc",
     "previews_optimization_guide.h",
-    "previews_top_host_provider.h",
     "previews_ui_service.cc",
     "previews_ui_service.h",
     "previews_user_data.cc",
@@ -41,8 +40,6 @@ source_set("unit_tests") {
     "previews_optimization_guide_unittest.cc",
     "previews_ui_service_unittest.cc",
     "previews_user_data_unittest.cc",
-    "proto_database_provider_test_base.cc",
-    "proto_database_provider_test_base.h",
   ]
 
   deps = [

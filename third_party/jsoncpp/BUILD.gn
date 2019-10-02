@@ -55,20 +55,6 @@ fuzzer_test("jsoncpp_fuzzer") {
   sources = [
     "fuzzers/json_fuzzer.cc",
   ]
-
-  deps = [
-    ":jsoncpp",
-  ]
-
-  include_dirs = [ "generated" ]
-
-  dict = "//testing/libfuzzer/fuzzers/dicts/json.dict"
-}
-
-fuzzer_test("jsoncpp_fuzzer") {
-  sources = [
-    "fuzzers/json_fuzzer.cc",
-  ]
   deps = [
     ":jsoncpp",
   ]

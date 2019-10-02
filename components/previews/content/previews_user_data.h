@@ -173,15 +173,6 @@ class PreviewsUserData {
     coin_flip_holdback_result_ = coin_flip_holdback_result;
   }
 
-  // The result of a coin flip (if present) for this page load.
-  CoinFlipHoldbackResult coin_flip_holdback_result() {
-    return coin_flip_holdback_result_;
-  }
-  void set_coin_flip_holdback_result(
-      CoinFlipHoldbackResult coin_flip_holdback_result) {
-    coin_flip_holdback_result_ = coin_flip_holdback_result;
-  }
-
   // Metadata for an attempted or committed Lite Page Redirect preview.
   ServerLitePageInfo* server_lite_page_info() {
     return server_lite_page_info_.get();
@@ -242,10 +233,6 @@ class PreviewsUserData {
   // by the coin flip holdback.
   content::PreviewsState committed_previews_state_without_holdback_ =
       content::PREVIEWS_OFF;
-
-  // The state of a random coin flip holdback, if any.
-  CoinFlipHoldbackResult coin_flip_holdback_result_ =
-      CoinFlipHoldbackResult::kNotSet;
 
   // The state of a random coin flip holdback, if any.
   CoinFlipHoldbackResult coin_flip_holdback_result_ =

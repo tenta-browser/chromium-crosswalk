@@ -194,12 +194,6 @@ class PasswordManagerClient {
   virtual void AutofillHttpAuth(const autofill::PasswordForm& preferred_match,
                                 const PasswordFormManagerForUI* form_manager);
 
-  // Sends username/password from |preferred_match| for filling in the http auth
-  // prompt.
-  virtual void AutofillHttpAuth(
-      const autofill::PasswordForm& preferred_match,
-      const PasswordFormManagerForUI* form_manager) const;
-
   // Gets prefs associated with this embedder.
   virtual PrefService* GetPrefs() const = 0;
 

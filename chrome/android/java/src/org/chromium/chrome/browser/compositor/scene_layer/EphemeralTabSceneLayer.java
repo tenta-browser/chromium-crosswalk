@@ -5,7 +5,6 @@
 package org.chromium.chrome.browser.compositor.scene_layer;
 
 import android.support.annotation.Nullable;
-import android.text.TextUtils;
 
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
@@ -15,7 +14,6 @@ import org.chromium.chrome.browser.compositor.bottombar.ephemeraltab.EphemeralTa
 import org.chromium.chrome.browser.compositor.bottombar.ephemeraltab.EphemeralTabCaptionControl;
 import org.chromium.chrome.browser.compositor.bottombar.ephemeraltab.EphemeralTabPanel;
 import org.chromium.chrome.browser.compositor.bottombar.ephemeraltab.EphemeralTabTitleControl;
-import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.resources.ResourceManager;
 
@@ -124,7 +122,6 @@ public class EphemeralTabSceneLayer extends SceneOverlayLayer {
     public void hideTree() {
         if (!mIsInitialized) return;
         nativeHideTree(mNativePtr);
-        mCachedUrl = null;
     }
 
     @Override

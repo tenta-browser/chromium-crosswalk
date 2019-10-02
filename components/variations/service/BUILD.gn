@@ -32,6 +32,7 @@ static_library("service") {
     "variations_field_trial_creator.h",
     "variations_service.cc",
     "variations_service.h",
+    "variations_service_client.cc",
     "variations_service_client.h",
   ]
 
@@ -39,6 +40,7 @@ static_library("service") {
     ":buildflags",
     "//base",
     "//components/encrypted_messages",
+    "//components/language/core/browser",
     "//components/metrics",
     "//components/network_time",
     "//components/pref_registry",

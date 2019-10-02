@@ -455,7 +455,6 @@ void ChangeListLoader::LoadChangeListFromServerAfterLoadChangeList(
     const std::string& start_page_token,
     const std::string& root_resource_id,
     bool is_delta_update,
-    std::vector<std::unique_ptr<ChangeList>> team_drives_change_lists,
     FileError error,
     std::vector<std::unique_ptr<ChangeList>> change_lists) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);

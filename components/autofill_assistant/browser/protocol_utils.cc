@@ -56,15 +56,6 @@ void FillClientContext(const ClientContextProto& client_context,
   }
 }
 
-void FillClientContext(const ClientContextProto& client_context,
-                       const TriggerContext& trigger_context,
-                       ClientContextProto* proto) {
-  proto->CopyFrom(client_context);
-  if (!trigger_context.experiment_ids.empty()) {
-    proto->set_experiment_ids(trigger_context.experiment_ids);
-  }
-}
-
 }  // namespace
 
 // static

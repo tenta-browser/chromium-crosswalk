@@ -93,11 +93,6 @@ std::string PrintTile(const std::string& title,
          testing::PrintToString(static_cast<int>(source));
 }
 
-MATCHER_P3(NotMatchesTile, title, url, source, PrintTile(title, url, source)) {
-  return arg.title != base::ASCIIToUTF16(title) && arg.url != GURL(url) &&
-         arg.source != source;
-}
-
 MATCHER_P3(MatchesTile, title, url, source, PrintTile(title, url, source)) {
   return arg.title == base::ASCIIToUTF16(title) && arg.url == GURL(url) &&
          arg.source == source;
@@ -2254,7 +2249,5 @@ TEST(MostVisitedSitesMergeTest, ShouldMergeTilesFavoringPersonalOverPopular) {
           MatchesTile("Explore", "https://explore.example.com/",
                       TileSource::EXPLORE)));
 }
-
-#endif
 
 }  // namespace ntp_tiles

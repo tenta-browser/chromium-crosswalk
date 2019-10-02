@@ -100,12 +100,6 @@ class GaiaCookieManagerService : public GaiaAuthConsumer,
         const CoreAccountId& account_id,
         const GoogleServiceAuthError& error);
 
-    void RunSetAccountsInCookieCompletedCallback(
-        signin::SetAccountsInCookieResult result);
-    void RunAddAccountToCookieCompletedCallback(
-        const std::string& account_id,
-        const GoogleServiceAuthError& error);
-
     static GaiaCookieRequest CreateAddAccountRequest(
         const CoreAccountId& account_id,
         gaia::GaiaSource source,

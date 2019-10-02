@@ -45,30 +45,6 @@ class PromptAction : public Action {
   void OnSuggestionChosen(int choice_index);
 
   ProcessActionCallback callback_;
-  ActionDelegate* delegate_;
-
-  // preconditions_[i] contains the element preconditions for
-  // proto.prompt.choice[i].
-  std::vector<std::unique_ptr<ElementPrecondition>> preconditions_;
-
-  // precondition_results_[i] contains the last result reported by
-  // preconditions_[i].
-  std::vector<bool> precondition_results_;
-
-  // true if something in precondition_results_ has changed, which means that
-  // the set of chips must be updated.
-  bool precondition_changed_ = false;
-
-  // Batch element checker for preconditions.
-  std::unique_ptr<BatchElementChecker> precondition_checker_;
-
-  // If >= 0, contains the index of the Choice to auto-select.
-  int auto_select_choice_index_ = -1;
-
-  // Batch element checker for auto-selection, if any.
-  std::unique_ptr<BatchElementChecker> auto_select_checker_;
-
-  std::unique_ptr<base::RepeatingTimer> timer_;
 
   // preconditions_[i] contains the element preconditions for
   // proto.prompt.choice[i].

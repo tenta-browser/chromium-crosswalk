@@ -579,35 +579,6 @@ void PaymentRequest::OnPaymentResponseAvailable(
   if (delegate_->IsInteractive())
     delegate_->ShowProcessingSpinner();
 
-  // Log the correct "selected instrument" metric according to its type and
-  // the method name in response.
-  DCHECK(state_->selected_instrument());
-  JourneyLogger::Event selected_event =
-      JourneyLogger::Event::EVENT_SELECTED_OTHER;
-  switch (state_->selected_instrument()->type()) {
-    case PaymentInstrument::Type::AUTOFILL:
-      selected_event = JourneyLogger::Event::EVENT_SELECTED_CREDIT_CARD;
-      break;
-    case PaymentInstrument::Type::SERVICE_WORKER_APP: {
-      selected_event =
-          IsGooglePaymentMethodInstrumentSelected(response->method_name)
-              ? JourneyLogger::Event::EVENT_SELECTED_GOOGLE
-              : JourneyLogger::Event::EVENT_SELECTED_OTHER;
-      break;
-    }
-    case PaymentInstrument::Type::NATIVE_MOBILE_APP:
-      NOTREACHED();
-      break;
-  }
-  journey_logger_.SetEventOccurred(selected_event);
-
-  // If currently interactive, show the processing spinner. Autofill payment
-  // instruments request a CVC, so they are always interactive at this point. A
-  // payment handler may elect to be non-interactive by not showing a
-  // confirmation page to the user.
-  if (delegate_->IsInteractive())
-    delegate_->ShowProcessingSpinner();
-
   client_->OnPaymentResponse(std::move(response));
 }
 

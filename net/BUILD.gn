@@ -3345,18 +3345,6 @@ source_set("quiche_test_tools") {
   ]
 }
 
-source_set("quiche_test_tools") {
-  testonly = true
-  sources = [
-    "quiche/common/platform/impl/quiche_test_impl.h",
-    "third_party/quiche/src/common/platform/api/quiche_test.h",
-  ]
-  deps = [
-    "//testing/gmock",
-    "//testing/gtest",
-  ]
-}
-
 source_set("quic_test_tools") {
   testonly = true
   sources = [

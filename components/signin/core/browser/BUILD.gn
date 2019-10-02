@@ -147,15 +147,6 @@ source_set("unit_tests") {
       "account_investigator_unittest.cc",
       "signin_status_metrics_provider_unittest.cc",
     ]
-
-    deps += [ "//chromeos/components/account_manager" ]
-  }
-
-  if (is_android) {
-    sources += [
-      "consistency_cookie_manager_unittest.cc",
-      "oauth2_token_service_delegate_android_unittest.cc",
-    ]
   }
 
   if (is_android) {

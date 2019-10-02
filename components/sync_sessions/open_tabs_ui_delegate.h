@@ -18,7 +18,7 @@
 
 namespace sync_sessions {
 
-class OpenTabsUIDelegate : public favicon::FaviconUrlMapper {
+class OpenTabsUIDelegate {
  public:
   // If a valid favicon for the page at |page_url| is found, returns a pointer
   // to the png-encoded image. Otherwise, returns nullptr.
@@ -66,7 +66,7 @@ class OpenTabsUIDelegate : public favicon::FaviconUrlMapper {
   virtual GURL GetIconUrlForPageUrl(const GURL& page_url) = 0;
 
  protected:
-  ~OpenTabsUIDelegate() override;
+  virtual ~OpenTabsUIDelegate();
 };
 
 }  // namespace sync_sessions

@@ -29,17 +29,3 @@ source_set("manifest") {
     "//services/service_manager/public/cpp",
   ]
 }
-
-source_set("manifest") {
-  sources = [
-    "manifest.cc",
-    "manifest.h",
-  ]
-
-  deps = [
-    "//base",
-    "//components/services/patch/public/interfaces",
-    "//components/strings",
-    "//services/service_manager/public/cpp",
-  ]
-}

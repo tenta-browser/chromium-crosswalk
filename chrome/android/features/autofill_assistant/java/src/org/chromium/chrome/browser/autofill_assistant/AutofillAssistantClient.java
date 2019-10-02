@@ -30,7 +30,7 @@ import java.util.Set;
  * This mainly a bridge to autofill_assistant::ClientAndroid.
  */
 @JNINamespace("autofill_assistant")
-class AutofillAssistantClient implements AutofillAssistantModuleEntry {
+class AutofillAssistantClient {
     /** OAuth2 scope that RPCs require. */
     private static final String AUTH_TOKEN_TYPE =
             "oauth2:https://www.googleapis.com/auth/userinfo.profile";
@@ -171,28 +171,6 @@ class AutofillAssistantClient implements AutofillAssistantModuleEntry {
         return nativePerformDirectAction(mNativeClientAndroid, actionId, experimentIds,
                 arguments.keySet().toArray(new String[arguments.size()]),
                 arguments.values().toArray(new String[arguments.size()]), onboardingCoordinator);
-    }
-
-    /**
-     * Gets rid of the UI, if there is one. Leaves Autofill Assistant running.
-     */
-    public void destroyUi() {
-        if (mNativeClientAndroid == 0) return;
-
-        nativeDestroyUI(mNativeClientAndroid);
-    }
-
-    /**
-     * Transfers ownership of the UI to an instance of Autofill Assistant running on
-     * the given tab/WebContents. Leaves Autofill Assistant running.
-     *
-     * <p>If Autofill Assistant is not running on the given WebContents, the UI is destroyed, as if
-     * {@link #destroyUi} was called.
-     */
-    public void transferUiTo(WebContents otherWebContents) {
-        if (mNativeClientAndroid == 0) return;
-
-        nativeTransferUITo(mNativeClientAndroid, otherWebContents);
     }
 
     @CalledByNative

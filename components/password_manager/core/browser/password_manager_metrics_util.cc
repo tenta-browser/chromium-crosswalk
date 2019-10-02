@@ -79,10 +79,6 @@ void LogApplySyncChangesState(ApplySyncChangesState state) {
   base::UmaHistogramEnumeration("PasswordManager.ApplySyncChangesState", state);
 }
 
-void LogApplySyncChangesState(ApplySyncChangesState state) {
-  UMA_HISTOGRAM_ENUMERATION("PasswordManager.ApplySyncChangesState", state);
-}
-
 void LogPasswordGenerationSubmissionEvent(PasswordSubmissionEvent event) {
   base::UmaHistogramEnumeration("PasswordGeneration.SubmissionEvent", event,
                                 SUBMISSION_EVENT_ENUM_COUNT);

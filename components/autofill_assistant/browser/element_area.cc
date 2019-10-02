@@ -73,24 +73,11 @@ void ElementArea::AddRectangles(
 void ElementArea::Update() {
   if (rectangles_.empty())
     return;
-  }
 
   // If anything is still pending, skip the update.
   if (visual_viewport_pending_update_)
     return;
 
-  // If anything is still pending, skip the update.
-  if (visual_viewport_pending_update_)
-    return;
-
-  for (auto& rectangle : rectangles_) {
-    if (rectangle.IsPending())
-      return;
-  }
-
-  // Mark everything as pending at the same time, to avoid reporting partial
-  // results.
-  visual_viewport_pending_update_ = true;
   for (auto& rectangle : rectangles_) {
     if (rectangle.IsPending())
       return;

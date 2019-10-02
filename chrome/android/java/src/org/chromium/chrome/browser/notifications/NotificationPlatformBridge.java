@@ -824,13 +824,6 @@ public class NotificationPlatformBridge {
         return mTwaClient;
     }
 
-    private TrustedWebActivityClient getTwaClient() {
-        if (mTwaClient == null) {
-            mTwaClient = ChromeApplication.getComponent().resolveTrustedWebActivityClient();
-        }
-        return mTwaClient;
-    }
-
     private static native void nativeInitializeNotificationPlatformBridge();
 
     private native void nativeOnNotificationClicked(long nativeNotificationPlatformBridgeAndroid,

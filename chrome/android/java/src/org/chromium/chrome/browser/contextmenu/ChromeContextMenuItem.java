@@ -151,10 +151,6 @@ public class ChromeContextMenuItem implements ContextMenuItem {
             return R.string.contextmenu_open_in_new_tab_group;
         }
 
-        if (FeatureUtilities.isTabGroupsAndroidEnabled() && item == Item.OPEN_IN_NEW_TAB) {
-            return R.string.contextmenu_open_in_new_tab_group;
-        }
-
         return STRING_IDS[item];
     }
 

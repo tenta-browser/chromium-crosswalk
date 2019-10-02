@@ -68,8 +68,6 @@ public class ChromeApplication extends Application {
 
     @Override
     public void onCreate() {
-        EarlyTraceEvent.Event onCreateEvent =
-                new EarlyTraceEvent.Event("ChromeApplication.onCreate");
         super.onCreate();
         // These can't go in attachBaseContext because Context.getApplicationContext() (which they
         // use under-the-hood) does not work until after it returns.
@@ -81,8 +79,6 @@ public class ChromeApplication extends Application {
     // Quirk: context.getApplicationContext() returns null during this method.
     @Override
     protected void attachBaseContext(Context context) {
-        sFirstTraceEvent = new EarlyTraceEvent.Event("ChromeApplication.attachBaseContext");
-        sInstance = this;
         boolean isBrowserProcess = isBrowserProcess();
         if (isBrowserProcess) UmaUtils.recordMainEntryPointTime();
         super.attachBaseContext(context);

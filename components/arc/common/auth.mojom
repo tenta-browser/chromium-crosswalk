@@ -296,7 +296,7 @@ interface AuthHost {
   [MinVersion=20] HandleUpdateCredentialsRequest@17(string account_name);
 };
 
-// Next Method ID: 3
+// Next Method ID: 5
 interface AuthInstance {
   // DEPRECATED: Please use Init@2 instead.
   InitDeprecated@0(AuthHost host_ptr);

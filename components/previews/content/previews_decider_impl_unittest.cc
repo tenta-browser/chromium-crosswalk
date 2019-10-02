@@ -46,7 +46,6 @@
 #include "components/previews/content/previews_hints.h"
 #include "components/previews/content/previews_ui_service.h"
 #include "components/previews/content/previews_user_data.h"
-#include "components/previews/content/proto_database_provider_test_base.h"
 #include "components/previews/core/previews_black_list.h"
 #include "components/previews/core/previews_experiments.h"
 #include "components/previews/core/previews_features.h"
@@ -1195,17 +1194,8 @@ TEST_F(PreviewsDeciderImplTest, OptimizationGuidePreviewsAllowedWithoutHints) {
        features::kDeferAllScriptPreviews},
       {});
   InitializeUIService();
-  InitializeOptimizationGuideHints();
-
-  base::test::ScopedCommandLine scoped_command_line;
-  base::CommandLine* command_line = scoped_command_line.GetProcessCommandLine();
-  command_line->AppendSwitch(
-      switches::kIgnoreLitePageRedirectOptimizationBlacklist);
-  ASSERT_TRUE(base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kIgnoreLitePageRedirectOptimizationBlacklist));
 
   base::HistogramTester histogram_tester;
-
   PreviewsUserData user_data(kDefaultPageId);
 
   // NoScript is allowed before commit without hints.

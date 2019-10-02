@@ -173,7 +173,6 @@ std::unique_ptr<DeletePageTask> DeletePageTask::CreateTaskWithCriteria(
 std::unique_ptr<DeletePageTask>
 DeletePageTask::CreateTaskMatchingUrlPredicateForCachedPages(
     OfflinePageMetadataStore* store,
-    const ClientPolicyController& policy_controller,
     DeletePageTask::DeletePageTaskCallback callback,
     const UrlPredicate& predicate) {
   PageCriteria criteria;
@@ -189,7 +188,6 @@ DeletePageTask::CreateTaskMatchingUrlPredicateForCachedPages(
 // static
 std::unique_ptr<DeletePageTask> DeletePageTask::CreateTaskDeletingForPageLimit(
     OfflinePageMetadataStore* store,
-    const ClientPolicyController& policy_controller,
     DeletePageTask::DeletePageTaskCallback callback,
     const OfflinePageItem& page) {
   std::string name_space = page.client_id.name_space;

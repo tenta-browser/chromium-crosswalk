@@ -59,37 +59,6 @@ base::TimeDelta RandomFetchDelay() {
       base::RandInt(kFetchRandomMinDelaySecs, kFetchRandomMaxDelaySecs));
 }
 
-// Parses a list of hosts to have hints fetched for. This overrides scheduling
-// of the first hints fetch and forces it to occur immediately. If no hosts are
-// provided, nullopt is returned.
-base::Optional<std::vector<std::string>>
-ParseHintsFetchOverrideFromCommandLine() {
-  base::CommandLine* cmd_line = base::CommandLine::ForCurrentProcess();
-  if (!cmd_line->HasSwitch(switches::kFetchHintsOverride))
-    return base::nullopt;
-
-  std::string override_hosts_value =
-      cmd_line->GetSwitchValueASCII(switches::kFetchHintsOverride);
-
-  std::vector<std::string> hosts =
-      base::SplitString(override_hosts_value, ",", base::TRIM_WHITESPACE,
-                        base::SPLIT_WANT_NONEMPTY);
-
-  if (hosts.size() == 0)
-    return base::nullopt;
-
-  return hosts;
-}
-
-// Provides a random time delta in seconds between |kFetchRandomMinDelay| and
-// |kFetchRandomMaxDelay|.
-base::TimeDelta RandomFetchDelay() {
-  constexpr int kFetchRandomMinDelaySecs = 30;
-  constexpr int kFetchRandomMaxDelaySecs = 60;
-  return base::TimeDelta::FromSeconds(
-      base::RandInt(kFetchRandomMinDelaySecs, kFetchRandomMaxDelaySecs));
-}
-
 }  // namespace
 
 PreviewsOptimizationGuide::PreviewsOptimizationGuide(
@@ -115,9 +84,6 @@ PreviewsOptimizationGuide::PreviewsOptimizationGuide(
       pref_service_(pref_service),
       url_loader_factory_(url_loader_factory) {
   DCHECK(optimization_guide_service_);
-  // TODO(mcrouse): This needs to be a pref to persist the last fetch attempt
-  // time and prevent crash loops.
-  last_fetch_attempt_ = base::Time();
   hint_cache_->Initialize(
       optimization_guide::switches::ShouldPurgeHintCacheStoreOnStartup(),
       base::BindOnce(&PreviewsOptimizationGuide::OnHintCacheInitialized,

@@ -31,9 +31,6 @@ namespace {
 const size_t kTraceConfigFileSizeLimit = 64 * 1024;
 const int kDefaultStartupDuration = 5;
 
-// 95th percentile size of current startup traces size uploaded.
-const size_t kMaxStartupTraceSizeInKb = 300;
-
 // Trace config file path:
 // - Android: /data/local/chrome-trace-config.json
 // - Others: specified by --trace-config-file flag.
@@ -75,7 +72,6 @@ TraceStartupConfig::GetDefaultBrowserStartupConfig() {
       {base::GetCurrentProcId()});
   // First 10k events at start are sufficient to debug startup traces.
   trace_config.SetTraceBufferSizeInEvents(10000);
-  trace_config.SetTraceBufferSizeInKb(kMaxStartupTraceSizeInKb);
   trace_config.SetProcessFilterConfig(process_config);
   // Enable argument filter since we could be background tracing.
   trace_config.EnableArgumentFilter();
@@ -148,11 +144,6 @@ base::FilePath TraceStartupConfig::GetResultFile() const {
 
 void TraceStartupConfig::OnTraceToResultFileFinished() {
   finished_writing_to_file_ = true;
-}
-
-bool TraceStartupConfig::IsUsingPerfettoOutput() const {
-  return base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kPerfettoOutputFile);
 }
 
 bool TraceStartupConfig::IsUsingPerfettoOutput() const {

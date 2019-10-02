@@ -39,10 +39,6 @@
 #include "base/win/windows_version.h"
 #endif
 
-#if defined(OS_ANDROID)
-#include "components/offline_pages/core/offline_page_feature.h"
-#endif
-
 namespace error_page {
 
 namespace {

@@ -33,10 +33,6 @@ SyncAccountInfo DetermineAccountToUse(signin::IdentityManager* identity_manager,
 // content area, rejecting credentials.
 bool IsWebSignout(const GoogleServiceAuthError& auth_error);
 
-// Returns whether |auth_error| indicates the user has locally signed out of
-// content area, rejecting credentials.
-bool IsWebSignout(const GoogleServiceAuthError& auth_error);
-
 }  // namespace syncer
 
 #endif  // COMPONENTS_SYNC_DRIVER_SYNC_AUTH_UTIL_H_

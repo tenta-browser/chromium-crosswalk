@@ -145,7 +145,7 @@ public class TextBubble implements AnchoredPopupWindow.LayoutObserver {
     }
 
     /**
-     * Constructs a {@link TextBubble} instance using the default arrow drawable background.
+     * Constructs a {@link TextBubble} instance.
      * @param context  Context to draw resources from.
      * @param rootView The {@link View} to use for size calculations and for display.
      * @param stringId The id of the string resource for the text that should be shown.

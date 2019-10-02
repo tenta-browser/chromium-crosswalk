@@ -269,7 +269,7 @@ public class CustomTabDelegateFactory implements TabDelegateFactory {
     }
 
     @Override
-    public void createBrowserControlsState(Tab tab) {
+    public BrowserControlsVisibilityDelegate createBrowserControlsVisibilityDelegate(Tab tab) {
         TabStateBrowserControlsVisibilityDelegate tabDelegate =
                 new TabStateBrowserControlsVisibilityDelegate(tab) {
                     @Override

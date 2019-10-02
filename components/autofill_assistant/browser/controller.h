@@ -352,24 +352,6 @@ class Controller : public ScriptExecutorDelegate,
   bool navigation_error_ = false;
   std::vector<ScriptExecutorDelegate::Listener*> listeners_;
 
-  // True once UiController::WillShutdown has been called.
-  bool will_shutdown_ = false;
-
-  std::unique_ptr<PaymentRequestOptions> payment_request_options_;
-  std::unique_ptr<PaymentInformation> payment_request_info_;
-
-  std::unique_ptr<FormProto> form_;
-  std::unique_ptr<FormProto::Result> form_result_;
-  base::RepeatingCallback<void(const FormProto::Result*)> form_callback_ =
-      base::DoNothing();
-
-  // Value for ScriptExecutorDelegate::IsNavigatingToNewDocument()
-  bool navigating_to_new_document_ = false;
-
-  // Value for ScriptExecutorDelegate::HasNavigationError()
-  bool navigation_error_ = false;
-  std::vector<ScriptExecutorDelegate::Listener*> listeners_;
-
   // Tracks scripts and script execution. It's kept at the end, as it tend to
   // depend on everything the controller support, through script and script
   // actions.

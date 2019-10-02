@@ -2650,6 +2650,5 @@ generate_jni("chrome_jni_headers") {
       "feed/core/java/src/org/chromium/chrome/browser/feed/FeedOfflineBridge.java",
       "feed/core/java/src/org/chromium/chrome/browser/feed/FeedSchedulerBridge.java",
     ]
-    bundle_path = "$root_build_dir/apks/MonochromePublic.aab"
   }
 }

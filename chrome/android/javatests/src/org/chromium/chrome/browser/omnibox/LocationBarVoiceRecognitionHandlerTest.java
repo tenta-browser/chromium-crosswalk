@@ -280,22 +280,6 @@ public class LocationBarVoiceRecognitionHandlerTest {
     }
 
     /**
-     * TODO(crbug.com/962527): Remove this dependency on {@link AutocompleteCoordinatorImpl}.
-     */
-    private class TestAutocompleteCoordinatorImpl extends AutocompleteCoordinatorImpl {
-        public TestAutocompleteCoordinatorImpl(ViewGroup parent, AutocompleteDelegate delegate,
-                OmniboxSuggestionListEmbedder listEmbedder,
-                UrlBarEditingTextStateProvider urlBarEditingTextProvider) {
-            super(parent, delegate, listEmbedder, urlBarEditingTextProvider);
-        }
-
-        @Override
-        public void onVoiceResults(List<VoiceResult> results) {
-            mAutocompleteVoiceResults = results;
-        }
-    }
-
-    /**
      * Test implementation of {@link LocationBarVoiceRecognitionHandler.Delegate}.
      */
     private class TestDelegate implements LocationBarVoiceRecognitionHandler.Delegate {

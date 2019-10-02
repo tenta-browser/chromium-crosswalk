@@ -953,28 +953,4 @@ public class SingleWebsitePreferences extends PreferenceFragmentCompat
             ManagedPreferencesUtils.showManagedSettingsCannotBeResetToast(getActivity());
         }
     }
-
-    /**
-     * Removes any user granted chosen object preference(s) from the preference screen.
-     */
-    private void removeUserChosenObjectPreferences() {
-        PreferenceScreen preferenceScreen = getPreferenceScreen();
-        ListAdapter list = preferenceScreen.getRootAdapter();
-
-        for (int i = 0; i < list.getCount(); ++i) {
-            Preference preference = (Preference) list.getItem(i);
-
-            if (preference.getKey().equals(CHOOSER_PERMISSION_PREFERENCE_KEY)) {
-                if (!((ChromeImageViewPreference) preference).isManaged()) {
-                    preferenceScreen.removePreference(preference);
-                }
-            }
-        }
-
-        mObjectUserPermissionCount = 0;
-
-        if (mObjectPolicyPermissionCount > 0) {
-            ManagedPreferencesUtils.showManagedSettingsCannotBeResetToast(getActivity());
-        }
-    }
 }

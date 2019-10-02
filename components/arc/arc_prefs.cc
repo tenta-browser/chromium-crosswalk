@@ -144,18 +144,6 @@ void RegisterLocalStatePrefs(PrefRegistrySimple* registry) {
   registry->RegisterDictionaryPref(kStabilityMetrics);
 }
 
-// ======== LOCAL STATE PREFS ========
-
-// A dictionary preference that keeps track of stability metric values, which is
-// maintained by StabilityMetricsManager. Persisting values in local state is
-// required to include these metrics in the initial stability log in case of a
-// crash.
-const char kStabilityMetrics[] = "arc.metrics.stability";
-
-void RegisterLocalStatePrefs(PrefRegistrySimple* registry) {
-  registry->RegisterDictionaryPref(kStabilityMetrics);
-}
-
 void RegisterProfilePrefs(PrefRegistrySimple* registry) {
   // TODO(dspaid): Implement a mechanism to allow this to sync on first boot
   // only.

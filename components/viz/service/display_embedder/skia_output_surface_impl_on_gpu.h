@@ -69,7 +69,7 @@ struct RenderPassGeometry;
 
 // The SkiaOutputSurface implementation running on the GPU thread. This class
 // should be created, used and destroyed on the GPU thread.
-class SkiaOutputSurfaceImplOnGpu {
+class SkiaOutputSurfaceImplOnGpu : public gpu::ImageTransportSurfaceDelegate {
  public:
   using DidSwapBufferCompleteCallback =
       base::RepeatingCallback<void(gpu::SwapBuffersCompleteParams,
@@ -94,6 +94,7 @@ class SkiaOutputSurfaceImplOnGpu {
       const DidSwapBufferCompleteCallback& did_swap_buffer_complete_callback,
       const BufferPresentedCallback& buffer_presented_callback,
       const ContextLostCallback& context_lost_callback);
+  ~SkiaOutputSurfaceImplOnGpu() override;
 
   gpu::CommandBufferId command_buffer_id() const {
     return sync_point_client_state_->command_buffer_id();
@@ -261,18 +262,6 @@ class SkiaOutputSurfaceImplOnGpu {
   scoped_refptr<DirectContextProvider> context_provider_;
   std::unique_ptr<TextureDeleter> texture_deleter_;
   std::unique_ptr<GLRendererCopier> copier_;
-
-  bool delayed_work_pending_ = false;
-
-  gl::GLApi* api_ = nullptr;
-  bool supports_alpha_ = false;
-
-  scoped_refptr<base::SingleThreadTaskRunner> context_current_task_runner_;
-  scoped_refptr<DirectContextProvider> context_provider_;
-  std::unique_ptr<TextureDeleter> texture_deleter_;
-  std::unique_ptr<GLRendererCopier> copier_;
-
-  GpuServiceImpl* const gpu_service_;
 
   bool delayed_work_pending_ = false;
 

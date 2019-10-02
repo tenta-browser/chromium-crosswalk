@@ -37,8 +37,6 @@ import org.chromium.ui.base.ResourceBundle;
 
 import java.util.Locale;
 
-import java.util.Locale;
-
 /**
  * Tracks the foreground session state for the Chrome activities.
  */

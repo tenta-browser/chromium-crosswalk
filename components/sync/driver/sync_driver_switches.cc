@@ -83,8 +83,4 @@ const base::Feature kSyncUSSNigori{"SyncUSSNigori",
 const base::Feature kSyncWifiConfigurations{"SyncWifiConfigurations",
                                             base::FEATURE_DISABLED_BY_DEFAULT};
 
-// Controls whether to enable syncing of Wi-Fi configurations.
-const base::Feature kSyncWifiConfigurations{"SyncWifiConfigurations",
-                                            base::FEATURE_DISABLED_BY_DEFAULT};
-
 }  // namespace switches

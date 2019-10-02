@@ -271,7 +271,7 @@ void OfflinePageModelTaskified::DeleteCachedPagesByURLPredicate(
     const UrlPredicate& predicate,
     DeletePageCallback callback) {
   auto task = DeletePageTask::CreateTaskMatchingUrlPredicateForCachedPages(
-      store_.get(), *policy_controller_.get(),
+      store_.get(),
       base::BindOnce(&OfflinePageModelTaskified::OnDeleteDone,
                      weak_ptr_factory_.GetWeakPtr(), std::move(callback)),
       predicate);
@@ -677,7 +677,7 @@ void OfflinePageModelTaskified::OnClearCachedPagesDone(
 void OfflinePageModelTaskified::RemovePagesMatchingUrlAndNamespace(
     const OfflinePageItem& page) {
   auto task = DeletePageTask::CreateTaskDeletingForPageLimit(
-      store_.get(), *policy_controller_.get(),
+      store_.get(),
       base::BindOnce(&OfflinePageModelTaskified::OnDeleteDone,
                      weak_ptr_factory_.GetWeakPtr(),
                      base::DoNothing::Once<DeletePageResult>()),

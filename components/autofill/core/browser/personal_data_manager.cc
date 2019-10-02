@@ -374,48 +374,6 @@ void PersonalDataManager::OnSyncServiceInitialized(
       database_helper_->SetUseAccountStorageForServerData(
           !sync_service->IsSyncFeatureEnabled());
     }
-    if (base::FeatureList::IsEnabled(
-            autofill::features::kAutofillEnableAccountWalletStorage)) {
-      // Use the ephemeral account storage when the user didn't enable the sync
-      // feature explicitly.
-      database_helper_->SetUseAccountStorageForServerCards(
-          !sync_service->IsSyncFeatureEnabled());
-    }
-  }
-
-  if (sync_service_ != sync_service) {
-    // Before the sync service pointer gets changed, remove the observer.
-    if (sync_service_)
-      sync_service_->RemoveObserver(this);
-
-    sync_service_ = sync_service;
-
-    UMA_HISTOGRAM_BOOLEAN(
-        "Autofill.ResetFullServerCards.SyncServiceNullOnInitialized",
-        !sync_service_);
-    if (!sync_service_) {
-      // TODO(crbug.com/851294): Reset server cards once the auth error
-      // investigation is done.
-      ResetFullServerCards(/*dry_run=*/!base::FeatureList::IsEnabled(
-          features::kAutofillResetFullServerCardsOnAuthError));
-      return;
-    }
-
-    sync_service_->AddObserver(this);
-    // Re-mask all server cards if the upload state is not active.
-    bool is_upload_not_active =
-        syncer::GetUploadToGoogleState(
-            sync_service_, syncer::ModelType::AUTOFILL_WALLET_DATA) ==
-        syncer::UploadState::NOT_ACTIVE;
-    UMA_HISTOGRAM_BOOLEAN(
-        "Autofill.ResetFullServerCards.SyncServiceNotActiveOnInitialized",
-        is_upload_not_active);
-    if (is_upload_not_active) {
-      // TODO(crbug.com/851294): Reset server cards once the auth error
-      // investigation is done.
-      ResetFullServerCards(/*dry_run=*/!base::FeatureList::IsEnabled(
-          features::kAutofillResetFullServerCardsOnAuthError));
-    }
   }
 }
 
@@ -1091,9 +1049,6 @@ std::vector<AutofillProfile*> PersonalDataManager::GetServerProfiles() const {
 
 std::vector<CreditCard*> PersonalDataManager::GetLocalCreditCards() const {
   std::vector<CreditCard*> result;
-  if (!IsAutofillCreditCardEnabled())
-    return result;
-
   result.reserve(local_credit_cards_.size());
   for (const auto& card : local_credit_cards_)
     result.push_back(card.get());

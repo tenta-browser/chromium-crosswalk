@@ -19,7 +19,6 @@ NS_ASSUME_NONNULL_BEGIN
 namespace autofill {
 struct FormData;
 struct PasswordFormFillData;
-struct FormData;
 }  // namespace autofill
 
 namespace password_manager {

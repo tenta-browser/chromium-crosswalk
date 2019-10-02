@@ -124,9 +124,6 @@ function downloadButtonClick() {
   if (window.errorPageController) {
     errorPageController.downloadButtonClick();
     var downloadButton = document.getElementById('download-button');
-    if (downloadButton.classList.contains('download-button-alternate')) {
-      downloadButton.classList.add('download-button-alternate-disabled');
-    }
     downloadButton.disabled = true;
     downloadButton.textContent = downloadButton.disabledText;
 

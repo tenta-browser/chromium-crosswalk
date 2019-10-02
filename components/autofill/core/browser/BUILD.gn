@@ -394,13 +394,6 @@ jumbo_static_library("browser") {
     ]
   }
 
-  if (!is_android && !is_ios) {
-    deps += [
-      "//ui/native_theme",
-      "//ui/native_theme:native_theme_browser",
-    ]
-  }
-
   configs += [ "//build/config/compiler:no_size_t_to_int_warning" ]
 }
 
@@ -624,18 +617,6 @@ source_set("unit_tests") {
       "autofill_credit_card_policy_handler_unittest.cc",
       "autofill_policy_handler_unittest.cc",
       "payments/credit_card_fido_authenticator_unittest.cc",
-    ]
-  }
-
-  if (!is_ios && !is_android) {
-    sources += [
-      "ui/address_contact_form_label_formatter_unittest.cc",
-      "ui/address_email_form_label_formatter_unittest.cc",
-      "ui/address_form_label_formatter_unittest.cc",
-      "ui/address_phone_form_label_formatter_unittest.cc",
-      "ui/contact_form_label_formatter_unittest.cc",
-      "ui/label_formatter_unittest.cc",
-      "ui/label_formatter_utils_unittest.cc",
     ]
   }
 

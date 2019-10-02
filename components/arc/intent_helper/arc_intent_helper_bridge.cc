@@ -77,24 +77,6 @@ void RecordOpenType(ArcIntentHelperOpenType type) {
   UMA_HISTOGRAM_ENUMERATION("Arc.IntentHelper.OpenType", type);
 }
 
-// Keep in sync with ArcIntentHelperOpenType enum in
-// //tools/metrics/histograms/enums.xml.
-enum class ArcIntentHelperOpenType {
-  DOWNLOADS = 0,
-  URL = 1,
-  CUSTOM_TAB = 2,
-  WALLPAPER_PICKER = 3,
-  VOLUME_CONTROL = 4,
-  CHROME_PAGE = 5,
-  WEB_APP = 6,
-  kMaxValue = WEB_APP,
-};
-
-// Records Arc.IntentHelper.OpenType UMA histogram.
-void RecordOpenType(ArcIntentHelperOpenType type) {
-  UMA_HISTOGRAM_ENUMERATION("Arc.IntentHelper.OpenType", type);
-}
-
 }  // namespace
 
 // static

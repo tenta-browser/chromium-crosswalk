@@ -36,16 +36,6 @@ public class SslValidityChecker {
         return nativeIsValidPageInPaymentHandlerWindow(webContents);
     }
 
-    /**
-     * Returns true for web contents that is allowed in a payment handler window.
-     *
-     * @param webContents The web contents to check.
-     * @return Whether the web contents is a allowed in a payment handler window.
-     */
-    public static boolean isValidPageInPaymentHandlerWindow(WebContents webContents) {
-        return nativeIsValidPageInPaymentHandlerWindow(webContents);
-    }
-
     private SslValidityChecker() {}
 
     private static native String nativeGetInvalidSslCertificateErrorMessage(

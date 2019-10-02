@@ -292,7 +292,6 @@ void AutofillWalletSyncBridge::GetAllDataImpl(DataCallback callback,
     return;
   }
 
-  // Convert all non base 64 strings so that they can be displayed properly.
   auto batch = std::make_unique<syncer::MutableDataBatch>();
   for (const std::unique_ptr<AutofillProfile>& entry : profiles) {
     batch->Put(GetStorageKeyForWalletDataSpecificsId(

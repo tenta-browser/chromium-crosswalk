@@ -525,47 +525,6 @@ void Controller::OnUrlChange() {
   if (state_ == AutofillAssistantState::STOPPED) {
     PerformDelayedShutdownIfNecessary();
     return;
-
-  progress_visible_ = visible;
-  GetUiController()->OnProgressVisibilityChanged(visible);
-}
-
-bool Controller::GetProgressVisible() const {
-  return progress_visible_;
-}
-
-const std::vector<Chip>& Controller::GetSuggestions() const {
-  static const base::NoDestructor<std::vector<Chip>> no_suggestions_;
-  return suggestions_ ? *suggestions_ : *no_suggestions_;
-}
-
-const std::vector<Chip>& Controller::GetActions() const {
-  static const base::NoDestructor<std::vector<Chip>> no_actions_;
-  return actions_ ? *actions_ : *no_actions_;
-}
-
-void Controller::SetChips(std::unique_ptr<std::vector<Chip>> chips) {
-  // We split the chips into suggestions and actions, that are displayed in
-  // different carousels.
-  actions_.reset();
-  suggestions_.reset();
-
-  if (chips && !chips->empty()) {
-    for (auto iter = chips->begin(); iter != chips->end(); iter++) {
-      if (iter->type == SUGGESTION) {
-        if (!suggestions_) {
-          suggestions_ = std::make_unique<std::vector<Chip>>();
-        }
-
-        suggestions_->emplace_back(std::move(*iter));
-      } else {
-        if (!actions_) {
-          actions_ = std::make_unique<std::vector<Chip>>();
-        }
-
-        actions_->emplace_back(std::move(*iter));
-      }
-    }
   }
 
   GetOrCheckScripts();
@@ -669,17 +628,6 @@ void Controller::OnGetScripts(const GURL& url,
              << "unparseable response";
     OnFatalError(l10n_util::GetStringUTF8(IDS_AUTOFILL_ASSISTANT_DEFAULT_ERROR),
                  Metrics::DropOutReason::GET_SCRIPTS_UNPARSABLE);
-    return;
-  }
-  if (response_proto.has_client_settings())
-    settings_.UpdateFromProto(response_proto.client_settings());
-
-  SupportsScriptResponseProto response_proto;
-  if (!response_proto.ParseFromString(response)) {
-    DVLOG(2) << __func__ << " from " << script_domain_ << " returned "
-             << "unparseable response";
-    OnFatalError(l10n_util::GetStringUTF8(IDS_AUTOFILL_ASSISTANT_DEFAULT_ERROR),
-                 Metrics::GET_SCRIPTS_UNPARSABLE);
     return;
   }
   if (response_proto.has_client_settings())
@@ -1280,12 +1228,6 @@ void Controller::OnRunnableScriptsChanged(
     user_action.SetCallback(base::BindOnce(
         &Controller::OnScriptSelected, weak_ptr_factory_.GetWeakPtr(), script));
     user_actions->emplace_back(std::move(user_action));
-  }
-  SetDefaultChipType(chips.get());
-
-  if (chips->empty() && state_ == AutofillAssistantState::STARTING) {
-    // Continue waiting
-    return;
   }
 
   // Change state, if necessary.

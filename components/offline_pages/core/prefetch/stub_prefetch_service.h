@@ -37,9 +37,6 @@ class StubPrefetchService : public PrefetchService {
   void SetEnabledByServer(PrefService* pref_service, bool enabled) override;
 
   SuggestedArticlesObserver* GetSuggestedArticlesObserverForTesting() override;
-
- private:
-  std::string gcm_token_;
 };
 
 }  // namespace offline_pages

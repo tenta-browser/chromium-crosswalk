@@ -7,8 +7,6 @@
 
 #include <string>
 
-#include <string>
-
 #include "base/macros.h"
 #include "components/signin/public/base/signin_buildflags.h"
 #include "components/signin/public/identity_manager/accounts_mutator.h"

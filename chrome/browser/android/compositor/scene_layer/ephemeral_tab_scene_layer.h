@@ -40,12 +40,6 @@ class EphemeralTabSceneLayer : public SceneLayer {
                       jint open_tab_icon_resource_id,
                       jint close_icon_resource_id);
 
-  void GetFavicon(JNIEnv* env,
-                  const base::android::JavaParamRef<jobject>& object,
-                  const base::android::JavaParamRef<jobject>& jprofile,
-                  const base::android::JavaParamRef<jstring>& jurl,
-                  jint size);
-
   void Update(JNIEnv* env,
               const base::android::JavaParamRef<jobject>& object,
               jint title_view_resource_id,

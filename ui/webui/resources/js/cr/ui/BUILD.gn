@@ -257,14 +257,6 @@ js_library("tabs") {
   ]
 }
 
-js_library("tabs") {
-  deps = [
-    ":focus_outline_manager",
-    "..:ui",
-    "../..:cr",
-  ]
-}
-
 js_library("tree") {
   deps = [
     "..:ui",

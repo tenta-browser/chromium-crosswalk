@@ -1070,31 +1070,6 @@ message WaitForDocumentProto {
   }
 }
 
-// Specify from which point in the script navigation is expected for the next
-// call to WaitForNavigation.
-message ExpectNavigationProto {}
-
-// Wait for the browser to have navigated to a new page since the last
-// ExpectNavigation or Navigate. This returns as soon as an HTTP response that's
-// not a redirect was received for the new page, possibly before even loading
-// the page content.
-//
-// Will return immediately if navigation already happened.
-//
-// Client errors:
-//   NAVIGATION_ERROR if navigation failed
-//   TIMED_OUT if timed out waiting for navigation to start
-//   INVALID_ACTION no ExpectNavigation or Navigate action was executed in the
-//     current script.
-message WaitForNavigationProto {
-  // How long to wait for navigation to start before failing with client status
-  // TIMED_OUT. The action waits 20s by default.
-  //
-  // This is usually used to track cases where expected navigation doesn't
-  // happen, because, for example, a click wasn't registered.
-  optional int32 timeout_ms = 1;
-}
-
 // Allow choosing one or more possibility. If FocusElement was called just
 // before, allow interaction with the touchable element area, otherwise don't
 // allow any interactions.

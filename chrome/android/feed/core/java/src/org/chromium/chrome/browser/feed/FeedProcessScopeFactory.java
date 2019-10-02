@@ -265,9 +265,4 @@ public class FeedProcessScopeFactory {
             sFeedLoggingBridge = null;
         }
     }
-
-    private static class StubFeedTooltiSupportedApi implements TooltipSupportedApi {
-        @Override
-        public void wouldTriggerHelpUi(String featureName, Consumer<Boolean> consumer) {}
-    }
 }

@@ -34,7 +34,6 @@ import org.chromium.chrome.browser.tab.TabObserver;
 import org.chromium.chrome.browser.tabmodel.EmptyTabModelSelectorObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorObserver;
-import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.components.variations.VariationsAssociatedData;
 
 import java.lang.annotation.Retention;
@@ -100,42 +99,6 @@ public class ChromeSurveyController implements InfoBarContainer.InfoBarAnimation
         int HIDDEN_INDIRECT = 3;
         // Number of entries
         int NUM_ENTRIES = 4;
-    }
-
-    /**
-     * Reasons that the user was rejected from being selected for a survey
-     *  Note: these values must match the SurveyFilteringResult enum in enums.xml.
-     */
-    @IntDef({FilteringResult.SURVEY_INFOBAR_ALREADY_DISPLAYED,
-            FilteringResult.CHROME_HOME_ON_FOR_LESS_THAN_ONE_WEEK,
-            FilteringResult.FORCE_SURVEY_ON_COMMAND_PRESENT,
-            FilteringResult.USER_ALREADY_SAMPLED_TODAY, FilteringResult.MAX_NUMBER_MISSING,
-            FilteringResult.ROLLED_NON_ZERO_NUMBER, FilteringResult.USER_SELECTED_FOR_SURVEY})
-    @Retention(RetentionPolicy.SOURCE)
-    public @interface FilteringResult {
-        int SURVEY_INFOBAR_ALREADY_DISPLAYED = 0;
-        int CHROME_HOME_ON_FOR_LESS_THAN_ONE_WEEK = 1;
-        int FORCE_SURVEY_ON_COMMAND_PRESENT = 2;
-        int USER_ALREADY_SAMPLED_TODAY = 3;
-        int MAX_NUMBER_MISSING = 4;
-        int ROLLED_NON_ZERO_NUMBER = 5;
-        int USER_SELECTED_FOR_SURVEY = 6;
-        int ENUM_BOUNDARY = 7;
-    }
-
-    /**
-     * How the infobar was closed and its visibility status when it was closed.
-     * Note: these values must match the InfoBarClosingStates enum in enums.xml.
-     */
-    @IntDef({InfoBarClosingState.ACCEPTED_SURVEY, InfoBarClosingState.CLOSE_BUTTON,
-            InfoBarClosingState.VISIBLE_INDIRECT, InfoBarClosingState.HIDDEN_INDIRECT})
-    @Retention(RetentionPolicy.SOURCE)
-    public @interface InfoBarClosingState {
-        int ACCEPTED_SURVEY = 0;
-        int CLOSE_BUTTON = 1;
-        int VISIBLE_INDIRECT = 2;
-        int HIDDEN_INDIRECT = 3;
-        int ENUM_BOUNDARY = 4;
     }
 
     private TabModelSelector mTabModelSelector;

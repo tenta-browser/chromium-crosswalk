@@ -69,20 +69,4 @@ class AccessorySheetViewBinder {
         if (tab.getOpeningAnnouncement() == null) return;
         announcer.announceForAccessibility(tab.getOpeningAnnouncement());
     }
-
-    private static void requestLayout(ViewPager viewPager) {
-         // Layout requests happen automatically since Kitkat and redundant requests cause warnings.
-        if (viewPager == null || Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) return;
-        viewPager.post(() -> {
-            ViewParent parent = viewPager.getParent();
-            if (parent != null) {
-                parent.requestLayout();
-            }
-        });
-    }
-
-    static void announceOpenedTab(View announcer, KeyboardAccessoryData.Tab tab) {
-        if (tab.getOpeningAnnouncement() == null) return;
-        announcer.announceForAccessibility(tab.getOpeningAnnouncement());
-    }
 }

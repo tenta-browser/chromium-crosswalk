@@ -1,5 +1,6 @@
 include_rules = [
   "+components/encrypted_messages",
+  "+components/language/core/browser",
   "+components/metrics",
   "+components/network_time",
   "+components/pref_registry",

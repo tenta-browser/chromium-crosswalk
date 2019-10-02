@@ -171,7 +171,6 @@ public class WebappNavigationTest {
         clickNodeWithId("post_button");
 
         ChromeTabUtils.waitForTabPageLoaded(activity.getActivityTab(), offOriginUrl());
-        WebappActivityTestRule.assertToolbarShowState(activity, true);
         Assert.assertEquals(Color.CYAN, activity.getToolbarManager().getPrimaryColor());
     }
 

@@ -518,16 +518,4 @@ AccessibilityPrivateSetVirtualKeyboardVisibleFunction::Run() {
   return RespondNow(NoArguments());
 }
 
-ExtensionFunction::ResponseAction
-AccessibilityPrivateSetVirtualKeyboardVisibleFunction::Run() {
-  std::unique_ptr<accessibility_private::SetVirtualKeyboardVisible::Params>
-      params = accessibility_private::SetVirtualKeyboardVisible::Params::Create(
-          *args_);
-  EXTENSION_FUNCTION_VALIDATE(params);
-
-  GetAccessibilityController()->SetVirtualKeyboardVisible(params->is_visible);
-
-  return RespondNow(NoArguments());
-}
-
 #endif  // defined (OS_CHROMEOS)

@@ -40,7 +40,6 @@
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/sync/driver/sync_service_observer.h"
 #include "components/webdata/common/web_data_service_consumer.h"
-#include "services/identity/public/cpp/identity_manager.h"
 
 class Browser;
 class PrefService;
@@ -743,9 +742,6 @@ class PersonalDataManager : public KeyedService,
   // Clear |ongoing_profile_changes_|.
   void ClearOnGoingProfileChanges();
 
-  // Whether the server cards are enabled and should be suggested to the user.
-  bool ShouldSuggestServerCards() const;
-
   const std::string app_locale_;
 
   // The default country code for new addresses.
@@ -779,9 +775,6 @@ class PersonalDataManager : public KeyedService,
 
   // The sync service this instances uses. Must outlive this instance.
   syncer::SyncService* sync_service_ = nullptr;
-
-  // The sync service this instances uses. Must outlive this instance.
-  syncer::SyncService* sync_service_;
 
   // Whether the user is currently operating in an off-the-record context.
   // Default value is false.

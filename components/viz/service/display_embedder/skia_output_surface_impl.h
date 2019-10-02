@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "base/observer_list.h"
 #include "base/optional.h"
 #include "base/threading/thread_checker.h"
 #include "base/util/type_safety/pass_key.h"
@@ -44,7 +45,7 @@ struct ImageContext;
 // render into. In SwapBuffers, it detaches a SkDeferredDisplayList from the
 // recorder and plays it back on the framebuffer SkSurface on the GPU thread
 // through SkiaOutputSurfaceImpleOnGpu.
-class VIZ_SERVICE_EXPORT SkiaOutputSurfaceImpl : public SkiaOutputSurfaceBase {
+class VIZ_SERVICE_EXPORT SkiaOutputSurfaceImpl : public SkiaOutputSurface {
  public:
   static std::unique_ptr<SkiaOutputSurface> Create(
       std::unique_ptr<SkiaOutputSurfaceDependency> deps,
@@ -110,14 +111,8 @@ class VIZ_SERVICE_EXPORT SkiaOutputSurfaceImpl : public SkiaOutputSurfaceBase {
                   const copy_output::RenderPassGeometry& geometry,
                   const gfx::ColorSpace& color_space,
                   std::unique_ptr<CopyOutputRequest> request) override;
-
-  // ExternalUseClient implementation:
-  void ReleaseCachedResources(const std::vector<ResourceId>& ids) override;
-
- protected:
-  // Set the fields of |capabilities_| and propagates to |impl_on_gpu_|. Should
-  // be called after BindToClient().
-  void SetCapabilitiesForTesting(bool flipped_output_surface);
+  void AddContextLostObserver(ContextLostObserver* observer) override;
+  void RemoveContextLostObserver(ContextLostObserver* observer) override;
 
   // ExternalUseClient implementation:
   void ReleaseCachedResources(const std::vector<ResourceId>& ids) override;

@@ -75,14 +75,6 @@ class VIZ_SERVICE_EXPORT OverlayProcessor {
   void SetDisplayTransformHint(gfx::OverlayTransform transform);
   void SetValidatorViewportSize(const gfx::Size& size);
 
-  const OverlayCandidateValidator* GetOverlayCandidateValidator() const {
-    return overlay_validator_.get();
-  }
-
-  bool NeedsSurfaceOccludingDamageRect() const;
-  void SetDisplayTransformHint(gfx::OverlayTransform transform);
-  void SetValidatorViewportSize(const gfx::Size& size);
-
   // Attempt to replace quads from the specified root render pass with overlays
   // or CALayers. This must be called every frame.
   void ProcessForOverlays(

@@ -34,7 +34,6 @@ using testing::_;
 using testing::ElementsAre;
 using testing::Invoke;
 using testing::IsEmpty;
-using testing::IsNull;
 using testing::NotNull;
 using testing::Pair;
 using testing::Return;

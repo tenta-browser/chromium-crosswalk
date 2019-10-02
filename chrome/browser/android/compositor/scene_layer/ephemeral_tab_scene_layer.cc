@@ -12,7 +12,6 @@
 #include "ui/android/resources/resource_manager_impl.h"
 #include "ui/android/view_android.h"
 
-using base::android::ConvertJavaStringToUTF8;
 using base::android::JavaParamRef;
 using base::android::JavaRef;
 using base::android::ScopedJavaGlobalRef;

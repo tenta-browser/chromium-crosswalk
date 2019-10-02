@@ -69,7 +69,6 @@
 <translation id="1430915738399379752">प्रिंट</translation>
 <translation id="1445680696957526815">Chrome चे घटक एकमेकांशी विसंगत आहेत. Chrome श्रेणीसुधारित होत असावे, कृपया काही मिनिटांमध्ये पुन्हा प्रयत्न करा. समस्या सुरु राहिल्यास, Chrome अनइंस्टॉल करून पहा आणि पुन्हा इंस्टॉल करून पहा.</translation>
 <translation id="1446450296470737166">MIDI डिव्हाइसेसच्या पूर्ण नियंत्रणास अनुमती द्या</translation>
-<translation id="1449080968331948513">डेटा सेव्हर आता लाइट मोडमध्ये आहे</translation>
 <translation id="145097072038377568">Android सेटिंग्ज मध्‍ये बंद करा</translation>
 <translation id="1477626028522505441">सर्व्हर समस्यांमुळे <ph name="FILE_NAME" /> डाउनलोड अयशस्वी झाले.</translation>
 <translation id="1497775360237967938">{DETAIL_COUNT,plural, =1{ (+ आणखी १)}other{ (+ आणखी #)}}</translation>
@@ -211,10 +210,9 @@
 <translation id="2501278716633472235">परत जा</translation>
 <translation id="2513403576141822879">गोपनीयता, सुरक्षितता आणि डेटा संकलनाशी संबंधित अधिक सेटिंग्जसाठी, <ph name="BEGIN_LINK" />सिंक आणि Google सेवा<ph name="END_LINK" /> पाहा</translation>
 <translation id="2523184218357549926">तुम्ही भेट दिलेल्या पेजच्या URL Google ला पाठवते</translation>
-<translation id="2526148617758225454">डेटा बचतकर्ता चालू आहे. सेटिंग्जमध्ये तो व्यवस्थापित करा.</translation>
 <translation id="2532336938189706096">वेब दृश्य</translation>
 <translation id="2534155362429831547"><ph name="NUMBER_OF_ITEMS" /> आयटम हटवले</translation>
-<translation id="2536728043171574184">या पेजाची ऑफलाइन प्रत पाहत आहे</translation>
+<translation id="2536728043171574184">या पेजची ऑफलाइन प्रत पाहत आहे</translation>
 <translation id="2546283357679194313">कुकीज आणि साइट डेटा</translation>
 <translation id="2567385386134582609">इमेज</translation>
 <translation id="257088987046510401">थीम</translation>
@@ -334,7 +332,6 @@
 <translation id="3387650086002190359">फाइल सिस्टम एररमुळे <ph name="FILE_NAME" /> डाउनलोड अयशस्वी झाले.</translation>
 <translation id="3398320232533725830">बुकमार्क व्यवस्थापक उघडा</translation>
 <translation id="3414952576877147120">आकार:</translation>
-<translation id="3434611491093664205">VR सेट करत आहे…</translation>
 <translation id="3443221991560634068">वर्तमान पृष्‍ठ रीलोड करा</translation>
 <translation id="3445014427084483498">आताच</translation>
 <translation id="3478363558367712427">तुम्ही तुमचे शोध इंजिन निवडू शकता</translation>
@@ -352,7 +349,7 @@
 <translation id="3568688522516854065">तुमच्या इतर डिव्हाइसवरून तुमचे टॅब मिळविण्यासाठी, साइन इन करा आणि सिंक सुरू करा</translation>
 <translation id="3587482841069643663">सर्व</translation>
 <translation id="358794129225322306">साइटला एकाहून अधिक फायली आपोआप डाउनलोड करू द्या.</translation>
-<translation id="3590487821116122040">Chrome साइट स्टोरेज यास महत्त्व देत नाही (उदा. ज्या साइटमध्ये सेटिंग्ज सेव्ह केलेल्या नसतात किंवा  सहसा भेट देत नाही अशा साइट)</translation>
+<translation id="3590487821116122040">Chrome साइट स्टोरेज यास महत्त्व देत नाही (उदा. ज्या साइटमध्ये सेटिंग्ज सेव्ह केलेल्या नसतात किंवा तुम्ही सहसा भेट देत नाही अशा साइट)</translation>
 <translation id="3599863153486145794">साइन-इन केलेल्या सर्व डिव्हाइसमधून इतिहास साफ करते. तुमच्या Google खात्यामध्ये <ph name="BEGIN_LINK" />myactivity.google.com<ph name="END_LINK" /> वर कदाचित ब्राउझिंगचे इतर फॉर्म असतील.</translation>
 <translation id="3600792891314830896">ध्वनी प्ले करणाऱ्या साइट म्यूट करा</translation>
 <translation id="3616113530831147358">ऑडिओ</translation>
@@ -385,7 +382,6 @@
 <translation id="3912508018559818924">वेबवरून सर्वोत्तम शोधत आहे…</translation>
 <translation id="3927692899758076493">Sans Serif</translation>
 <translation id="3928666092801078803">माझा डेटा एकत्र करा</translation>
-<translation id="3934752326445182741">इमेजची एक झलक <ph name="BEGIN_NEW" />नवीन<ph name="END_NEW" /></translation>
 <translation id="393697183122708255">सक्षम केलेला कोणताही व्हॉइस शोध उपलब्ध नाही</translation>
 <translation id="395206256282351086">शोध आणि साइट सूचना बंद आहेत</translation>
 <translation id="3955193568934677022">संरक्षित आशय प्ले करण्यासाठी साइटना अनुमती द्या (शिफारस केलेले)</translation>
@@ -512,7 +508,6 @@
 
 हे सेटिंग बदलण्यासाठी, <ph name="BEGIN_LINK" />सिंक रीसेट करा<ph name="END_LINK" /></translation>
 <translation id="4807098396393229769">कार्डवरील नाव</translation>
-<translation id="4807963036345170158">डेटा बचतकर्ता बंद आहे</translation>
 <translation id="4816465935029283692">डेटा प्रकार</translation>
 <translation id="4824958205181053313">सिंक रद्द करायचे?</translation>
 <translation id="4837753911714442426">पेज प्रिंट करण्‍यासाठी पर्याय उघडा</translation>
@@ -652,7 +647,6 @@
 <translation id="569536719314091526">अधिक पर्याय बटणावरून या पेजचे कोणत्याही भाषेत भाषांतर करा</translation>
 <translation id="572328651809341494">अलीकडील टॅब</translation>
 <translation id="5726692708398506830">पृष्ठावरील प्रत्येकगोष्ट आणखी मोठी करा</translation>
-<translation id="5734520971562437809">६० टक्क्यांपर्यंत कमी डेटा वापरा आणि वेबचा वेग वाढवा.</translation>
 <translation id="5748802427693696783">मानक टॅबवर स्विच केले</translation>
 <translation id="5749068826913805084">Chrome ला फायली डाउनलोड करण्यासाठी स्टोरेज अॅक्सेस आवश्यक आहे.</translation>
 <translation id="5763382633136178763">गुप्त टॅब</translation>
@@ -707,7 +701,6 @@
 <translation id="6159335304067198720"><ph name="PERCENT" /> डेटा बचत</translation>
 <translation id="6165508094623778733">अधिक जाणून घ्या</translation>
 <translation id="6177111841848151710">वर्तमान शोध इंजिनसाठी अवरोधित केले</translation>
-<translation id="6177390657002841081">डेटा बचतकर्ता चालू करा</translation>
 <translation id="6181444274883918285">साइट एक्सेप्शन जोडा</translation>
 <translation id="6192333916571137726">फाइल डाउनलोड करा</translation>
 <translation id="6192792657125177640">अपवाद</translation>
@@ -882,7 +875,6 @@
 <translation id="7403691278183511381">Chrome फर्स्ट रन अनुभव</translation>
 <translation id="741204030948306876">होय, मला मान्य आहे</translation>
 <translation id="7413229368719586778">सुरू होण्याची तारीख <ph name="DATE" /></translation>
-<translation id="7418565925463285788">गट टॅब...</translation>
 <translation id="7423098979219808738">प्रथम विचारा</translation>
 <translation id="7423538860840206698">क्लिपबोर्ड वाचणे ब्लॉक केले</translation>
 <translation id="7431991332293347422">शोध पर्सनलाइझ करण्यासाठी तुमचा ब्राउझिंग इतिहास कसा वापरला जातो ते आणि बरेच काही नियंत्रित करा</translation>
@@ -958,7 +950,6 @@
 <translation id="7929962904089429003">मेनू उघडा</translation>
 <translation id="7942131818088350342"><ph name="PRODUCT_NAME" /> कालबाह्य झाले आहे.</translation>
 <translation id="7947953824732555851">स्वीकार करा आणि साइन इन करा</translation>
-<translation id="7960977077911686065">सुरू ठेवून तुम्ही सहमती दर्शवता की, Chrome ही सेवा पुरवण्यासाठी Chrome ऑटोफिल साइटवरील डेटा, साइटची URL आणि तिचा आशय Google ला पाठवेल. तुम्ही यालादेखील सहमती दर्शवता की, Chrome तुम्ही निवडलेला वैयक्तिक डेटा Chrome ऑटोफिल मार्फत वेबसाइटला पाठवेल. \n\nChrome आणि Chrome ऑटोफिल मध्ये Google असिस्टंट बंद करण्यासाठी Chrome सेटिंग्जला भेट द्या.  <ph name="BEGIN_LINK" />अधिक जाणून घ्या<ph name="END_LINK" /></translation>
 <translation id="7963646190083259054">विक्रेता:</translation>
 <translation id="7971136598759319605">एका दिवसापूर्वी ॲक्टिव्ह होते</translation>
 <translation id="7975379999046275268">पेज <ph name="BEGIN_NEW" />नवीन<ph name="END_NEW" /> चे पूर्वावलोकन करा</translation>
@@ -1059,7 +1050,6 @@
 <translation id="8583805026567836021">खाते डेटा साफ करत आहे</translation>
 <translation id="860043288473659153">कार्डधारकाचे नाव</translation>
 <translation id="8609465669617005112">वर हलवा</translation>
-<translation id="8611192991944347781">डेटा व्यवस्थापित करा</translation>
 <translation id="8616006591992756292">तुमच्या Google खात्यात <ph name="BEGIN_LINK" />myactivity.google.com<ph name="END_LINK" /> वर ब्राउझिंग इतिहासाची अन्य स्वरूपे असू शकतात.</translation>
 <translation id="8617240290563765734">डाउनलोड केलेल्या आशयमध्ये नमूद केलेली सुचविलेली URL उघडायची?</translation>
 <translation id="8636825310635137004">आपल्या इतर डिव्हाइसेस मधून तुमचे टॅब प्राप्त करण्यासाठी, संकालन चालू करा</translation>
@@ -1072,7 +1062,6 @@
 <translation id="868929229000858085">तुमचे संपर्क शोधा</translation>
 <translation id="869891660844655955">कालावधी समाप्ती तारीख</translation>
 <translation id="8719023831149562936">वर्तमान टॅब बीम करू शकत नाही</translation>
-<translation id="8723954843026426558">मी अटी आणि नियम, गोपनीयता धोरण आणि <ph name="BEGIN_BOLD" /><ph name="DOMAIN" /><ph name="END_BOLD" /> मधून बाहेर पडण्याच्या अधिकाराला साहमती दर्शवतो/ते</translation>
 <translation id="8725066075913043281">पुन्हा प्रयत्न करा</translation>
 <translation id="8728487861892616501">हे अ‍ॅप्लिकेशन वापरून, तुम्ही Chrome च्या <ph name="BEGIN_LINK1" />सेवा अटी<ph name="END_LINK1" /> आणि <ph name="BEGIN_LINK2" />गोपनीयता सूचना<ph name="END_LINK2" /> आणि <ph name="BEGIN_LINK3" />Family Link ने व्यवस्थापित केलेल्या Google खात्यांसाठी गोपनीयता सूचना<ph name="END_LINK3" /> यांना सहमती दर्शवता.</translation>
 <translation id="8730621377337864115">पूर्ण झाले</translation>
@@ -1122,17 +1111,14 @@
 <translation id="9104217018994036254">टॅबसह शेअर करण्यासाठी डिव्हाइसची सूची.</translation>
 <translation id="9133703968756164531"><ph name="ITEM_NAME" /> (<ph name="ITEM_ID" />)</translation>
 <translation id="9137013805542155359">मूळ दर्शवा</translation>
-<translation id="9138504265731110181">तुम्हाला वेबवर चेक आउट करण्यात मदत करून Google असिस्टंट तुमचा वेळ वाचवते</translation>
 <translation id="9139068048179869749">साइटना सूचना पाठविण्याची अनुमती देण्यापूर्वी प्रथम विचारा (शिफारस केलेले)</translation>
 <translation id="9139318394846604261">खरेदी</translation>
 <translation id="9150694013019234766">स्क्रीनच्या तळाजवळ तुमच्या टॅब गटातील टॅब दरम्यान स्विच करा</translation>
 <translation id="9155898266292537608">तुम्ही शब्दावर जलद टॅप करूनदेखील शोधू शकता</translation>
 <translation id="9169594135889675189">गटामध्ये नवीन टॅब जोडा</translation>
 <translation id="9188680907066685419">व्यवस्थापित केलेल्या खात्यामधून साइन आउट करा</translation>
-<translation id="9190112541605496997">तुमची खाती व्यवस्थापित करण्यासाठी "खाते व्यवस्थापित करा" बटणावर टॅप करा</translation>
 <translation id="9204836675896933765">1 फाइल शिल्लक</translation>
 <translation id="9206873250291191720">A</translation>
-<translation id="9215534869786664672">६० टक्क्यांपर्यंत कमी डेटा वापरा आणि वेबचा वेग वाढवा. Google सर्व्हर तुम्ही भेट देत असलेली पेज ऑप्टिमाइझ करतील.</translation>
 <translation id="9219103736887031265">इमेज</translation>
 <translation id="926205370408745186">डिजिटल संतुलन वरून तुमची Chrome ॲक्टिव्हिटी काढून टाका</translation>
 <translation id="932327136139879170">होम</translation>
@@ -1149,5 +1135,4 @@
 <translation id="982182592107339124">हे यासह सर्व साइटसाठी डेटा साफ करेल:</translation>
 <translation id="983192555821071799">सर्व टॅब बंद करा</translation>
 <translation id="987264212798334818">सामान्य</translation>
-<translation id="994060550494506178">डिजिटल संतुलनशी कनेक्ट करा</translation>
 </translationbundle>

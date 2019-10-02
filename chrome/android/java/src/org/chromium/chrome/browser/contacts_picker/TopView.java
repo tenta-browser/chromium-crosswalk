@@ -94,7 +94,6 @@ public class TopView extends RelativeLayout
 
         TextView title = findViewById(R.id.checkbox_title);
         title.setText(R.string.contacts_picker_all_contacts);
-    }
 
         mNamesFilterChip = findViewById(R.id.names_filter);
         TextView textView = mNamesFilterChip.getPrimaryTextView();

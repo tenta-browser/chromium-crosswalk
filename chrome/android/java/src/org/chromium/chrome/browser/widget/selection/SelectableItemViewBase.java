@@ -139,20 +139,6 @@ public abstract class SelectableItemViewBase<E>
         return false;
     }
 
-    // OnTouchListener implementation.
-    @Override
-    public final boolean onTouch(View view, MotionEvent event) {
-        int action = event.getActionMasked();
-        if (action == MotionEvent.ACTION_DOWN) {
-            // mCurrentX needs init here as well, since we might not get ACTION_MOVE
-            // for a simple click turning into a long click when selection mode is on.
-            mAnchorX = mCurrentX = event.getX();
-        } else if (action == MotionEvent.ACTION_MOVE) {
-            mCurrentX = event.getX();
-        }
-        return false;
-    }
-
     // OnClickListener implementation.
     @Override
     public void onClick(View view) {

@@ -57,7 +57,6 @@ class CallStackProfileBuilder : public base::ProfileBuilder {
   explicit CallStackProfileBuilder(
       const CallStackProfileParams& profile_params,
       const WorkIdRecorder* work_id_recorder = nullptr,
-      const base::MetadataRecorder* metadata_recorder = nullptr,
       base::OnceClosure completed_callback = base::OnceClosure());
 
   ~CallStackProfileBuilder() override;
@@ -114,7 +113,6 @@ class CallStackProfileBuilder : public base::ProfileBuilder {
   unsigned int last_work_id_ = std::numeric_limits<unsigned int>::max();
   bool is_continued_work_ = false;
   const WorkIdRecorder* const work_id_recorder_;
-  const base::MetadataRecorder* const metadata_recorder_;
 
   // The SampledProfile protobuf message which contains the collected stack
   // samples.

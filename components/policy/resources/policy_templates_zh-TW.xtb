@@ -130,39 +130,6 @@
 
       系統會展開環境變數。在 Windows 上，系統會將 %ABC% 取代為 ABC 環境變數的值。</translation>
 <translation id="1151353063931113432">允許這些網站的圖片</translation>
-<translation id="1151545095291359187">配置 <ph name="PRODUCT_NAME" /> 的擴充功能管理設定。
-
-          這項政策可控制多項設定 (包括由任何現有的擴充功能相關政策控制的設定)，效力優先於任何先前設定的既有政策。
-
-          這項政策可為擴充功能 ID 或更新網址與其設定建立對應關係。有了擴充功能 ID，系統就只會將設定套用到指定的擴充功能。你可以針對特殊的 ID <ph name="DEFAULT_SCOPE" /> 指定預設設定，讓沒有透過這項政策指定自訂設定的擴充功能全部套用預設設定。此外，系統會比對這個擴充功能的資訊清單提供的更新網址，將設定套用到所有更新網址相符的擴充功能 (如 <ph name="LINK_TO_EXTENSION_DOC1" /> 所述)。
-
-          每個擴充功能 (或更新網址相同的擴充功能) 的設定也會記錄以下列載的這些欄位。
-
-          <ph name="INSTALLATION_MODE" />：對應到指示擴充功能安裝模式的字串。有效的字串如下：
-          * <ph name="ALLOWED" />：允許使用者安裝這個擴充功能 (這是預設的行為)。
-          * <ph name="BLOCKED" />：禁止安裝這個擴充功能。
-          * <ph name="FORCE_INSTALLED" />：自動安裝這個擴充功能，且使用者無法移除。
-          * <ph name="NORMAL_INSTALLED" />：自動安裝這個擴充功能，但使用者可以停用。
-
-          你也可以為多個擴充功能設定 <ph name="INSTALLATION_MODE" />，包括 <ph name="DEFAULT_SCOPE" /> 擴充功能 (做為預設設定) 和更新網址相同的擴充功能。在這種情況下，只能使用 <ph name="ALLOWED" /> 和 <ph name="BLOCKED" /> 這兩個值。
-
-          如果將模式設為 <ph name="FORCE_INSTALLED" /> 或 <ph name="NORMAL_INSTALLED" />，則必須一併設定 <ph name="UPDATE_URL" />。請注意，系統只會在初次安裝擴充功能時使用你在這項政策中設定的更新網址，後續更新擴充功能時則會使用擴充功能的資訊清單指示的更新網址。更新網址應指向前述更新資訊清單 XML 檔案。
-
-          <ph name="BLOCKED_PERMISSIONS" />：對應到字串清單，指示擴充功能的封鎖 API 權限。權限名稱與擴充功能資訊清單宣告的權限字串相同 (如 <ph name="LINK_TO_EXTENSION_DOC3" /> 所述)。你也可以針對 <ph name="DEFAULT_SCOPE" /> 擴充功能配置這項設定。如果擴充功能要求封鎖清單中的權限，則無法載入。如果擴充功能含有封鎖的權限，但屬於選擇性要求，系統會以一般方式進行處理。不過，一旦要求的權限發生衝突，系統會自動在執行階段拒絕要求。
-
-          <ph name="ALLOWED_PERMISSIONS" />：與 <ph name="BLOCKED_PERMISSIONS" /> 相似，但明確允許部分可能遭到全域封鎖權限清單封鎖的權限，因此無法針對 <ph name="DEFAULT_SCOPE" /> 擴充功能進行設定。請注意，這項設定不會自動將權限授予擴充功能。
-
-          <ph name="MINIMUM_VERSION_REQUIRED" />：對應到版本字串。版本字串的格式與擴充功能資訊清單中使用的格式相同 (如 <ph name="LINK_TO_EXTENSION_DOC4" /> 所述)。如果擴充功能的版本比指定的最低版本更舊，便會遭到停用。這項設定也適用於強制安裝的擴充功能。
-
-          下列設定僅適用於預設的 <ph name="DEFAULT_SCOPE" /> 設定：
-
-          <ph name="INSTALL_SOURCES" />：這份清單中的每個項目都是擴充功能樣式比對模式 (<ph name="LINK_TO_MATCH_PATTERNS" />)。使用者可以透過任何與這份清單中的項目相符的網址輕鬆安裝各種項目。<ph name="EXTENSION_SUFFIX_WILDCARD" /> 檔案的位置和下載來源網頁 (亦即參照網址) 都必須與這些模式相符。
-
-          <ph name="ALLOWED_TYPES" />：這項設定會將可以在 <ph name="PRODUCT_NAME" /> 中安裝的擴充功能/應用程式類型加入許可清單。設定值為字串清單，系統接受的字串如下：<ph name="VALID_ALLOWED_TYPES" />。如要進一步瞭解這些類型，請參閱 <ph name="PRODUCT_NAME" /> 擴充功能說明文件。
-          <ph name="BLOCKED_INSTALL_MESSAGE" />：如果使用者要安裝的擴充功能遭到政策封鎖，Chrome 線上應用程式商店會顯示一般錯誤訊息。這項設定可讓你在錯誤訊息中附加文字，藉此將使用者導向服務中心，說明特定擴充功能遭到封鎖的原因，或提供其他資訊。錯誤訊息的長度上限為 1000 個字元，多餘的字元會遭到截斷。
-          <ph name="RUNTIME_BLOCKED_HOSTS" />：接受擴充功能禁止進行互動的主機清單。互動行為包括植入 JavaScript、修改及查看 webRequests/webNavigation、查看及修改 Cookie。格式與比對模式 <ph name="LINK_TO_MATCH_PATTERNS" /> 類似，但不可定義路徑，例如「*://*.example.com」。這項設定也支援有效的 TLD 萬用字元，例如「*://example.*」。
-          <ph name="RUNTIME_ALLOWED_HOSTS" />：接受擴充功能可進行互動的主機清單 (無論是否為 <ph name="RUNTIME_BLOCKED_HOSTS" /> 列出的主機)。格式與 <ph name="RUNTIME_BLOCKED_HOSTS" /> 相同。
-          </translation>
 <translation id="1152117524387175066">回報裝置的開發人員模式切換設定在開機時的狀態。
 
       如果這項政策設為 False，則不會回報開發人員模式切換設定的狀態。</translation>
@@ -635,21 +602,6 @@
 
       請注意，如果平台支援政策通知，由於政策通知通常會在政策變更時自動強制更新 (不需更高的更新頻率)，所以更新延遲時間會設為 24 小時 (忽略所有預設值和這項政策的值)。</translation>
 <translation id="2024476116966025075">設定遠端存取用戶端的網域名稱 (必要)</translation>
-<translation id="202757291638965203">設定印表機清單。
-
-      這項政策可讓管理員為每位使用者提供
-      印表機設定。
-
-      「<ph name="PRINTER_DISPLAY_NAME" />」和「<ph name="PRINTER_DESCRIPTION" />」是形式不拘的字串，可加以自訂方便選擇印表機。「<ph name="PRINTER_MANUFACTURER" />」和「<ph name="PRINTER_MODEL" />」則可讓使用者輕鬆識別印表機，兩者分別代表印表機的製造商和型號。「<ph name="PRINTER_URI" />」必須是可透過用戶端電腦連上的位址 (包括「<ph name="URI_SCHEME" />」、「<ph name="URI_PORT" />」和「<ph name="URI_QUEUE" />」)。「<ph name="PRINTER_UUID" />」可選用。如有提供，則會用於協助複製「<ph name="ZEROCONF_DISCOVERY" />」。
-
-      「<ph name="PRINTER_EFFECTIVE_MODEL" />」必須是其中一個代表 <ph name="PRODUCT_NAME" /> 支援印表機的字串。系統會利用這個字串找出印表機適用的 PPD 並加以安裝。詳情請參閱 https://support.google.com/chrome?p=noncloudprint。
-
-      首次使用印表機時，會完成印表機設定程序。PPD 則會在使用該印表機時才下載，之後系統會快取常用的 PPD。
-
-      這項政策旨在補足個別使用者的印表機設定， 對使用者能否在個別裝置上設定印表機沒有影響。
-
-      如果是受管理的 Active Directory 裝置，這項政策支援將「<ph name="MACHINE_NAME_VARIABLE" />」擴充為 Active Directory 電腦名稱或其子字串。舉例來說，如果電腦名稱為「<ph name="MACHINE_NAME_EXAMPLE" />」，「<ph name="MACHINE_NAME_VARIABLE_EXAMPLE" />」將會被第 6 個位置後的 4 個字元取代 (亦即「<ph name="MACHINE_NAME_PART_EXAMPLE" />」)。請注意，位置序數從 0 開始計算。
-      </translation>
 <translation id="2030905906517501646">預設搜尋引擎關鍵字</translation>
 <translation id="203096360153626918">這項政策對 Android 應用程式沒有影響。即使將這項政策設為 <ph name="FALSE" />，Android 應用程式仍可進入全螢幕模式。</translation>
 <translation id="2043770014371753404">停用的企業印表機</translation>
@@ -1246,24 +1198,6 @@
       如果將這項政策設為 False，系統會停用 WPAD 最佳化設定，因而延長 <ph name="PRODUCT_NAME" /> 等待 DNS 型 WPAD 伺服器回應的時間。如果未設定或已啟用這項政策，系統會啟用 WPAD 最佳化設定。
 
       無論系統是否設定這項政策或這項政策的設定方式為何，使用者一律無法變更 WPAD 最佳化設定。</translation>
-<translation id="3071839057966069710">設定印表機清單。
-
-      這項政策可讓管理員為使用者提供印表機設定。
-
-      「<ph name="PRINTER_DISPLAY_NAME" />」和「<ph name="PRINTER_DESCRIPTION" />」可填入形式不拘的自訂字串，方便使用者選取印表機。「<ph name="PRINTER_MANUFACTURER" />」和「<ph name="PRINTER_MODEL" />」可讓使用者輕鬆識別印表機，兩者分別代表印表機的製造商和型號。<ph name="PRINTER_URI" /> 必須是可透過用戶端電腦連線的位址，包括 <ph name="URI_SCHEME" />、<ph name="URI_PORT" /> 和 <ph name="URI_QUEUE" />。<ph name="PRINTER_UUID" /> 為選填欄位。如有提供這項資訊，系統會用來刪除重複的 <ph name="ZEROCONF_DISCOVERY" /> 印表機。
-
-      <ph name="PRINTER_EFFECTIVE_MODEL" /> 必須與其中一個代表 <ph name="PRODUCT_NAME" />支援的印表機字串相符。系統會利用這個字串找出並安裝印表機適用的 PPD。詳情請參閱 https://support.google.com/chrome?p=noncloudprint。
-
-      <ph name="PRINTER_AUTOCONF" /> 是布林值標記，表示是否要使用 IPP Everywhere 設定印表機。<ph name="PRODUCT_OS_NAME" /> 76 以上版本支援這個標記。
-
-      你可以選擇在 <ph name="PRINTER_EFFECTIVE_MODEL" /> 中納入印表機名稱，或將 <ph name="PRINTER_AUTOCONF" /> 設為 True。如果同時設定 (或同時不設定) 這兩個印表機屬性，系統將予以忽略。
-
-      首次使用印表機時，系統會完成印表機設定程序。PPD 則會在有人使用印表機時才下載。之後系統會快取常用的 PPD。
-
-      這項政策對使用者是否能在個別裝置上設定印表機沒有影響，而是補足個別使用者的印表機設定。
-
-      如果是 Active Directory 管理的裝置，這項政策支援將 <ph name="MACHINE_NAME_VARIABLE" /> 擴充為 Active Directory 電腦名稱或其子字串。舉例來說，如果電腦名稱為 <ph name="MACHINE_NAME_EXAMPLE" />，則系統會以第 6 個字元後的 4 個字元取代 <ph name="MACHINE_NAME_VARIABLE_EXAMPLE" />，也就是 <ph name="MACHINE_NAME_PART_EXAMPLE" />。請注意，字元序數從 0 開始計算。
-      </translation>
 <translation id="3072045631333522102">在零售模式下登入畫面所使用的螢幕保護程式</translation>
 <translation id="3072847235228302527">為裝置本機帳戶設定《服務條款》</translation>
 <translation id="3077183141551274418">啟用或停用分頁生命週期功能</translation>
@@ -1330,15 +1264,6 @@
 <translation id="3214164532079860003">如果啟用這項政策，則會強制從目前的預設瀏覽器匯入首頁。如果停用這項政策，則不會匯入首頁。如果未設定這項政策，系統會自動匯入首頁，或詢問使用者是否要匯入首頁。</translation>
 <translation id="3219421230122020860">可使用無痕模式</translation>
 <translation id="3220624000494482595">如果資訊站應用程式是 Android 應用程式，即使將這項政策設為 <ph name="TRUE" />，仍無法控制 <ph name="PRODUCT_OS_NAME" />版本。</translation>
-<translation id="3229833076897893450">
-      為了盡可能減少隔離功能對使用者的影響， 建議你先查看 IsolateOrigins
-      政策設定， 瞭解如何使用 IsolateOrigins 設定需要隔離的網站清單。
-      SitePerProcess 這項設定會隔離所有網站。
-      如果啟用這項政策，每個網站就會以獨立程序執行。
-      如果停用這項政策，原先的網站隔離程序管理邏輯就會生效，IsolateOrigins 和 SitePerProcess 的實場測試也會停用。使用者還是可以手動啟用 SitePerProcess。
-      如果沒有設定這項政策，使用者就能變更這項設定。
-      在 <ph name="PRODUCT_OS_NAME" /> 上，建議你也將「<ph name="DEVICE_LOGIN_SCREEN_SITE_PER_PROCESS_POLICY_NAME" />」裝置政策設為相同的值。如果兩項政策指定的值不相符，在套用使用者政策指定的值的情況下，進入使用者工作階段時可能會發生延遲情況。
-      </translation>
 <translation id="3236046242843493070">允許安裝擴充功能、應用程式和使用者指令碼的來源網址模式清單</translation>
 <translation id="3240609035816615922">印表機設定存取權政策。</translation>
 <translation id="3240655340884151271">座架的內建 NIC MAC 位址</translation>
@@ -3028,13 +2953,6 @@
           如果設定了這項政策，使用者可以啟用或停用螢幕小鍵盤以暫時覆寫政策。不過，使用者的選擇並非持續有效；每當顯示新的登入畫面，或使用者在登入畫面上閒置一分鐘後，系統便會還原預設設定。
 
           如未設定這項政策，那麼登入畫面最初顯示時就會停用螢幕小鍵盤。使用者隨時可以啟用或停用螢幕小鍵盤，這項功能在登入畫面中的狀態，會在不同使用者之間持續下去。</translation>
-<translation id="6570691255874112762">這項政策可控管使用者是否能夠透過「憑證管理員」匯入及移除憑證。
-
-      如果將這項政策設為「允許使用者管理所有憑證」或不設定這項政策，使用者將能夠管理憑證。
-
-      如果將這項政策設為「允許使用者管理使用者憑證」，使用者將能夠管理使用者憑證，但無法管理整個裝置的憑證。
-
-      如果將這項政策設為「禁止使用者管理憑證」，使用者將無法管理憑證，只能查看憑證。</translation>
 <translation id="6573305661369899995">設定外部網址來源限制</translation>
 <translation id="6583851521569686409">設定印表機清單。
 
@@ -3739,13 +3657,6 @@
 <translation id="787125417158068494">如果設為 SyncDisabled 或未設定，ARC 應用程式將無法使用「<ph name="PRODUCT_OS_NAME" />」憑證。
 
       如果設為 CopyCaCerts，ARC 應用程式將可使用所有 ONC 安裝的 CA 憑證 (需有「<ph name="WEB_TRUSTED_BIT" />」)。</translation>
-<translation id="7872535148622213208">
-        這項政策可指定要視為安全內容的來源 (網址)
-        清單，以便機構設定內部網頁開發所需的
-        暫存伺服器。
-        功能與 --unsafely-treat-insecure-origin-as-secure 標記相同。
-        如要進一步瞭解安全內容，請參閱 https://www.w3.org/TR/secure-contexts/
-        </translation>
 <translation id="7882585827992171421">這項政策僅在零售模式下有效。
 
       決定使用擴充程式 ID 當做登入畫面的螢幕保護程式。該擴充功能必須屬於你透過 DeviceAppPack 政策為這個網域設定的 AppPack。</translation>

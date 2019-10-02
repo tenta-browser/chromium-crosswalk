@@ -80,12 +80,6 @@ const base::Feature kUseLocalBlacklistsV2{"SafeBrowsingUseLocalBlacklistsV2",
 constexpr base::FeatureParam<bool> kShouldFillOldPhishGuardProto{
     &kPasswordProtectionForSignedInUsers, "DeprecateOldProto", false};
 
-const base::Feature kForceUseAPDownloadProtection{
-    "ForceUseAPDownloadProtection", base::FEATURE_DISABLED_BY_DEFAULT};
-
-constexpr base::FeatureParam<bool> kShouldFillOldPhishGuardProto{
-    &kPasswordProtectionForSignedInUsers, "DeprecateOldProto", false};
-
 namespace {
 // List of Safe Browsing features. Boolean value for each list member should be
 // set to true if the experiment state should be listed on

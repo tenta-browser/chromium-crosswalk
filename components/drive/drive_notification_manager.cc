@@ -32,10 +32,6 @@ const int kSlowPollingIntervalInSecs = 3600;
 // The period to batch together invalidations before passing them to observers.
 constexpr int kInvalidationBatchIntervalSecs = 15;
 
-// The period to batch together invalidations before passing them to observers.
-constexpr base::TimeDelta kInvalidationBatchInterval =
-    base::TimeDelta::FromSeconds(5);
-
 // The sync invalidation object ID for Google Drive.
 const char kDriveInvalidationObjectId[] = "CHANGELOG";
 
@@ -63,12 +59,6 @@ DriveNotificationManager::DriveNotificationManager(
   DCHECK(invalidation_service_);
   RegisterDriveNotifications();
   RestartPollingTimer();
-
-  batch_timer_ = std::make_unique<base::RetainingOneShotTimer>(
-      FROM_HERE, kInvalidationBatchInterval,
-      base::BindRepeating(&DriveNotificationManager::OnBatchTimerExpired,
-                          weak_ptr_factory_.GetWeakPtr()),
-      clock);
 }
 
 DriveNotificationManager::~DriveNotificationManager() {

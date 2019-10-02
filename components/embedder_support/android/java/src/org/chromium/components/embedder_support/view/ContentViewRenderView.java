@@ -187,13 +187,6 @@ public class ContentViewRenderView extends FrameLayout {
         return new SurfaceView(context);
     }
 
-    public void registerFirstRenderedFrameListener(FirstRenderedFrameListener listener) {
-        mFirstRenderedFrameListener = listener;
-        if (mFirstFrameReceived && mFirstRenderedFrameListener != null) {
-            mFirstRenderedFrameListener.onFirstFrameReceived();
-        }
-    }
-
     /**
      * @return whether the surface view is initialized and ready to render.
      */

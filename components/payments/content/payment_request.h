@@ -116,12 +116,6 @@ class PaymentRequest : public mojom::PaymentRequest,
 
   bool IsIncognito() const;
 
-  // Allow to skip UI into payment handlers for such payment methods as
-  // "basic-card". Used only in tests.
-  void set_skip_ui_for_non_url_payment_method_identifiers_for_test() {
-    skip_ui_for_non_url_payment_method_identifiers_for_test_ = true;
-  }
-
   content::WebContents* web_contents() { return web_contents_; }
 
   bool skipped_payment_request_ui() { return skipped_payment_request_ui_; }

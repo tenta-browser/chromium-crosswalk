@@ -478,20 +478,6 @@ TEST_F(AutofillProfileSyncBridgeTest,
   bridge()->AutofillProfileChanged(change);
 }
 
-// Server profile updates should be ignored.
-TEST_F(AutofillProfileSyncBridgeTest,
-       AutofillProfileChanged_Deleted_IgnoreServerProfiles) {
-  StartSyncing({});
-
-  AutofillProfile server_profile(AutofillProfile::SERVER_PROFILE, "server-id");
-  AutofillProfileChange change(AutofillProfileChange::REMOVE,
-                               server_profile.guid(), &server_profile);
-
-  EXPECT_CALL(mock_processor(), Put(_, _, _)).Times(0);
-  // Should not crash.
-  bridge()->AutofillProfileChanged(change);
-}
-
 TEST_F(AutofillProfileSyncBridgeTest, GetAllDataForDebugging) {
   AutofillProfile local1 = AutofillProfile(kGuidA, kHttpsOrigin);
   local1.SetRawInfo(NAME_FIRST, ASCIIToUTF16("John"));

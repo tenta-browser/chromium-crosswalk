@@ -314,9 +314,7 @@ public class PrefetchFeedFlowTest {
         PrefetchBackgroundTask task = new PrefetchBackgroundTask();
         TestThreadUtils.runOnUiThreadBlocking(() -> {
             TaskParameters.Builder builder =
-                    TaskParameters.create(TaskIds.OFFLINE_PAGES_PREFETCH_JOB_ID)
-                            .addExtras(PrefetchBackgroundTaskScheduler.createGCMTokenBundle(
-                                    GCM_TOKEN));
+                    TaskParameters.create(TaskIds.OFFLINE_PAGES_PREFETCH_JOB_ID);
             PrefetchBackgroundTask.skipConditionCheckingForTesting();
             task.onStartTask(ContextUtils.getApplicationContext(), builder.build(),
                     (boolean needsReschedule) -> { finished.notifyCalled(); });

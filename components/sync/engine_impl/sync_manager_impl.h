@@ -28,7 +28,6 @@
 #include "components/sync/engine_impl/nudge_handler.h"
 #include "components/sync/engine_impl/sync_engine_event_listener.h"
 #include "components/sync/js/js_backend.h"
-#include "components/sync/nigori/cryptographer.h"
 #include "components/sync/syncable/change_reorder_buffer.h"
 #include "components/sync/syncable/directory_change_delegate.h"
 #include "services/network/public/cpp/network_connection_tracker.h"
@@ -92,6 +91,7 @@ class SyncManagerImpl
   void SaveChanges() override;
   void ShutdownOnSyncThread() override;
   UserShare* GetUserShare() override;
+  ModelTypeConnector* GetModelTypeConnector() override;
   std::unique_ptr<ModelTypeConnector> GetModelTypeConnectorProxy() override;
   std::string cache_guid() override;
   std::string birthday() override;

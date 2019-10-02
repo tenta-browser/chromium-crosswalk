@@ -77,39 +77,6 @@ QuarantineFileResult FailedSaveResultToQuarantineResult(HRESULT result) {
   }
 }
 
-// Maps a return code from an unsuccessful IAttachmentExecute::Save() call to a
-// QuarantineFileResult.
-//
-// Typical return codes from IAttachmentExecute::Save():
-//   S_OK   : The file was okay. If any viruses were found, they were cleaned.
-//   E_FAIL : Virus infected.
-//   INET_E_SECURITY_PROBLEM : The file was blocked due to security policy.
-//
-// Any other return value indicates an unexpected error during the scan.
-QuarantineFileResult FailedSaveResultToQuarantineResult(HRESULT result) {
-  switch (result) {
-    case INET_E_SECURITY_PROBLEM:  // 0x800c000e
-      // This is returned if the download was blocked due to security
-      // restrictions. E.g. if the source URL was in the Restricted Sites zone
-      // and downloads are blocked on that zone, then the download would be
-      // deleted and this error code is returned.
-      return QuarantineFileResult::BLOCKED_BY_POLICY;
-
-    case E_FAIL:  // 0x80004005
-      // Returned if an anti-virus product reports an infection in the
-      // downloaded file during IAE::Save().
-      return QuarantineFileResult::VIRUS_INFECTED;
-
-    default:
-      // Any other error that occurs during IAttachmentExecute::Save() likely
-      // indicates a problem with the security check, but not necessarily the
-      // download. This also includes cases where SUCCEEDED(result) is true. In
-      // the latter case we are likely dealing with a situation where the file
-      // is missing after a successful scan. See http://crbug.com/153212.
-      return QuarantineFileResult::SECURITY_CHECK_FAILED;
-  }
-}
-
 // Invokes IAttachmentExecute::Save on CLSID_AttachmentServices to validate the
 // downloaded file. The call may scan the file for viruses and if necessary,
 // annotate it with evidence.  As a result of the validation, the file may be

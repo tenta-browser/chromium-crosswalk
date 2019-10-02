@@ -20,7 +20,6 @@
 #include "components/viz/service/display_embedder/server_shared_bitmap_manager.h"
 #include "components/viz/service/display_embedder/skia_output_surface_dependency_impl.h"
 #include "components/viz/service/display_embedder/skia_output_surface_impl.h"
-#include "components/viz/service/display_embedder/skia_output_surface_impl_non_ddl.h"
 #include "components/viz/service/display_embedder/software_output_surface.h"
 #include "components/viz/service/display_embedder/viz_process_context_provider.h"
 #include "components/viz/service/gl/gpu_service_impl.h"
@@ -201,17 +200,6 @@ std::unique_ptr<OutputSurface> OutputSurfaceProviderImpl::CreateOutputSurface(
       output_surface = std::make_unique<GLOutputSurface>(
           std::move(context_provider), surface_handle);
 #elif defined(OS_ANDROID)
-      // When SurfaceControl is enabled, any resource backed by an
-      // AHardwareBuffer can be marked as an overlay candidate but it requires
-      // that we use a SurfaceControl backed GLSurface. If we're creating a
-      // native window backed GLSurface, the overlay processing code will
-      // incorrectly assume these resources can be overlayed. So we disable all
-      // overlay processing for this OutputSurface.
-      const bool allow_overlays =
-          task_executor_->gpu_feature_info()
-              .status_values[gpu::GPU_FEATURE_TYPE_ANDROID_SURFACE_CONTROL] !=
-          gpu::kGpuFeatureStatusEnabled;
-
       output_surface = std::make_unique<GLOutputSurfaceAndroid>(
           std::move(context_provider), surface_handle);
 #else

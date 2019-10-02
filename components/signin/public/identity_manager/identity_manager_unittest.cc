@@ -1253,7 +1253,6 @@ TEST_F(IdentityManagerTest,
             identity_manager_diagnostics_observer()
                 ->on_access_token_request_completed_error());
 }
-#endif
 
 TEST_F(IdentityManagerTest,
        ObserveAccessTokenRequestCompletionWithRefreshToken) {

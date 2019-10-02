@@ -271,16 +271,6 @@ class PreviewsOptimizationGuideTest
         data_reduction_proxy::switches::kEnableDataReductionProxy);
   }
 
-  void EnableDataSaver() {
-    base::CommandLine::ForCurrentProcess()->AppendSwitch(
-        data_reduction_proxy::switches::kEnableDataReductionProxy);
-  }
-
-  void DisableDataSaver() {
-    base::CommandLine::ForCurrentProcess()->RemoveSwitch(
-        data_reduction_proxy::switches::kEnableDataReductionProxy);
-  }
-
   void CreateServiceAndGuide() {
     if (guide_) {
       ResetGuide();
@@ -1845,22 +1835,6 @@ TEST_F(PreviewsOptimizationGuideTest, IsBlacklisted) {
 
   EXPECT_FALSE(guide()->IsBlacklisted(GURL("https://maindomain.co.in"),
                                       PreviewsType::LITE_PAGE_REDIRECT));
-}
-
-TEST_F(PreviewsOptimizationGuideTest, LitePageRedirectSkipIsBlacklistedCheck) {
-  base::test::ScopedFeatureList scoped_list;
-  scoped_list.InitAndEnableFeature(features::kLitePageServerPreviews);
-  InitializeWithLitePageRedirectBlacklist();
-
-  EXPECT_TRUE(
-      guide()->IsBlacklisted(GURL("https://m.blacklisteddomain.com/path"),
-                             PreviewsType::LITE_PAGE_REDIRECT));
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kIgnoreLitePageRedirectOptimizationBlacklist);
-
-  EXPECT_FALSE(
-      guide()->IsBlacklisted(GURL("https://m.blacklisteddomain.com/path"),
-                             PreviewsType::LITE_PAGE_REDIRECT));
 }
 
 TEST_F(PreviewsOptimizationGuideTest,

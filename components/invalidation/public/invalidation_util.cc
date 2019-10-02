@@ -164,13 +164,6 @@ ObjectIdSet ConvertTopicsToIds(Topics topics) {
   return ids;
 }
 
-ObjectIdSet ConvertTopicsToIds(Topics topics) {
-  ObjectIdSet ids;
-  for (const auto& topic : topics)
-    ids.insert(invalidation::ObjectId(kDeprecatedSource, topic.first));
-  return ids;
-}
-
 invalidation::ObjectId ConvertTopicToId(const Topic& topic) {
   return invalidation::ObjectId(kDeprecatedSourceForFCM, topic);
 }

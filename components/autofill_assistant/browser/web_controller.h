@@ -462,17 +462,6 @@ class WebController {
       const ClientStatus& status,
       std::unique_ptr<FindElementResult> element);
 
-  // Waits for the document.readyState to be 'interactive' or 'complete'.
-  void WaitForDocumentToBecomeInteractive(
-      int remaining_rounds,
-      std::string object_id,
-      base::OnceCallback<void(bool)> callback);
-  void OnWaitForDocumentToBecomeInteractive(
-      int remaining_rounds,
-      std::string object_id,
-      base::OnceCallback<void(bool)> callback,
-      std::unique_ptr<runtime::CallFunctionOnResult> result);
-
   // Weak pointer is fine here since it must outlive this web controller, which
   // is guaranteed by the owner of this object.
   content::WebContents* web_contents_;

@@ -508,12 +508,9 @@ public class SyncAndServicesPreferences extends PreferenceFragmentCompat
 
         mSearchSuggestions.setChecked(mPrefServiceBridge.isSearchSuggestEnabled());
         mNavigationError.setChecked(mPrefServiceBridge.isResolveNavigationErrorEnabled());
-        mNavigationError.setEnabled(!useSyncAndAllServices);
         mSafeBrowsing.setChecked(mPrefServiceBridge.isSafeBrowsingEnabled());
-        mSafeBrowsing.setEnabled(!useSyncAndAllServices);
         mSafeBrowsingReporting.setChecked(
                 mPrefServiceBridge.isSafeBrowsingExtendedReportingEnabled());
-        mSafeBrowsingReporting.setEnabled(!useSyncAndAllServices);
         mUsageAndCrashReporting.setChecked(
                 mPrivacyPrefManager.isUsageAndCrashReportingPermittedByUser());
         mUrlKeyedAnonymizedData.setChecked(

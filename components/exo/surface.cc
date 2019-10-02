@@ -197,9 +197,6 @@ class CustomWindowTargeter : public aura::WindowTargeter {
     if (!surface || !surface->IsInputEnabled(surface))
       return false;
 
-    if (event.IsTouchEvent() && !surface->IsTouchEnabled(surface))
-      return false;
-
     gfx::Point local_point = event.location();
     if (window->parent())
       aura::Window::ConvertPointToTarget(window->parent(), window,
@@ -685,13 +682,6 @@ void Surface::CommitSurfaceHierarchy(bool synchronized) {
     hit_test_region_.Intersect(surface_hierarchy_content_bounds_);
   } else {
     hit_test_region_ = surface_hierarchy_content_bounds_;
-  }
-
-  int outset = state_.input_outset;
-  if (outset > 0) {
-    gfx::Rect input_rect = surface_hierarchy_content_bounds_;
-    input_rect.Inset(-outset, -outset);
-    hit_test_region_ = input_rect;
   }
 
   int outset = state_.input_outset;

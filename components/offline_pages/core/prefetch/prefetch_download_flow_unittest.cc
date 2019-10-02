@@ -58,8 +58,6 @@ class PrefetchDownloadFlowTest : public PrefetchTaskTestBase {
     prefetch_service_taco_->SetPrefetchStore(store_util()->ReleaseStore());
     prefetch_service_taco_->SetPrefetchDownloader(std::move(downloader));
     prefetch_service_taco_->CreatePrefetchService();
-    prefetch_service_taco_->prefetch_service()->SetCachedGCMToken(
-        "dummy_gcm_token");
     item_generator()->set_client_namespace(kSuggestedArticlesNamespace);
   }
 

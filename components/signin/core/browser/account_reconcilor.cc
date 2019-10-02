@@ -37,10 +37,6 @@
 #include "components/signin/core/browser/consistency_cookie_manager_android.h"
 #endif
 
-#if defined(OS_ANDROID)
-#include "components/signin/core/browser/consistency_cookie_manager_android.h"
-#endif
-
 using signin::AccountReconcilorDelegate;
 using signin_metrics::AccountReconcilorState;
 
@@ -168,21 +164,6 @@ AccountReconcilor::Lock::~Lock() {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   if (reconcilor_)
     reconcilor_->DecrementLockCount();
-}
-
-AccountReconcilor::ScopedSyncedDataDeletion::ScopedSyncedDataDeletion(
-    AccountReconcilor* reconcilor)
-    : reconcilor_(reconcilor->weak_factory_.GetWeakPtr()) {
-  DCHECK(reconcilor_);
-  ++reconcilor_->synced_data_deletion_in_progress_count_;
-}
-
-AccountReconcilor::ScopedSyncedDataDeletion::~ScopedSyncedDataDeletion() {
-  if (!reconcilor_)
-    return;  // The reconcilor was destroyed.
-
-  DCHECK_GT(reconcilor_->synced_data_deletion_in_progress_count_, 0);
-  --reconcilor_->synced_data_deletion_in_progress_count_;
 }
 
 AccountReconcilor::ScopedSyncedDataDeletion::ScopedSyncedDataDeletion(

@@ -139,39 +139,6 @@
 
       Ie-expand ang mga variable ng environment. Sa Windows, ang %ABC% ay papalitan ng value ng variable ng environment na ABC.</translation>
 <translation id="1151353063931113432">Pinapayagan ang mga larawan sa mga site na ito</translation>
-<translation id="1151545095291359187">Nagko-configure sa mga setting ng pamamahala ng extension para sa <ph name="PRODUCT_NAME" />.
-
-          Maraming setting ang kinokontrol ng patakarang ito, kasama ang mga setting na kinokontrol ng anumang kasalukuyang patakarang nauugnay sa extension. Io-override ng patakarang ito ang anumang legacy na patakaran kung parehong nakatakda ang mga ito.
-
-          Minamapa ng patakarang ito ang isang extension ID o update URL sa configuration nito. Sa pamamagitan ng extension ID, sa tinukoy na extension lang malalapat ang configuration. Maaaring magtakda ng default na configuration para sa espesyal na ID na <ph name="DEFAULT_SCOPE" />, na malalapat sa lahat ng extension na walang nakatakdang custom na configuration sa patakarang ito. Sa pamamagitan ng update URL, malalapat ang configuration sa lahat ng extension na mayroon ng eksaktong update URL na nakasaad sa manifest ng extension na ito, gaya ng inilalarawan sa <ph name="LINK_TO_EXTENSION_DOC1" />.
-
-          Ang configuration para sa bawat extension (o mga extension na may parehong update URL) ay panibagong diksyunaryo na maaaring maglaman sa mga field na nakadokumento sa ibaba.
-
-          <ph name="INSTALLATION_MODE" />: nagmamapa sa isang string na nagsasaad ng installation mode para sa extension. Ang mga valid na string ay:
-          * <ph name="ALLOWED" />: nagpapahintulot sa extension na ma-install ng user. Ito ang default na gawi.
-          * <ph name="BLOCKED" />: nagba-block sa pag-install ng extension.
-          * <ph name="FORCE_INSTALLED" />: awtomatikong ini-install ang extension at hindi maaalis ng user.
-          * <ph name="NORMAL_INSTALLED" />: awtomatikong ini-install ang extension ngunit maaaring i-disable ng user.
-
-          Mako-configure din ang <ph name="INSTALLATION_MODE" /> para sa maraming extension, kasama ang extension na <ph name="DEFAULT_SCOPE" /> (bilang mga default na setting) at mga extension na may parehong update URL. Ang value na <ph name="ALLOWED" /> at <ph name="BLOCKED" /> lang ang magagamit sa sitwasyong ito.
-
-          Kung nakatakda ang mode sa <ph name="FORCE_INSTALLED" /> o <ph name="NORMAL_INSTALLED" />, dapat ding mag-configure ng <ph name="UPDATE_URL" />. Tandaang ginagamit lang ang update URL na nakatakda sa patakarang ito para sa unang pag-install; gagamitin sa mga kasunod na update ng extension ang update URL na nakasaad sa manifest ng extension. Dapat tumuro ang update URL sa isang Update Manifest XML document tulad ng nabanggit sa itaas.
-
-          <ph name="BLOCKED_PERMISSIONS" />: nagmamapa sa isang listahan ng mga string na nagsasaad sa mga naka-block na pahintulot sa API para sa extension. Ang mga pangalan ng mga pahintulot ay pareho sa mga string ng pahintulot na idineklara sa manifest ng extension tulad ng inilalarawan sa <ph name="LINK_TO_EXTENSION_DOC3" />. Mako-configure din ang setting na ito para sa extension na <ph name="DEFAULT_SCOPE" />. Kung kailangan ng extension ng pahintulot na nasa blocklist, hindi ito papayagang mag-load. Kung naglalaman ito ng naka-block na pahintulot bilang opsyonal na kinakailangan, pangangasiwaan ito sa normal na paraan, ngunit awtomatikong tatanggihan sa runtime ang paghiling ng mga nagsasalungat na pahintulot.
-
-          <ph name="ALLOWED_PERMISSIONS" />: katulad ng <ph name="BLOCKED_PERMISSIONS" />, ngunit sa halip ay tahasang pinapayagan ang ilang pahintulot na maaaring ma-block ng pangkalahatang listahan ng naka-block na pahintunlot, at dahil dito ay hindi mako-configure para sa extension na <ph name="DEFAULT_SCOPE" />. Tandaang hindi awtomatikong nagbibigay ng mga pinayagang pahintulot sa mga extension ang setting na ito.
-
-          <ph name="MINIMUM_VERSION_REQUIRED" />: nagmamapa sa isang string ng bersyon. Ang format ng string ng bersyon ay pareho sa ginamit sa manifest ng extension, gaya ng inilalarawan sa <ph name="LINK_TO_EXTENSION_DOC4" />. Madi-disable ang extension na may bersyong mas luma sa tinukoy na minimum na bersyon. Nalalapat din ito sa mga pwersahang na-install na extension.
-
-          Magagamit lang ang mga sumusunod na setting para sa default na configuration ng <ph name="DEFAULT_SCOPE" />:
-
-          <ph name="INSTALL_SOURCES" />: Ang bawat item sa listahang ito ay isang match pattern sa istilo ng extension (<ph name="LINK_TO_MATCH_PATTERNS" />). Madaling mai-install ng mga user ang mga item mula sa anumang URL na tumutugma sa isang item sa listahang ito. Dapat payagan ng mga pattern na ito ang lokasyon ng <ph name="EXTENSION_SUFFIX_WILDCARD" /> file at ang page kung saan sinimulan ang download (ibig sabihin, ang referrer).
-
-          <ph name="ALLOWED_TYPES" />: Inilalagay sa whitelist ng setting na ito ang mga pinapayagang uri ng extension/mga app na maaaring i-install sa <ph name="PRODUCT_NAME" />.  Ang value ay isang listahan ng mga string, kung saan ang bawat isa sa mga ito ay dapat na isa sa mga sumusunod: <ph name="VALID_ALLOWED_TYPES" />. Tingnan ang dokumentasyon ng mga extension ng <ph name="PRODUCT_NAME" /> para sa higit pang impormasyon tungkol sa mga uring ito.
-          <ph name="BLOCKED_INSTALL_MESSAGE" />: Kung susubukan ng isang user na mag-install ng isang extension, ngunit maba-block ito ng patakaran, magpapakita ang Chrome Webstore ng pangkalahatang mensahe ng error. Binibigyang-daan ka ng setting na ito na magsama ng text sa mensahe ng error. Magagamit ito sa pagdirekta ng mga user sa iyong help desk, pagpapaliwanag kung bakit naka-block ang isang partikular na extension, o iba pang bagay. Mapuputol ang mensahe ng error na ito kung lalampas ito sa 1000 character.
-          <ph name="RUNTIME_BLOCKED_HOSTS" />: Tumatanggap ng listahan ng mga host na hindi maaaring makaugnayan ng isang extension. Kasama rito ang paglalagay ng javascript, pagbago at pagtingin sa webRequests / webNavigation, pagtingin at pagbago ng cookies. Pareho ang format sa Mga Match Pattern <ph name="LINK_TO_MATCH_PATTERNS" />, ngunit walang maaaring tukuying path dito. hal. "*://*.example.com". Sinusuportahan din nito ang epektibong pag-wildcard ng TLD, hal. "*://example.*".
-          <ph name="RUNTIME_ALLOWED_HOSTS" />: Tumatanggap ng listahan ng mga host kung saan maaaring makipag-ugnayan ang isang extension, nakalista man ang mga ito sa <ph name="RUNTIME_BLOCKED_HOSTS" /> o hindi. Pareho ang format nito sa <ph name="RUNTIME_BLOCKED_HOSTS" />.
-          </translation>
 <translation id="1152117524387175066">Iulat ang katayuan ng dev switch ng device sa pag-boot.
 
       Kung nakatakda ang patakaran sa false, hindi iuulat ang katayuan ng dev switch.</translation>
@@ -645,21 +612,6 @@
 
       Tandaan na kung sinusuportahan ng platform ang mga notification ng patakaran, itatakda ang pagkaantala ng pag-refresh sa 24 na oras (nang hindi pinapansin ang lahat ng default at ang value ng patakarang ito) dahil inaasahan na ang mga notification ng patakaran ay magpipilit ng awtomatikong pag-refresh sa tuwing magbabago ang patakaran, kaya hindi na kailangang madalas na mag-refresh.</translation>
 <translation id="2024476116966025075">I-configure ang kinakailangang domain name para sa mga client ng malayuang pag-access</translation>
-<translation id="202757291638965203">Nagko-configure ng listahan ng mga printer.
-
-      Nabibigyang-daan ng patakarang ito ang mga administrator na magbigay ng mga configuration ng printer para sa
-      kanilang mga user.
-
-      Ang <ph name="PRINTER_DISPLAY_NAME" /> at <ph name="PRINTER_DESCRIPTION" /> ay mga free form na string na maaaring i-customize para sa mas madaling pagpili ng printer. Pinapadali ng <ph name="PRINTER_MANUFACTURER" /> at <ph name="PRINTER_MODEL" /> ang pagtukoy ng printer ng mga end user. Kinakatawan ng mga ito ang manufacturer at modelo ng printer. Ang <ph name="PRINTER_URI" /> ay dapat isang address na mapupuntahan mula sa isang client na computer kabilang ang <ph name="URI_SCHEME" />, <ph name="URI_PORT" />, at <ph name="URI_QUEUE" />. Opsyonal ang <ph name="PRINTER_UUID" />.  Kung ibibigay, gagamitin ito para makatulong na mag-deduplicate ng mga printer sa <ph name="ZEROCONF_DISCOVERY" />.
-
-      Tumutugma dapat ang <ph name="PRINTER_EFFECTIVE_MODEL" /> sa isa sa mga string na kumakatawan sa isang printer na sinusuportahan ng <ph name="PRODUCT_NAME" />. Gagamitin ang string para tukuyin at i-install ang naaangkop na PPD para sa printer. Makakahanap ng higit pang impormasyon sa https://support.google.com/chrome?p=noncloudprint.
-
-      Makukumpleto ang pag-set up ng printer sa unang paggamit ng printer.  Hindi mada-download ang mga PPD hanggang magamit ang printer.  Pagkatapos ng oras na iyon, maka-cache ang mga PPD na madalas gamitin.
-
-      Walang epekto ang patakarang ito kung maaaring mag-configure ng mga printer ang mga user sa mga indibidwal na device.  Nilalayon itong maging karagdagan sa configuration ng mga printer ng mga indibidwal na user.
-
-      Para sa mga device na pinapamahalaan ng Active Directory, sinusuportahan ng patakarang ito ang pag-expand ng <ph name="MACHINE_NAME_VARIABLE" /> sa pangalan ng machine ng Active Directory o isang substring nito. Halimbawa, kung ang pangalan ng machine ay <ph name="MACHINE_NAME_EXAMPLE" />, mapapalitan ang <ph name="MACHINE_NAME_VARIABLE_EXAMPLE" /> ng 4 na character simula pagkatapos ng ika-6 na posisyon, ibig sabihin, ang <ph name="MACHINE_NAME_PART_EXAMPLE" />. Tandaang ang posisyon ay zero-based.
-      </translation>
 <translation id="2030905906517501646">Default na keyword ng provider ng paghahanap</translation>
 <translation id="203096360153626918">Ang patakarang ito ay walang epekto sa mga Android app. Makakapunta ang mga ito sa fullscreen mode kahit na nakatakda ang patakaran sa <ph name="FALSE" />.</translation>
 <translation id="2043770014371753404">Mga naka-disable na printer ng enterprise</translation>
@@ -1262,25 +1214,6 @@
       Kung nakatakda sa false ang patakarang ito, madi-disable ang pag-optimize ng WPAD na magsasanhi sa <ph name="PRODUCT_NAME" /> na maghintay nang mas matagal para sa mga DNS-based na WPAD server.  Kung hindi nakatakda o naka-enable ang patakarang ito, ie-enable ang pag-optimize ng WPAD.
 
       Nakatakda man o paano man itinakda ang patakarang ito, hindi mababago ng mga user ang setting ng pag-optimize ng WPAD.</translation>
-<translation id="3071839057966069710">Nagko-configure ng listahan ng mga printer.
-
-      Nagbibigay-daan ang patakarang ito sa mga administrator na magbigay ng mga configuration ng printer para sa
-      kanilang mga user.
-
-      Ang <ph name="PRINTER_DISPLAY_NAME" /> at <ph name="PRINTER_DESCRIPTION" /> ay mga free form na string na puwedeng i-customize para sa mas madaling pagpili ng printer. Pinapadali ng <ph name="PRINTER_MANUFACTURER" /> at <ph name="PRINTER_MODEL" /> ang pagtukoy ng printer ng mga end user. Kinakatawan ng mga ito ang manufacturer at modelo ng printer. Ang <ph name="PRINTER_URI" /> ay dapat isang address na mapupuntahan mula sa isang client na computer kabilang ang <ph name="URI_SCHEME" />, <ph name="URI_PORT" />, at <ph name="URI_QUEUE" />. Opsyonal ang <ph name="PRINTER_UUID" />. Kung ibibigay, gagamitin ito para makatulong na mag-deduplicate ng mga printer sa <ph name="ZEROCONF_DISCOVERY" />.
-
-      Tumutugma dapat ang <ph name="PRINTER_EFFECTIVE_MODEL" /> sa isa sa mga string na kumakatawan sa printer na sinusuportahan ng <ph name="PRODUCT_NAME" />. Gagamitin ang string para tukuyin at i-install ang naaangkop na PPD para sa printer. Makakahanap ng higit pang impormasyon sa https://support.google.com/chrome?p=noncloudprint.
-
-      Ang <ph name="PRINTER_AUTOCONF" /> ay isang boolean flag na nagsasaad kung dapat gamitin ang IPP Everywhere para i-set up ang printer. Sinusuportahan ang flag na ito sa bersyon 76 pataas ng <ph name="PRODUCT_OS_NAME" />.
-
-      Dapat ay naglalaman ang <ph name="PRINTER_EFFECTIVE_MODEL" /> ng pangalan ng printer o nakatakda ang <ph name="PRINTER_AUTOCONF" /> sa true. Babalewalain ang mga printer na may pareho o walang anumang property.
-
-      Makukumpleto ang pag-set up ng printer sa unang paggamit ng printer.  Hindi mada-download ang mga PPD hanggang magamit ang printer.  Pagkatapos noon, maka-cache ang mga PPD na madalas gamitin.
-
-      Walang epekto ang patakarang ito sa kung puwedeng mag-configure ng mga printer ang mga user sa mga indibidwal na device.  Ginawa ito para maging karagdagan sa configuration ng mga printer ng mga indibidwal na user.
-
-      Para sa mga device na pinapamahalaan ng Active Directory, sinusuportahan ng patakarang ito ang pag-expand ng <ph name="MACHINE_NAME_VARIABLE" /> sa pangalan ng machine ng Active Directory o sa isang substring nito. Halimbawa, kung ang pangalan ng machine ay <ph name="MACHINE_NAME_EXAMPLE" />, mapapalitan ang <ph name="MACHINE_NAME_VARIABLE_EXAMPLE" /> ng 4 na character simula sa ikaw-6 na posisyon, ibig sabihin, ang <ph name="MACHINE_NAME_PART_EXAMPLE" />. Tandaang nakabtay sa zero ang posisyon.
-      </translation>
 <translation id="3072045631333522102">Screen saver na gagamitin sa screen sa pag-sign-in sa mode ng retail</translation>
 <translation id="3072847235228302527">Itakda ang Mga Tuntunin ng Serbisyo para sa isang account na lokal sa device</translation>
 <translation id="3077183141551274418">Ine-enable o dini-disable ang mga lifecycle ng tab</translation>
@@ -1351,16 +1284,6 @@
       Kung hindi ito nakatakda, maaaring tanungin sa user kung mag-i-import o hindi, o maaaring awtomatikong mangyari ang pag-import.</translation>
 <translation id="3219421230122020860">Available ang mode na incognito</translation>
 <translation id="3220624000494482595">Kung ang kiosk app ay isang Android app, wala itong kontrol sa bersyon ng <ph name="PRODUCT_OS_NAME" />, kahit na nakatakda ang patakarang ito sa <ph name="TRUE" />.</translation>
-<translation id="3229833076897893450">
-      Maaari mong tingnan ang setting ng patakaran ng IsolateOrigins para
-      parehong masulit ang pag-isolate at pagkakaroon ng limitadong epekto sa mga user sa pamamagitan ng paggamit ng
-      IsolateOrigins na may listahan ng mga site na gusto mong i-isolate. Ina-isolate ng setting na ito na
-      SitePerProcess ang lahat ng site.
-      Kung naka-enable ang patakaran, tatakbo ang bawat site sa sarili nitong proseso.
-      Kung naka-disable ang patakaran, magkakabisa ang logic sa pamamahala ng proseso bago ang Pag-isolate ng Site, at madi-disable ang mga field trial ng IsolateOrigins at SitePerProcess. Magagawa pa rin ng mga user na manual na i-enable ang SitePerProcess.
-      Kung hindi na-configure ang patakaran, mababago ng user ang setting na ito.
-      Inirerekomenda sa <ph name="PRODUCT_OS_NAME" /> na itakda rin ang patakaran sa device na <ph name="DEVICE_LOGIN_SCREEN_SITE_PER_PROCESS_POLICY_NAME" /> sa parehong value. Kung hindi magtutugma ang mga value na tinukoy ng dalawang patakaran, maaaring magkaroon ng pagkaantala sa pagpasok sa isang session ng user habang inilalapat ang value na tinukoy ng patakaran ng user.
-      </translation>
 <translation id="3236046242843493070">Mga pattern ng URL na bibigyang-daan ang mga manggagaling na pag-install ng extension, app, at script ng user</translation>
 <translation id="3240609035816615922">Patakaran sa pag-access ng configuration ng printer</translation>
 <translation id="3240655340884151271">Built-in na NIC MAC address ng dock</translation>
@@ -2379,21 +2302,6 @@
       Kung itatakda ang patakarang ito, tutukuyin nito ang haba ng oras na walang aktibidad ng user na dapat lumipas bago awtomatikong mag-log in sa lokal na account ng device na tinukoy ng patakarang |DeviceLocalAccountAutoLoginId|.
 
       Kung hindi itatakda ang patakarang ito, gagamitin ang 0 milliseconds bilang pag-timeout.
-
-      Tinutukoy ang patakarang ito gamit ang milliseconds.</translation>
-<translation id="523505283826916779">Mga setting ng accessibility</translation>
-<translation id="5236882091572996759">Kung itatakda ang patakarang ito sa True o kung hindi ito itatakda, hindi ituturing na idle ang user habang nagpe-play ang audio. Pinipigilan nitong maabot ang timeout bago mag-idle at maisagawa ang pagkilos sa idle. Gayunpaman, isasagawa ang pag-dim ng screen, pag-off ng screen, at pag-lock ng screen pagkatapos ng mga naka-configure na timeout, mayroon mang aktibidad ng audio o wala.
-
-          Kung itatakda ang patakarang ito sa False, hindi mapipigilan ng aktibidad sa audio na ituring na idle ang user.</translation>
-<translation id="5246700266104954355">Hindi na ginagamit ang patakarang ito. Pakigamit ang <ph name="DEFAULT_PLUGINS_SETTING_POLICY_NAME" /> para kontrolin ang avalability ng Flash plugin at <ph name="ALWAYS_OPEN_PDF_EXTERNALLY_POLICY_NAME" /> para kontrolin kung dapat bang gamitin ang pinagsamang PDF viewer para sa pagbubukas ng mga PDF file.
-
-      Nagsasaad ng listahan ng mga plugin na naka-enable sa <ph name="PRODUCT_NAME" /> at pinipigilan ang mga user na baguhin ang setting na ito.
-
-      Puwedeng gamitin ang mga wildcard na character na '*' at '?' para magtugma ng pagkakasunod-sunod ng mga arbitrary na character. Tumutugma ang '*' sa isang arbitrary na bilang ng mga character habang tumutukoy naman ang '?' sa isang opsyonal na iisang character, ibig sabihin, tumutugma ito sa zero o isang character. Ang escape na character ay '\', kaya para tumugma sa mga aktwal na '*', '?', o '\' na character, puwede kang maglagay ng '\' bago ang mga ito.
-
-      Palaging ginagamit sa <ph name="PRODUCT_NAME" /> ang nakasaad na listahan ng mga plugin kung naka-install ang mga ito. Minarkahan ang mga plugin bilang naka-enable sa 'about:plugins' at hindi madi-disable ng mga user ang mga ito.
-
-      Tandaang ino-override ng patakarang ito ang DisabledPlugins at DisabledPluginsExceptions.
 
       Tinutukoy ang patakarang ito gamit ang milliseconds.</translation>
 <translation id="523505283826916779">Mga setting ng accessibility</translation>
@@ -3852,13 +3760,6 @@ lumagpas na sa partikular na haba ng panahon ang oras na hindi ito nagamit.
 <translation id="787125417158068494">Kung nakatakda sa SyncDisabled o hindi naka-configure, hindi available ang mga certificate ng <ph name="PRODUCT_OS_NAME" /> para sa mga ARC app.
 
       Kung nakatakda sa CopyCaCerts, available para sa mga ARC app ang lahat ng CA certificate na may <ph name="WEB_TRUSTED_BIT" /> na na-install ng ONC.</translation>
-<translation id="7872535148622213208">
-        May nakasaad sa patakaran na isang listahan ng mga pinagmulan (URL) na ituturing bilang secure
-        na konteksto. Ang layunin ay payagan ang mga organisasyong mag-set up ng server ng pag-stage
-        para sa mga internal na pag-develop sa web.
-        Pareho ito sa flag na --unsafely-treat-insecure-origin-as-secure.
-        Para sa higit pang impormasyon tungkol sa mga secure na konteksto, tingnan ang https://www.w3.org/TR/secure-contexts/
-        </translation>
 <translation id="7882585827992171421">Sa retail mode lamang aktibo ang patakarang ito.
 
       Tinutukoy ang id ng extension na gagamitin bilang isang screen saver sa screen sa pag-sign-in. Ang extension ay dapat na bahagi ng AppPack na naka-configure para sa domain na ito sa pamamagitan ng patakarang AppPacks.</translation>

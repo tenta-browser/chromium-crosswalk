@@ -26,7 +26,6 @@
 #include "components/sync/engine/engine_util.h"
 #include "components/sync/engine/net/http_post_provider_factory.h"
 #include "components/sync/engine/polling_constants.h"
-#include "components/sync/engine/sync_engine_switches.h"
 #include "components/sync/engine_impl/cycle/directory_type_debug_info_emitter.h"
 #include "components/sync/engine_impl/loopback_server/loopback_connection_manager.h"
 #include "components/sync/engine_impl/model_type_connector_proxy.h"
@@ -407,12 +406,6 @@ void SyncManagerImpl::Init(InitArgs* args) {
     network_connection_tracker_->AddNetworkConnectionObserver(this);
   } else {
     scheduler_->OnCredentialsUpdated();
-  }
-
-  // Control types don't have DataTypeControllers, but they need to have
-  // update handlers registered in ModelTypeRegistry.
-  for (ModelType control_type : ControlTypes()) {
-    model_type_registry_->RegisterDirectoryType(control_type, GROUP_PASSIVE);
   }
 
   NotifyInitializationSuccess();
@@ -1000,6 +993,11 @@ UserShare* SyncManagerImpl::GetUserShare() {
   DCHECK(initialized_);
   DCHECK(share_);
   return share_;
+}
+
+ModelTypeConnector* SyncManagerImpl::GetModelTypeConnector() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return model_type_registry_.get();
 }
 
 std::unique_ptr<ModelTypeConnector>

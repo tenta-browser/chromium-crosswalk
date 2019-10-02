@@ -172,10 +172,6 @@ class TestAutofillClient : public AutofillClient {
 
   ukm::TestUkmRecorder* GetTestUkmRecorder();
 
-  void set_sync_service(syncer::SyncService* test_sync_service) {
-    test_sync_service_ = test_sync_service;
-  }
-
  private:
   ukm::TestAutoSetUkmRecorder test_ukm_recorder_;
   signin::IdentityTestEnvironment identity_test_env_;

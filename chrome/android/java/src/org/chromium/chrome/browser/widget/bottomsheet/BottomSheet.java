@@ -484,13 +484,6 @@ public class BottomSheet
         return mSettleAnimator != null && mTargetState == SheetState.HIDDEN;
     }
 
-    /**
-     * @return Whether the sheet is in the process of closing.
-     */
-    public boolean isClosing() {
-        return mSettleAnimator != null && mTargetState == SheetState.HIDDEN;
-    }
-
     @Override
     public boolean onInterceptTouchEvent(MotionEvent e) {
         // If touch is disabled, act like a black hole and consume touch events without doing

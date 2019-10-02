@@ -43,18 +43,6 @@ button:active {
   float: left;
 }
 
-[dir='rtl'] button {
-  float: left;
-}
-
-.ask-permission-button {
-  float: right;
-}
-
-.go-back-button {
-  float: left;
-}
-
 #details {
   color: #696969;
   margin: 45px 0 50px;

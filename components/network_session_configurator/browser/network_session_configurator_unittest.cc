@@ -241,18 +241,6 @@ TEST_F(NetworkSessionConfiguratorTest,
 }
 
 TEST_F(NetworkSessionConfiguratorTest,
-       QuicRetransmittableOnWireTimeoutMillisecondsFieldTrialParams) {
-  std::map<std::string, std::string> field_trial_params;
-  field_trial_params["retransmittable_on_wire_timeout_milliseconds"] = "1000";
-  variations::AssociateVariationParams("QUIC", "Enabled", field_trial_params);
-  base::FieldTrialList::CreateFieldTrial("QUIC", "Enabled");
-
-  ParseFieldTrials();
-
-  EXPECT_EQ(1000, params_.quic_retransmittable_on_wire_timeout_milliseconds);
-}
-
-TEST_F(NetworkSessionConfiguratorTest,
        QuicIdleConnectionTimeoutSecondsFieldTrialParams) {
   std::map<std::string, std::string> field_trial_params;
   field_trial_params["idle_connection_timeout_seconds"] = "300";

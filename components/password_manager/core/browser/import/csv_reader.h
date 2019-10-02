@@ -17,10 +17,6 @@ namespace password_manager {
 // Parsed representation of tabular CSV data.
 class CSVTable {
  public:
-  // Maximum number of columns accepted. If any row has more than |kMaxColumns|
-  // cells, the parsing fails.
-  constexpr static size_t kMaxColumns = 100;
-
   CSVTable();
   ~CSVTable();
 

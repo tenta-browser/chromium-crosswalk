@@ -310,25 +310,6 @@ TEST_F(VizDevToolsTest, FrameSinkElementOrdering) {
                           frame_sink_node->getNodeId());
 }
 
-// Verify that FrameSinkElements are inserted into the tree according to the
-// ordering of their FrameSinkIds.
-TEST_F(VizDevToolsTest, FrameSinkElementOrdering) {
-  RegisterFrameSinkId(kFrameSink2);
-
-  BuildDocument();
-
-  DOM::Node* frame_sink_node = FindFrameSinkNode(kFrameSink2, root());
-
-  // Create a frame sink element before the existing frame sink.
-  RegisterFrameSinkId(kFrameSink1);
-  ExpectChildNodeInserted(dom_agent()->element_root()->node_id(), 0);
-
-  // Create a frame sink element after the existing frame sink.
-  RegisterFrameSinkId(kFrameSink3);
-  ExpectChildNodeInserted(dom_agent()->element_root()->node_id(),
-                          frame_sink_node->getNodeId());
-}
-
 // Verify that creating a surface and adding a reference to the root surface
 // creates a node attached to the root surface node.
 TEST_F(VizDevToolsTest, SurfaceCreated) {

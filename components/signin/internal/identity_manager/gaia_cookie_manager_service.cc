@@ -182,21 +182,6 @@ void GaiaCookieManagerService::GaiaCookieRequest::
     std::move(add_account_to_cookie_completed_callback_).Run(account_id, error);
 }
 
-void GaiaCookieManagerService::GaiaCookieRequest::
-    RunSetAccountsInCookieCompletedCallback(
-        signin::SetAccountsInCookieResult result) {
-  if (set_accounts_in_cookie_completed_callback_)
-    std::move(set_accounts_in_cookie_completed_callback_).Run(result);
-}
-
-void GaiaCookieManagerService::GaiaCookieRequest::
-    RunAddAccountToCookieCompletedCallback(
-        const std::string& account_id,
-        const GoogleServiceAuthError& error) {
-  if (add_account_to_cookie_completed_callback_)
-    std::move(add_account_to_cookie_completed_callback_).Run(account_id, error);
-}
-
 // static
 GaiaCookieManagerService::GaiaCookieRequest
 GaiaCookieManagerService::GaiaCookieRequest::CreateAddAccountRequest(

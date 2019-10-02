@@ -34,7 +34,6 @@
 #include "components/crash/android/jni_headers/PackagePaths_jni.h"
 #include "components/crash/content/app/crash_reporter_client.h"
 #include "content/public/common/content_descriptors.h"
-#include "jni/PackagePaths_jni.h"
 #include "sandbox/linux/services/syscall_wrappers.h"
 #include "third_party/crashpad/crashpad/client/annotation.h"
 #include "third_party/crashpad/crashpad/client/client_argv_handling.h"

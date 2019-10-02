@@ -12,9 +12,6 @@
 #include "base/feature_list.h"
 #include "build/build_config.h"
 
-#include "base/feature_list.h"
-#include "build/build_config.h"
-
 namespace signin {
 
 #if defined(OS_ANDROID)

@@ -36,11 +36,6 @@
 #include "components/download/internal/common/android/download_collection_bridge.h"
 #endif  // defined(OS_ANDROID)
 
-#if defined(OS_ANDROID)
-#include "base/android/content_uri_utils.h"
-#include "components/download/internal/common/android/download_collection_bridge.h"
-#endif  // defined(OS_ANDROID)
-
 #define CONDITIONAL_TRACE(trace)                  \
   do {                                            \
     if (download_id_ != DownloadItem::kInvalidId) \

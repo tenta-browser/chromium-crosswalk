@@ -20,7 +20,6 @@ class UserAction;  // For SetDefaultChipType
 struct Chip {
   explicit Chip(const ChipProto& proto);
   Chip();
-  Chip(const ChipProto& chip_proto);
   ~Chip();
 
   bool empty() const;

@@ -40,9 +40,6 @@ import org.chromium.chrome.browser.compositor.layouts.phone.stack.StackTab;
 import org.chromium.chrome.browser.compositor.scene_layer.SceneLayer;
 import org.chromium.chrome.browser.compositor.scene_layer.TabListSceneLayer;
 import org.chromium.chrome.browser.fullscreen.ChromeFullscreenManager;
-import org.chromium.chrome.browser.gesturenav.NavigationGlowFactory;
-import org.chromium.chrome.browser.gesturenav.NavigationHandler;
-import org.chromium.chrome.browser.gesturenav.TabSwitcherActionDelegate;
 import org.chromium.chrome.browser.partnercustomizations.HomepageManager;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabList;
@@ -229,10 +226,8 @@ public abstract class StackLayoutBase extends Layout {
 
     private final GestureEventFilter mGestureEventFilter;
     private final TabListSceneLayer mSceneLayer;
-    private final boolean mNavigationEnabled;
 
     private StackLayoutGestureHandler mGestureHandler;
-    private NavigationHandler mNavigationHandler;
 
     private final ArrayList<Pair<CompositorAnimator, FloatProperty>> mLayoutAnimations =
             new ArrayList<>();
@@ -247,7 +242,6 @@ public abstract class StackLayoutBase extends Layout {
             mLastOnDownTimeStamp = time;
 
             if (shouldIgnoreTouchInput()) return;
-            if (mNavigationEnabled) mNavigationHandler.onDown();
             mStacks.get(getTabStackIndex()).onDown(time);
         }
 
@@ -259,15 +253,6 @@ public abstract class StackLayoutBase extends Layout {
         @Override
         public void drag(float x, float y, float dx, float dy, float tx, float ty) {
             if (shouldIgnoreTouchInput()) return;
-
-            if (mNavigationEnabled) {
-                mNavigationHandler.onScroll(mLastOnDownX * mDpToPx, -dx * mDpToPx, -dy * mDpToPx,
-                        x * mDpToPx, y * mDpToPx);
-                if (mNavigationHandler.isActive()) {
-                    cancelDragTabs(time());
-                    return;
-                }
-            }
 
             @SwipeMode
             int oldInputMode = mInputMode;
@@ -513,14 +498,6 @@ public abstract class StackLayoutBase extends Layout {
                 onTabClosureCancelled(LayoutManager.time(), tab.getId(), tab.isIncognito());
             }
         };
-        if (mNavigationEnabled && mNavigationHandler == null) {
-            Tab currentTab = mTabModelSelector.getCurrentTab();
-            mNavigationHandler = new NavigationHandler(mViewContainer,
-                    new TabSwitcherActionDelegate(currentTab.getActivity()::onBackPressed,
-                            mTabModelSelector::getCurrentTab),
-                    NavigationGlowFactory.forSceneLayer(mViewContainer, mSceneLayer,
-                            currentTab.getActivity().getWindowAndroid()));
-        }
     }
 
     /**

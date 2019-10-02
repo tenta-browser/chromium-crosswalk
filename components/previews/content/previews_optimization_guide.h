@@ -43,9 +43,7 @@ class Hint;
 
 namespace previews {
 
-class HintsFetcher;
 class PreviewsHints;
-class PreviewsTopHostProvider;
 class PreviewsUserData;
 
 // A Previews optimization guide that makes decisions guided by hints received

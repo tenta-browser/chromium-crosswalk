@@ -88,10 +88,6 @@ class WMHelperTester : public WMHelper, public VSyncTimingManager::Delegate {
   void AddVSyncParameterObserver(
       viz::mojom::VSyncParameterObserverPtr observer) override {}
 
-  // Overridden from VSyncTimingManager::Delegate:
-  void AddVSyncParameterObserver(
-      viz::mojom::VSyncParameterObserverPtr observer) override {}
-
  private:
   aura::Window* root_window_;
   LifetimeManager lifetime_manager_;

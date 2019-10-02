@@ -125,30 +125,4 @@ class KeyboardAccessoryViewBinder {
             });
         }
     }
-
-    private static void requestLayout(KeyboardAccessoryView view) {
-         // Layout requests happen automatically since Kitkat and redundant requests cause warnings.
-        if (view == null || Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) return;
-        view.post(() -> {
-            ViewParent parent = view.getParent();
-            if (parent != null) {
-                parent.requestLayout();
-            }
-        });
-    }
-
-    private static void setActiveTabHint(KeyboardAccessoryModel model, KeyboardAccessoryView view) {
-        int activeTab = -1;
-        if (model.activeTab() != null) {
-            activeTab = model.activeTab();
-        }
-        for (int i = 0; i < model.getTabList().size(); ++i) {
-            Tab tab = model.getTabList().get(i);
-            if (activeTab == i) {
-                view.setTabDescription(i, R.string.keyboard_accessory_sheet_hide);
-            } else {
-                view.setTabDescription(i, tab.getContentDescription());
-            }
-        }
-    }
 }

@@ -1209,50 +1209,6 @@ TEST_F(NewPasswordFormManagerTest, UpdatePasswordValueMultiplePasswordFields) {
   CheckPendingCredentials(expected, saved_form);
 }
 
-TEST_F(NewPasswordFormManagerTest, UpdatePasswordValueMultiplePasswordFields) {
-  TestMockTimeTaskRunner::ScopedContext scoped_context(task_runner_.get());
-  FormData form = observed_form_only_password_fields_;
-
-  CreateFormManager(form);
-  fetcher_->NotifyFetchCompleted();
-  base::string16 password = ASCIIToUTF16("password1");
-  base::string16 pin = ASCIIToUTF16("pin");
-  form.fields[0].value = password;
-  form.fields[1].value = pin;
-  form_manager_->ProvisionallySave(form, &driver_, false);
-
-  // Check that a second password field is chosen for saving.
-  EXPECT_EQ(pin, form_manager_->GetPendingCredentials().password_value);
-
-  PasswordForm expected = form_manager_->GetPendingCredentials();
-  expected.password_value = password;
-  expected.password_element = form.fields[0].name;
-
-  // Simulate that the user updates value to save for the first password field.
-  form_manager_->UpdatePasswordValue(password);
-
-  // Check that newly created pending credentials are correct.
-  CheckPendingCredentials(expected, form_manager_->GetPendingCredentials());
-  EXPECT_TRUE(form_manager_->IsNewLogin());
-
-  // Check that a vote is sent for the field with the value which is chosen by
-  // the user.
-  std::map<base::string16, ServerFieldType> expected_types;
-  expected_types[expected.password_element] = autofill::PASSWORD;
-
-  EXPECT_CALL(mock_autofill_download_manager_,
-              StartUploadRequest(UploadedAutofillTypesAre(expected_types),
-                                 false, _, _, true, nullptr));
-
-  // Check that the password which was chosen by the user is saved.
-  MockFormSaver& form_saver = MockFormSaver::Get(form_manager_.get());
-  PasswordForm saved_form;
-  EXPECT_CALL(form_saver, Save(_, _, _)).WillOnce(SaveArg<0>(&saved_form));
-
-  form_manager_->Save();
-  CheckPendingCredentials(expected, saved_form);
-}
-
 TEST_F(NewPasswordFormManagerTest, PermanentlyBlacklist) {
   TestMockTimeTaskRunner::ScopedContext scoped_context(task_runner_.get());
   fetcher_->NotifyFetchCompleted();

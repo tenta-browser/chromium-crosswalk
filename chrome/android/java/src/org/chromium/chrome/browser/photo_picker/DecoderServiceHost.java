@@ -73,9 +73,6 @@ public class DecoderServiceHost
     // A worker task for asynchronously handling video decode requests.
     private DecodeVideoTask mWorkerTask;
 
-    // A worker task for asynchronously handling video decode requests.
-    private DecodeVideoTask mWorkerTask;
-
     // A callback to use for testing to see if decoder is ready.
     static ServiceReadyCallback sReadyCallbackForTesting;
 

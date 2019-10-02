@@ -43,10 +43,6 @@ gpu::SurfaceHandle OutputSurface::GetSurfaceHandle() const {
   return gpu::kNullSurfaceHandle;
 }
 
-SkiaOutputSurface* OutputSurface::AsSkiaOutputSurface() {
-  return nullptr;
-}
-
 void OutputSurface::UpdateLatencyInfoOnSwap(
     const gfx::SwapResponse& response,
     std::vector<ui::LatencyInfo>* latency_info) {

@@ -45,7 +45,6 @@ import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorObserver;
-import org.chromium.chrome.browser.tabmodel.TabModelUtils;
 import org.chromium.chrome.browser.tabmodel.TabSelectionType;
 import org.chromium.chrome.browser.util.UrlConstants;
 import org.chromium.chrome.browser.widget.prefeditor.Completable;
@@ -292,14 +291,6 @@ public class PaymentRequestImpl
         public void onOverviewModeStartedShowing(boolean showToolbar) {
             mJourneyLogger.setAborted(AbortReason.ABORTED_BY_USER);
             disconnectFromClientWithDebugMessage(ErrorStrings.TAB_OVERVIEW_MODE);
-        }
-    };
-
-    /** Monitors changes in the tab overview. */
-    private final OverviewModeObserver mOverviewModeObserver = new EmptyOverviewModeObserver() {
-        @Override
-        public void onOverviewModeStartedShowing(boolean showToolbar) {
-            onDismiss();
         }
     };
 
@@ -1025,17 +1016,6 @@ public class PaymentRequestImpl
                         || !mInvokedPaymentInstrument.isChangingPaymentMethod())) {
             mJourneyLogger.setAborted(AbortReason.INVALID_DATA_FROM_RENDERER);
             disconnectFromClientWithDebugMessage(ErrorStrings.INVALID_STATE);
-            return;
-        }
-
-        if (!mRequestShipping && !mRequestPayerName && !mRequestPayerEmail && !mRequestPayerPhone
-                && (mInvokedPaymentInstrument == null
-                        || !mInvokedPaymentInstrument.isChangingPaymentMethod())) {
-            mJourneyLogger.setAborted(AbortReason.INVALID_DATA_FROM_RENDERER);
-            disconnectFromClientWithDebugMessage(
-                    "PaymentRequestUpdateEvent.updateWith() called without passing a promise into "
-                    + "PaymentRequest.show(), without a payment method change event, and without"
-                    + "payment options (e.g. requestShipping: true)");
             return;
         }
 

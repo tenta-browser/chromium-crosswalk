@@ -8,7 +8,6 @@ import android.support.annotation.Nullable;
 import android.view.View;
 import android.view.Window;
 
-import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.fullscreen.FullscreenHtmlApiHandler.FullscreenHtmlApiDelegate;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabBrowserControlsState;
@@ -26,20 +25,6 @@ public abstract class FullscreenManager {
     private final FullscreenHtmlApiHandler mHtmlApiHandler;
     private boolean mOverlayVideoMode;
     @Nullable private Tab mTab;
-
-    /**
-     * @return {@link FullscreenManager} instance which a given {@link Tab}
-     *         is associated with as the active tab; {@code null} if the tab
-     *         is not an active one.
-     * TODO(jinsukim): Look into removing this method.
-     */
-    public static FullscreenManager from(Tab tab) {
-        if (tab == null) return null;
-        ChromeActivity activity = tab.getActivity();
-        if (activity == null) return null;
-        FullscreenManager manager = activity.getFullscreenManager();
-        return manager.getTab() == tab ? manager : null;
-    }
 
     /**
      * Constructs the basic ChromeTab oriented FullscreenManager.

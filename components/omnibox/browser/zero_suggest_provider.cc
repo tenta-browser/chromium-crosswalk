@@ -718,7 +718,6 @@ ZeroSuggestProvider::ResultType ZeroSuggestProvider::TypeOfResultToRun(
 
   if (field_trial_variant == kMostVisitedVariant)
     return MOST_VISITED;
-  }
 
 #if defined(OS_ANDROID) || defined(OS_IOS)
   // For Android and iOS, default to MOST_VISITED so long as:

@@ -391,7 +391,7 @@ public class TabModalPresenter
                     @Override
                     public void onAnimationEnd(Animator animation) {
                         mDialogContainer.setVisibility(View.GONE);
-                        mViewContainer.removeView(dialogView);
+                        mDialogContainer.removeView(dialogView);
                     }
                 })
                 .start();

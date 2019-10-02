@@ -366,13 +366,6 @@ class UnmaskCardRequest : public PaymentsRequest {
                           std::move(chrome_user_context));
     }
 
-    if (ShouldUseActiveSignedInAccount()) {
-      std::unique_ptr<base::DictionaryValue> chrome_user_context(
-          new base::DictionaryValue());
-      chrome_user_context->SetBoolean("full_sync_enabled", full_sync_enabled_);
-      request_dict.Set("chrome_user_context", std::move(chrome_user_context));
-    }
-
     int value = 0;
     if (base::StringToInt(request_details_.user_response.exp_month, &value))
       request_dict.SetKey("expiration_month", base::Value(value));
@@ -650,13 +643,6 @@ class UploadCardRequest : public PaymentsRequest {
                                  base::Value(full_sync_enabled_));
       request_dict.SetKey("chrome_user_context",
                           std::move(chrome_user_context));
-    }
-
-    if (ShouldUseActiveSignedInAccount()) {
-      std::unique_ptr<base::DictionaryValue> chrome_user_context(
-          new base::DictionaryValue());
-      chrome_user_context->SetBoolean("full_sync_enabled", full_sync_enabled_);
-      request_dict.Set("chrome_user_context", std::move(chrome_user_context));
     }
 
     SetStringIfNotEmpty(request_details_.card, CREDIT_CARD_NAME_FULL,

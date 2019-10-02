@@ -87,14 +87,6 @@ size_t MaxStoredHistoryLengthForHostIndifferentBlackList();
 // The maximum number of hosts allowed in the in memory black list.
 size_t MaxInMemoryHostsInBlackList();
 
-// The maximum number of hosts allowed to be requested by the client to the
-// remote Optimzation Guide Service.
-size_t MaxHostsForOptimizationGuideServiceHintsFetch();
-
-// The amount of time a fetched hint will be considered fresh enough
-// to be used and remain in the HintCacheStore.
-base::TimeDelta StoredFetchedHintsFreshnessDuration();
-
 // The number of recent navigations that were opted out of for a given host that
 // would trigger that host to be blacklisted.
 int PerHostBlackListOptOutThreshold();
@@ -122,12 +114,6 @@ base::TimeDelta LitePagePreviewsNavigationTimeoutDuration();
 
 // The host for Lite Page server previews.
 GURL GetLitePagePreviewsDomainURL();
-
-// The API key for the One Platform Optimization Guide Service.
-std::string GetOptimizationGuideServiceAPIKey();
-
-// The host for the One Platform Optimization Guide Service.
-GURL GetOptimizationGuideServiceURL();
 
 // The duration of a single bypass for Lite Page Server Previews.
 base::TimeDelta LitePagePreviewsSingleBypassDuration();
@@ -189,10 +175,6 @@ int LitePageServerPreviewsVersion();
 int NoScriptPreviewsVersion();
 int ResourceLoadingHintsVersion();
 int DeferAllScriptPreviewsVersion();
-
-// Returns true if the feature to fetch hints from the remote Optimization Guide
-// Service is enabled.
-bool IsHintsFetchingEnabled();
 
 // For estimating NoScript data savings, this is the percentage factor to
 // multiple by the network bytes for inflating the original_bytes count.

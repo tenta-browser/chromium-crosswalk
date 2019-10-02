@@ -41,8 +41,6 @@ class USER_MANAGER_EXPORT FakeUserManager : public UserManagerBase {
 
   void set_local_state(PrefService* local_state) { local_state_ = local_state; }
 
-  void set_local_state(PrefService* local_state) { local_state_ = local_state; }
-
   // UserManager overrides.
   const UserList& GetUsers() const override;
   UserList GetUsersAllowedForMultiProfile() const override;
@@ -152,9 +150,6 @@ class USER_MANAGER_EXPORT FakeUserManager : public UserManagerBase {
 
  protected:
   User* primary_user_;
-
-  // Can be set by set_local_state().
-  PrefService* local_state_ = nullptr;
 
   // Can be set by set_local_state().
   PrefService* local_state_ = nullptr;

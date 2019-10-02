@@ -44,11 +44,6 @@ interface AutofillDriver {
   // Notification that a select element's options were modified.
   SelectFieldOptionsDidChange(FormData form);
 
-  // Notification that a form field has scrolled.
-  TextFieldDidScroll(FormData form,
-                     FormFieldData field,
-                     gfx.mojom.RectF bounding_box);
-
   // Queries the browser for Autofill suggestions for a form input field.
   // |id| is the request ID which is used to map responses correctly.
   QueryFormFieldAutofill(int32 id,

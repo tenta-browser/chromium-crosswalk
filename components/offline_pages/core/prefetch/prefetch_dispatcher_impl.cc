@@ -92,15 +92,8 @@ void PrefetchDispatcherImpl::EnsureTaskScheduled() {
     background_task_->SetReschedule(
         PrefetchBackgroundTaskRescheduleType::RESCHEDULE_WITHOUT_BACKOFF);
   } else {
-    service_->GetGCMToken(
-        base::BindOnce(&PrefetchDispatcherImpl::EnsureTaskScheduledWithGCMToken,
-                       weak_factory_.GetWeakPtr()));
+    service_->GetPrefetchBackgroundTaskHandler()->EnsureTaskScheduled();
   }
-}
-
-void PrefetchDispatcherImpl::EnsureTaskScheduledWithGCMToken(
-    const std::string& gcm_token) {
-  service_->GetPrefetchBackgroundTaskHandler()->EnsureTaskScheduled(gcm_token);
 }
 
 void PrefetchDispatcherImpl::AddCandidatePrefetchURLs(

@@ -451,45 +451,6 @@ class WebControllerBrowserTest : public content::ContentBrowserTest,
     EXPECT_LT(top, container_bottom);
   }
 
-  // Scroll an element into view that's within a container element. This
-  // requires scrolling the container, then the window, to get the element to
-  // the desired y position.
-  void TestScrollIntoView(int initial_window_scroll_y,
-                          int initial_container_scroll_y) {
-    EXPECT_TRUE(content::ExecJs(
-        shell(), base::StringPrintf(
-                     R"(window.scrollTo(0, %d);
-           let container = document.querySelector("#scroll_container");
-           container.scrollTo(0, %d);)",
-                     initial_window_scroll_y, initial_container_scroll_y)));
-
-    Selector selector;
-    selector.selectors.emplace_back("#scroll_item_5");
-
-    TopPadding top_padding{0.25, TopPadding::Unit::RATIO};
-    FocusElement(selector, top_padding);
-    base::ListValue eval_result = content::EvalJs(shell(), R"(
-      let item = document.querySelector("#scroll_item_5");
-      let itemRect = item.getBoundingClientRect();
-      let container = document.querySelector("#scroll_container");
-      let containerRect = container.getBoundingClientRect();
-      [itemRect.top, itemRect.bottom, window.innerHeight,
-           containerRect.top, containerRect.bottom])")
-                                      .ExtractList();
-    double top = eval_result.GetList()[0].GetDouble();
-    double bottom = eval_result.GetList()[1].GetDouble();
-    double window_height = eval_result.GetList()[2].GetDouble();
-    double container_top = eval_result.GetList()[3].GetDouble();
-    double container_bottom = eval_result.GetList()[4].GetDouble();
-
-    // Element is at the desired position. (top is relative to the viewport)
-    EXPECT_NEAR(top, window_height * 0.25, 0.5);
-
-    // Element is within the visible portion of its container.
-    EXPECT_GT(bottom, container_top);
-    EXPECT_LT(top, container_bottom);
-  }
-
  protected:
   std::unique_ptr<WebController> web_controller_;
 
@@ -1273,19 +1234,6 @@ IN_PROC_BROWSER_TEST_F(WebControllerBrowserTest,
   EXPECT_EQ(ACTION_APPLIED, status.proto_status()) << "Status: " << status;
   EXPECT_THAT(end_state,
               AnyOf(DOCUMENT_LOADED, DOCUMENT_INTERACTIVE, DOCUMENT_COMPLETE));
-}
-
-IN_PROC_BROWSER_TEST_F(WebControllerBrowserTest, WaitForHeightChange) {
-  base::RunLoop run_loop;
-  ClientStatus result;
-  web_controller_->WaitForWindowHeightChange(
-      base::BindOnce(&WebControllerBrowserTest::OnClientStatus,
-                     base::Unretained(this), run_loop.QuitClosure(), &result));
-
-  EXPECT_TRUE(
-      content::ExecJs(shell(), "window.dispatchEvent(new Event('resize'))"));
-  run_loop.Run();
-  EXPECT_EQ(ACTION_APPLIED, result.proto_status());
 }
 
 }  // namespace

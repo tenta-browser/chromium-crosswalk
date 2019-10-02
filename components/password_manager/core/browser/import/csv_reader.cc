@@ -16,8 +16,6 @@
 
 namespace password_manager {
 
-namespace password_manager {
-
 namespace {
 
 // Returns all the characters from the start of |input| until the first '\n',

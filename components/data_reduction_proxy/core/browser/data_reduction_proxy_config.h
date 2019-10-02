@@ -234,13 +234,6 @@ class DataReductionProxyConfig
   // net::GetWifiSSID() call gets stuck.
   void ContinueNetworkChanged(const std::string& network_id);
 
-  // Invoked to continue network changed handling after the network id is
-  // retrieved. If |get_network_id_task_runner_| is set, the network id is
-  // fetched on the worker thread. Otherwise, OnNetworkChanged calls this
-  // directly. This is a workaround for https://crbug.com/821607 where
-  // net::GetWifiSSID() call gets stuck.
-  void ContinueNetworkChanged(const std::string& network_id);
-
   // Requests the secure proxy check URL. Upon completion, returns the results
   // to the caller via the |fetcher_callback|. Virtualized for unit testing.
   virtual void SecureProxyCheck(SecureProxyCheckerCallback fetcher_callback);

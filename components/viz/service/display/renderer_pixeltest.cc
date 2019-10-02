@@ -3151,15 +3151,6 @@ TYPED_TEST(GPURendererPixelTest, AntiAliasing) {
   SharedQuadState* blue_shared_state = CreateTestSharedQuadState(
       blue_quad_to_target_transform, rect, pass.get(), gfx::RRectF());
 
-  gfx::Rect green_rect(19, 7, 180, 10);
-  SharedQuadState* green_shared_state = CreateTestSharedQuadState(
-      gfx::Transform(), green_rect, pass.get(), gfx::RRectF());
-  auto* green = pass->CreateAndAppendDrawQuad<SolidColorDrawQuad>();
-  green->SetNew(green_shared_state, green_rect, green_rect, SK_ColorGREEN,
-                false);
-
-  SharedQuadState* blue_shared_state = CreateTestSharedQuadState(
-      gfx::Transform(), rect, pass.get(), gfx::RRectF());
   auto* blue = pass->CreateAndAppendDrawQuad<SolidColorDrawQuad>();
   blue->SetNew(blue_shared_state, rect, rect, SK_ColorBLUE, false);
 
@@ -5015,21 +5006,6 @@ INSTANTIATE_TEST_SUITE_P(
     testing::Combine(testing::ValuesIn(intermediate_color_spaces),
                      testing::ValuesIn(dst_color_spaces),
                      testing::ValuesIn(color_space_premul_values)));
-
-// TODO(crbug.com/939442): Enable these tests for SkiaRenderer.
-// INSTANTIATE_TEST_SUITE_P(
-//     FromColorSpace,
-//     SkiaColorTransformPixelTest,
-//     testing::Combine(testing::ValuesIn(src_color_spaces),
-//                      testing::ValuesIn(intermediate_color_spaces),
-//                      testing::ValuesIn(color_space_premul_values)));
-
-// INSTANTIATE_TEST_SUITE_P(
-//     ToColorSpace,
-//     SkiaColorTransformPixelTest,
-//     testing::Combine(testing::ValuesIn(intermediate_color_spaces),
-//                      testing::ValuesIn(dst_color_spaces),
-//                      testing::ValuesIn(color_space_premul_values)));
 
 #endif  // !defined(OS_ANDROID)
 

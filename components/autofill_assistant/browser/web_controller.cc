@@ -2113,48 +2113,4 @@ void WebController::OnWaitForDocumentToBecomeInteractive(
       settings_->document_ready_check_interval);
 }
 
-void WebController::WaitForDocumentToBecomeInteractive(
-    int remaining_rounds,
-    std::string object_id,
-    base::OnceCallback<void(bool)> callback) {
-  devtools_client_->GetRuntime()->CallFunctionOn(
-      runtime::CallFunctionOnParams::Builder()
-          .SetObjectId(object_id)
-          .SetFunctionDeclaration(std::string(kIsDocumentReadyForInteract))
-          .SetReturnByValue(true)
-          .Build(),
-      base::BindOnce(&WebController::OnWaitForDocumentToBecomeInteractive,
-                     weak_ptr_factory_.GetWeakPtr(), remaining_rounds,
-                     object_id, std::move(callback)));
-}
-
-void WebController::OnWaitForDocumentToBecomeInteractive(
-    int remaining_rounds,
-    std::string object_id,
-    base::OnceCallback<void(bool)> callback,
-    std::unique_ptr<runtime::CallFunctionOnResult> result) {
-  ClientStatus status = CheckJavaScriptResult(result.get(), __FILE__, __LINE__);
-  if (!status.ok() || remaining_rounds <= 0) {
-    DVLOG(1) << __func__
-             << " Failed to wait for the document to become interactive with "
-                "remaining_rounds: "
-             << remaining_rounds;
-    std::move(callback).Run(false);
-    return;
-  }
-
-  bool ready;
-  if (SafeGetBool(result->GetResult(), &ready) && ready) {
-    std::move(callback).Run(true);
-    return;
-  }
-
-  base::PostDelayedTaskWithTraits(
-      FROM_HERE, {content::BrowserThread::UI},
-      base::BindOnce(&WebController::WaitForDocumentToBecomeInteractive,
-                     weak_ptr_factory_.GetWeakPtr(), --remaining_rounds,
-                     object_id, std::move(callback)),
-      settings_->document_ready_check_interval);
-}
-
 }  // namespace autofill_assistant

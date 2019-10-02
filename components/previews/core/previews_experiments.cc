@@ -114,18 +114,6 @@ size_t MaxInMemoryHostsInBlackList() {
                               "max_hosts_in_blacklist", 100);
 }
 
-size_t MaxHostsForOptimizationGuideServiceHintsFetch() {
-  return GetFieldTrialParamByFeatureAsInt(
-      features::kOptimizationHintsFetching,
-      "max_hosts_for_optimization_guide_service_hints_fetch", 30);
-}
-
-base::TimeDelta StoredFetchedHintsFreshnessDuration() {
-  return base::TimeDelta::FromDays(GetFieldTrialParamByFeatureAsInt(
-      features::kOptimizationHintsFetching,
-      "max_store_duration_for_featured_hints_in_days", 7));
-}
-
 int PerHostBlackListOptOutThreshold() {
   return GetParamValueAsInt(kClientSidePreviewsFieldTrial,
                             "per_host_opt_out_threshold", 2);
@@ -328,10 +316,6 @@ int ResourceLoadingHintsVersion() {
 int DeferAllScriptPreviewsVersion() {
   return GetFieldTrialParamByFeatureAsInt(features::kDeferAllScriptPreviews,
                                           kVersion, 0);
-}
-
-bool IsHintsFetchingEnabled() {
-  return base::FeatureList::IsEnabled(features::kOptimizationHintsFetching);
 }
 
 int NoScriptPreviewsInflationPercent() {

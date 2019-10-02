@@ -113,28 +113,4 @@ content::PreviewsState PreviewsUserData::CommittedPreviewsState() const {
   return committed_previews_state_without_holdback_;
 }
 
-bool PreviewsUserData::CoinFlipForNavigation() const {
-  if (params::ShouldOverrideNavigationCoinFlipToHoldback())
-    return true;
-
-  if (params::ShouldOverrideNavigationCoinFlipToAllowed())
-    return false;
-
-  return random_coin_flip_for_navigation_;
-}
-
-void PreviewsUserData::SetEligibilityReasonForPreview(
-    PreviewsType preview,
-    PreviewsEligibilityReason reason) {
-  preview_eligibility_reasons_[preview] = reason;
-}
-
-base::Optional<PreviewsEligibilityReason>
-PreviewsUserData::EligibilityReasonForPreview(PreviewsType preview) {
-  auto iter = preview_eligibility_reasons_.find(preview);
-  if (iter == preview_eligibility_reasons_.end())
-    return base::nullopt;
-  return iter->second;
-}
-
 }  // namespace previews

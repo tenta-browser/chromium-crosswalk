@@ -770,7 +770,6 @@ void SkiaOutputSurfaceImplOnGpu::ScheduleOverlays(
           std::move(gpu_fence));
     }
   }
-  ReleaseFenceSyncAndPushTextureUpdates(sync_fence_release);
 }
 
 void SkiaOutputSurfaceImplOnGpu::SwapBuffers(OutputSurfaceFrame frame) {

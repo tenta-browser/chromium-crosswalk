@@ -6,7 +6,6 @@
 
 #include <utility>
 
-#include "base/feature_list.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "components/sync/protocol/model_type_store_schema_descriptor.pb.h"
@@ -29,11 +28,6 @@ const char ModelTypeStoreBackend::kDBSchemaDescriptorRecordId[] =
     "_mts_schema_descriptor";
 const char ModelTypeStoreBackend::kStoreInitResultHistogramName[] =
     "Sync.ModelTypeStoreInitResult";
-
-const base::Feature kModelTypeStoreAvoidReadCache{
-    "kModelTypeStoreAvoidReadCache", base::FEATURE_DISABLED_BY_DEFAULT};
-const base::Feature kModelTypeStoreSmallWriteBufferSize{
-    "kModelTypeStoreSmallWriteBufferSize", base::FEATURE_DISABLED_BY_DEFAULT};
 
 namespace {
 

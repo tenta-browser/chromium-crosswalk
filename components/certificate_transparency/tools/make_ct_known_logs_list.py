@@ -4,8 +4,6 @@
 # found in the LICENSE file.
 """Generate a C++ file containing information on all accepted CT logs."""
 
-from __future__ import print_function
-
 import base64
 import datetime
 import hashlib

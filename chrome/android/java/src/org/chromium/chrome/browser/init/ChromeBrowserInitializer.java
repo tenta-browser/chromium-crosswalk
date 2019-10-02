@@ -237,7 +237,6 @@ public class ChromeBrowserInitializer {
         DeviceUtils.addDeviceSpecificUserAgentSwitch();
         ApplicationStatus.registerStateListenerForAllActivities(
                 createActivityStateListener());
-        mApplication.initDefaultNightMode();
 
         mPreInflationStartupComplete = true;
     }
@@ -458,8 +457,6 @@ public class ChromeBrowserInitializer {
                         Log.e(TAG, "Killing process because of locale change.");
                         Process.killProcess(Process.myPid());
                     }
-
-                    DeviceFormFactor.resetValuesIfNeeded(mApplication);
                 }
             }
         };

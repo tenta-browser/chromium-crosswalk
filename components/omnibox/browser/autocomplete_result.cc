@@ -848,31 +848,3 @@ void AutocompleteResult::GroupSuggestionsBySearchVsURL(iterator begin,
     }
   }
 }
-
-void AutocompleteResult::LimitNumberOfURLsShown(
-    size_t max_url_count,
-    const CompareWithDemoteByType<AutocompleteMatch>& comparing_object) {
-  size_t search_count = std::count_if(
-      matches_.begin(), matches_.end(), [&](const AutocompleteMatch& m) {
-        return AutocompleteMatch::IsSearchType(m.type) &&
-               // Don't count if would be removed.
-               comparing_object.GetDemotedRelevance(m) > 0;
-      });
-  // Display more than GetMaxURLMatches() if there are no non-URL suggestions
-  // to replace them. Avoid signed math.
-  if (GetMaxMatches() > search_count &&
-      GetMaxMatches() - search_count > max_url_count)
-    max_url_count = GetMaxMatches() - search_count;
-  size_t url_count = 0, total_count = 0;
-  // Erase URL suggestions past the count of allowed ones, or anything past
-  // maximum.
-  matches_.erase(
-      std::remove_if(matches_.begin(), matches_.end(),
-                     [&url_count, max_url_count,
-                      &total_count](const AutocompleteMatch& m) {
-                       return (!AutocompleteMatch::IsSearchType(m.type) &&
-                               ++url_count > max_url_count) ||
-                              ++total_count > GetMaxMatches();
-                     }),
-      matches_.end());
-}

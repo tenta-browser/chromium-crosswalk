@@ -35,10 +35,6 @@
 #include "components/download/internal/common/android/download_collection_bridge.h"
 #endif  // defined(OS_ANDROID)
 
-#if defined(OS_ANDROID)
-#include "components/download/internal/common/android/download_collection_bridge.h"
-#endif  // defined(OS_ANDROID)
-
 namespace download {
 
 namespace {

@@ -7,7 +7,6 @@
 #include "base/callback_forward.h"
 #include "chrome/android/chrome_jni_headers/DownloadBackgroundTask_jni.h"
 #include "chrome/browser/android/download/download_manager_service.h"
-#include "chrome/browser/android/profile_key_util.h"
 #include "chrome/browser/download/download_service_factory.h"
 #include "chrome/browser/profiles/profile_key.h"
 #include "chrome/browser/profiles/profile_key_android.h"

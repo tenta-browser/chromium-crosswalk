@@ -483,10 +483,4 @@ void PasswordProtectionService::GetPhishingDetector(
   provider->GetInterface(phishing_detector);
 }
 
-void PasswordProtectionService::GetPhishingDetector(
-    service_manager::InterfaceProvider* provider,
-    mojom::PhishingDetectorPtr* phishing_detector) {
-  provider->GetInterface(phishing_detector);
-}
-
 }  // namespace safe_browsing

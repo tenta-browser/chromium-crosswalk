@@ -100,14 +100,6 @@ class Pointer : public SurfaceTreeHost,
   void EnablePointerCapture();
   void DisablePointerCapture();
 
-  // Relative motion registration.
-  void RegisterRelativePointerDelegate(RelativePointerDelegate* delegate);
-  void UnregisterRelativePointerDelegate(RelativePointerDelegate* delegate);
-
-  // Pointer capture toggles:
-  void EnablePointerCapture();
-  void DisablePointerCapture();
-
  private:
   // Returns the effective target for |event|.
   Surface* GetEffectiveTargetForEvent(ui::LocatedEvent* event) const;

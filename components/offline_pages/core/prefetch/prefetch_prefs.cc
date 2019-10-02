@@ -26,8 +26,6 @@ const char kPrefetchCachedGCMToken[] = "offline_prefetch.gcm_token";
 
 const char kUserSettingEnabled[] = "offline_prefetch.enabled";
 const char kBackoff[] = "offline_prefetch.backoff";
-const char kContentSuggestionsNotificationsEnabled[] =
-    "ntp.content_suggestions.notifications.enabled";
 
 void RegisterPrefs(PrefRegistrySimple* registry) {
   registry->RegisterListPref(kBackoff);

@@ -85,7 +85,6 @@ public class ToolbarTablet extends ToolbarLayout
 
     private NewTabPage mVisibleNtp;
 
-    private boolean mWasAppMenuUpdateBadgeShowing;
     /**
      * Constructs a ToolbarTablet object.
      * @param context The Context in which this View object is created.

@@ -105,11 +105,6 @@ void GLOutputSurfaceBufferQueue::SetDrawRectangle(const gfx::Rect& damage) {
   buffer_queue_->CopyDamageForCurrentSurface(damage);
 }
 
-void GLOutputSurfaceBufferQueue::SetDrawRectangle(const gfx::Rect& damage) {
-  GLOutputSurface::SetDrawRectangle(damage);
-  buffer_queue_->CopyDamageForCurrentSurface(damage);
-}
-
 void GLOutputSurfaceBufferQueue::SwapBuffers(OutputSurfaceFrame frame) {
   DCHECK(buffer_queue_);
 

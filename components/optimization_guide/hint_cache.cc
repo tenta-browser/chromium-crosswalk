@@ -20,43 +20,6 @@ namespace {
 // is exceeded, the least recently used hint is purged from the cache.
 const size_t kDefaultMaxMemoryCacheHints = 20;
 
-// Verify |get_hints_response| and load the hints that have keys represented by
-// hosts suffix into UpdateData to be stored in the HintCache. Returns true if
-// there are applicable hints moved into UpdateData that can be stored.
-bool ProcessGetHintsResponse(
-    optimization_guide::proto::GetHintsResponse* get_hints_response,
-    HintUpdateData* fetched_hints_update_data) {
-  std::unordered_set<std::string> seen_host_suffixes;
-
-  bool has_processed_hints = false;
-  // Process each hint in |get_hints_response|.
-  for (auto& hint : *(get_hints_response->mutable_hints())) {
-    // One |hint| applies to one host URL suffix.
-    if (hint.key_representation() != optimization_guide::proto::HOST_SUFFIX) {
-      continue;
-    }
-    const std::string& hint_key = hint.key();
-
-    // Validate configuration keys.
-    DCHECK(!hint_key.empty());
-    if (hint_key.empty()) {
-      continue;
-    }
-
-    auto seen_host_suffixes_iter = seen_host_suffixes.find(hint_key);
-    DCHECK(seen_host_suffixes_iter == seen_host_suffixes.end());
-
-    seen_host_suffixes.insert(hint_key);
-
-    if (!hint.page_hints().empty()) {
-      // Move fetched hints into update data
-      fetched_hints_update_data->MoveHintIntoUpdateData(std::move(hint));
-      has_processed_hints = true;
-    }
-  }
-  return has_processed_hints;
-}
-
 }  // namespace
 
 HintCache::HintCache(

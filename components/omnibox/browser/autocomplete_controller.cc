@@ -669,9 +669,6 @@ void AutocompleteController::UpdateAssociatedKeywords(
 
 void AutocompleteController::UpdateKeywordDescriptions(
     AutocompleteResult* result) {
-  bool show_suffix_on_all_search_suggestions = base::FeatureList::IsEnabled(
-      omnibox::kUIExperimentShowSuffixOnAllSearchSuggestions);
-
   base::string16 last_keyword;
   for (auto i(result->begin()); i != result->end(); ++i) {
     if (AutocompleteMatch::IsSearchType(i->type)) {

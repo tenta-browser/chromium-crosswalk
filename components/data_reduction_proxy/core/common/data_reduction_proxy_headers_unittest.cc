@@ -72,7 +72,7 @@ TEST(DataReductionProxyHeadersTest, IsLitePagePreview) {
   }
 }
 
-TEST_F(DataReductionProxyHeadersTest, GetDataReductionProxyActionValue) {
+TEST(DataReductionProxyHeadersTest, GetDataReductionProxyActionValue) {
   const struct {
      const char* headers;
      std::string action_key;
@@ -166,7 +166,7 @@ TEST_F(DataReductionProxyHeadersTest, GetDataReductionProxyActionValue) {
   }
 }
 
-TEST_F(DataReductionProxyHeadersTest, GetProxyBypassInfo) {
+TEST(DataReductionProxyHeadersTest, GetProxyBypassInfo) {
   const struct {
      const char* headers;
      bool expected_result;
@@ -418,7 +418,7 @@ TEST_F(DataReductionProxyHeadersTest, GetProxyBypassInfo) {
   }
 }
 
-TEST_F(DataReductionProxyHeadersTest, ParseHeadersAndSetProxyInfo) {
+TEST(DataReductionProxyHeadersTest, ParseHeadersAndSetProxyInfo) {
   std::string headers =
       "HTTP/1.1 200 OK\n"
       "connection: keep-alive\n"
@@ -435,7 +435,7 @@ TEST_F(DataReductionProxyHeadersTest, ParseHeadersAndSetProxyInfo) {
   EXPECT_FALSE(data_reduction_proxy_info.bypass_all);
 }
 
-TEST_F(DataReductionProxyHeadersTest, HasDataReductionProxyViaHeader) {
+TEST(DataReductionProxyHeadersTest, HasDataReductionProxyViaHeader) {
   const struct {
     const char* headers;
     bool expected_result;

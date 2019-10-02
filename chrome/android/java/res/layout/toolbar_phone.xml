@@ -27,14 +27,6 @@
         android:layout_height="match_parent"
         android:layout_gravity="top" />
 
-    <ViewStub
-        android:id="@+id/incognito_tabs_stub"
-        android:inflatedId="@+id/incognito_toggle_tabs"
-        android:layout="@layout/incognito_toggle_tabs"
-        android:layout_width="wrap_content"
-        android:layout_height="match_parent"
-        android:layout_gravity="center" />
-
     <LinearLayout android:id="@+id/toolbar_buttons"
         android:orientation="horizontal"
         android:layout_width="wrap_content"

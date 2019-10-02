@@ -133,8 +133,6 @@ public class MainPreferences extends PreferenceFragmentCompat
 
         updatePasswordsPreference();
 
-        updatePasswordsPreference();
-
         setManagedPreferenceDelegateForPreference(PREF_SEARCH_ENGINE);
         setManagedPreferenceDelegateForPreference(PREF_DATA_REDUCTION);
 

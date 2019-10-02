@@ -135,39 +135,4 @@ TEST(NavigationMetrics, MainFrameSameDocumentHasRTLDomainTrue) {
   test.ExpectUniqueSample(kMainFrameHasRTLDomain, 1 /* true */, 1);
 }
 
-TEST(NavigationMetrics, MainFrameDifferentDocumentHasRTLDomainFalse) {
-  base::HistogramTester test;
-  RecordMainFrameNavigation(GURL(kTestUrl), false, false);
-  test.ExpectTotalCount(kMainFrameHasRTLDomainDifferentPage, 1);
-  test.ExpectTotalCount(kMainFrameHasRTLDomain, 1);
-  test.ExpectUniqueSample(kMainFrameHasRTLDomainDifferentPage, 0 /* false */,
-                          1);
-  test.ExpectUniqueSample(kMainFrameHasRTLDomain, 0 /* false */, 1);
-}
-
-TEST(NavigationMetrics, MainFrameDifferentDocumentHasRTLDomainTrue) {
-  base::HistogramTester test;
-  RecordMainFrameNavigation(GURL(kRtlUrl), false, false);
-  test.ExpectTotalCount(kMainFrameHasRTLDomainDifferentPage, 1);
-  test.ExpectTotalCount(kMainFrameHasRTLDomain, 1);
-  test.ExpectUniqueSample(kMainFrameHasRTLDomainDifferentPage, 1 /* true */, 1);
-  test.ExpectUniqueSample(kMainFrameHasRTLDomain, 1 /* true */, 1);
-}
-
-TEST(NavigationMetrics, MainFrameSameDocumentHasRTLDomainFalse) {
-  base::HistogramTester test;
-  RecordMainFrameNavigation(GURL(kTestUrl), true, false);
-  test.ExpectTotalCount(kMainFrameHasRTLDomainDifferentPage, 0);
-  test.ExpectTotalCount(kMainFrameHasRTLDomain, 1);
-  test.ExpectUniqueSample(kMainFrameHasRTLDomain, 0 /* false */, 1);
-}
-
-TEST(NavigationMetrics, MainFrameSameDocumentHasRTLDomainTrue) {
-  base::HistogramTester test;
-  RecordMainFrameNavigation(GURL(kRtlUrl), true, false);
-  test.ExpectTotalCount(kMainFrameHasRTLDomainDifferentPage, 0);
-  test.ExpectTotalCount(kMainFrameHasRTLDomain, 1);
-  test.ExpectUniqueSample(kMainFrameHasRTLDomain, 1 /* true */, 1);
-}
-
 }  // namespace navigation_metrics

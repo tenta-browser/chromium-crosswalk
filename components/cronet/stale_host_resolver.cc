@@ -434,9 +434,7 @@ StaleHostResolver::StaleOptions::StaleOptions()
 StaleHostResolver::StaleHostResolver(
     std::unique_ptr<net::ContextHostResolver> inner_resolver,
     const StaleOptions& stale_options)
-    : inner_resolver_(std::move(inner_resolver)),
-      options_(stale_options),
-      weak_ptr_factory_(this) {
+    : inner_resolver_(std::move(inner_resolver)), options_(stale_options) {
   DCHECK_LE(0, stale_options.max_expired_time.InMicroseconds());
   DCHECK_LE(0, stale_options.max_stale_uses);
 }

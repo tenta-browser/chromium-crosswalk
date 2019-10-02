@@ -191,51 +191,6 @@ public class EphemeralTabPanel extends OverlayPanel {
         closePanel(StateChangeReason.UNKNOWN, false);
     }
 
-    private void startListeningForCloseConditions() {
-        TabModelSelector selector = mActivity.getTabModelSelector();
-        mTabModelObserver = new TabModelSelectorTabModelObserver(selector) {
-            @Override
-            public void didSelectTab(Tab tab, @TabSelectionType int type, int lastId) {
-                closeTab();
-            }
-
-            @Override
-            public void didAddTab(Tab tab, @TabLaunchType int type) {
-                closeTab();
-            }
-        };
-        mTabModelSelectorTabObserver = new TabModelSelectorTabObserver(selector) {
-            @Override
-            public void onPageLoadStarted(Tab tab, String url) {
-                // Hides the panel if the base page navigates.
-                closeTab();
-            }
-
-            @Override
-            public void onCrash(Tab tab) {
-                // Hides the panel if the foreground tab crashed
-                if (SadTab.isShowing(tab)) closeTab();
-            }
-
-            @Override
-            public void onClosingStateChanged(Tab tab, boolean closing) {
-                if (closing) closeTab();
-            }
-        };
-    }
-
-    private void stopListeningForCloseConditions() {
-        if (mTabModelObserver == null) return;
-        mTabModelObserver.destroy();
-        mTabModelSelectorTabObserver.destroy();
-        mTabModelObserver = null;
-        mTabModelSelectorTabObserver = null;
-    }
-
-    private void closeTab() {
-        closePanel(StateChangeReason.UNKNOWN, false);
-    }
-
     @Override
     protected float getPeekedHeight() {
         return getBarHeightPeeking() * 1.5f;

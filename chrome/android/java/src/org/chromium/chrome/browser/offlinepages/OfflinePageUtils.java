@@ -22,7 +22,6 @@ import org.chromium.base.task.AsyncTask;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.ChromeFeatureList;
-import org.chromium.chrome.browser.DeviceConditions;
 import org.chromium.chrome.browser.FileProviderHelper;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.share.ShareParams;
@@ -461,12 +460,6 @@ public class OfflinePageUtils {
         // Return false if there is no offline page.
         if (offlinePage == null) return false;
 
-        // We share temporary pages by URL instead of sharing the page to prevent unanticipated side
-        // effects in the public directory.
-        // TODO(petewil): https://crbug.com/831780 - Desired long term behavior is to share the page
-        // with a content URI instead of as a URL, so all offline pages are shared as MHTML.
-        if (isTemporaryNamespace(offlinePage.getClientId().getNamespace())) return false;
-
         String offlinePath = offlinePage.getFilePath();
 
         // If we have a content or file Uri, then we can share the page.
@@ -496,18 +489,6 @@ public class OfflinePageUtils {
         return isContentScheme || isFileScheme;
     }
 
-
-    /**
-     * Determines if the page is in one of the temporary namespaces.
-     * @param namespace Namespace of the page in question.
-     * @return true if the page is in a temporary namespace.
-     */
-    public static boolean isTemporaryNamespace(String namespace) {
-        return namespace.equals(OfflinePageBridge.BOOKMARK_NAMESPACE)
-                || namespace.equals(OfflinePageBridge.LAST_N_NAMESPACE)
-                || namespace.equals(OfflinePageBridge.CCT_NAMESPACE)
-                || namespace.equals(OfflinePageBridge.SUGGESTED_ARTICLES_NAMESPACE);
-    }
 
     /**
      * For internal pages, we must publish them, then share them.

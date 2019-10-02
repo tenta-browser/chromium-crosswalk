@@ -26,7 +26,6 @@ static_library("core") {
     "//base",
     "//components/blacklist/opt_out_blacklist",
     "//components/variations",
-    "//google_apis",
     "//net:net",
     "//third_party/re2",
     "//url:url",

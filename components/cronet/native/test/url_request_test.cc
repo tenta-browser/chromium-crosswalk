@@ -283,10 +283,7 @@ class UrlRequestTest : public ::testing::TestWithParam<
                            std::tuple<bool, RequestFinishedListenerType>> {
  protected:
   UrlRequestTest() {}
-  ~UrlRequestTest() override {
-    if (request_finished_listener_ != nullptr)
-      Cronet_RequestFinishedInfoListener_Destroy(request_finished_listener_);
-  }
+  ~UrlRequestTest() override {}
 
   void SetUp() override { EXPECT_TRUE(cronet::TestServer::Start()); }
 
@@ -496,8 +493,6 @@ class UrlRequestTest : public ::testing::TestWithParam<
   // pointer is only needed to unregister the listener from the Engine in
   // CleanupRequestFinishedListener() and to allow tests that never run the
   // |request_finished_listener_| to be able to destroy it.
-  Cronet_RequestFinishedInfoListenerPtr request_finished_listener_ = nullptr;
-
   Cronet_RequestFinishedInfoListenerPtr request_finished_listener_ = nullptr;
 
  private:
