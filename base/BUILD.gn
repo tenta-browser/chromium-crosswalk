@@ -57,6 +57,9 @@ declare_args() {
   # LockImpl::PriorityInheritanceAvailable() in lock_impl_posix.cc for the
   # platform requirements to safely enable priority inheritance.
   enable_mutex_priority_inheritance = false
+
+  #set to true to enable log messages to be also sent to stderr
+  enable_stderr_log = false
 }
 
 # Mutex priority inheritance is disabled by default due to security
