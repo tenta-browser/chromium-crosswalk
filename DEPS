@@ -2626,8 +2626,6 @@ skip_child_includes = [
   'v8',
 ]
 
-gclient_gn_args_file =  'src/build/config/gclient_args.gni'
-
 hooks = [
   {
     'action': [
